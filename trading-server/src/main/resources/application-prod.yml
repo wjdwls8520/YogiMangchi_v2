@@ -1,0 +1,10 @@
+spring:
+  flyway:
+    user: ${TRADING_MIGRATION_USERNAME}
+    password: ${TRADING_MIGRATION_PASSWORD}
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

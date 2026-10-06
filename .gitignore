@@ -1,0 +1,9 @@
+**/.gradle/
+**/.gradle-user-home/
+**/build/
+.idea/
+*.iml
+.env
+.env.*
+!.env.example
+*.log
