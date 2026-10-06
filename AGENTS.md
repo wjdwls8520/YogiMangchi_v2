@@ -51,6 +51,8 @@ Yogimangchi V2는 하나의 Git Repository에서 관리하는 Monorepo를 기본
 Yogimangchi-V2/
 ├── README.md
 ├── AGENTS.md
+├── docker-compose.yml
+├── .env.example
 ├── docs/
 ├── frontend/
 ├── content-server/
@@ -62,6 +64,9 @@ Rules:
 - `frontend`, `content-server`, `trading-server` 내부에 별도의 Git Repository를 생성하지 않는다.
 - 하나의 Repository를 사용하더라도 각 애플리케이션의 실행, 배포 및 데이터 소유권 경계는 독립적으로 유지한다.
 - Git Repository 경계와 애플리케이션 경계를 동일한 개념으로 취급하지 않는다.
+- 공용 Docker Compose는 Repository 루트의 `docker-compose.yml`에서 관리한다.
+- 애플리케이션 디렉터리별 Compose 파일을 기본 구조로 만들지 않는다.
+- 공용 로컬 인프라 환경변수 예시는 루트 `.env.example`에서 관리한다.
 
 ---
 
@@ -98,7 +103,8 @@ Yogimangchi V2 Backend는 두 개의 독립된 Spring Boot 애플리케이션으
 
 - `content-server`와 `trading-server`의 책임을 임의로 합치거나 이동하지 않는다.
 - 두 애플리케이션은 향후 독립적으로 배포, 분리 및 확장할 수 있는 경계를 유지한다.
-- 현재 하나의 PostgreSQL 인스턴스를 사용하더라도 각 애플리케이션의 데이터 소유권은 명확하게 분리한다.
+- 공용 PostgreSQL Database 이름은 `yogimangchi`이며 애플리케이션의 데이터 소유권은 Schema 기준으로 분리한다.
+- Trading Schema는 `trading`, 향후 Content Schema는 `content`이며 현재 `content` Schema는 미리 생성하지 않는다.
 - 다른 애플리케이션이 소유한 Entity를 현재 애플리케이션의 JPA Entity에서 연관관계로 참조하지 않는다.
 - 다른 애플리케이션이 소유한 테이블을 직접 조회, JOIN, INSERT, UPDATE 또는 DELETE하지 않는다.
 - 다른 애플리케이션의 데이터를 참조해야 하는 경우 필요한 식별자(ID)만 저장한다.
@@ -287,7 +293,7 @@ Rules:
 
 ## 12. Infrastructure Constraints
 
-현재 기본 인프라는 다음을 기준으로 한다.
+배포 시 기본 인프라는 다음을 기준으로 한다.
 
 - Next.js → Vercel
 - Spring Boot → Docker
@@ -296,6 +302,9 @@ Rules:
 - Nginx
 - Docker Compose
 - GitHub Actions
+
+현재 로컬 개발에서는 루트 Docker Compose로 PostgreSQL과 Redis만 실행하고 Spring Boot는 IDE에서 직접 실행한다.
+Trading Server는 `application.yml` 하나를 사용한다. 새로운 Profile 또는 `application-*.yml` 분리는 실제 운영 필요가 생긴 뒤 결정한다.
 
 현재 V2에서는 기본적으로 다음 기술을 사용하지 않는다.
 

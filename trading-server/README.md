@@ -40,8 +40,9 @@ Redis, Validation, Lombok, JWT/OAuth2, H2, WebSocket 의존성은 아직 필요�
 
 ## PostgreSQL과 마이그레이션
 
-Trading 전용 DB(권장 이름 `yogimangchi_trading`)와 `trading` 스키마를 사용한다.
-Content의 DB/스키마/계정 권한과 분리한다. `trading`은 Flyway/Hibernate의 공통 기본 스키마다.
+Content와 Trading은 공용 Database `yogimangchi`를 사용하고, 애플리케이션별 Schema와
+데이터 소유권을 분리한다. Trading은 `trading`, 향후 Content는 `content` 스키마를 사용한다.
+`trading`은 Trading Server의 Flyway/Hibernate 공통 기본 스키마다.
 
 - V1: 테이블과 PK, Unique/Check/Not-null 제약 생성
 - V2: 공식 Binance 메타데이터로 확인한 초기 12개 종목 등록
@@ -61,80 +62,64 @@ Flyway는 현재 PostgreSQL SQL 두 파일만으로 변경 이력과 재현성�
 
 | 변수 | 의미 |
 | --- | --- |
-| `SPRING_PROFILES_ACTIVE` | `local` 또는 `prod`; 동시에 지정하지 않는다 |
 | `TRADING_SERVER_PORT` | HTTP 포트, 기본 8081 |
-| `TRADING_DB_URL` | 필수 PostgreSQL JDBC URL |
-| `TRADING_DB_USERNAME` | 필수 애플리케이션 계정 |
-| `TRADING_DB_PASSWORD` | 필수 애플리케이션 비밀번호 |
-| `TRADING_MIGRATION_USERNAME` | prod의 필수 Flyway 전용 계정 |
-| `TRADING_MIGRATION_PASSWORD` | prod의 필수 Flyway 비밀번호 |
-| `TRADING_DB_PORT` | 로컬 Compose의 DB 포트, 기본 5433; JDBC URL과 맞춘다 |
+| `YOGIMANGCHI_DB_USERNAME` | 공용 PostgreSQL 로컬 계정 |
+| `YOGIMANGCHI_DB_PASSWORD` | 공용 PostgreSQL 로컬 비밀번호 |
+| `YOGIMANGCHI_DB_PORT` | Compose에서 명시하는 DB 포트; Spring Boot 기본값 5433 |
+| `YOGIMANGCHI_REDIS_PORT` | Compose에서 명시하는 Redis 포트; 예시 6379 |
 
-local은 하나의 로컬 계정으로 초기화와 실행한다. prod는 같은 DB URL에 Flyway 계정을 별도로 사용한다.
-실제 비밀번호/운영 주소를 저장소에 넣지 않는다. `.env.example`은 예시이며
+현재는 `application.yml` 하나를 사용하고 Profile을 분리하지 않는다. 하나의 로컬 계정으로
+Flyway 초기화와 애플리케이션을 실행한다. JDBC URL은 `localhost`의 지정 포트와
+고정 Database 이름 `yogimangchi`로 구성하며, 기본 Schema는 `trading`이다.
+실제 비밀번호/운영 주소를 저장소에 넣지 않는다. 루트 `.env.example`은 예시이며
 **Spring Boot는 `.env`를 자동으로 읽지 않는다.** 셸/IDE/배포 환경에서 변수를 전달한다.
-Docker Compose는 자체 `.env` 처리 규칙을 따른다.
+루트 `.env`는 Docker Compose용이며, IntelliJ에서 Trading Server를 실행할 때는
+Run Configuration의 Environment Variables에 Spring Boot용 환경변수를 별도로 전달한다.
 
 ## 로컬 실행
 
-JDK 17과 Docker Desktop Linux 엔진을 준비하고 `trading-server`에서 실행한다.
-아래 비밀번호 입력은 PowerShell 7 기준이다.
+JDK 17과 Docker Desktop Linux 엔진을 준비한다. 루트 `.env`가 없다면 루트
+`.env.example`을 `.env`로 복사하고 로컬 DB 비밀번호를 입력한다. Repository 루트에서
+공용 `docker-compose.yml`로 인프라를 실행한다.
 
 ```powershell
-$env:SPRING_PROFILES_ACTIVE = 'local'
+docker compose up -d
+```
+
+그 후 IntelliJ에서 `trading-server`를 Spring Boot/Gradle 프로젝트로 열고 위 환경변수를
+Run Configuration에 설정해 실행한다. 셸에서 실행할 경우 Repository 루트에서
+아래 명령을 사용한다. 비밀번호 입력은 PowerShell 7 기준이다.
+
+```powershell
+Set-Location trading-server
 $env:TRADING_SERVER_PORT = '8081'
-$env:TRADING_DB_URL = 'jdbc:postgresql://localhost:5433/yogimangchi_trading'
-$env:TRADING_DB_USERNAME = 'trading_local'
-$env:TRADING_DB_PASSWORD = Read-Host 'Local PostgreSQL password' -MaskInput
-docker compose -f compose.local.yml up -d --wait
+$env:YOGIMANGCHI_DB_PORT = '5433'
+$env:YOGIMANGCHI_DB_USERNAME = 'yogimangchi_local'
+$env:YOGIMANGCHI_DB_PASSWORD = Read-Host 'Local PostgreSQL password' -MaskInput
 .\gradlew.bat bootRun
 ```
 
-Compose는 DB만 시작하며 localhost에만 포트를 공개하고 이름 있는 Volume에 데이터를 보존한다.
+Compose는 PostgreSQL과 Redis만 시작하며 localhost에만 포트를 공개한다.
+PostgreSQL은 `postgres-data` Volume에 데이터를 보존하며 Redis Volume은 추가하지 않는다.
+PostgreSQL이 연결을 받을 준비가 된 뒤 Trading Server를 실행한다.
 초기 계정은 **로컬 개발 전용**으로 운영에 사용하지 않는다. 기존 Volume의 계정/비밀번호는
-환경변수 변경만으로 바뀌지 않는다. 중지는 `docker compose -f compose.local.yml down`이다.
+환경변수 변경만으로 바뀌지 않는다. 중지는 Repository 루트에서 `docker compose down`이다.
 `-v`는 데이터를 삭제하므로 데이터 폐기가 필요한 경우에만 사용한다.
 Docker CLI가 PATH에 없다면 설치된 CLI의 절대 경로를 사용하거나 PATH를 구성한다.
 
+Compose 위치 또는 Volume 키 변경으로 Volume의 실제 이름이 달라질 수 있다.
+기존 Volume을 사용하는 경우 실행 전에 기존 이름과 재사용 설정을 확인하고 데이터를 삭제하지 않는다.
+
 - 공개 API: `http://localhost:8081/api/v1/symbols`
-- local Swagger: `http://localhost:8081/swagger-ui/index.html`
-- local OpenAPI: `http://localhost:8081/v3/api-docs`, `/v3/api-docs.yaml`
+- Swagger: `http://localhost:8081/swagger-ui/index.html`
+- OpenAPI: `http://localhost:8081/v3/api-docs`, `/v3/api-docs.yaml`
 
 ## 운영 계정 경계
 
-DBA가 DB/계정을 먼저 준비한다. 다음은 신규 DB 초기 구성용 `psql` 예시이며,
-기존 DB에 그대로 반복 실행하지 않는다. 비밀번호는 `\password` 프롬프트로 지정한다.
-
-```sql
-CREATE ROLE trading_migrator LOGIN;
-CREATE ROLE trading_app LOGIN;
-\password trading_migrator
-\password trading_app
-CREATE DATABASE yogimangchi_trading OWNER trading_migrator;
-\connect yogimangchi_trading
-REVOKE ALL ON DATABASE yogimangchi_trading FROM PUBLIC;
-GRANT CONNECT ON DATABASE yogimangchi_trading TO trading_app;
-REVOKE ALL ON SCHEMA public FROM PUBLIC;
-CREATE SCHEMA trading AUTHORIZATION trading_migrator;
-GRANT USAGE ON SCHEMA trading TO trading_app;
-ALTER DEFAULT PRIVILEGES FOR ROLE trading_migrator IN SCHEMA trading
-    GRANT SELECT ON TABLES TO trading_app;
-```
-
-현재 애플리케이션 계정은 SELECT만 필요하다. DDL/Seed는 마이그레이션 계정이 수행한다.
-이미 생성된 테이블에는 별도로 SELECT 권한을 부여한다. 쓰기 기능 도입 시 필요한 테이블과
-Sequence 권한만 추가한다. Content 계정에 Trading DB/스키마 접근 권한을 부여하지 않는다.
-현재 기동 시 Flyway를 실행하므로 두 계정이 프로세스에 전달된다. 향후 배포 파이프라인에서
-마이그레이션을 별도 실행하면 장기 실행 프로세스에서 DDL 자격증명을 제거할 수 있다.
-
-필수 환경변수를 배포 환경에 등록한 뒤 실행한다.
-
-```powershell
-$env:SPRING_PROFILES_ACTIVE = 'prod'
-java -jar build/libs/trading-server-0.0.1-SNAPSHOT.jar
-```
-
-prod/프로필 미지정 시 문서는 비활성화되고 Security도 접근을 차단한다.
+현재 로컬 개발에서는 운영 전용 계정이나 별도 운영 설정을 사용하지 않는다.
+운영 계정 권한과 환경 설정 분리는 실제 운영 배포가 필요해질 때 결정한다.
+Swagger/OpenAPI는 기본 설정에서 활성화하며 서버는 `127.0.0.1`에 바인딩한다.
+운영 배포 시에는 Swagger/OpenAPI가 외부에 노출되지 않도록 별도 차단 구성을 도입한다.
 운영 TLS, 비밀값 전달, 백업/복구 및 Nginx/네트워크의 포트 노출 제한은 배포 시 별도로 검증한다.
 
 ## API와 보안
@@ -151,7 +136,7 @@ Provider/Provider Symbol/status는 공개 DTO에 없다. Repository는 필요한
 Service가 읽기 전용 트랜잭션을 가진다.
 
 Security는 이 경로의 GET만 추가 공개한다. 하위 경로, 쓰기 요청, 다른 업무 API는 차단한다.
-local 문서 접근과 기본 계정 미생성, 폼 로그인/Basic/로그아웃/요청 캐시 비활성화,
+로컬 문서 접근과 기본 계정 미생성, 폼 로그인/Basic/로그아웃/요청 캐시 비활성화,
 CSRF 기본 보호를 유지했다. JWT/세션/토큰 저장 정책은 아직 구현·결정하지 않았다.
 CORS는 실제 Frontend Origin이 정해질 때 명시적으로 허용 목록을 정한다.
 
@@ -178,8 +163,8 @@ DB 없이 웹/보안/오류 응답 테스트만 실행하려면:
 .\gradlew.bat test --tests '*TradingSymbolWebTests'
 ```
 
-루트 `docs/trading-openapi.yaml`은 실제 local endpoint에서 생성한다.
-API 변경 후 local 서버를 실행하고 `trading-server`에서 아래 명령으로 갱신해 코드와 함께 리뷰한다.
+루트 `docs/trading-openapi.yaml`은 실제 로컬 endpoint에서 생성한다.
+API 변경 후 서버를 실행하고 `trading-server`에서 아래 명령으로 갱신해 코드와 함께 리뷰한다.
 별도 생성 플러그인이나 수작업으로 중복 관리하는 DTO 스키마는 사용하지 않는다.
 
 ```powershell
@@ -189,4 +174,4 @@ Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/tra
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
 자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-Order/Fill/Position/Wallet, Binance 연결, Redis, JWT, Admin, Trading Engine은 이번 구현에 없다.
+Order/Fill/Position/Wallet, Binance 연결, Redis 연동, JWT, Admin, Trading Engine은 이번 구현에 없다.

@@ -2,9 +2,9 @@ spring:
   application:
     name: trading-server
   datasource:
-    url: ${TRADING_DB_URL}
-    username: ${TRADING_DB_USERNAME}
-    password: ${TRADING_DB_PASSWORD}
+    url: jdbc:postgresql://localhost:${YOGIMANGCHI_DB_PORT:5432}/yogimangchi
+    username: ${YOGIMANGCHI_DB_USERNAME}
+    password: ${YOGIMANGCHI_DB_PASSWORD}
   jpa:
     open-in-view: false
     hibernate:
@@ -21,6 +21,7 @@ spring:
       mode: never
 
 server:
+  address: 127.0.0.1
   port: ${TRADING_SERVER_PORT:8081}
   error:
     include-message: never
@@ -28,9 +29,8 @@ server:
     include-binding-errors: never
     include-exception: false
 
-# Documentation is opt-in through the local profile.
 springdoc:
   api-docs:
-    enabled: false
+    enabled: true
   swagger-ui:
-    enabled: false
+    enabled: true
