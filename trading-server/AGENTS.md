@@ -28,67 +28,12 @@ Trading Server는 Yogimangchi V2에서 특히 데이터 정합성, 동시성, �
 
 ---
 
-## Key Rules
+## 작업 판단 기준
 
-- Futures only  
-  <!-- 현물은 지원하지 않고 선물 모의투자만 운영한다. -->
-
-- Quote asset: USDT  
-  <!-- 모든 거래의 기준 화폐, 지갑 자산, 손익 계산 기준은 USDT로 통일한다. -->
-
-- PostgreSQL = Source of Truth  
-  <!-- 주문, 포지션, 지갑 등 영구 데이터의 최종 원본은 PostgreSQL이다. -->
-
-- Frontend price is never trusted for execution  
-  <!-- 프론트가 보내는 가격은 체결에 절대 사용하지 않고 서버가 관리하는 가격만 신뢰한다. -->
-
-- Browser receives prices from Trading Server WebSocket  
-  <!-- 브라우저가 Binance에 직접 연결하지 않고 우리 Trading Server와 WebSocket으로 연결해 가격을 받는다. -->
-
-- Binance WebSocket is centrally managed by Trading Server  
-  <!-- Binance 연결은 사용자별로 만들지 않고 Trading Server에서 소수의 연결로 중앙 관리한다. -->
-
-- TradingSymbol list is DB-managed, not hardcoded  
-  <!-- 지원 코인 목록은 코드에 고정하지 않고 DB에서 관리한다. 초기 12종목은 Seed 데이터다. -->
-
-- Frontend symbol list comes from Trading Server API  
-  <!-- 프론트도 코인 목록을 하드코딩하지 않고 Trading Server API에서 받아 사용한다. -->
-
-- TradingSymbol identity uses internal tradingSymbolId  
-  <!-- BTCUSDT 같은 Binance 문자열이 아니라 우리 DB의 tradingSymbolId를 영구적인 TradingSymbol 식별자로 사용한다. -->
-
-- Provider symbols stay behind the provider boundary  
-  <!-- 1000PEPEUSDT 같은 Binance 전용 계약명은 Binance 연동 영역에서만 알고 Domain 전체로 퍼뜨리지 않는다. -->
-
-- Market / Limit orders are supported  
-  <!-- 시장가와 지정가 주문을 모두 지원한다. -->
-
-- Price crossing must not be missed  
-  <!-- 가격이 지정가나 청산가를 정확히 찍지 않고 건너뛰더라도 체결/청산 조건을 놓치면 안 된다. -->
-
-- Wallet / Position consistency is mandatory  
-  <!-- 주문, 체결, 청산 중에도 지갑과 포지션 데이터가 서로 어긋나지 않아야 한다. -->
-
-- Trading operations must be idempotent  
-  <!-- 같은 체결이나 청산 작업이 두 번 실행돼도 자산이나 손익이 중복 반영되면 안 된다. -->
-
-- Concurrency must be handled explicitly  
-  <!-- 동시 주문, 체결, 청산 시 동시성 문제를 반드시 고려하고 필요한 경우 Lock을 사용한다. -->
-
-- Redis is auxiliary and recoverable  
-  <!-- Redis는 빠른 조회와 실시간 처리를 위한 보조 저장소이며, 유실되어도 PostgreSQL을 기준으로 복구 가능해야 한다. -->
-
-- Business history is not hard-deleted  
-  <!-- 주문, 체결, 포지션 등 중요한 거래 이력은 물리 삭제하지 않고 상태 변경이나 Soft Delete를 사용한다. -->
-
-- Binance reconnect must respect rate limits  
-  <!-- Binance 연결이 끊겨도 무한 재접속하지 않고 Backoff/Jitter를 사용해 IP 제한이나 차단을 유발하지 않는다. -->
-
-- Guest and Competition share the same Trading Engine  
-  <!-- 게스트 투자와 대회 투자를 별도로 구현하지 않고 같은 주문/체결/청산 엔진을 공유한다. -->
-
-- Correctness and consistency come before optimization  
-  <!-- 성능 최적화보다 먼저 정확한 체결, 데이터 정합성, 장애 복구가 보장되어야 한다. -->
+이 문서는 Trading의 제품·데이터 불변조건을 정의한다. 현재 구현 상태, 초기 Seed 목록, 실행·환경변수·로그 설정은 `README.md`와 현재 코드에서 확인한다.
+요구사항을 만족하는 가장 단순하고 안정적인 구현을 선택한다. 기존 구조는 재사용하되 명확한 개선이 있다면 변경할 수 있다.
+클래스, 자료구조, Lock, Scheduler, Query 기술은 실제 문제와 검증 결과를 기준으로 Agent가 선택한다.
+필요한 의존성은 루트 정책에 따라 추가할 수 있으며, 선택 이유와 영향을 완료 보고한다. 미래 기능과 과도한 추상화를 선행 구현하지 않는다.
 
 # 1. Trading Scope
 
@@ -131,237 +76,19 @@ Yogimangchi는 실제 거래소가 아니라 **시장 가격을 기준으로 동
 
 # 2. Supported Trading Symbols
 
-Yogimangchi V2는 초기 서비스 기준으로 다음 12개 Cryptocurrency를 기본 TradingSymbol으로 제공한다.
-
-| Name | Symbol | TradingSymbol |
-| --- | --- | --- |
-| Bitcoin | BTC | BTC/USDT |
-| Ethereum | ETH | ETH/USDT |
-| XRP | XRP | XRP/USDT |
-| BNB | BNB | BNB/USDT |
-| Solana | SOL | SOL/USDT |
-| Cardano | ADA | ADA/USDT |
-| Chainlink | LINK | LINK/USDT |
-| Avalanche | AVAX | AVAX/USDT |
-| Sui | SUI | SUI/USDT |
-| Dogecoin | DOGE | DOGE/USDT |
-| Pepe | PEPE | PEPE/USDT |
-| Shiba Inu | SHIB | SHIB/USDT |
-
-위 12개는 **초기 Seed TradingSymbol**이며 애플리케이션 코드에 영구적으로 고정된 목록으로 취급하지 않는다.
-
-지원 TradingSymbol은 PostgreSQL에서 관리한다.
-
-Rules:
-
-- 사용자에게 표시하는 Coin Name과 Symbol은 실제 Cryptocurrency에서 일반적으로 사용하는 명칭과 Symbol을 사용한다.
-- Yogimangchi 전용 임의 Symbol 또는 불필요한 별칭을 만들지 않는다.
-- 모든 TradingSymbol의 Quote Asset은 `USDT`로 통일한다.
-- Wallet의 기본 자산 역시 `USDT`를 사용한다.
-- 지원 TradingSymbol 목록을 Enum이나 여러 코드 위치의 문자열 목록으로 중복 관리하지 않는다.
-- 지원 TradingSymbol의 Source of Truth는 Trading Server가 소유하는 영구 TradingSymbol 데이터다.
-- 새로운 Cryptocurrency가 Binance에 추가되었다는 이유만으로 Yogimangchi TradingSymbol에 자동 등록하거나 자동 활성화하지 않는다.
-- Yogimangchi에서 어떤 TradingSymbol을 제공할지는 별도의 서비스 운영 결정으로 취급한다.
+- Futures 거래와 Wallet의 Quote Asset은 USDT다.
+- 지원 종목은 PostgreSQL에서 관리한다. 초기 Seed를 Java Enum이나 Frontend 목록으로 고정하지 않는다.
+- Frontend는 Trading Server API에서 Domain 기준 종목 정보를 받는다.
+- 영구 식별자는 내부 `tradingSymbolId`다. Provider Symbol 변경으로 기존 이력의 정체성이 바뀌어서는 안 된다.
+- Provider Symbol과 계약 단위는 명시적 Mapping으로 관리하고 Provider 연동 경계 밖으로 퍼뜨리지 않는다.
+- 등록·Mapping 변경 시 공식 Futures metadata로 실제 계약, 단위, 상태 및 필요한 거래 규칙을 검증한다. 문자열 모양만 보고 단위를 추측하지 않는다.
+- Provider 가격과 Domain 자산 한 단위 가격을 구분한다. 소비자에게 제공할 가격은 Domain 단위로 정규화한다.
+- 새로운 Provider 종목을 자동 등록·활성화하지 않는다. 활성화는 서비스 운영 결정이다.
+- 종목 비활성화는 신규 주문과 일반 거래 목록에서 제외하되 기존 이력을 유지한다.
+- 기존 Pending Order / Open Position 처리는 명시적인 업무 정책이 필요하다. 비활성화와 상장폐지를 같게 취급하거나 기존 거래를 단순 삭제하지 않는다.
+- Admin 인증·검증·비활성화 정책은 해당 기능을 구현할 때 결정하며, 현재 작업 범위를 넘어 구현하지 않는다.
 
 ---
-
-## 2.1 TradingSymbol Identity
-
-외부 Provider의 Symbol 또는 Contract Name을 Yogimangchi 내부 데이터의 영구 식별자로 사용하지 않는다.
-
-각 TradingSymbol은 Yogimangchi 내부의 변경되지 않는 식별자를 가진다.
-
-개념적인 구조:
-
-```text id="tradingsymbol-identity"
-TradingSymbol
-
-id
-name
-symbol
-quoteAsset
-provider
-providerSymbol
-status
-```
-
-예:
-
-```text id="tradingsymbol-identity-example"
-id = 1
-name = Bitcoin
-symbol = BTC
-quoteAsset = USDT
-provider = BINANCE
-providerSymbol = BTCUSDT
-status = ACTIVE
-```
-
-Order, Position 등 Trading 데이터가 TradingSymbol을 참조해야 하는 경우 외부 Provider Symbol 문자열을 영구 식별자로 사용하지 않고 내부 `tradingSymbolId`를 기준으로 참조하는 것을 기본으로 한다.
-
-외부 Provider에서 Contract Symbol이 변경되어도 Yogimangchi 내부 TradingSymbol의 정체성과 기존 Trading History가 깨져서는 안 된다.
-
-예:
-
-```text id="provider-change"
-TradingSymbol ID = 11
-
-기존 providerSymbol
-→ ABCUSDT
-
-Provider 변경 발생
-
-새 providerSymbol
-→ XYZUSDT
-```
-
-이 경우 기존 Order나 Position의 TradingSymbol 정체성이 변경되어서는 안 된다.
-
-Provider 특수 명칭이 Yogimangchi Domain 전체에 전파되지 않도록 한다.
-
----
-
-## 2.2 Provider TradingSymbol Mapping
-
-Yogimangchi Domain Symbol과 Binance Futures의 실제 Contract Symbol은 서로 다를 수 있다.
-
-외부 Provider Mapping은 Market Data Adapter 또는 이에 준하는 경계에서 명시적으로 관리한다.
-
-다음 정보를 실제 구현 시점의 Binance 공식 Futures Metadata를 기준으로 확인한다.
-
-- Provider Symbol
-- Base Asset
-- Quote Asset
-- Provider Symbol Status
-- Price Precision
-- Quantity Precision
-- Tick Size
-- Step Size
-- 기타 주문 및 가격 처리에 필요한 Trading Rule
-
-Provider Symbol 또는 Trading Rule을 추측만으로 하드코딩하지 않는다.
-
-TradingSymbol 등록 또는 수정 시 해당 Binance Futures Symbol이 실제로 존재하고 사용할 수 있는지 검증한다.
-
-외부 Provider의 Symbol 변경 또는 계약 구조 변경이 발생했을 때 Domain 전체 코드를 수정해야 하는 구조를 만들지 않는다.
-
----
-
-## 2.3 TradingSymbol Administration
-
-지원 TradingSymbol은 Admin 기능을 통해 관리할 수 있는 구조를 사용한다.
-
-Admin이 수행할 수 있는 기본 TradingSymbol 관리 기능:
-
-- 신규 TradingSymbol 등록
-- TradingSymbol 정보 확인
-- TradingSymbol 활성화
-- TradingSymbol 비활성화
-- Provider Mapping 변경
-
-신규 TradingSymbol 등록 시 관리자가 임의의 문자열만 입력하여 즉시 거래 가능 상태로 만드는 구조를 사용하지 않는다.
-
-개념적인 흐름:
-
-```text id="symbol-admin-flow"
-Admin TradingSymbol 등록 요청
-        ↓
-Binance Futures Metadata 확인
-        ↓
-Provider Symbol 및 Trading Rule 검증
-        ↓
-Yogimangchi TradingSymbol 생성
-        ↓
-필요한 검증 완료
-        ↓
-ACTIVE
-```
-
-Binance에 새로운 TradingSymbol이 상장되었다고 해서 Yogimangchi에 자동으로 추가하지 않는다.
-
-Admin 또는 운영 정책에 의해 명시적으로 등록 및 활성화한다.
-
-TradingSymbol 데이터 역시 루트 `AGENTS.md`의 Data Retention 정책을 따른다.
-
-관리자가 TradingSymbol을 서비스에서 제외하는 경우 Row를 물리 삭제하지 않는다.
-
-기본 상태:
-
-```text id="symbol-status"
-ACTIVE
-INACTIVE
-```
-
-실제 요구사항이 발생하지 않은 상태에서 불필요하게 많은 TradingSymbol Status를 미리 만들지 않는다.
-
-`INACTIVE` TradingSymbol은 기본적으로:
-
-- 신규 주문을 받을 수 없다.
-- 일반 사용자의 거래 가능 TradingSymbol 목록에서 제외된다.
-- 기존 Trading History는 그대로 유지된다.
-
-TradingSymbol 비활성화 시 기존 Pending Order와 Open Position을 단순 삭제하거나 무효화하지 않는다.
-
-기존 Trading 상태를 어떻게 종료하거나 유지할지는 명시적인 업무 정책에 따라 처리한다.
-
-특히 외부 거래소의 상장폐지와 Yogimangchi 운영상의 단순 비활성화를 같은 상황으로 취급하지 않는다.
-
----
-
-## 2.4 Frontend TradingSymbol List
-
-Frontend는 지원 Symbol 목록을 자체 코드에 하드코딩하지 않는다.
-
-거래 가능한 TradingSymbol 목록은 `trading-server`가 제공하는 API를 통해 조회한다.
-
-개념적인 구조:
-
-```text id="symbol-list-flow"
-PostgreSQL TradingSymbol
-        ↓
-Trading Server
-        ↓
-TradingSymbol API
-        ↓
-Frontend
-```
-
-예:
-
-```text id="symbol-api"
-GET /api/v1/symbols
-```
-
-실제 Endpoint는 API 설계 시 프로젝트 Convention에 맞게 결정한다.
-
-Frontend에 필요한 TradingSymbol 응답에는 필요한 범위에서 다음과 같은 정보를 제공할 수 있다.
-
-```text id="symbol-response"
-tradingSymbolId
-symbol
-name
-quoteAsset
-displaySymbol
-status
-pricePrecision
-quantityPrecision
-```
-
-Frontend가 Binance의 Provider Symbol을 알아야만 정상 동작하는 구조를 피한다.
-
-예를 들어 Yogimangchi 사용자 화면에서는:
-
-```text id="frontend-symbol"
-PEPE
-PEPE/USDT
-```
-
-처럼 Domain 기준 정보를 사용하고, 실제 Binance Contract Mapping은 Trading Server 내부 책임으로 유지한다.
-
-Admin에서 TradingSymbol을 추가하거나 활성화한 경우 Frontend를 다시 배포하지 않아도 지원 TradingSymbol 목록에 반영될 수 있는 구조를 지향한다.
-
----
-
 # 3. Guest / Competition
 
 Guest Trading과 Competition Trading을 서로 다른 Trading Engine으로 구현하지 않는다.
@@ -387,121 +114,23 @@ Competition마다 독립적인 Trading Account가 존재할 수 있다.
 
 # 4. Server-authoritative Price
 
-Frontend가 전달한 가격을 실제 주문, 체결, PnL 또는 Liquidation 판단의 신뢰 가능한 가격으로 사용하지 않는다.
-
-가격의 신뢰 주체는 항상 Trading Server다.
-
-기본 데이터 흐름:
-
-```text id="server-price"
-Binance Futures Market Data
-            ↓
-      Trading Server
-            ↓
-Server-authoritative Market Price
-        ┌───┴────────────┐
-        ↓                ↓
- Trading Engine    Frontend Broadcast
-                         ↓
-                 Browser WebSocket
-```
-
-Trading Server는 현재 사용하고 있는 가격의 다음 정보를 판단할 수 있어야 한다.
-
-- TradingSymbol
-- Price
-- Timestamp
-- Freshness
-
-오래되었거나 정상적인 시장 가격이라고 판단할 수 없는 데이터를 사용하여 새로운 거래를 실행하지 않는다.
-
-Last Price, Mark Price 등 서로 다른 가격 종류를 사용할 경우 각각의 목적을 명확하게 정의하고 암묵적으로 혼용하지 않는다.
+- Frontend 가격을 주문·체결·PnL·Liquidation의 신뢰 가능한 입력으로 사용하지 않는다. 가격의 신뢰 주체는 Trading Server다.
+- 현재 authoritative price는 Binance USDⓈ-M Futures Mark Price다. Last Price 등 다른 가격 종류와 암묵적으로 혼용하지 않는다.
+- 가격의 내부 종목 ID, Domain 단위, eventTime, receivedAt과 freshness를 함께 판단할 수 있어야 한다.
+- 오래되거나 정상적인 시장 가격으로 판단할 수 없는 값으로 새로운 거래를 실행하지 않는다.
+- 연결 상태와 개별 종목 가격의 freshness를 구분한다. 연결이 열렸다는 이유만으로 가격이 유효하다고 판단하지 않는다.
+- 중복·역순 이벤트가 최신 가격을 되돌리거나 오래된 값을 fresh하게 만들지 않아야 한다.
 
 ---
-
 # 5. Frontend Market Data Delivery
 
-Frontend Browser는 실시간 가격 수신을 위해 Binance WebSocket에 직접 연결하지 않는다.
-
-실시간 가격 전달의 기본 구조는 다음과 같다.
-
-```text id="frontend-market-data"
-Binance Futures WebSocket
-          ↓
-Trading Server
-          ↓
-Market Price
-     ┌────┴────┐
-     ↓         ↓
-   Memory     Redis
-     │
-     ↓
-Trading Server WebSocket
-          ↓
-       Browser
-```
-
-Rules:
-
-- Binance Market Data 연결은 `trading-server`에서 중앙 관리한다.
-- Browser는 실시간 가격을 받기 위해 Yogimangchi Trading Server와 WebSocket 연결을 맺는다.
-- 사용자마다 Binance WebSocket Connection을 생성하지 않는다.
-- Browser가 Redis에 직접 접근하지 않는다.
-- Browser가 최신 가격을 확인하기 위해 Redis를 지속적으로 Polling하는 구조를 사용하지 않는다.
-- Redis는 Trading Server 내부에서 실시간 상태 공유, Cache 및 향후 Scale-Out을 지원하는 보조 저장소로 사용할 수 있다.
-- 사용자 수와 Redis 조회 횟수가 직접 비례하도록 설계하지 않는다.
-- 실시간 가격은 Server가 연결된 Browser에 Push하는 방식을 기본으로 한다.
-- 사용자가 필요하지 않은 모든 TradingSymbol의 데이터를 무조건 전송하지 않는다.
-- 가능한 경우 현재 화면이나 기능에서 필요한 TradingSymbol만 Subscribe하도록 설계한다.
-
-예:
-
-```text id="symbol-subscribe"
-User A → BTC/USDT Subscribe
-User B → ETH/USDT Subscribe
-User C → BTC/USDT Subscribe
-
-BTC Price Event
-→ User A
-→ User C
-```
-
-화면 표시를 위해 Trading Engine 내부의 모든 Price Event를 Browser에 그대로 전송할 필요는 없다.
-
-사용자 수 또는 TradingSymbol Event 빈도가 증가할 경우 Frontend 전송에는 다음을 검토할 수 있다.
-
-- Throttling
-- Latest-value Coalescing
-- TradingSymbol별 Subscriber 관리
-
-예:
-
-```text id="frontend-coalescing"
-Binance Events
-
-100.01
-100.02
-100.04
-100.03
-100.05
-
-↓
-
-Trading Engine
-필요한 Price Event 처리
-
-↓
-
-Frontend Broadcast
-일정 시간 구간의 최신값 100.05 전달
-```
-
-UI 전송 최적화로 인해 Trading Engine의 주문, 체결 또는 Liquidation 판단에 필요한 Price Event까지 누락되어서는 안 된다.
-
-Trading Engine용 가격 처리와 Frontend 표시용 Broadcast 빈도는 서로 다른 책임으로 취급한다.
+Browser는 Binance나 Redis에 직접 연결하지 않고 Trading Server에서 가격과 데이터 가용 상태를 받는다.
+Binance 연결 수를 사용자 수에 비례하여 늘리지 않는다. 실제 Browser 전송은 해당 기능 요구가 있을 때 구현한다.
+사용자에게 필요한 종목만 전송하는 것을 기본으로 하며, UI 전송 최적화가 Trading Engine의 가격 crossing 판단을 누락시켜서는 안 된다.
+오래된 마지막 가격을 실시간 가격처럼 표시하지 않도록 timestamp와 상태를 함께 전달한다.
+전송 빈도와 구독 관리의 구현 방법은 실제 요구·측정에 따라 선택한다.
 
 ---
-
 # 6. Binance WebSocket Connection
 
 Binance WebSocket Connection은 사용자 수와 독립적으로 Trading Server에서 중앙 관리한다.
@@ -645,89 +274,28 @@ Order 체결은 멱등성을 고려한다.
 
 ---
 
-# 9. Price Window
+# 9. Price Crossing
 
-실시간 가격 데이터는 모든 가격 단계를 하나씩 전달한다고 가정하지 않는다.
-
-가격이 크게 움직이면 특정 Limit Price 또는 Liquidation Price를 건너뛸 수 있다.
-
-이를 처리하기 위해 가격 변화의 범위를 판단하는 **Price Window 개념**을 사용할 수 있다.
-
-개념적으로 다음 정보를 사용할 수 있다.
-
-```text id="price-window-fields"
-previousPrice
-currentPrice
-minPrice
-maxPrice
-```
-
-예:
-
-```text id="price-window-example"
-previousPrice = 100
-currentPrice  = 95
-
-Price Window = 95 ~ 100
-```
-
-이 범위 안에 존재하는 Trigger가 있는지 판단할 수 있다.
-
-Price Window의 핵심 목적은 다음과 같다.
-
-> 가격 이벤트 간 Gap으로 인해 주문 체결 또는 강제청산 조건이 누락되지 않도록 한다.
-
-Price Window는 반드시 JPA Entity 또는 영구 데이터여야 하는 것은 아니다.
-
-구현 시 가장 단순하고 명확한 형태를 선택한다.
+가격 이벤트가 모든 중간 가격을 전달한다고 가정하지 않는다.
+Limit Price나 Liquidation Price를 정확히 찍지 않고 건너뛰어도 조건을 놓치지 않아야 한다.
+이 불변조건을 만족하는 범위 판단·이벤트 보존 방식은 실제 Trigger 기능 구현 시 결정한다.
+Latest Price 한 값만 보관하는 구조가 crossing 이력까지 보존한다고 가정하지 않는다.
 
 ---
-
 # 10. Price Trigger Engine
 
-가격 조건을 확인하기 위해 매 가격 이벤트마다 전체 Pending Order 또는 전체 Open Position을 조회하는 구조는 사용하지 않는다.
-
-가격 이벤트를 기준으로 **실제로 영향을 받을 수 있는 후보만 탐색하는 구조**를 설계한다.
-
-검토 가능한 방식:
-
-- Price Event 기반 처리
-- Price Window 기반 Range Query
-- PostgreSQL Index
-- PostgreSQL Partial Index
-- Redis Sorted Set
-- 필요한 경우 Scheduler 기반 보정 작업
-
-특정 기술을 처음부터 강제하지 않는다.
-
-구현 단계에서 데이터 규모, 복잡도, 복구 가능성과 실제 Query Pattern을 기준으로 가장 적절한 방식을 선택한다.
-
-Redis를 Trigger 탐색 성능 개선에 사용할 수 있다.
-
-그러나 Redis를 Order / Position의 영구적인 Source of Truth로 사용하지 않는다.
-
-Redis 데이터가 모두 사라져도 PostgreSQL의 영구 데이터를 이용하여 필요한 Trigger 상태를 복원할 수 있어야 한다.
+영향받을 수 있는 후보를 탐색하고, 매 Tick마다 전체 Pending Order / Open Position을 읽는 비용이 발생하지 않도록 실제 조회 패턴과 규모를 검토한다.
+탐색 자료구조와 Query 기술은 정확성·복구 가능성·복잡도·측정을 근거로 선택한다.
+Redis나 Memory를 사용하더라도 영구 Order / Position의 원본은 PostgreSQL이며 보조 상태를 복구할 수 있어야 한다.
 
 ---
+# 11. Scheduling
 
-# 11. Scheduler
-
-Scheduler를 사용하는 것 자체를 금지하지 않는다.
-
-그러나 Scheduler가 주기적으로 전체 Pending Order 또는 Position Table을 계속 Scan하는 구조를 기본 설계로 사용하지 않는다.
-
-Scheduler는 다음과 같은 용도로 사용할 수 있다.
-
-- 실시간 이벤트에서 누락된 작업 보정
-- 장애 이후 상태 복구
-- 정합성 검사
-- 만료 Order 처리
-- 운영상 필요한 정기 작업
-
-실시간 체결 및 Liquidation의 주 처리 방식과 보정용 Scheduler의 역할을 명확하게 구분한다.
+실시간 처리와 장애 복구·보정 작업의 책임을 구분한다.
+주기 작업의 사용 여부, 실행 간격과 방식은 실제 누락·복구·만료 요구가 있을 때 결정한다.
+무제한 중복 실행이나 반복적인 전체 조회로 정상 거래를 방해하지 않도록 검증한다.
 
 ---
-
 # 12. Liquidation
 
 Leverage를 사용하는 Position에는 Liquidation 조건이 존재한다.
@@ -820,36 +388,12 @@ Trading 전체에서 공통된 Precision Policy를 유지한다.
 
 # 15. Concurrency
 
-다음 상황은 정상적으로 발생할 수 있다고 가정한다.
-
-- 같은 사용자의 여러 주문 동시 요청
-- 새로운 주문과 Pending Order 체결의 동시 실행
-- Order 취소와 체결의 동시 실행
-- 사용자의 주문과 Liquidation의 동시 실행
-- 동일 Pending Order에 대한 여러 Worker의 체결 시도
-- 동일 Position에 대한 여러 Liquidation 시도
-
-Wallet, Position, Order의 정합성에 영향을 주는 작업은 동시성 제어 전략을 반드시 검토한다.
-
-Wallet처럼 동일 Account의 자산 상태를 변경하는 핵심 데이터에는 필요한 경우 Pessimistic Lock을 사용할 수 있다.
-
-그러나 모든 Entity와 조회에 Pessimistic Lock을 무분별하게 사용하지 않는다.
-
-Lock은 실제 정합성이 필요한 Transaction 범위 안에서 최소한으로 사용한다.
-
-여러 데이터를 Lock해야 하는 경우 가능한 한 일관된 Lock 순서를 유지하여 Deadlock 위험을 줄인다.
-
-Pessimistic Lock 사용으로 병목이 발생할 정도로 규모가 성장할 경우 다음 전략을 검토할 수 있다.
-
-- Optimistic Lock
-- Atomic Update
-- Queue / Serialization
-- 분산 동시성 제어
-
-현재 필요성이 없는 복잡한 동시성 시스템을 미리 구축하지 않는다.
+주문·취소·체결·청산이 동시에 발생하며 같은 대상에 여러 처리가 중복 도착할 수 있다고 가정한다.
+Wallet / Position / Order 정합성과 중복 반영 방지를 보장하는 동시성 전략을 명시하고 테스트한다.
+Lock 종류나 직렬화 방식은 업무 범위와 실제 경합을 기준으로 선택한다.
+선택한 방식의 경합 범위, 교착·재시도·실패 동작을 검증하고 필요 없는 분산 동시성 시스템을 선행 도입하지 않는다.
 
 ---
-
 # 16. Transaction
 
 Trading Transaction은 단순한 Repository 호출 단위를 기준으로 하지 않는다.
@@ -946,84 +490,18 @@ Order 취소는 Order 삭제가 아니라 상태 변경으로 표현한다.
 
 # 19. Query & Index
 
-Pending Order와 Liquidation Candidate 탐색에서 전체 Table Scan에 의존하지 않는다.
-
-Index는 실제 Query Pattern을 기준으로 설계한다.
-
-예상 가능한 후보:
-
-```text id="index-examples"
-tradingSymbolId + status + triggerPrice
-tradingSymbolId + status + liquidationPrice
-accountId + status
-competitionId + status
-```
-
-실제 Column과 Index 순서는 Query가 정해진 후 결정한다.
-
-PostgreSQL의 Partial Index가 유리한 Query에는 이를 검토할 수 있다.
-
-예:
-
-```text id="partial-index"
-WHERE status = 'PENDING'
-WHERE status = 'OPEN'
-```
-
-Unique Index는 성능 최적화를 위한 일반 Index처럼 사용하지 않는다.
-
-Unique Index는 업무적으로 중복 데이터가 존재해서는 안 되는 조건을 DB 수준에서도 보장하기 위해 사용한다.
-
-Index 추가 전 다음을 확인한다.
-
-- WHERE 조건
-- JOIN 조건
-- ORDER BY
-- Cardinality
-- 데이터 규모
-
-필요한 경우 `EXPLAIN` 또는 `EXPLAIN ANALYZE`를 사용하여 실제 Query Plan을 검증한다.
-
-추측만으로 Index를 대량 생성하지 않는다.
+Index와 조회 방식은 실제 WHERE/JOIN/정렬 조건, 데이터 규모와 실행 계획을 기준으로 결정한다.
+미래 Query를 추측해 Index를 대량 생성하지 않는다.
+업무 중복 금지 조건은 필요한 DB Constraint로 보장하며, 이를 단순 성능 최적화와 구분한다.
 
 ---
-
 # 20. Competition Finalization
 
-Competition 종료 시 많은 Pending Order와 Open Position이 동시에 존재할 수 있다.
-
-모든 데이터를 하나의 거대한 Transaction에서 한꺼번에 처리하지 않는다.
-
-대량 작업은 일정 크기의 Chunk로 나누어 처리한다.
-
-초기 기준으로 약 500건 단위의 Chunk를 검토할 수 있다.
-
-그러나 500은 절대적인 값이 아니다.
-
-실제 DB 성능, Transaction 시간 및 데이터 규모를 측정하여 변경할 수 있어야 한다.
-
-각 Chunk는 독립적인 Transaction으로 처리할 수 있어야 한다.
-
-대량 처리 중 장애가 발생하더라도 이미 처리된 데이터와 처리하지 못한 데이터를 구분하고 안전하게 작업을 재개할 수 있어야 한다.
-
-멱등성을 고려한다.
-
-데이터를 처리하면서 대상 데이터의 상태가 변경되는 경우 단순 Offset Pagination으로 인해 데이터가 누락되거나 중복될 수 있음을 고려한다.
-
-필요한 경우 ID 기반 Keyset 방식 등을 사용한다.
-
-Competition 종료 시 다음 흐름의 순서를 명확하게 결정한다.
-
-- 신규 거래 차단
-- Pending Order 취소
-- Open Position 종료
-- 최종 PnL 반영
-- Wallet 상태 확정
-- Competition 결과 확정
-- Ranking 계산
+대회 종료는 신규 거래 차단, Pending Order 정리, Open Position 종료, 자산·손익·결과 확정의 순서를 명확히 정의해야 한다.
+대량 처리의 중간 실패 후 완료·미완료 대상을 구분하고 재실행해도 누락·중복 반영이 없어야 한다.
+처리 중 상태 변경으로 대상이 누락되지 않도록 하며, 처리 단위·Transaction 범위·페이지 방식은 실제 규모와 정합성 요구로 결정한다.
 
 ---
-
 # 21. Failure Recovery
 
 실시간 Trading Engine은 장애가 발생할 수 있음을 전제로 설계한다.
@@ -1107,141 +585,25 @@ eventType
 
 # 24. Testing
 
-Trading의 핵심 업무 규칙은 자동 테스트 대상이다.
+관련 기능을 구현할 때 핵심 업무 불변조건과 실패 경계를 자동 테스트한다. 미래 기능의 테스트를 미리 만들지 않는다.
 
-특히 다음 상황을 중요하게 테스트한다.
+- TradingSymbol: DB 목록, ACTIVE/INACTIVE, 내부 ID 유지, 검증된 Provider Mapping과 계약 단위
+- Market Data: 정규화·파싱, freshness, 중복·역순·잘못된 이벤트, 연결 실패·재연결·종료
+- Trading: Market/Limit 및 LONG/SHORT 조건, crossing, 유효한 상태 전이, 중복 체결·청산 방지
+- Wallet/Position: 금액·수량·레버리지 계산, 동시 처리와 Transaction Rollback
+- Recovery/Competition: 재시작·보조 저장소 유실·대량 처리 중간 실패 후 안전한 재실행
 
-### TradingSymbol
-
-- 초기 Seed TradingSymbol 생성
-- TradingSymbol 목록 조회
-- TradingSymbol 등록
-- Binance Futures Symbol 검증 실패
-- ACTIVE TradingSymbol
-- INACTIVE TradingSymbol
-- 비활성 TradingSymbol 신규 주문 차단
-- Provider Symbol 변경
-- 내부 `tradingSymbolId` 유지
-- Frontend TradingSymbol API
-
-### Market Data
-
-- Binance 메시지 정상 Parsing
-- Provider Symbol Mapping
-- 지원하지 않는 TradingSymbol 처리
-- 오래된 Price Event 처리
-- WebSocket Disconnect
-- Reconnect
-- Subscription 복구
-- 중복 Connection 방지
-
-### Order
-
-- Market LONG
-- Market SHORT
-- Limit LONG
-- Limit SHORT
-- Limit Order 미체결
-- Limit Order 체결
-- Order 취소
-- 이미 취소된 Order 체결 방지
-
-### Price Trigger
-
-- 가격이 Trigger와 정확히 일치
-- 가격이 Trigger를 위에서 아래로 통과
-- 가격이 Trigger를 아래에서 위로 통과
-- 큰 Price Gap
-- 동일 Price Event 중복 처리
-
-### Position / Wallet
-
-- Position 생성
-- Position 변경
-- 여러 TradingSymbol Position
-- 서로 다른 Leverage
-- USDT Wallet Balance 변경
-- Margin 계산
-- Realized PnL
-- Unrealized PnL
-
-### Liquidation
-
-- LONG Liquidation
-- SHORT Liquidation
-- Liquidation Price 정확히 도달
-- Liquidation Price를 가격이 건너뜀
-- 동일 Position 중복 Liquidation 방지
-
-### Concurrency
-
-- 같은 Account의 동시 주문
-- 주문과 체결의 동시 실행
-- 주문과 Liquidation의 동시 실행
-- 동일 Pending Order의 동시 체결 시도
-- 동일 Position의 동시 Liquidation 시도
-
-### Transaction
-
-- Fill 생성 후 Position 변경 실패
-- Position 변경 후 Wallet 변경 실패
-- 중간 Exception 발생 시 전체 Rollback
-
-### Recovery
-
-- Redis 상태 유실
-- Application 재시작
-- Pending Order 복구
-- Open Position 감시 복구
-
-### Competition
-
-- Competition 종료
-- Pending Order 대량 취소
-- Position 대량 종료
-- Chunk 처리
-- 중간 실패
-- 재실행
-
-모든 테스트를 처음부터 한꺼번에 만들지 않는다.
-
-관련 기능을 구현할 때 해당 핵심 규칙의 테스트를 함께 작성한다.
-
-외부 Binance 서버에 항상 연결되어야만 전체 자동 테스트가 성공하는 구조를 만들지 않는다.
-
-실제 Binance 연결 확인과 내부 로직 자동 테스트를 구분한다.
+자동 테스트는 외부 Binance의 가용성에 의존하지 않는다. 실제 네트워크 검증은 별도로 실행하고 성공·실패를 사실대로 보고한다.
+테스트 실패를 삭제·비활성화해서 숨기지 않는다.
 
 ---
-
 # 25. Implementation Boundaries
 
-현재 요구되지 않은 미래 Trading 기능을 미리 구현하지 않는다.
-
-특히 다음을 요구사항 없이 추가하지 않는다.
-
-- Kafka
-- Kubernetes
-- 복잡한 분산 Lock
-- 별도 Matching Server
-- 별도 Liquidation Server
-- 별도 Order Server
-- Event Sourcing
-- CQRS
-- Microservice 추가 분리
-
-현재 구조로 해결할 수 없는 실제 문제가 확인되었을 때 해당 기술을 검토한다.
-
-새로운 기술이나 구조가 필요하다고 판단되면 임의로 추가하기 전에 다음을 설명한다.
-
-1. 현재 방식의 문제
-2. 새로운 방식이 해결하는 문제
-3. 추가되는 복잡성
-4. 장점
-5. 단점
-6. 현재 시점에서 필요한 이유
+현재 요청 범위를 넘어 Trading 기능이나 별도 서비스·분산 시스템을 선행 구현하지 않는다.
+필요한 의존성은 루트 정책에 따라 Agent가 선택하며 기존 기능으로 충분한지 먼저 확인한다.
+기반 기술 변경에는 사전 승인이 필요하다. 그 외 현재 요구를 위한 구현 선택은 진행하고 근거·영향을 완료 보고한다.
 
 ---
-
 # 26. Design Principle
 
 Trading 코드를 구현할 때 다음 우선순위를 따른다.
