@@ -2,6 +2,7 @@ package com.yogimangchi.trading.binance.markprice;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTargetLoader;
+import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -13,6 +14,7 @@ class BinanceMarkPriceConfigurationTests {
     private final ApplicationContextRunner context = new ApplicationContextRunner()
             .withBean(ObjectMapper.class, ObjectMapper::new)
             .withBean(BinanceSubscriptionTargetLoader.class, () -> mock(BinanceSubscriptionTargetLoader.class))
+            .withBean(LatestPriceStore.class, LatestPriceStore::new)
             .withUserConfiguration(BinanceMarkPriceClient.class);
 
     @Test

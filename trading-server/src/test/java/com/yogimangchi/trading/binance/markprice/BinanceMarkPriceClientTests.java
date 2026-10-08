@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -46,6 +47,7 @@ class BinanceMarkPriceClientTests {
     private boolean databaseUnavailable;
     private BinanceMarkPriceClient client;
     private final Clock clock = Clock.fixed(Instant.ofEpochMilli(1562305380000L), ZoneOffset.UTC);
+    private final LatestPriceStore latestPrices = new LatestPriceStore(clock);
 
     @BeforeEach
     void setUp() {
@@ -78,7 +80,7 @@ class BinanceMarkPriceClientTests {
             });
             connections.add(connection);
             return connection.handshake;
-        }, executor, clock, now::get, new ReconnectBackoff(() -> 1.0), true);
+        }, executor, clock, now::get, new ReconnectBackoff(() -> 1.0), true, latestPrices);
     }
 
     @AfterEach
@@ -123,7 +125,7 @@ class BinanceMarkPriceClientTests {
     }
 
     @Test
-    void openWithoutValidDataDoesNotResetBackoffButFirstValidPriceDoes() {
+    void openWithoutValidDataDoesNotResetBackoffButFirstStoredPriceDoes() {
         client.start();
         Connection first = openLatest();
         first.listener.onClose(first.socket, 1000, "unstable");
@@ -135,8 +137,29 @@ class BinanceMarkPriceClientTests {
         retries.get(1).action.run();
         Connection third = openLatest();
         third.listener.onText(third.socket, BinanceMarkPriceProtocolTests.message("BTCUSDT", "10"), true);
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.FRESH);
         third.listener.onClose(third.socket, 1000, "after healthy price");
         assertThat(retries).extracting(Retry::delay).containsExactly(1000L, 2000L, 1000L);
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.UNAVAILABLE);
+    }
+
+    @Test
+    void unknownInvalidAndOldMessagesCannotUpdateLatestPriceOrRestoreHealth() {
+        client.start();
+        Connection connection = openLatest();
+        connection.listener.onText(connection.socket, "{}", true);
+        connection.listener.onText(connection.socket, BinanceMarkPriceProtocolTests.message("ETHUSDT", "1"), true);
+        connection.listener.onText(connection.socket,
+                BinanceMarkPriceProtocolTests.message("BTCUSDT", "1").replace("1562305380000", "1562305370000"), true);
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.MISSING);
+        assertThat(messages()).noneMatch(text -> text.contains("HEALTHY"));
+        String valid = BinanceMarkPriceProtocolTests.message("BTCUSDT", "10");
+        connection.listener.onText(connection.socket, valid, true);
+        connection.listener.onText(connection.socket, valid.replace("\"10\"", "\"999\""), true);
+        connection.listener.onText(connection.socket, "{", true);
+        assertThat(latestPrices.find(42L).latestPrice().orElseThrow().domainMarkPrice()).isEqualByComparingTo("10");
+        client.stop();
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.UNAVAILABLE);
     }
 
     @Test

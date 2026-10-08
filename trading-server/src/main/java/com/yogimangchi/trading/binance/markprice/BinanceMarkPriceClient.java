@@ -3,6 +3,9 @@ package com.yogimangchi.trading.binance.markprice;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTarget;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTargetLoader;
+import com.yogimangchi.trading.marketdata.LatestMarkPrice;
+import com.yogimangchi.trading.marketdata.LatestPriceStore;
+import java.util.stream.Collectors;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -53,6 +56,7 @@ public class BinanceMarkPriceClient {
     private final LongSupplier nanoTime;
     private final ReconnectBackoff backoff;
     private final boolean logPrices;
+    private final LatestPriceStore latestPrices;
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean stopping = new AtomicBoolean();
 
@@ -71,20 +75,20 @@ public class BinanceMarkPriceClient {
 
     @Autowired
     public BinanceMarkPriceClient(BinanceSubscriptionTargetLoader loader, ObjectMapper mapper,
-            @Value("${binance.mark-price.log-prices:false}") boolean logPrices) {
+            LatestPriceStore latestPrices, @Value("${binance.mark-price.log-prices:false}") boolean logPrices) {
         this(loader::loadActiveTargets, mapper, connector(),
                 Executors.newSingleThreadScheduledExecutor(task -> {
                     Thread thread = new Thread(task, "binance-mark-price");
                     thread.setDaemon(true);
                     return thread;
                 }), Clock.systemUTC(), System::nanoTime,
-                new ReconnectBackoff(() -> ThreadLocalRandom.current().nextDouble()), logPrices);
+                new ReconnectBackoff(() -> ThreadLocalRandom.current().nextDouble()), logPrices, latestPrices);
     }
 
     BinanceMarkPriceClient(Supplier<List<BinanceSubscriptionTarget>> loadTargets, ObjectMapper mapper,
             BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect,
             ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime,
-            ReconnectBackoff backoff, boolean logPrices) {
+            ReconnectBackoff backoff, boolean logPrices, LatestPriceStore latestPrices) {
         this.loadTargets = loadTargets;
         this.mapper = mapper;
         this.connect = connect;
@@ -93,6 +97,7 @@ public class BinanceMarkPriceClient {
         this.nanoTime = nanoTime;
         this.backoff = backoff;
         this.logPrices = logPrices;
+        this.latestPrices = latestPrices;
     }
 
     private static BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connector() {
@@ -126,12 +131,16 @@ public class BinanceMarkPriceClient {
                 return;
             }
             if (targets.isEmpty()) {
+                latestPrices.beginSubscription(java.util.Set.of());
+                latestPrices.markUnavailable();
                 state = State.DISCONNECTED;
                 log.info("[Binance WS] No ACTIVE Binance symbols; checking again in 30s");
                 retry = executor.schedule(this::attemptConnection, 30, TimeUnit.SECONDS);
                 return;
             }
             Session session = new Session(new BinanceMarkPriceProtocol(targets, mapper));
+            latestPrices.beginSubscription(targets.stream().map(BinanceSubscriptionTarget::tradingSymbolId)
+                    .collect(Collectors.toSet()));
             current = session;
             session.handshake = connect.apply(session.protocol.uri(), session);
             session.handshake.whenComplete((socket, error) -> {
@@ -165,6 +174,7 @@ public class BinanceMarkPriceClient {
             return;
         }
         current = null;
+        latestPrices.markUnavailable();
         if (session != null) {
             session.abort();
         }
@@ -212,6 +222,11 @@ public class BinanceMarkPriceClient {
             return;
         }
         BinanceMarkPriceEvent price = event.get();
+        if (!latestPrices.update(new LatestMarkPrice(price.tradingSymbolId(), price.domainMarkPrice(),
+                price.eventTime(), price.receivedAt()))) {
+            rejectedEvents++;
+            return;
+        }
         session.lastDataAt = nanoTime.getAsLong();
         if (!session.healthy) {
             long disconnectedMillis = disconnectedAt == null ? 0
@@ -268,6 +283,7 @@ public class BinanceMarkPriceClient {
         CompletableFuture<Void> closed = new CompletableFuture<>();
         try {
             executor.execute(() -> {
+                latestPrices.markUnavailable();
                 if (retry != null) {
                     retry.cancel(false);
                 }
@@ -306,6 +322,7 @@ public class BinanceMarkPriceClient {
             }
             log.warn("[Binance WS] shutdown timeout/error; connection aborted");
         } finally {
+            latestPrices.markUnavailable();
             executor.shutdownNow();
         }
     }

@@ -1,7 +1,7 @@
 # Trading Server
 
 Yogimangchi V2의 독립 Spring Boot 애플리케이션이다. 현재 PostgreSQL/JPA 기반
-TradingSymbol 구조와 공개 거래 종목 조회 API를 제공한다. 루트 `readme.md`,
+TradingSymbol 구조, 공개 거래 종목 조회 API, Binance Mark Price 수신과 정규화된 최신 가격 상태를 제공한다. 루트 `readme.md`,
 루트 및 이 디렉터리의 `AGENTS.md`를 따른다.
 
 ## 버전과 의존성
@@ -168,11 +168,11 @@ Binance eventTime, 서버 receivedAt이 기록된다. 가격을 DB나 Redis에 �
 `BINANCE_MARK_PRICE_ENABLED=false`를 사용한다. 기존 DB/서버 환경변수와 함께 IDE 실행 환경에 지정한다.
 
 연결 실패/종료 시 1·2·4·8·16·30초 상한의 80~100% 무작위 지연 후 재연결한다.
-onOpen만으로 재시도 횟수를 초기화하지 않는다. 첫 유효한 정규화 가격을 수신한 뒤
+onOpen만으로 재시도 횟수를 초기화하지 않는다. 첫 유효한 정규화 가격을 저장한 뒤
 `HEALTHY` 로그와 함께 초기화하며 복구까지 걸린 시간도 이 시점을 기준으로 기록한다.
 이전 연결의 늦은 callback은 무시한다.
 5초마다 확인해 마지막 정상 데이터 수신 후 15초 이상 침묵하면 재연결한다.
-이는 연결 전체의 수신 중단 감지이며, 개별 종목의 eventTime 기반 freshness 판정은 후속 작업이다.
+이는 연결 전체의 수신 중단 감지이며 아래 종목별 freshness와 별개다.
 24시간 연결 제한에 대비해 23시간 50분에 연결을 교체한다. Java WebSocket의 자동 Pong을 사용한다.
 종료 시 재시도를 취소하고 Close를 전송하며, 응답을 최대 2초 기다린 후 연결을 정리한다.
 
@@ -180,7 +180,7 @@ onOpen만으로 재시도 횟수를 초기화하지 않는다. 첫 유효한 정
 [Mark Price Stream](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/market),
 [Java 17 자동 Pong](https://docs.oracle.com/en/java/javase/17/docs/api/java.net.http/java/net/http/WebSocket.Listener.html#onPing(java.net.http.WebSocket,java.nio.ByteBuffer)).
 
-### 가격 단위
+### 가격 단위와 최신 상태
 
 2026-10-08 [공식 exchangeInfo](https://fapi.binance.com/fapi/v1/exchangeInfo)에서
 BTCUSDT의 baseAsset=BTC, 1000PEPEUSDT의 baseAsset=1000PEPE,
@@ -188,6 +188,22 @@ BTCUSDT의 baseAsset=BTC, 1000PEPEUSDT의 baseAsset=1000PEPE,
 Provider 한 단위의 Mark Price를 DB Mapping의 배수로 나눠 Domain 자산 한 단위당 USDT로 정규화한다.
 예: 1000PEPEUSDT의 `0.0098 / 1000 = 0.0000098 USDT/PEPE`.
 BigDecimal의 정확한 나눗셈을 사용하며 임의 rounding이나 Symbol 문자열에서의 배수 추론은 없다.
+
+`marketdata.LatestPriceStore`는 내부 ID별 불변 `LatestMarkPrice`와 가용 상태를 메모리에 보관한다.
+짧은 synchronized 연산으로 갱신/조회/연결 상태 변경을 보호한다.
+소비자는 `find(id)`에서 가격 객체(eventTime/receivedAt 포함)와 다음 상태를 함께 받는다.
+
+- MISSING: 해당 종목의 가격 없음
+- FRESH: 현재 구독에서 정상 수신했고 eventTime과 receivedAt이 모두 5초 미만
+- STALE: 종목의 timestamp가 유효 기간을 벗어남
+- UNAVAILABLE: 연결이 끊겼거나 재구독 후 해당 종목의 새 가격을 아직 받지 못함
+
+최대 1초의 미래 clock skew만 허용한다. 서버 시간 동기화가 필요하다.
+오래된/과도하게 미래인 메시지, 중복·역순 eventTime, 잘못된 payload는 저장값을 갱신하지 않는다.
+재연결 후에도 종목마다 새 가격을 받아야 FRESH가 되며 구독에서 빠진 종목은 제거한다.
+현재 연결 중 DB Mapping/활성 상태 변경을 즉시 감지하는 기능은 없다.
+재시작 시 Store는 비어 있으며, 이 Store는 Tick 이력이나 가격 crossing 범위를 보존하지 않는다.
+가격 조회 Controller, Browser WebSocket, Redis, 주문/체결 기능은 추가하지 않았다.
 
 ## 테스트와 OpenAPI 갱신
 
