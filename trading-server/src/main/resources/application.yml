@@ -43,3 +43,7 @@ springdoc:
     enabled: true
   swagger-ui:
     enabled: true
+
+marketdata:
+  websocket:
+    allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}

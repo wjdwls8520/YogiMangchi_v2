@@ -209,7 +209,7 @@ BigDecimal의 정확한 나눗셈을 사용하며 임의 rounding이나 Symbol �
 재연결 후에도 종목마다 새 가격을 받아야 FRESH가 되며 구독에서 빠진 종목은 제거한다.
 현재 연결 중 DB Mapping/활성 상태 변경을 즉시 감지하는 기능은 없다.
 재시작 시 Store는 비어 있으며, 이 Store는 Tick 이력이나 가격 crossing 범위를 보존하지 않는다.
-가격 조회 Controller, Browser WebSocket, 주문/체결 기능은 아직 추가하지 않았다.
+가격 조회 Controller와 주문/체결 기능은 아직 추가하지 않았다. Browser에는 아래 WebSocket으로 전달한다.
 
 ### Redis 공유 가격과 이벤트
 
@@ -244,6 +244,78 @@ Stream은 Pub/Sub와 달리 보존 구간을 다시 읽을 수 있지만 영구 
 12개 종목의 1초 이벤트 기준 보존량은 약 2시간이며 실제 유입량에 따라 달라진다.
 현재 단계는 Producer만 구현한다. 지정가/청산 Worker가 추가될 때 소비자 그룹, DB Commit 이후 ACK,
 Pending 재처리와 보존 구간/Redis 유실 감지 정책을 함께 적용한다. Redis Volume이나 영구 보존을 가정하지 않는다.
+
+### Browser 실시간 가격 WebSocket
+
+공개 endpoint는 `ws://localhost:8081/ws/market`이며 Raw WebSocket JSON을 사용한다.
+STOMP/SockJS는 필요하지 않으므로 추가하지 않았다. Spring WebSocket Starter는 서버 측 Upgrade와
+Session 처리를 제공한다. 기존 REST endpoint와 동일한 서버에서 동작한다.
+Browser의 허용 Origin은 기본 `http://localhost:5173,http://127.0.0.1:5173`이며
+`TRADING_WS_ALLOWED_ORIGINS`에 쉼표로 구분한 정확한 Origin을 지정할 수 있다. `*`는 허용하지 않는다.
+TLS 배포에서는 `wss://`를 사용한다. 구독 ID는 `GET /api/v1/symbols`에서 얻으며 Provider Symbol은 전달하지 않는다.
+
+Client → Server:
+
+```json
+{"type":"SUBSCRIBE","tradingSymbolIds":[1,2]}
+{"type":"UNSUBSCRIBE","tradingSymbolIds":[2]}
+{"type":"PING"}
+```
+
+Server → Client 예시(모든 응답 `version=1`):
+
+```json
+{"version":1,"type":"CONNECTED","maxSubscriptions":32,"heartbeatSeconds":20,"idleTimeoutSeconds":60}
+{"version":1,"type":"SUBSCRIBED","tradingSymbolIds":[1,2]}
+{"version":1,"type":"SNAPSHOT","prices":[{"tradingSymbolId":1,"price":"65123.45","status":"FRESH","eventTime":"2026-10-08T00:00:00Z","receivedAt":"2026-10-08T00:00:00.100Z"}]}
+{"version":1,"type":"MARKET_PRICE","tradingSymbolId":1,"price":"65124.10","status":"FRESH","eventTime":"2026-10-08T00:00:01Z","receivedAt":"2026-10-08T00:00:01.100Z"}
+{"version":1,"type":"MARKET_STATUS","status":"STALE","affectedTradingSymbolIds":[1]}
+{"version":1,"type":"INFRA_STATUS","component":"REDIS","status":"HEALTHY"}
+{"version":1,"type":"ERROR","code":"SYMBOL_NOT_AVAILABLE","message":"Every requested tradingSymbolId must be ACTIVE"}
+{"version":1,"type":"UNSUBSCRIBED","tradingSymbolIds":[1]}
+{"version":1,"type":"PONG","serverTime":"2026-10-08T00:00:20Z"}
+```
+
+연결만으로 모든 종목을 전송하지 않는다. 구독 요청 전체가 유효한 ACTIVE ID일 때만 반영하며
+없는 ID·INACTIVE ID가 섞이면 요청 전체를 거절한다. 같은 ID를 다시 구독해도 중복 등록/전송하지 않는다.
+SUBSCRIBED/UNSUBSCRIBED에는 처리 후 전체 구독 ID를 반환하고, SNAPSHOT에는 요청한 ID의 현재 상태를 반환한다.
+수신 가격이 없으면 `price/eventTime/receivedAt=null, status=UNAVAILABLE`다.
+금액은 JavaScript 부동소수점 손실을 피하도록 Decimal 문자열이며 Domain 자산 한 단위 기준 USDT다.
+
+정상 실시간 전송은 Redis Pub/Sub → MarketDataFanout → 해당 종목 구독 Session 경로를 사용한다.
+초기 Snapshot은 이 노드의 LatestPriceStore를 사용한다. 가격 eventTime을 비교하므로 Snapshot/실시간 경합이나
+Pub/Sub 중복이 과거 가격을 덮어쓰지 않는다. Redis 장애 중 유효한 로컬 가격 전송은 유지하고
+INFRA_STATUS는 UNAVAILABLE로 별도 표시한다. Redis 복구만으로 시장 가격이 RECOVERED가 되지는 않는다.
+
+MARKET_STATUS는 `UNAVAILABLE`, `RECONNECTING`, `STALE`, `RECOVERED`다.
+RECOVERED는 해당 종목의 새 유효 가격 이후에만 발생하며, 연결 성공 자체로 보내지 않는다.
+1초 간격으로 종목별 timestamp를 확인하여 stale 전환을 알리고 오래된 값을 MARKET_PRICE로 반복 전송하지 않는다.
+Frontend는 FRESH 외 상태에서 마지막 가격을 현재 거래 가능한 실시간 가격처럼 표시하면 안 된다.
+INFRA_STATUS의 Redis 상태는 STARTING/HEALTHY/UNAVAILABLE이며 시장 freshness와 독립적이다.
+
+Client는 20초마다 JSON PING을 보내고, 실제 Client 입력이 60초 동안 없으면 연결을 종료한다.
+연결은 최대 256개, Session당 종목은 32개, 입력은 8KiB/초당 20개 명령으로 제한한다.
+Session별 출력 큐는 128개이며 별도 8개 Writer Thread가 전송한다. 느린 Client는 큐 초과 또는
+5초 전송 timeout 시 1013 코드로 종료하여 Binance/Redis 수신 Thread를 막지 않는다.
+소켓 종료도 별도 큐에서 처리하며 Tomcat Close timeout은 1초다.
+Client 종료/오류/서버 종료 시 구독과 큐를 정리한다. 재연결 후에는 필요한 ID를 다시 SUBSCRIBE한다.
+
+React에서 사용할 기본 연결 예:
+
+```javascript
+const socket = new WebSocket('ws://localhost:8081/ws/market');
+socket.onopen = () => socket.send(JSON.stringify({type: 'SUBSCRIBE', tradingSymbolIds: [selectedSymbolId]}));
+socket.onmessage = ({data}) => handleMarketMessage(JSON.parse(data));
+const heartbeat = setInterval(() => {
+  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type: 'PING'}));
+}, 20_000);
+// useEffect cleanup:
+// clearInterval(heartbeat); socket.close();
+```
+
+WebSocket은 REST가 아니므로 OpenAPI path에 중복 선언하지 않고 이 Protocol을 계약으로 관리한다.
+실제 HTTP Upgrade, Redis 경유 live 전달, Origin 거절, 구독 검증/해제, stale/복구와
+느린 소켓의 비동기 격리를 외부 Binance 없이 자동 테스트한다.
 
 ## 테스트와 OpenAPI 갱신
 

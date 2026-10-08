@@ -15,6 +15,7 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(authorize -> {
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/symbols").permitAll();
+            authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
             authorize.requestMatchers(
                     "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml",
                     "/swagger-ui.html", "/swagger-ui/**"
