@@ -16,7 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+@SpringBootTest(properties = "binance.mark-price.enabled=false")
 @AutoConfigureMockMvc
 @Import(PostgresTestConfiguration.class)
 @Transactional

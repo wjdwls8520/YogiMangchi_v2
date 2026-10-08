@@ -60,13 +60,13 @@ Flyway는 현재 PostgreSQL SQL 두 파일만으로 변경 이력과 재현성�
 
 ## 환경변수
 
-| 변수 | 의미 |
-| --- | --- |
-| `TRADING_SERVER_PORT` | HTTP 포트, 기본 8081 |
-| `YOGIMANGCHI_DB_USERNAME` | 공용 PostgreSQL 로컬 계정 |
-| `YOGIMANGCHI_DB_PASSWORD` | 공용 PostgreSQL 로컬 비밀번호 |
-| `YOGIMANGCHI_DB_PORT` | Compose에서 명시하는 DB 포트; Spring Boot 기본값 5433 |
-| `YOGIMANGCHI_REDIS_PORT` | Compose에서 명시하는 Redis 포트; 예시 6379 |
+| 변수 | 의미                                         |
+| --- |--------------------------------------------|
+| `TRADING_SERVER_PORT` | HTTP 포트, 기본 8081                           |
+| `YOGIMANGCHI_DB_USERNAME` | 공용 PostgreSQL 로컬 계정                        |
+| `YOGIMANGCHI_DB_PASSWORD` | 공용 PostgreSQL 로컬 비밀번호                      |
+| `YOGIMANGCHI_DB_PORT` | Compose에서 명시하는 DB 포트; Spring Boot 기본값 5432 |
+| `YOGIMANGCHI_REDIS_PORT` | Compose에서 명시하는 Redis 포트; 예시 6379           |
 
 현재는 `application.yml` 하나를 사용하고 Profile을 분리하지 않는다. 하나의 로컬 계정으로
 Flyway 초기화와 애플리케이션을 실행한다. JDBC URL은 `localhost`의 지정 포트와
@@ -145,6 +145,31 @@ CORS는 실제 Frontend Origin이 정해질 때 명시적으로 허용 목록을
 `application/problem+json`의 500 응답으로 반환한다. 내부 예외/SQL/Stack Trace는 응답에 넣지 않고
 원인은 서버 로그에 남긴다. Service에서 예외를 삼키지 않는다.
 
+## Binance Mark Price 수신
+
+서버 준비 완료 후 DB의 ACTIVE/BINANCE 종목을 조회해 하나의 USDⓈ-M Futures Combined Stream에 연결한다.
+`wss://fstream.binance.com/market/stream?streams=<providerSymbol 소문자>@markPrice@1s/...`를 사용한다.
+API Key와 추가 의존성 없이 Java 17 기본 WebSocket을 사용하며, 재연결 시 DB 대상을 다시 조회한다.
+현재 연결 도중 DB 변경을 즉시 반영하는 Admin/동적 구독 기능은 구현하지 않았다.
+
+`[Binance WS]` 로그로 연결 상태와 10초 단위 수신 통계를 확인한다.
+`[MARK PRICE]`에는 내부 ID, Domain Symbol, Provider Symbol, BigDecimal Mark Price,
+Binance eventTime, 서버 receivedAt이 기록된다. 가격을 DB나 Redis에 저장하거나 Browser로 전송하지 않는다.
+현재 개발 검증용 가격 로그는 INFO가 기본이다. `BINANCE_MARK_PRICE_LOG_PRICES=false`로 설정하면
+가격만 DEBUG로 내려가므로 기본 INFO 수준에서 출력되지 않는다. 연결 전체를 끄려면
+`BINANCE_MARK_PRICE_ENABLED=false`를 사용한다. 기존 DB/서버 환경변수와 함께 IDE 실행 환경에 지정한다.
+
+연결 실패/종료 시 1·2·4·8·16·30초 상한의 80~100% 무작위 지연 후 재연결한다.
+정상 연결 시 재시도 횟수를 초기화하고, 이전 연결의 늦은 callback은 무시한다.
+5초마다 확인해 마지막 정상 데이터 수신 후 15초 이상 침묵하면 재연결한다.
+이는 연결 전체의 수신 중단 감지이며, 개별 종목의 eventTime 기반 freshness 판정은 후속 작업이다.
+24시간 연결 제한에 대비해 23시간 50분에 연결을 교체한다. Java WebSocket의 자동 Pong을 사용한다.
+종료 시 재시도를 취소하고 Close를 전송하며, 응답을 최대 2초 기다린 후 연결을 정리한다.
+
+기준 문서: [Binance 연결 정책](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Connect),
+[Mark Price Stream](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/market),
+[Java 17 자동 Pong](https://docs.oracle.com/en/java/javase/17/docs/api/java.net.http/java/net/http/WebSocket.Listener.html#onPing(java.net.http.WebSocket,java.nio.ByteBuffer)).
+
 ## 테스트와 OpenAPI 갱신
 
 ```powershell
@@ -174,4 +199,4 @@ Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/tra
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
 자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-Order/Fill/Position/Wallet, Binance 연결, Redis 연동, JWT, Admin, Trading Engine은 이번 구현에 없다.
+Order/Fill/Position/Wallet, Redis 연동, JWT, Admin, Trading Engine은 이번 구현에 없다.

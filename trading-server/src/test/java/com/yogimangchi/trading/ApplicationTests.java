@@ -21,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+@SpringBootTest(properties = "binance.mark-price.enabled=false")
 @AutoConfigureMockMvc
 @Import(PostgresTestConfiguration.class)
 class ApplicationTests {
@@ -35,6 +35,12 @@ class ApplicationTests {
     @Test
     void defaultUserIsNotGenerated() {
         assertThat(context.getBeansOfType(UserDetailsService.class)).isEmpty();
+    }
+
+    @Test
+    void externalBinanceConnectionIsDisabledInAutomatedTests() {
+        assertThat(context.getBeansOfType(
+                com.yogimangchi.trading.binance.markprice.BinanceMarkPriceClient.class)).isEmpty();
     }
 
     @Test
