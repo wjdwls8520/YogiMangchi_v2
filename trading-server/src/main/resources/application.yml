@@ -1,6 +1,15 @@
 spring:
   application:
     name: trading-server
+  data:
+    redis:
+      host: ${YOGIMANGCHI_REDIS_HOST:localhost}
+      port: ${YOGIMANGCHI_REDIS_PORT:6379}
+      password: ${YOGIMANGCHI_REDIS_PASSWORD:}
+      connect-timeout: 1s
+      timeout: 1s
+      repositories:
+        enabled: false
   datasource:
     url: jdbc:postgresql://localhost:${YOGIMANGCHI_DB_PORT:5432}/yogimangchi
     username: ${YOGIMANGCHI_DB_USERNAME}

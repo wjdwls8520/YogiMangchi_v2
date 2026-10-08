@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 
 /** Small, synchronized snapshots: price, subscription availability and freshness are read atomically. */
 @Component
@@ -17,6 +18,7 @@ public class LatestPriceStore {
     private static final Duration FRESH_FOR = Duration.ofSeconds(5);
     private static final Duration MAX_CLOCK_SKEW = Duration.ofSeconds(1);
     private final Clock clock;
+    private final ApplicationEventPublisher events;
     private final Map<Long, LatestMarkPrice> prices = new HashMap<>();
     private final Set<Long> available = new HashSet<>();
     private Set<Long> subscribed = Set.of();
@@ -26,29 +28,42 @@ public class LatestPriceStore {
 
     public record Snapshot(Status status, Optional<LatestMarkPrice> latestPrice) { }
 
-    @Autowired
     public LatestPriceStore() {
         this(Clock.systemUTC());
     }
 
+    @Autowired
+    public LatestPriceStore(ApplicationEventPublisher events) {
+        this(Clock.systemUTC(), events);
+    }
+
     public LatestPriceStore(Clock clock) {
+        this(clock, event -> { });
+    }
+
+    public LatestPriceStore(Clock clock, ApplicationEventPublisher events) {
         this.clock = clock;
+        this.events = events;
     }
 
     public synchronized void beginSubscription(Set<Long> tradingSymbolIds) {
+        Set<Long> affected = new HashSet<>(subscribed);
+        affected.addAll(tradingSymbolIds);
         subscribed = Set.copyOf(tradingSymbolIds);
         prices.keySet().retainAll(subscribed);
         available.clear();
         accepting = true;
+        events.publishEvent(MarketDataEvent.state(MarketDataEvent.Type.RECONNECTING, affected, clock.instant()));
     }
 
     public synchronized void markUnavailable() {
         accepting = false;
         available.clear();
+        events.publishEvent(MarketDataEvent.state(MarketDataEvent.Type.UNAVAILABLE, subscribed, clock.instant()));
     }
 
     public synchronized boolean update(LatestMarkPrice price) {
-        if (!accepting || !subscribed.contains(price.tradingSymbolId()) || !isFresh(price, clock.instant())) {
+        if (!accepting || !subscribed.contains(price.tradingSymbolId()) || !isFreshAt(price, clock.instant())) {
             return false;
         }
         LatestMarkPrice previous = prices.get(price.tradingSymbolId());
@@ -58,6 +73,8 @@ public class LatestPriceStore {
         }
         prices.put(price.tradingSymbolId(), price);
         available.add(price.tradingSymbolId());
+        // Listeners only enqueue: external I/O must never run under this short local-cache lock.
+        events.publishEvent(MarketDataEvent.price(price));
         return true;
     }
 
@@ -67,15 +84,15 @@ public class LatestPriceStore {
             return new Snapshot(Status.MISSING, Optional.empty());
         }
         Status status = !available.contains(tradingSymbolId) ? Status.UNAVAILABLE
-                : isFresh(price, clock.instant()) ? Status.FRESH : Status.STALE;
+                : isFreshAt(price, clock.instant()) ? Status.FRESH : Status.STALE;
         return new Snapshot(status, Optional.of(price));
     }
 
-    private boolean isFresh(LatestMarkPrice price, Instant now) {
+    public static boolean isFreshAt(LatestMarkPrice price, Instant now) {
         return recent(price.eventTime(), now) && recent(price.receivedAt(), now);
     }
 
-    private boolean recent(Instant time, Instant now) {
+    private static boolean recent(Instant time, Instant now) {
         return time.isAfter(now.minus(FRESH_FOR)) && !time.isAfter(now.plus(MAX_CLOCK_SKEW));
     }
 }

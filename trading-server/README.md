@@ -1,7 +1,8 @@
 # Trading Server
 
 Yogimangchi V2의 독립 Spring Boot 애플리케이션이다. 현재 PostgreSQL/JPA 기반
-TradingSymbol 구조, 공개 거래 종목 조회 API, Binance Mark Price 수신과 정규화된 최신 가격 상태를 제공한다. 루트 `readme.md`,
+TradingSymbol 구조, 공개 거래 종목 조회 API, Binance Mark Price 수신과 정규화된 최신 가격 상태,
+Redis 기반 시세 공유를 제공한다. 루트 `readme.md`,
 루트 및 이 디렉터리의 `AGENTS.md`를 따른다.
 
 ## 버전과 의존성
@@ -26,6 +27,7 @@ Java 17 이상과 Gradle 8.4 이상의 8.x를 지원하므로 기존 Wrapper를 
 | `spring-boot-starter-web` | Spring MVC와 HTTP 서버 |
 | `spring-boot-starter-security` | 공개 경로 지정과 나머지 요청 차단 |
 | `spring-boot-starter-data-jpa` | TradingSymbol 영속성과 트랜잭션 |
+| `spring-boot-starter-data-redis` | Lettuce 연결, 공유 Snapshot, Pub/Sub와 재생 가능한 Stream |
 | `postgresql` (runtime) | PostgreSQL JDBC 연결 |
 | `flyway-core`, `flyway-database-postgresql` (DB 모듈은 runtime) | SQL 마이그레이션과 Seed 이력 |
 | `springdoc-openapi-starter-webmvc-ui` | Swagger와 OpenAPI 생성 |
@@ -36,7 +38,9 @@ Java 17 이상과 Gradle 8.4 이상의 8.x를 지원하므로 기존 Wrapper를 
 Boot 4의 `starter-webmvc`, `starter-webmvc-test`, `starter-security-test`를 교체했다.
 `UserDetailsServiceAutoConfiguration`과 `AutoConfigureMockMvc` import도 Boot 3용으로 변경했다.
 Gradle `platform`으로 Boot BOM을 사용하며 별도의 dependency-management 플러그인은 없다.
-Redis, Validation, Lombok, JWT/OAuth2, H2, WebSocket 의존성은 아직 필요하지 않아 추가하지 않았다.
+Redis는 현재 공유 가격/이벤트 기능에 사용한다. 기존 JDK WebSocket과 JPA는 Redis 프로토콜을
+제공하지 않으므로 Boot BOM이 관리하는 Spring Data Redis/Lettuce를 사용한다. 별도 버전을 고정하지 않는다.
+Validation, Lombok, JWT/OAuth2, H2, Browser WebSocket 의존성은 아직 추가하지 않았다.
 
 ## PostgreSQL과 마이그레이션
 
@@ -75,6 +79,8 @@ Java Mapping 검증은 정확한 Decimal 나눗셈이 불가능한 배수도 거
 | `YOGIMANGCHI_DB_PASSWORD` | 공용 PostgreSQL 로컬 비밀번호                      |
 | `YOGIMANGCHI_DB_PORT` | Compose에서 명시하는 DB 포트; Spring Boot 기본값 5432 |
 | `YOGIMANGCHI_REDIS_PORT` | Compose에서 명시하는 Redis 포트; 예시 6379           |
+| `YOGIMANGCHI_REDIS_HOST` | Trading Server의 Redis 주소; 기본 localhost |
+| `YOGIMANGCHI_REDIS_PASSWORD` | Redis 인증이 필요한 배포 환경의 비밀번호; 기본 미설정 |
 
 현재는 `application.yml` 하나를 사용하고 Profile을 분리하지 않는다. 하나의 로컬 계정으로
 Flyway 초기화와 애플리케이션을 실행한다. JDBC URL은 `localhost`의 지정 포트와
@@ -162,7 +168,7 @@ API Key와 추가 의존성 없이 Java 17 기본 WebSocket을 사용하며, 재
 
 `[Binance WS]` 로그로 연결 상태와 10초 단위 수신 통계를 확인한다.
 `[MARK PRICE]`에는 내부 ID, Domain Symbol, Provider Symbol, `providerMarkPrice`, `domainMarkPrice`,
-Binance eventTime, 서버 receivedAt이 기록된다. 가격을 DB나 Redis에 저장하거나 Browser로 전송하지 않는다.
+Binance eventTime, 서버 receivedAt이 기록된다. 가격은 메모리와 Redis에 보관하며 PostgreSQL에는 저장하지 않는다.
 가격 로그 설정 `BINANCE_MARK_PRICE_LOG_PRICES`는 기본 false다. 가격은 DEBUG이므로
 기본 INFO 수준에서는 출력하지 않는다. 개발 검증 시에만 true로 지정해 가격을 INFO로 출력한다. 연결 전체를 끄려면
 `BINANCE_MARK_PRICE_ENABLED=false`를 사용한다. 기존 DB/서버 환경변수와 함께 IDE 실행 환경에 지정한다.
@@ -203,7 +209,41 @@ BigDecimal의 정확한 나눗셈을 사용하며 임의 rounding이나 Symbol �
 재연결 후에도 종목마다 새 가격을 받아야 FRESH가 되며 구독에서 빠진 종목은 제거한다.
 현재 연결 중 DB Mapping/활성 상태 변경을 즉시 감지하는 기능은 없다.
 재시작 시 Store는 비어 있으며, 이 Store는 Tick 이력이나 가격 crossing 범위를 보존하지 않는다.
-가격 조회 Controller, Browser WebSocket, Redis, 주문/체결 기능은 추가하지 않았다.
+가격 조회 Controller, Browser WebSocket, 주문/체결 기능은 아직 추가하지 않았다.
+
+### Redis 공유 가격과 이벤트
+
+`LatestPriceStore`는 단일 노드의 빠른 서버 기준 가격 조회를 담당하고,
+`RedisMarketDataBridge`는 최대 1,024건의 큐와 별도 Worker로 Redis를 갱신한다.
+Binance 수신 Thread에서는 Redis나 Browser I/O를 수행하지 않는다.
+현재는 이 노드 하나가 Binance 가격을 수집한다. 여러 수집 노드를 동시에 실행하기 전에는
+수집 소유권과 가용 상태 변경의 책임을 별도로 설계해야 한다.
+
+| Redis Key | 내용/수명 |
+| --- | --- |
+| `trading:market:v1:snapshot:{id}` | version=1 JSON, 내부 ID/Domain Mark Price/eventTime/receivedAt. 두 timestamp 기준 남은 freshness만큼, 최대 5초 TTL |
+| `trading:market:v1:watermark:{id}` | 마지막 eventTime, 24시간 TTL. Snapshot 만료 후에도 중복/역순 갱신 차단 |
+| `trading:market:v1:state:{id}` | FRESH 또는 RECONNECTING/UNAVAILABLE. 가격과 함께 원자적으로 조회하며 연결 중단 시 Snapshot 제거 |
+| `trading:market:v1:events` | 모든 수락 가격과 연결 상태의 Redis Stream, 정확히 최대 100,000건 보관 |
+| `trading:market:v1:fanout` | 같은 JSON 이벤트의 Pub/Sub Channel |
+
+Lua 하나에서 시간 역행 검사, Snapshot 저장, Stream 추가와 Pub/Sub 발행을 수행한다.
+큐에서 지연되어 freshness를 잃은 가격은 다시 5초를 부여하지 않고 폐기하며 replay gap으로 기록한다.
+Pub/Sub를 실제 구독한 `MarketDataFanout`이 로컬 소비자에 전달한다. 같은 eventId의 로컬 fallback과
+Pub/Sub echo는 최대 8,192개 ID의 중복 제거 구간에서 한 번만 전달한다.
+Fanout 자체도 1,024건으로 제한되며 밀릴 때 오래된 UI 이벤트부터 버린다. 거래 Trigger는 이 경로에 의존하면 안 된다.
+
+Redis 연결/명령 timeout은 1초이고 장애 시 5초 간격으로 재접속한다. 초기 Redis 연결 실패도
+서버 기동을 종료시키지 않는다. 유휴 상태에서도 1초마다 연결과 구독 가용 상태를 확인한다.
+Redis health(STARTING/HEALTHY/UNAVAILABLE)는 Binance 연결 상태 및 종목별 freshness와 별도다.
+Redis 장애 시 현재 노드의 유효한 로컬 가격은 계속 조회할 수 있고 UI용 fanout은 로컬로 우회한다.
+실패·큐 초과·폐기마다 `gapSequence`로 재생 경로의 불연속을 알리므로, Redis 복구만으로
+누락된 가격 crossing을 복원했다고 판단하지 않는다. PostgreSQL 데이터는 변경하지 않는다.
+
+Stream은 Pub/Sub와 달리 보존 구간을 다시 읽을 수 있지만 영구 원본은 아니다.
+12개 종목의 1초 이벤트 기준 보존량은 약 2시간이며 실제 유입량에 따라 달라진다.
+현재 단계는 Producer만 구현한다. 지정가/청산 Worker가 추가될 때 소비자 그룹, DB Commit 이후 ACK,
+Pending 재처리와 보존 구간/Redis 유실 감지 정책을 함께 적용한다. Redis Volume이나 영구 보존을 가정하지 않는다.
 
 ## 테스트와 OpenAPI 갱신
 
@@ -212,7 +252,7 @@ BigDecimal의 정확한 나눗셈을 사용하며 임의 rounding이나 Symbol �
 .\gradlew.bat test
 ```
 
-macOS/Linux에서는 `sh ./gradlew`를 사용한다. 통합 테스트는 Docker에서 격리된 PostgreSQL을
+macOS/Linux에서는 `sh ./gradlew`를 사용한다. 통합 테스트는 Docker에서 격리된 PostgreSQL과 Redis를
 생성하고 종료 시 정리한다. 로컬/운영 DB 자격증명을 쓰지 않고 실제 Flyway와 Hibernate validate를 실행한다.
 Docker가 없으면 실패하며 자동 생략하지 않는다. 최초 실행에는 이미지/의존성 다운로드가 필요하다.
 **자동 테스트는 Binance 연결에 의존하지 않는다.**
@@ -234,4 +274,4 @@ Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/tra
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
 자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-Order/Fill/Position/Wallet, Redis 연동, JWT, Admin, Trading Engine은 이번 구현에 없다.
+Order/Fill/Position/Wallet, JWT, Admin, Trading Engine은 이번 단계에 없다.
