@@ -26,13 +26,13 @@ class BinanceSubscriptionTargetLoaderIntegrationTests {
     @Autowired private EntityManager entityManager;
 
     @ParameterizedTest
-    @CsvSource({"BTC, BTCUSDT", "PEPE, 1000PEPEUSDT", "SHIB, 1000SHIBUSDT"})
-    void preservesInternalIdAndSeparateDomainAndProviderSymbols(String symbol, String providerSymbol) {
+    @CsvSource({"BTC, BTCUSDT, 1", "PEPE, 1000PEPEUSDT, 1000", "SHIB, 1000SHIBUSDT, 1000"})
+    void preservesInternalIdAndSeparateDomainAndProviderSymbols(String symbol, String providerSymbol, long multiplier) {
         Long id = findSymbol(symbol).getId();
 
         assertThat(loader.loadActiveTargets())
                 .hasSize(12)
-                .contains(new BinanceSubscriptionTarget(id, symbol, providerSymbol));
+                .contains(new BinanceSubscriptionTarget(id, symbol, providerSymbol, multiplier));
     }
 
     @Test
@@ -56,10 +56,10 @@ class BinanceSubscriptionTargetLoaderIntegrationTests {
     void reloadsDatabaseManagedTargetsAfterActivationAndInactivation() {
         assertThat(loader.loadActiveTargets()).hasSize(12);
         TradingSymbol symbol = TradingSymbol.register(
-                "Test Coin", "TEST", "USDT", TradingSymbolProvider.BINANCE, "TESTUSDT");
+                "Test Coin", "TEST", "USDT", TradingSymbolProvider.BINANCE, "TESTUSDT", 1L);
         entityManager.persist(symbol);
         entityManager.flush();
-        BinanceSubscriptionTarget target = new BinanceSubscriptionTarget(symbol.getId(), "TEST", "TESTUSDT");
+        BinanceSubscriptionTarget target = new BinanceSubscriptionTarget(symbol.getId(), "TEST", "TESTUSDT", 1L);
         assertThat(loader.loadActiveTargets()).hasSize(12).doesNotContain(target);
 
         symbol.activate();
@@ -75,17 +75,17 @@ class BinanceSubscriptionTargetLoaderIntegrationTests {
     void reloadsProviderMappingWithoutChangingInternalIdentity() {
         TradingSymbol symbol = findSymbol("PEPE");
         Long id = symbol.getId();
-        BinanceSubscriptionTarget original = new BinanceSubscriptionTarget(id, "PEPE", "1000PEPEUSDT");
+        BinanceSubscriptionTarget original = new BinanceSubscriptionTarget(id, "PEPE", "1000PEPEUSDT", 1000L);
         assertThat(loader.loadActiveTargets()).contains(original);
 
-        symbol.changeProviderSymbol("TESTPEPEUSDT");
+        symbol.changeProviderMapping("TESTPEPEUSDT", 1L);
         entityManager.flush();
         entityManager.clear();
 
         assertThat(loader.loadActiveTargets())
                 .hasSize(12)
                 .doesNotContain(original)
-                .contains(new BinanceSubscriptionTarget(id, "PEPE", "TESTPEPEUSDT"));
+                .contains(new BinanceSubscriptionTarget(id, "PEPE", "TESTPEPEUSDT", 1L));
     }
 
     @Test

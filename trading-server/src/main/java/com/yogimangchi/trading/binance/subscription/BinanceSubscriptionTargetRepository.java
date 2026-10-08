@@ -12,7 +12,7 @@ public interface BinanceSubscriptionTargetRepository extends Repository<TradingS
 
     @Query("""
             select new com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTarget(
-                s.id, s.symbol, s.providerSymbol)
+                s.id, s.symbol, s.providerSymbol, s.providerUnitMultiplier)
             from TradingSymbol s
             where s.status = :status and s.provider = :provider
             order by s.id asc

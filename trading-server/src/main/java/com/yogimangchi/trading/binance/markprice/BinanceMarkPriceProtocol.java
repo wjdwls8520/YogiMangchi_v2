@@ -74,7 +74,8 @@ final class BinanceMarkPriceProtocol {
                 return Optional.empty();
             }
             return Optional.of(new BinanceMarkPriceEvent(target.tradingSymbolId(), target.symbol(),
-                    providerSymbol, price, Instant.ofEpochMilli(data.path("E").longValue()), receivedAt));
+                    providerSymbol, price, price.divide(BigDecimal.valueOf(target.providerUnitMultiplier())),
+                    Instant.ofEpochMilli(data.path("E").longValue()), receivedAt));
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             return Optional.empty();
         }

@@ -46,6 +46,7 @@ Content와 Trading은 공용 Database `yogimangchi`를 사용하고, 애플리�
 
 - V1: 테이블과 PK, Unique/Check/Not-null 제약 생성
 - V2: 공식 Binance 메타데이터로 확인한 초기 12개 종목 등록
+- V3: Provider 계약 한 단위에 포함된 Domain 자산 수량 `provider_unit_multiplier` 추가
 - Flyway가 순서와 체크섬을 관리하며 정상 적용된 Seed는 재시작 시 다시 실행하지 않는다.
 - 운영 중 변경한 상태/Provider Mapping을 Seed가 덮어쓰지 않는다.
 - 적용한 마이그레이션은 수정하지 않고 새 버전 파일을 추가한다.
@@ -53,10 +54,17 @@ Content와 Trading은 공용 Database `yogimangchi`를 사용하고, 애플리�
 - `open-in-view=false`, `spring.sql.init.mode=never`, `spring.flyway.clean-disabled=true`를 사용한다.
 - DB 연결·마이그레이션·매핑 검증에 실패하면 기동을 실패시킨다.
 
-Flyway는 현재 PostgreSQL SQL 두 파일만으로 변경 이력과 재현성을 확보할 수 있어 선택했다.
+Flyway는 PostgreSQL SQL 파일만으로 변경 이력과 재현성을 확보할 수 있어 선택했다.
 별도의 XML/YAML 변경 모델은 필요하지 않다. SQL 버전 관리가 추가되고 이미 적용한 파일의
 수정/임의 롤백을 피해야 한다는 운영 부담이 있다.
 [Spring DB 초기화 지침](https://docs.spring.io/spring-boot/3.5/how-to/data-initialization.html)을 따른다.
+
+V3는 기존 ID/상태/Provider Symbol을 유지한다. 동일 단위 Mapping은 1,
+검증된 PEPE/1000PEPEUSDT 및 SHIB/1000SHIBUSDT Mapping은 1000으로 이관한다.
+검증되지 않은 다른 계약명 Mapping이 있으면 배수를 추측하지 않고 Migration 전체를 Rollback한다.
+이 경우 해당 계약 단위를 공식 metadata로 확인하고 V3 적용 계획을 보완해야 한다.
+배수는 NOT NULL / 양수 제약을 가지며 기본값은 없다. 등록과 Mapping 변경 시 배수를 명시한다.
+Java Mapping 검증은 정확한 Decimal 나눗셈이 불가능한 배수도 거부한다.
 
 ## 환경변수
 
@@ -153,14 +161,16 @@ API Key와 추가 의존성 없이 Java 17 기본 WebSocket을 사용하며, 재
 현재 연결 도중 DB 변경을 즉시 반영하는 Admin/동적 구독 기능은 구현하지 않았다.
 
 `[Binance WS]` 로그로 연결 상태와 10초 단위 수신 통계를 확인한다.
-`[MARK PRICE]`에는 내부 ID, Domain Symbol, Provider Symbol, BigDecimal Mark Price,
+`[MARK PRICE]`에는 내부 ID, Domain Symbol, Provider Symbol, `providerMarkPrice`, `domainMarkPrice`,
 Binance eventTime, 서버 receivedAt이 기록된다. 가격을 DB나 Redis에 저장하거나 Browser로 전송하지 않는다.
-현재 개발 검증용 가격 로그는 INFO가 기본이다. `BINANCE_MARK_PRICE_LOG_PRICES=false`로 설정하면
-가격만 DEBUG로 내려가므로 기본 INFO 수준에서 출력되지 않는다. 연결 전체를 끄려면
+가격 로그 설정 `BINANCE_MARK_PRICE_LOG_PRICES`는 기본 false다. 가격은 DEBUG이므로
+기본 INFO 수준에서는 출력하지 않는다. 개발 검증 시에만 true로 지정해 가격을 INFO로 출력한다. 연결 전체를 끄려면
 `BINANCE_MARK_PRICE_ENABLED=false`를 사용한다. 기존 DB/서버 환경변수와 함께 IDE 실행 환경에 지정한다.
 
 연결 실패/종료 시 1·2·4·8·16·30초 상한의 80~100% 무작위 지연 후 재연결한다.
-정상 연결 시 재시도 횟수를 초기화하고, 이전 연결의 늦은 callback은 무시한다.
+onOpen만으로 재시도 횟수를 초기화하지 않는다. 첫 유효한 정규화 가격을 수신한 뒤
+`HEALTHY` 로그와 함께 초기화하며 복구까지 걸린 시간도 이 시점을 기준으로 기록한다.
+이전 연결의 늦은 callback은 무시한다.
 5초마다 확인해 마지막 정상 데이터 수신 후 15초 이상 침묵하면 재연결한다.
 이는 연결 전체의 수신 중단 감지이며, 개별 종목의 eventTime 기반 freshness 판정은 후속 작업이다.
 24시간 연결 제한에 대비해 23시간 50분에 연결을 교체한다. Java WebSocket의 자동 Pong을 사용한다.
@@ -169,6 +179,15 @@ Binance eventTime, 서버 receivedAt이 기록된다. 가격을 DB나 Redis에 �
 기준 문서: [Binance 연결 정책](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Connect),
 [Mark Price Stream](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/market),
 [Java 17 자동 Pong](https://docs.oracle.com/en/java/javase/17/docs/api/java.net.http/java/net/http/WebSocket.Listener.html#onPing(java.net.http.WebSocket,java.nio.ByteBuffer)).
+
+### 가격 단위
+
+2026-10-08 [공식 exchangeInfo](https://fapi.binance.com/fapi/v1/exchangeInfo)에서
+BTCUSDT의 baseAsset=BTC, 1000PEPEUSDT의 baseAsset=1000PEPE,
+1000SHIBUSDT의 baseAsset=1000SHIB, quoteAsset/marginAsset=USDT를 확인했다.
+Provider 한 단위의 Mark Price를 DB Mapping의 배수로 나눠 Domain 자산 한 단위당 USDT로 정규화한다.
+예: 1000PEPEUSDT의 `0.0098 / 1000 = 0.0000098 USDT/PEPE`.
+BigDecimal의 정확한 나눗셈을 사용하며 임의 rounding이나 Symbol 문자열에서의 배수 추론은 없다.
 
 ## 테스트와 OpenAPI 갱신
 

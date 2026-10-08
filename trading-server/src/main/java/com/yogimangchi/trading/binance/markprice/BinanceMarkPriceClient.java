@@ -71,7 +71,7 @@ public class BinanceMarkPriceClient {
 
     @Autowired
     public BinanceMarkPriceClient(BinanceSubscriptionTargetLoader loader, ObjectMapper mapper,
-            @Value("${binance.mark-price.log-prices:true}") boolean logPrices) {
+            @Value("${binance.mark-price.log-prices:false}") boolean logPrices) {
         this(loader::loadActiveTargets, mapper, connector(),
                 Executors.newSingleThreadScheduledExecutor(task -> {
                     Thread thread = new Thread(task, "binance-mark-price");
@@ -155,12 +155,8 @@ public class BinanceMarkPriceClient {
         session.openedAt = nanoTime.getAsLong();
         session.lastDataAt = session.openedAt;
         state = State.CONNECTED;
-        long disconnectedMillis = disconnectedAt == null ? 0
-                : TimeUnit.NANOSECONDS.toMillis(session.openedAt - disconnectedAt);
-        log.info("[Binance WS] CONNECTED streams={} reconnectAttempt={} disconnectedDurationMs={}",
-                session.protocol.size(), retryAttempt, disconnectedMillis);
-        retryAttempt = 0;
-        disconnectedAt = null;
+        log.info("[Binance WS] CONNECTED streams={} reconnectAttempt={} awaitingValidPrice=true",
+                session.protocol.size(), retryAttempt);
         socket.request(1);
     }
 
@@ -217,15 +213,24 @@ public class BinanceMarkPriceClient {
         }
         BinanceMarkPriceEvent price = event.get();
         session.lastDataAt = nanoTime.getAsLong();
+        if (!session.healthy) {
+            long disconnectedMillis = disconnectedAt == null ? 0
+                    : TimeUnit.NANOSECONDS.toMillis(session.lastDataAt - disconnectedAt);
+            log.info("[Binance WS] HEALTHY reconnectAttempt={} disconnectedDurationMs={}",
+                    retryAttempt, disconnectedMillis);
+            retryAttempt = 0;
+            disconnectedAt = null;
+            session.healthy = true;
+        }
         lastReceivedAt = price.receivedAt();
         receivedEvents++;
-        String format = "[MARK PRICE] tradingSymbolId={} symbol={} providerSymbol={} price={} eventTime={} receivedAt={}";
+        String format = "[MARK PRICE] tradingSymbolId={} symbol={} providerSymbol={} providerMarkPrice={} domainMarkPrice={} eventTime={} receivedAt={}";
         if (logPrices) {
             log.info(format, price.tradingSymbolId(), price.symbol(), price.providerSymbol(),
-                    price.markPrice(), price.eventTime(), price.receivedAt());
+                    price.providerMarkPrice(), price.domainMarkPrice(), price.eventTime(), price.receivedAt());
         } else {
             log.debug(format, price.tradingSymbolId(), price.symbol(), price.providerSymbol(),
-                    price.markPrice(), price.eventTime(), price.receivedAt());
+                    price.providerMarkPrice(), price.domainMarkPrice(), price.eventTime(), price.receivedAt());
         }
     }
 
@@ -313,6 +318,7 @@ public class BinanceMarkPriceClient {
         private CompletableFuture<WebSocket> handshake;
         private long openedAt;
         private long lastDataAt;
+        private boolean healthy;
 
         private Session(BinanceMarkPriceProtocol protocol) {
             this.protocol = protocol;

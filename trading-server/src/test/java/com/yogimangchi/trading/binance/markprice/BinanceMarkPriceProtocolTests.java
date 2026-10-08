@@ -9,6 +9,7 @@ import java.util.Locale;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -16,8 +17,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class BinanceMarkPriceProtocolTests {
 
     private final BinanceMarkPriceProtocol protocol = new BinanceMarkPriceProtocol(List.of(
-            new BinanceSubscriptionTarget(42L, "BTC", "BTCUSDT"),
-            new BinanceSubscriptionTarget(91L, "PEPE", "1000PEPEUSDT")), new ObjectMapper());
+            new BinanceSubscriptionTarget(42L, "BTC", "BTCUSDT", 1L),
+            new BinanceSubscriptionTarget(91L, "PEPE", "1000PEPEUSDT", 1000L)), new ObjectMapper());
 
     @Test
     void buildsOneRoutedCombinedStreamFromDatabaseTargets() {
@@ -45,9 +46,30 @@ class BinanceMarkPriceProtocolTests {
         assertThat(event.tradingSymbolId()).isEqualTo(91L);
         assertThat(event.symbol()).isEqualTo("PEPE");
         assertThat(event.providerSymbol()).isEqualTo("1000PEPEUSDT");
-        assertThat(event.markPrice()).isEqualTo(new BigDecimal("0.009876543210123456789000"));
+        assertThat(event.providerMarkPrice()).isEqualTo(new BigDecimal("0.009876543210123456789000"));
+        assertThat(event.domainMarkPrice()).isEqualByComparingTo("0.000009876543210123456789000");
         assertThat(event.eventTime()).isEqualTo(Instant.ofEpochMilli(1562305380000L));
         assertThat(event.receivedAt()).isEqualTo(receivedAt);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"BTC,BTCUSDT,1,82692.90000000,82692.90000000",
+            "PEPE,1000PEPEUSDT,1000,0.0098,0.0000098",
+            "SHIB,1000SHIBUSDT,1000,0.01543210,0.00001543210"})
+    void normalizesVerifiedContractUnitsExactly(String symbol, String providerSymbol, long multiplier,
+                                               String providerPrice, String domainPrice) {
+        var mapped = new BinanceMarkPriceProtocol(List.of(
+                new BinanceSubscriptionTarget(5L, symbol, providerSymbol, multiplier)), new ObjectMapper());
+        var event = mapped.parse(message(providerSymbol, providerPrice), Instant.now()).orElseThrow();
+        assertThat(event.providerMarkPrice()).isEqualTo(new BigDecimal(providerPrice));
+        assertThat(event.domainMarkPrice()).isEqualByComparingTo(domainPrice);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1, 3, 7})
+    void refusesInvalidOrNonTerminatingMultipliers(long multiplier) {
+        assertThatThrownBy(() -> new BinanceSubscriptionTarget(1L, "TEST", "TESTUSDT", multiplier))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @ParameterizedTest
@@ -77,7 +99,7 @@ class BinanceMarkPriceProtocolTests {
 
     @Test
     void refusesEmptyOversizedDuplicateAndUnsafeSubscriptionTargets() {
-        var target = new BinanceSubscriptionTarget(1L, "BTC", "BTCUSDT");
+        var target = new BinanceSubscriptionTarget(1L, "BTC", "BTCUSDT", 1L);
         assertThatThrownBy(() -> new BinanceMarkPriceProtocol(List.of(), new ObjectMapper()))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new BinanceMarkPriceProtocol(java.util.Collections.nCopies(1025, target),
@@ -85,7 +107,7 @@ class BinanceMarkPriceProtocolTests {
         assertThatThrownBy(() -> new BinanceMarkPriceProtocol(List.of(target, target), new ObjectMapper()))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new BinanceMarkPriceProtocol(List.of(
-                new BinanceSubscriptionTarget(1L, "BTC", "BTCUSDT/ethusdt@ticker")), new ObjectMapper()))
+                new BinanceSubscriptionTarget(1L, "BTC", "BTCUSDT/ethusdt@ticker", 1L)), new ObjectMapper()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

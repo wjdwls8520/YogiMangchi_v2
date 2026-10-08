@@ -9,6 +9,8 @@ import java.net.URI;
 import java.net.http.WebSocket;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -38,11 +40,12 @@ class BinanceMarkPriceClientTests {
     private final List<Connection> connections = new ArrayList<>();
     private final List<Retry> retries = new ArrayList<>();
     private final List<BinanceSubscriptionTarget> targets = new ArrayList<>(List.of(
-            new BinanceSubscriptionTarget(42L, "BTC", "BTCUSDT")));
+            new BinanceSubscriptionTarget(42L, "BTC", "BTCUSDT", 1L)));
     private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
     private Runnable healthCheck;
     private boolean databaseUnavailable;
     private BinanceMarkPriceClient client;
+    private final Clock clock = Clock.fixed(Instant.ofEpochMilli(1562305380000L), ZoneOffset.UTC);
 
     @BeforeEach
     void setUp() {
@@ -75,7 +78,7 @@ class BinanceMarkPriceClientTests {
             });
             connections.add(connection);
             return connection.handshake;
-        }, executor, Clock.systemUTC(), now::get, new ReconnectBackoff(() -> 1.0), true);
+        }, executor, clock, now::get, new ReconnectBackoff(() -> 1.0), true);
     }
 
     @AfterEach
@@ -96,13 +99,14 @@ class BinanceMarkPriceClientTests {
         assertThat(retries).hasSize(1);
         assertThat(retries.get(0).delay).isEqualTo(1000);
         verify(first.socket).abort();
-        targets.add(new BinanceSubscriptionTarget(77L, "ETH", "ETHUSDT"));
+        targets.add(new BinanceSubscriptionTarget(77L, "ETH", "ETHUSDT", 1L));
         now.set(Duration.ofSeconds(2).toNanos());
         retries.get(0).action.run();
         Connection second = openLatest();
         assertThat(second.uri.toString()).endsWith("btcusdt@markPrice@1s/ethusdt@markPrice@1s");
         first.listener.onError(first.socket, new IllegalStateException("late callback"));
         assertThat(retries).hasSize(1);
+        second.listener.onText(second.socket, BinanceMarkPriceProtocolTests.message("BTCUSDT", "123"), true);
         second.listener.onClose(second.socket, 1000, "server rotation");
         assertThat(retries).hasSize(2);
         assertThat(retries.get(1).delay).isEqualTo(1000);
@@ -116,6 +120,23 @@ class BinanceMarkPriceClientTests {
         retries.get(0).action.run();
         connections.get(1).handshake.completeExceptionally(new java.io.IOException("unreachable"));
         assertThat(retries).extracting(Retry::delay).containsExactly(1000L, 2000L);
+    }
+
+    @Test
+    void openWithoutValidDataDoesNotResetBackoffButFirstValidPriceDoes() {
+        client.start();
+        Connection first = openLatest();
+        first.listener.onClose(first.socket, 1000, "unstable");
+        retries.get(0).action.run();
+        Connection second = openLatest();
+        second.listener.onText(second.socket, "invalid", true);
+        second.listener.onClose(second.socket, 1000, "unstable");
+        assertThat(retries).extracting(Retry::delay).containsExactly(1000L, 2000L);
+        retries.get(1).action.run();
+        Connection third = openLatest();
+        third.listener.onText(third.socket, BinanceMarkPriceProtocolTests.message("BTCUSDT", "10"), true);
+        third.listener.onClose(third.socket, 1000, "after healthy price");
+        assertThat(retries).extracting(Retry::delay).containsExactly(1000L, 2000L, 1000L);
     }
 
     @Test
@@ -148,7 +169,7 @@ class BinanceMarkPriceClientTests {
         connection.listener.onText(connection.socket, message.substring(0, 20), false);
         connection.listener.onText(connection.socket, message.substring(20), true);
         assertThat(messages()).anyMatch(text -> text.contains("tradingSymbolId=42 symbol=BTC")
-                && text.contains("price=123.45000000"));
+                && text.contains("domainMarkPrice=123.45000000"));
         now.set(Duration.ofSeconds(20).toNanos());
         connection.listener.onText(connection.socket, "invalid JSON", true);
         healthCheck.run();
@@ -189,7 +210,7 @@ class BinanceMarkPriceClientTests {
         assertThat(connections).isEmpty();
         assertThat(retries.get(0).delay).isEqualTo(30);
         assertThat(retries.get(0).unit).isEqualTo(TimeUnit.SECONDS);
-        targets.add(new BinanceSubscriptionTarget(5L, "SOL", "SOLUSDT"));
+        targets.add(new BinanceSubscriptionTarget(5L, "SOL", "SOLUSDT", 1L));
         retries.get(0).action.run();
         assertThat(connections).hasSize(1);
     }

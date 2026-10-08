@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.util.Objects;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "trading_symbol")
@@ -34,6 +35,9 @@ public class TradingSymbol {
     @Column(nullable = false, length = 40)
     private String providerSymbol;
 
+    @Column(nullable = false)
+    private long providerUnitMultiplier;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     private TradingSymbolStatus status;
@@ -42,7 +46,7 @@ public class TradingSymbol {
     }
 
     private TradingSymbol(String name, String symbol, String quoteAsset,
-                          TradingSymbolProvider provider, String providerSymbol) {
+                          TradingSymbolProvider provider, String providerSymbol, long providerUnitMultiplier) {
         if (name == null || name.isBlank() || name.length() > 100 || !name.equals(name.strip())) {
             throw new IllegalArgumentException("name must be non-blank, trimmed, and at most 100 characters");
         }
@@ -51,17 +55,19 @@ public class TradingSymbol {
             throw new IllegalArgumentException("quoteAsset must be USDT");
         }
         requireSymbol(providerSymbol, 40, "providerSymbol");
+        requireProviderUnitMultiplier(providerUnitMultiplier);
         this.name = name;
         this.symbol = symbol;
         this.quoteAsset = quoteAsset;
         this.provider = Objects.requireNonNull(provider, "provider must not be null");
         this.providerSymbol = providerSymbol;
+        this.providerUnitMultiplier = providerUnitMultiplier;
         this.status = TradingSymbolStatus.INACTIVE;
     }
 
     public static TradingSymbol register(String name, String symbol, String quoteAsset,
-                                         TradingSymbolProvider provider, String providerSymbol) {
-        return new TradingSymbol(name, symbol, quoteAsset, provider, providerSymbol);
+                                         TradingSymbolProvider provider, String providerSymbol, long providerUnitMultiplier) {
+        return new TradingSymbol(name, symbol, quoteAsset, provider, providerSymbol, providerUnitMultiplier);
     }
 
     // Future administration must verify provider metadata and existing trading state before activation.
@@ -73,9 +79,22 @@ public class TradingSymbol {
         this.status = TradingSymbolStatus.INACTIVE;
     }
 
-    public void changeProviderSymbol(String providerSymbol) {
+    public void changeProviderMapping(String providerSymbol, long providerUnitMultiplier) {
         requireSymbol(providerSymbol, 40, "providerSymbol");
+        requireProviderUnitMultiplier(providerUnitMultiplier);
         this.providerSymbol = providerSymbol;
+        this.providerUnitMultiplier = providerUnitMultiplier;
+    }
+
+    public static void requireProviderUnitMultiplier(long multiplier) {
+        if (multiplier <= 0) {
+            throw new IllegalArgumentException("providerUnitMultiplier must be positive");
+        }
+        try {
+            BigDecimal.ONE.divide(BigDecimal.valueOf(multiplier));
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("providerUnitMultiplier must permit exact decimal normalization", exception);
+        }
     }
 
     private static void requireSymbol(String value, int maxLength, String field) {
@@ -90,5 +109,6 @@ public class TradingSymbol {
     public String getQuoteAsset() { return quoteAsset; }
     public TradingSymbolProvider getProvider() { return provider; }
     public String getProviderSymbol() { return providerSymbol; }
+    public long getProviderUnitMultiplier() { return providerUnitMultiplier; }
     public TradingSymbolStatus getStatus() { return status; }
 }
