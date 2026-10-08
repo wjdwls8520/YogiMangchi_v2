@@ -35,6 +35,14 @@ Trading Server는 Yogimangchi V2에서 특히 데이터 정합성, 동시성, �
 클래스, 자료구조, Lock, Scheduler, Query 기술은 실제 문제와 검증 결과를 기준으로 Agent가 선택한다.
 필요한 의존성은 루트 정책에 따라 추가할 수 있으며, 선택 이유와 영향을 완료 보고한다. 미래 기능과 과도한 추상화를 선행 구현하지 않는다.
 
+### Single-node complete, Multi-node ready
+
+- 현재 한 대의 Trading Server와 PostgreSQL·Redis만으로 요청된 기능이 완전히 동작해야 한다.
+- Trading 정합성은 영구 DB의 Transaction·동시성 제어·멱등성으로 보장하고, JVM 메모리에만 의존하지 않는다.
+- 현재에도 필요한 공유 Market State·실시간 전달·이벤트 재처리 경계는 구현하여 향후 다중 서버에서도 핵심 Trading Domain을 재작성하지 않도록 한다.
+- 여러 서버가 있어야 의미가 있는 Leader Election, Node Registry, 서버 간 Heartbeat 및 Ownership Coordinator는 선행 구현하지 않는다.
+- 자연스럽게 드러나지 않는 미래 Coordination 경계에만 짧은 TODO를 남긴다. 구체적인 구현 방법은 현재 요구사항과 테스트를 기준으로 선택한다.
+
 # 1. Trading Scope
 
 Yogimangchi V2의 모의투자는 **USDT 기준 Futures Trading만 지원한다.**
