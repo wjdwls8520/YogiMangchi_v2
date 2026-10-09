@@ -65,7 +65,7 @@ class TradingSymbolIntegrationTests {
                     Set.of("PEPE", "SHIB").contains(symbol.getSymbol()) ? 1000L : 1L);
         });
         assertThat(jdbc.queryForList("select version from trading.flyway_schema_history where type = 'SQL' order by installed_rank", String.class))
-                .containsExactly("1", "2", "3");
+                .containsExactly("1", "2", "3", "4");
     }
 
     @Test

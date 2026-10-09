@@ -45,6 +45,13 @@ Trading Server는 Yogimangchi V2에서 특히 데이터 정합성, 동시성, �
 
 # 1. Trading Scope
 
+### Guest Trading MVP 인증 경계
+
+현재 요청된 Trading MVP에서는 Content 로그인/JWT 구현 전에도 계정 소유권을 검증하기 위해
+7일 만료의 무작위 Guest Bearer Credential을 사용할 수 있다. 원문은 생성 응답 한 번에만 제공하고
+DB에는 Hash만 보존한다. 요청의 임의 accountId를 신뢰하지 않으며 인증된 계정으로 업무 범위를 제한한다.
+이는 Trading MVP에 한정한 경계이며 최종 제품의 Content 발급 Yogimangchi JWT 원칙은 유지한다.
+
 Yogimangchi V2의 모의투자는 **USDT 기준 Futures Trading만 지원한다.**
 
 지원:

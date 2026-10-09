@@ -5,6 +5,98 @@ info:
 servers:
 - url: /
 paths:
+  /api/v1/trading/accounts/guest:
+    post:
+      tags:
+      - trading-account-controller
+      summary: Create a guest simulation account with 10000 USDT
+      description: Returns a 7-day opaque bearer credential once. Losing it means
+        losing access; never share or log it.
+      operationId: createGuest
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestAccountResponse"
+  /api/v1/trading/account/wallet:
+    get:
+      tags:
+      - trading-account-controller
+      summary: Read the authenticated guest's USDT wallet and current valuation
+      description: "401: missing/expired credential; 409 TRADING_BUSY: retry after\
+        \ lock contention; 503: authentication storage unavailable."
+      operationId: wallet
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletResponse"
+      security:
+      - guestBearer: []
+  /api/v1/trading/account/summary:
+    get:
+      tags:
+      - trading-account-controller
+      summary: "Read a coherent account, wallet and open-position snapshot"
+      description: "401: missing/expired credential; 409 TRADING_BUSY: retry after\
+        \ lock contention; 503: authentication storage unavailable."
+      operationId: summary
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountSummaryResponse"
+      security:
+      - guestBearer: []
+  /api/v1/trading/account/positions:
+    get:
+      tags:
+      - trading-account-controller
+      summary: Read the authenticated guest's open position lots
+      description: "401: missing/expired credential; 409 TRADING_BUSY: retry after\
+        \ lock contention; 503: authentication storage unavailable."
+      operationId: positions
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PositionResponse"
+      security:
+      - guestBearer: []
   /api/v1/symbols:
     get:
       tags:
@@ -56,6 +148,108 @@ components:
           - object
           - "null"
           additionalProperties: {}
+    GuestAccountResponse:
+      type: object
+      properties:
+        accountId:
+          type: integer
+          format: int64
+        status:
+          type: string
+        quoteAsset:
+          type: string
+        initialBalance:
+          type: string
+        accessToken:
+          type: string
+          description: "256-bit opaque guest credential. Returned once; send as Authorization:\
+            \ Bearer <token>."
+        tokenType:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    WalletResponse:
+      type: object
+      description: USDT amounts are decimal strings. Valuation-dependent fields are
+        null when any open position price is unavailable.
+      properties:
+        quoteAsset:
+          type: string
+        balance:
+          type: string
+        usedMargin:
+          type: string
+        reservedMargin:
+          type: string
+        realizedPnl:
+          type: string
+        unrealizedPnl:
+          type: string
+        equity:
+          type: string
+        availableBalance:
+          type: string
+        valuationStatus:
+          type: string
+    AccountSummaryResponse:
+      type: object
+      properties:
+        accountId:
+          type: integer
+          format: int64
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        wallet:
+          $ref: "#/components/schemas/WalletResponse"
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PositionResponse"
+        valuedAt:
+          type: string
+          format: date-time
+    PositionResponse:
+      type: object
+      description: Independent position lot in domain asset units. markPrice/unrealizedPnl
+        are null unless the server price is FRESH.
+      properties:
+        id:
+          type: integer
+          format: int64
+        tradingSymbolId:
+          type: integer
+          format: int64
+        side:
+          type: string
+        quantity:
+          type: string
+        entryPrice:
+          type: string
+        leverage:
+          type: integer
+          format: int32
+        margin:
+          type: string
+        status:
+          type: string
+        realizedPnl:
+          type: string
+        markPrice:
+          type: string
+        unrealizedPnl:
+          type: string
+        priceStatus:
+          type: string
+        priceEventTime:
+          type: string
+          format: date-time
+        openedAt:
+          type: string
+          format: date-time
     TradingSymbolResponse:
       type: object
       properties:
@@ -77,3 +271,9 @@ components:
           type: string
           description: 화면 표시용 거래쌍
           example: BTC / USDT
+  securitySchemes:
+    guestBearer:
+      type: http
+      description: Opaque Guest Trading MVP credential; not a Content JWT. Issued
+        by POST /api/v1/trading/accounts/guest.
+      scheme: bearer

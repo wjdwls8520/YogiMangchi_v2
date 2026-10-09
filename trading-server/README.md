@@ -149,15 +149,54 @@ ID는 예시다. 클라이언트는 목록과 ID를 하드코딩하지 않고 AP
 Provider/Provider Symbol/status는 공개 DTO에 없다. Repository는 필요한 컬럼을 DTO로 조회하고
 Service가 읽기 전용 트랜잭션을 가진다.
 
-Security는 이 경로의 GET만 추가 공개한다. 하위 경로, 쓰기 요청, 다른 업무 API는 차단한다.
-로컬 문서 접근과 기본 계정 미생성, 폼 로그인/Basic/로그아웃/요청 캐시 비활성화,
-CSRF 기본 보호를 유지했다. JWT/세션/토큰 저장 정책은 아직 구현·결정하지 않았다.
-CORS는 실제 Frontend Origin이 정해질 때 명시적으로 허용 목록을 정한다.
+Symbol 목록, Guest 계정 생성, 공개 가격 WebSocket과 로컬 문서에 필요한 경로만 공개한다.
+계정 조회는 아래 Guest Bearer 인증을 요구하며 명시하지 않은 다른 업무 경로는 차단한다.
+기본 계정 미생성, 폼 로그인/Basic/로그아웃/요청 캐시 비활성화를 유지한다.
+거래 REST는 Stateless이며 Cookie 인증이 없으므로 `/api/v1/trading/**`만 CSRF 검사에서 제외한다.
+다른 경로에는 기존 CSRF 보호를 유지한다. REST CORS 허용 Origin은 기본 localhost/127.0.0.1의 5173이며
+`TRADING_HTTP_ALLOWED_ORIGINS`에 쉼표로 구분한 정확한 Origin을 설정한다. `*`/Cookie Credentials는 허용하지 않는다.
 
-현재 업무 예외가 없어 BusinessException/ErrorCode를 미리 만들지 않았다.
+현재 필요한 업무 오류는 `BusinessException`/`ErrorCode`와 공통 ProblemDetail 응답으로 처리한다.
 전역 `ApiExceptionHandler`는 MVC 오류 처리를 유지하고 예상하지 못한 오류를
 `application/problem+json`의 500 응답으로 반환한다. 내부 예외/SQL/Stack Trace는 응답에 넣지 않고
 원인은 서버 로그에 남긴다. Service에서 예외를 삼키지 않는다.
+
+### Guest 계정·Wallet·Position Core
+
+| Method | Endpoint | 인증/응답 |
+| --- | --- | --- |
+| POST | `/api/v1/trading/accounts/guest` | 공개. 10,000 USDT 계정과 7일 Guest Credential 생성, 201 |
+| GET | `/api/v1/trading/account/wallet` | Bearer. 자기 Wallet과 현재 평가 금액 |
+| GET | `/api/v1/trading/account/positions` | Bearer. 자기 OPEN Position 목록 |
+| GET | `/api/v1/trading/account/summary` | Bearer. 일관된 계정·Wallet·OPEN Position 평가 Snapshot |
+
+Guest 생성 응답은 `accountId`, `status`, `quoteAsset`, `initialBalance`, `accessToken`, `tokenType`, `expiresAt`이다.
+`accessToken`은 암호학적으로 무작위인 256-bit 불투명 문자열이고 `Authorization: Bearer <accessToken>`으로 보낸다.
+서버는 PostgreSQL에 SHA-256 Hash만 저장하며 원문은 생성 응답에서 한 번만 제공한다. URL·로그에 토큰을 넣지 않는다.
+이 Credential은 현재 Trading MVP의 계정 접근권이며 Content 로그인/JWT를 대신하는 영구 인증 설계는 아니다.
+토큰을 잃거나 7일이 지나면 해당 계정에 다시 접근할 수 없다. 계정/이력은 삭제되지 않으며 새 Guest를 생성한다.
+Frontend는 우선 메모리에 보관하고 새로고침 복구를 위한 브라우저 저장 선택에는 XSS 위험을 고려한다.
+인터넷 공개 전에는 TLS, Gateway의 Guest 생성/인증 요청 제한과 최종 Content JWT 전환을 검증해야 한다.
+계정 ID를 경로·요청에 넣어 다른 계정에 접근하는 API는 제공하지 않는다. 만료/변조/없는 Credential은 401이다.
+
+V4는 `trading_account`, `wallet`, `position`을 생성한다. 계정은 내부 ID, 상태, Credential Hash/만료,
+생성 시간과 마지막 재무 변경 시각을 가진다. Wallet은 계정당 하나이며 실제 잔액, 사용/예약 Margin,
+누적 실현 PnL을 보존한다. Position은 개별 체결 Lot 단위로 독립된 LONG/SHORT 수량·진입가·Leverage·Margin,
+OPEN/CLOSED/LIQUIDATED 상태·실현 PnL·청산가·생성/종료 시각을 가진다. 같은 종목의 여러 Lot도 USDT Wallet을 공유한다.
+현재 단계에서는 계정 생성/조회만 제공하며 Order/Fill 또는 공개 Position 변경 API는 아직 없다.
+
+금액/가격은 NUMERIC(38,18), Domain 자산 수량은 NUMERIC(28,8)이다. `execution.TradingMath`에서
+금액/PnL HALF_EVEN 18자리, 최초 Margin CEILING 18자리, Leverage 1~20, 1~1,000,000 USDT Notional,
+최대 10^12 수량/100개 OPEN Lot 정책을 정의한다. JSON 금액·수량은 정밀도를 보존하는 문자열이다.
+LONG PnL은 `(mark-entry)*quantity`, SHORT는 그 반대다. 평가자산은 `balance + unrealizedPnl`이며
+사용 가능 금액은 `max(0, min(balance, equity) - usedMargin - reservedMargin)`이다.
+미실현 이익으로 추가 Margin을 만들지 않으며 손실은 구매력을 줄인다. Margin은 현금 지출이 아닌 사용 제한이다.
+
+계정 Snapshot은 PostgreSQL 계정 Row Lock → Wallet → Position 순서로 읽어 동시 재무 변경과 섞이지 않게 한다.
+Lock 대기는 최대 2초이며 경합 실패는 409 `TRADING_BUSY`다. 가격은 하나의 메모리 Snapshot으로 평가한다.
+하나의 보유 종목이라도 FRESH가 아니면 전체 `unrealizedPnl/equity/availableBalance`는 null이고
+`valuationStatus=UNAVAILABLE`이다. 해당 Position의 Mark/PnL도 null이며 마지막 가격을 0 또는 현재 값으로 취급하지 않는다.
+Open Position이 없는 계정의 평가 금액은 DB 현금만으로 계산할 수 있다. 시장 연결 상태와 DB 잔액을 혼동하지 않는다.
 
 ## Binance Mark Price 수신
 
@@ -346,4 +385,4 @@ Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/tra
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
 자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-Order/Fill/Position/Wallet, JWT, Admin, Trading Engine은 이번 단계에 없다.
+Order/Fill 실행, JWT, Admin, Trading Engine은 다음 단계에서 필요한 범위를 구현한다.

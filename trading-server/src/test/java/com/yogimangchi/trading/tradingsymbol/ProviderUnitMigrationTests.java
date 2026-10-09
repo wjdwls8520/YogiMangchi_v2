@@ -29,7 +29,7 @@ class ProviderUnitMigrationTests {
             Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("2").load().migrate();
             jdbc.update("update " + schema + ".trading_symbol set status = 'INACTIVE' where symbol = 'PEPE'");
             var before = jdbc.queryForList("select id, symbol, provider_symbol, status from " + schema + ".trading_symbol order by id");
-            var flyway = Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load();
+            var flyway = Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("3").load();
             assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
             assertThat(jdbc.queryForList("select id, symbol, provider_symbol, status from " + schema + ".trading_symbol order by id"))
                     .isEqualTo(before);
@@ -48,7 +48,7 @@ class ProviderUnitMigrationTests {
         try {
             Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("2").load().migrate();
             jdbc.update("update " + schema + ".trading_symbol set provider_symbol = 'NEWPEPEUSDT' where symbol = 'PEPE'");
-            assertThatThrownBy(() -> Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load().migrate())
+            assertThatThrownBy(() -> Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("3").load().migrate())
                     .isInstanceOf(FlywayException.class).hasStackTraceContaining("Unverified provider mapping");
             assertThat(jdbc.queryForObject("select count(*) from information_schema.columns where table_schema = ? and column_name = 'provider_unit_multiplier'", Long.class, schema))
                     .isZero();

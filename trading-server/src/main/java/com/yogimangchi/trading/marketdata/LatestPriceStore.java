@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -79,12 +80,24 @@ public class LatestPriceStore {
     }
 
     public synchronized Snapshot find(Long tradingSymbolId) {
+        return findAt(tradingSymbolId, clock.instant());
+    }
+
+    /** One timestamp and cache lock give account-wide valuation a coherent price vector. */
+    public synchronized Map<Long, Snapshot> findAll(Collection<Long> tradingSymbolIds) {
+        Instant now = clock.instant();
+        Map<Long, Snapshot> result = new HashMap<>();
+        for (Long id : tradingSymbolIds) result.put(id, findAt(id, now));
+        return Map.copyOf(result);
+    }
+
+    private Snapshot findAt(Long tradingSymbolId, Instant now) {
         LatestMarkPrice price = prices.get(tradingSymbolId);
         if (price == null) {
             return new Snapshot(Status.MISSING, Optional.empty());
         }
         Status status = !available.contains(tradingSymbolId) ? Status.UNAVAILABLE
-                : isFreshAt(price, clock.instant()) ? Status.FRESH : Status.STALE;
+                : isFreshAt(price, now) ? Status.FRESH : Status.STALE;
         return new Snapshot(status, Optional.of(price));
     }
 
