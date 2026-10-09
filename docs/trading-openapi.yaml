@@ -26,6 +26,117 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GuestAccountResponse"
+  /api/v1/trading/account/positions/{positionId}/close:
+    post:
+      tags:
+      - order-controller
+      summary: Close one entire owned position at the fresh server mark price
+      description: "LONG closes by selling, SHORT by buying. All held symbols must\
+        \ be fresh. Same idempotency contract as opening; 404 for another account's\
+        \ position."
+      operationId: close
+      parameters:
+      - name: positionId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponse"
+      security:
+      - guestBearer: []
+  /api/v1/trading/account/orders:
+    get:
+      tags:
+      - order-controller
+      summary: "Read own order/fill history, newest first"
+      description: "Use the last returned orderId as beforeId for the next page; limit\
+        \ 1-100, default 50."
+      operationId: history
+      parameters:
+      - name: beforeId
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 50
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OrderResponse"
+      security:
+      - guestBearer: []
+    post:
+      tags:
+      - order-controller
+      summary: Open a LONG or SHORT position at the fresh server mark price
+      description: "Idempotency-Key: 8-100 letters, digits, underscore or hyphen.\
+        \ Replay returns original result. 400 invalid request; 401 credential; 409\
+        \ margin/risk/idempotency conflict; 503 unavailable price. No client execution\
+        \ price."
+      operationId: create
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+        required: true
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponse"
+      security:
+      - guestBearer: []
   /api/v1/trading/account/wallet:
     get:
       tags:
@@ -169,6 +280,74 @@ components:
         expiresAt:
           type: string
           format: date-time
+    FillResponse:
+      type: object
+      properties:
+        fillId:
+          type: integer
+          format: int64
+        price:
+          type: string
+        priceEventTime:
+          type: string
+          format: date-time
+        executedAt:
+          type: string
+          format: date-time
+        realizedPnl:
+          type: string
+    OrderResponse:
+      type: object
+      properties:
+        orderId:
+          type: integer
+          format: int64
+        positionId:
+          type: integer
+          format: int64
+        tradingSymbolId:
+          type: integer
+          format: int64
+        type:
+          type: string
+        action:
+          type: string
+        side:
+          type: string
+        status:
+          type: string
+        quantity:
+          type: string
+        leverage:
+          type: integer
+          format: int32
+        createdAt:
+          type: string
+          format: date-time
+        fill:
+          $ref: "#/components/schemas/FillResponse"
+    CreateOrderRequest:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - MARKET
+        tradingSymbolId:
+          type: integer
+          format: int64
+        side:
+          type: string
+          enum:
+          - LONG
+          - SHORT
+        quantity:
+          type: string
+          description: "Domain asset quantity, maximum 8 decimal places"
+          example: "0.001"
+        leverage:
+          type: integer
+          format: int32
     WalletResponse:
       type: object
       description: USDT amounts are decimal strings. Valuation-dependent fields are

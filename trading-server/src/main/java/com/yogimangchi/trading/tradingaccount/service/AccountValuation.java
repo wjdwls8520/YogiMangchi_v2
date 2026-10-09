@@ -20,9 +20,15 @@ public class AccountValuation {
                         BigDecimal availableBalance, BigDecimal maintenanceMargin) { }
 
     public Value calculate(Wallet wallet, List<Position> positions) {
+        return calculate(wallet, positions, java.util.Set.of());
+    }
+
+    public Value calculate(Wallet wallet, List<Position> positions, java.util.Set<Long> additionalSymbols) {
         Instant capturedAt = Instant.now();
+        var ids = new java.util.HashSet<>(additionalSymbols);
+        positions.forEach(position -> ids.add(position.getTradingSymbolId()));
         Map<Long, LatestPriceStore.Snapshot> snapshots = prices.findAll(
-                positions.stream().map(Position::getTradingSymbolId).toList());
+                ids);
         boolean fresh = snapshots.values().stream().allMatch(snapshot -> snapshot.status() == LatestPriceStore.Status.FRESH);
         if (!fresh) return new Value(capturedAt, snapshots, false, null, null, null, null);
         BigDecimal pnl = BigDecimal.ZERO;

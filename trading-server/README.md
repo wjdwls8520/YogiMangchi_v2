@@ -183,7 +183,25 @@ V4는 `trading_account`, `wallet`, `position`을 생성한다. 계정은 내부 
 생성 시간과 마지막 재무 변경 시각을 가진다. Wallet은 계정당 하나이며 실제 잔액, 사용/예약 Margin,
 누적 실현 PnL을 보존한다. Position은 개별 체결 Lot 단위로 독립된 LONG/SHORT 수량·진입가·Leverage·Margin,
 OPEN/CLOSED/LIQUIDATED 상태·실현 PnL·청산가·생성/종료 시각을 가진다. 같은 종목의 여러 Lot도 USDT Wallet을 공유한다.
-현재 단계에서는 계정 생성/조회만 제공하며 Order/Fill 또는 공개 Position 변경 API는 아직 없다.
+시장가 주문은 개별 Position Lot을 만들고 전체 종료만 지원한다. 부분 종료/동일 종목 합산은 제공하지 않는다.
+
+| Method | Endpoint | 목적 |
+| --- | --- | --- |
+| POST | `/api/v1/trading/account/orders` | `type=MARKET`, `tradingSymbolId`, `side=LONG/SHORT`, 문자열 `quantity`, `leverage`로 주문 |
+| POST | `/api/v1/trading/account/positions/{positionId}/close` | 해당 Lot 전체 종료. Body 없음 |
+| GET | `/api/v1/trading/account/orders?beforeId=&limit=50` | 자기 주문/체결 이력. ID 내림차순, 최대 100개 |
+
+모두 Guest Bearer 인증이 필요하다. 변경 요청의 `Idempotency-Key`는 8~100자 영문/숫자/`_`/`-`다.
+계정별 동일 Key/동일 요청은 최초 결과를 반환하고 다른 요청은 409 `IDEMPOTENCY_CONFLICT`다.
+네트워크 응답 유실 시 같은 Key로 재시도한다. 재전송은 가격이 unavailable이어도 기존 결과를 돌려준다.
+주문/종료 성공은 200이며 Response의 `fill`에 체결가·가격 이벤트 시각·체결 시각·실현 PnL이 있다.
+Client의 임의 가격은 사용하지 않는다. V5의 계정별 Key UNIQUE, Position별 OPEN/CLOSE UNIQUE,
+Fill의 order_id UNIQUE와 계정 Row Lock을 함께 사용한다. Position/Wallet/Order/Fill은 하나의 Transaction이다.
+Commit 이후에만 성공 로그를 남긴다. Lock timeout/교착은 전체 rollback하며 무한 재시도하지 않는다.
+신규 주문에는 ACTIVE 종목과 보유 종목 전체의 fresh 가격, 충분한 가용 Margin이 필요하다.
+종료도 전체 fresh 평가를 요구하며 유지증거금 이하의 계정은 `ACCOUNT_AT_RISK`로 차단한다.
+손실 Lot 종료로 현금이 음수가 되면 거절한다. 수익 Lot을 먼저 종료해야 하는 경우가 있다.
+지정가/자동 강제청산은 다음 단계에서 추가하며, 이 단계만 인터넷 서비스로 배포하지 않는다.
 
 금액/가격은 NUMERIC(38,18), Domain 자산 수량은 NUMERIC(28,8)이다. `execution.TradingMath`에서
 금액/PnL HALF_EVEN 18자리, 최초 Margin CEILING 18자리, Leverage 1~20, 1~1,000,000 USDT Notional,
@@ -385,4 +403,4 @@ Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/tra
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
 자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-Order/Fill 실행, JWT, Admin, Trading Engine은 다음 단계에서 필요한 범위를 구현한다.
+지정가 Trigger/자동 강제청산, JWT, Admin은 다음 단계에서 필요한 범위를 구현한다.
