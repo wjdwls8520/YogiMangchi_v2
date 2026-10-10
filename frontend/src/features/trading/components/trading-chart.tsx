@@ -19,11 +19,11 @@ export function TradingChart({ view = "loading" }: { view?: MarketChartView }) {
             {timeframe}
           </button>
         ))}
-        <span>Timeframe 미지원</span>
+        <span className="px-2 text-xs text-slate-500">Timeframe 미지원</span>
       </div>
       <figure aria-labelledby="chart-caption" className="flex min-h-80 flex-1 flex-col sm:min-h-96">
-        <div data-market-chart-frame aria-busy={view === "loading"}>
-          <div data-chart-mount aria-label="BTC / USDT Mark Price 선 그래프" role="img" />
+        <div data-market-chart-frame data-view={view} aria-busy={view === "loading"} className="relative min-h-80 flex-1 sm:min-h-96">
+          <div data-chart-mount aria-label="BTC / USDT Mark Price 선 그래프" role="img" className="absolute inset-0 overflow-hidden" />
           {view !== "ready" && <ChartState title={messages[view]} />}
         </div>
         <figcaption id="chart-caption" className="flex flex-wrap justify-between gap-2 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
