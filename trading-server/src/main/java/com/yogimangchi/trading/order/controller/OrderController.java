@@ -15,7 +15,7 @@ public class OrderController {
     private final TradingOrderService engine;
     public OrderController(TradingOrderService engine) { this.engine = engine; }
     @PostMapping("/orders")
-    @Operation(summary="Create a MARKET execution or reserve a PENDING LIMIT order",
+    @Operation(summary="OPEN a new lot with MARKET or reserve a PENDING LIMIT OPEN order",
             description="Idempotency-Key: 8-100 letters, digits, underscore or hyphen. Replay returns the same order with its current state. 400 invalid request; 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price or recovering engine. No client execution price.")
     public OrderResponse create(@AuthenticationPrincipal GuestPrincipal principal, @RequestHeader("Idempotency-Key") String key,
             @RequestBody CreateOrderRequest request) { return engine.create(principal.accountId(), key, request); }

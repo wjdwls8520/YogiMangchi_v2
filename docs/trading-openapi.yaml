@@ -159,7 +159,7 @@ paths:
     post:
       tags:
       - order-controller
-      summary: Create a MARKET execution or reserve a PENDING LIMIT order
+      summary: OPEN a new lot with MARKET or reserve a PENDING LIMIT OPEN order
       description: "Idempotency-Key: 8-100 letters, digits, underscore or hyphen.\
         \ Replay returns the same order with its current state. 400 invalid request;\
         \ 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price\
@@ -493,6 +493,8 @@ components:
           example: "70000"
     CreateOrderRequest:
       type: object
+      description: OPEN a new independent position lot. Reduce existing exposure through
+        the position close or close-orders endpoint.
       properties:
         type:
           type: string
@@ -514,6 +516,9 @@ components:
         leverage:
           type: integer
           format: int32
+          description: Lot leverage; fixed after opening
+          maximum: 20
+          minimum: 1
         limitPrice:
           type: string
           description: Required only for LIMIT. LONG fills at or below; SHORT at or

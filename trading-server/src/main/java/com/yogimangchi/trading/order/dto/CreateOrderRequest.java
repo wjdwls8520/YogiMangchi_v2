@@ -3,7 +3,8 @@ import com.yogimangchi.trading.order.entity.TradingOrder;
 import com.yogimangchi.trading.position.entity.Position;
 import java.math.BigDecimal;
 import io.swagger.v3.oas.annotations.media.Schema;
+@Schema(description = "OPEN a new independent position lot. Reduce existing exposure through the position close or close-orders endpoint.")
 public record CreateOrderRequest(TradingOrder.Type type, Long tradingSymbolId, Position.Side side,
         @Schema(type = "string", example = "0.001", description = "Domain asset quantity, maximum 8 decimal places") BigDecimal quantity,
-        Integer leverage,
+        @Schema(minimum = "1", maximum = "20", description = "Lot leverage; fixed after opening") Integer leverage,
         @Schema(type = "string", example = "60000", description = "Required only for LIMIT. LONG fills at or below; SHORT at or above this price") BigDecimal limitPrice) { }

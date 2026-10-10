@@ -200,6 +200,8 @@ V7은 기존 원래 수량/증거금을 `initial_quantity`/`initial_margin`에 �
 | GET | `/api/v1/trading/status` | 공개. Trigger 기반시설 READY/RECOVERING |
 
 status 외에는 Guest Bearer 인증이 필요하다. 주문/종료의 `Idempotency-Key`는 8~100자 영문/숫자/`_`/`-`다.
+주문/종료 요청은 `Content-Type: application/json`으로 전송한다. 시장가 전체 종료는 빈 Body 또는 `{}`를 사용할 수 있다.
+빈 문자열/공백 수량은 생략으로 간주하지 않고 400으로 거절한다.
 계정별 동일 Key/동일 요청은 최초 결과를 반환하고 다른 요청은 409 `IDEMPOTENCY_CONFLICT`다.
 네트워크 응답 유실 시 같은 Key로 재시도한다. 재전송은 가격이 unavailable이어도 동일 주문을 돌려준다.
 지정가가 이미 체결/취소된 경우 그 주문의 현재 상태를 반환하며 새 주문을 만들지 않는다.
@@ -260,6 +262,8 @@ V8은 수량 예약의 `0 <= reserved <= remaining` 제약과 CLOSE 대상 Posit
 큰 가격 Gap의 손실을 0으로 잘라내지 않는다. 잔액이 0 이하면 BANKRUPT로 신규 거래를 차단하고 실제 손실을 보존한다.
 청산 후 잔액이 양수면 ACTIVE이며 새 거래가 가능하다. 자동 부채 보전/보험 기금은 제공하지 않는다.
 이것은 명시적인 모의투자 정책이며 Binance Maintenance Tier, Funding, 수수료 또는 실제 매칭 엔진의 복제가 아니다.
+현재 OPEN/CLOSE/LIQUIDATE의 Fee는 모두 0이며 기존 무수수료 정책을 유지한다. 정해지지 않은 Maker/Taker 요율을
+임의 적용하지 않는다. 실제 거래소 비용을 비교하는 수익률로 해석해서는 안 되며 Funding 역시 계산하지 않는다.
 
 Worker는 매 Tick 전체 주문을 읽지 않는다. 종목별 OPEN Position 인덱스와 LONG/SHORT 지정가 범위 인덱스로
 후보 계정을 100개씩 Keyset 조회하고, 계정 잠금 후 최대 100개 PENDING/OPEN 항목을 재검증한다.

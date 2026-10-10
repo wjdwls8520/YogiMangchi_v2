@@ -180,9 +180,11 @@ class MarketOrderIntegrationTests {
         amount("balance", "10040"); amount("used_margin", "60");
     }
 
-    @Test void repeatedPartialClosesFinishExactlyAndPreserveOriginalLotAndEveryFill() {
-        var opened = create("1", Position.Side.SHORT, 3, key());
-        price("900");
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(Position.Side.class)
+    void repeatedPartialClosesFinishExactlyAndPreserveOriginalLotAndEveryFill(Position.Side side) {
+        var opened = create("1", side, 3, key());
+        price(side == Position.Side.LONG ? "1100" : "900");
         for (String quantity : List.of("0.3", "0.3", "0.4"))
             service.close(guest.accountId(), opened.positionId(), key(), new ClosePositionRequest(new BigDecimal(quantity)));
         assertThat(accounts.summary(guest.accountId()).positions()).isEmpty();
@@ -239,6 +241,18 @@ class MarketOrderIntegrationTests {
             rejects(() -> service.close(guest.accountId(), opened.positionId(), key(), new ClosePositionRequest(new BigDecimal(quantity))), ErrorCode.INVALID_ORDER);
         var small = service.close(guest.accountId(), opened.positionId(), key(), new ClosePositionRequest(new BigDecimal("0.00000001")));
         assertThat(small.fill().quantity()).isEqualTo("0.00000001");
+    }
+
+    @Test void blankCloseQuantityIsInvalidInsteadOfBeingTreatedAsFullClose() throws Exception {
+        var opened = create("1", Position.Side.LONG, 5, key());
+        for (String quantity : List.of("", " ")) {
+            mvc.perform(post("/api/v1/trading/account/positions/" + opened.positionId() + "/close")
+                    .header("Authorization", "Bearer " + guest.accessToken()).header("Idempotency-Key", key())
+                    .contentType("application/json").content("{\"quantity\":\"" + quantity + "\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+        assertThat(accounts.summary(guest.accountId()).positions().get(0).quantity()).isEqualTo("1.00000000");
+        assertThat(fillCount()).isEqualTo(1);
     }
     private void price(String price) { Instant now = Instant.now(); prices.update(new LatestMarkPrice(symbol, new BigDecimal(price), now, now)); }
     private static String key() { return UUID.randomUUID().toString(); }

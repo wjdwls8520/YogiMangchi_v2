@@ -342,6 +342,12 @@ class TriggerIntegrationTests {
         var other=accounts.createGuest();
         mvc.perform(post(path).header("Authorization","Bearer "+other.accessToken()).header("Idempotency-Key",key())
                 .contentType("application/json").content(body)).andExpect(status().isNotFound());
+        for (String blank : List.of("", " ")) {
+            mvc.perform(post(path).header("Authorization","Bearer "+guest.accessToken()).header("Idempotency-Key",key())
+                    .contentType("application/json").content("{\"quantity\":\""+blank+"\",\"limitPrice\":\"110\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+        positionAmount(opened.positionId(),"reserved_close_quantity","0");
         mvc.perform(post(path).header("Authorization","Bearer "+guest.accessToken()).header("Idempotency-Key",key())
                 .contentType("application/json").content(body))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.action").value("CLOSE"))
@@ -355,6 +361,203 @@ class TriggerIntegrationTests {
     private OrderResponse closeLimit(Long positionId,String quantity,String limit) {
         return orders.createLimitClose(guest.accountId(),positionId,key(),new LimitCloseRequest(
                 quantity==null ? null : new BigDecimal(quantity),new BigDecimal(limit)));
+    }
+
+    @Test void simultaneousCloseReservationsCannotOverbookAndDuplicateKeyReservesOnce() throws Exception {
+        var opened=market(Position.Side.LONG,"1",10);
+        var results=concurrentResults(() -> closeLimit(opened.positionId(),"0.7","110"),
+                () -> closeLimit(opened.positionId(),"0.7","120"));
+        assertThat(results.stream().filter(OrderResponse.class::isInstance)).hasSize(1);
+        assertThat(results.stream().filter(BusinessException.class::isInstance).map(BusinessException.class::cast))
+                .extracting(BusinessException::getCode).containsExactly(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
+        positionAmount(opened.positionId(),"reserved_close_quantity","0.7");
+        orders.cancel(guest.accountId(),orders.pending(guest.accountId()).get(0).orderId());
+        String key=key(); var request=new LimitCloseRequest(new BigDecimal("0.7"),new BigDecimal("110"));
+        var duplicates=concurrentResults(() -> orders.createLimitClose(guest.accountId(),opened.positionId(),key,request),
+                () -> orders.createLimitClose(guest.accountId(),opened.positionId(),key,request));
+        assertThat(duplicates).allMatch(OrderResponse.class::isInstance);
+        assertThat(duplicates.stream().distinct()).hasSize(1);
+        positionAmount(opened.positionId(),"reserved_close_quantity","0.7");
+    }
+
+    @Test void limitCloseCancelVersusFillSettlesExactlyOnce() throws Exception {
+        var opened=market(Position.Side.LONG,"1",10);
+        var closing=closeLimit(opened.positionId(),"0.4","110");
+        var price=tick("111");
+        race(() -> orders.cancel(guest.accountId(),closing.orderId()), () -> processor.process(guest.accountId(),price,Map.of(symbol,price)));
+        String status=orderStatus(closing.orderId());
+        assertThat(status).isIn("FILLED","CANCELED");
+        positionAmount(opened.positionId(),"reserved_close_quantity","0");
+        positionAmount(opened.positionId(),"quantity",status.equals("FILLED") ? "0.6" : "1");
+        amount("balance",status.equals("FILLED") ? "10004.4" : "10000");
+        amount("used_margin",status.equals("FILLED") ? "6" : "10");
+        assertThat(fillCount()).isEqualTo(status.equals("FILLED") ? 2 : 1);
+    }
+
+    @Test void marketHalfCloseCannotRacePastReservedLimitClose() throws Exception {
+        var opened=market(Position.Side.LONG,"1",10);
+        var closing=closeLimit(opened.positionId(),"0.6","110");
+        var price=tick("111");
+        doNothing().when(gate).requireCaughtUp(anyMap());
+        var results=concurrentResults(() -> orders.close(guest.accountId(),opened.positionId(),key(),new ClosePositionRequest(new BigDecimal("0.5"))),
+                () -> { processor.process(guest.accountId(),price,Map.of(symbol,price)); return "processed"; });
+        assertThat(results.stream().filter(BusinessException.class::isInstance).map(BusinessException.class::cast))
+                .extracting(BusinessException::getCode).containsExactly(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
+        assertThat(orderStatus(closing.orderId())).isEqualTo("FILLED");
+        positionAmount(opened.positionId(),"quantity","0.4"); positionAmount(opened.positionId(),"reserved_close_quantity","0");
+        amount("balance","10006.6"); amount("used_margin","4"); assertThat(fillCount()).isEqualTo(2);
+    }
+
+    @Test void closeFillFailureRestoresReservationRemainingQuantityAndWalletThenRetriesOnce() {
+        var opened=market(Position.Side.LONG,"1",10);
+        var closing=closeLimit(opened.positionId(),"0.4","110");
+        var price=tick("111");
+        doThrow(new IllegalStateException("injected close fill failure")).when(fills).save(any());
+        assertThatThrownBy(() -> processor.process(guest.accountId(),price,Map.of(symbol,price))).isInstanceOf(IllegalStateException.class);
+        positionAmount(opened.positionId(),"quantity","1"); positionAmount(opened.positionId(),"reserved_close_quantity","0.4");
+        amount("used_margin","10"); amount("balance","10000"); assertThat(orderStatus(closing.orderId())).isEqualTo("PENDING");
+        assertThat(fillCount()).isEqualTo(1);
+        reset(fills);
+        processor.process(guest.accountId(),price,Map.of(symbol,price));
+        processor.process(guest.accountId(),price,Map.of(symbol,price));
+        positionAmount(opened.positionId(),"quantity","0.6"); positionAmount(opened.positionId(),"reserved_close_quantity","0");
+        amount("balance","10004.4"); assertThat(fillCount()).isEqualTo(2);
+    }
+
+    @Test void partialCloseStreamReplayAfterCommitDoesNotDecreaseQuantityTwice() throws Exception {
+        var opened=market(Position.Side.LONG,"1",10);
+        closeLimit(opened.positionId(),"0.4","110"); tick("111");
+        String checkpoint=jdbc.queryForObject("select stream_id from trading.market_trigger_cursor where id=1",String.class);
+        doThrow(new IllegalStateException("crash before checkpoint")).when(candidates).accounts(any(),longThat(id -> id>0));
+        assertThatThrownBy(worker::runOnce).isInstanceOf(IllegalStateException.class);
+        assertThat(jdbc.queryForObject("select stream_id from trading.market_trigger_cursor where id=1",String.class)).isEqualTo(checkpoint);
+        positionAmount(opened.positionId(),"quantity","0.6"); amount("balance","10004.4");
+        reset(candidates);
+        var restarted=new MarketTriggerWorker(redis,jdbc,json,bridge,gate,candidates,processor,false);
+        try { restarted.runOnce(); } finally { restarted.close(); }
+        positionAmount(opened.positionId(),"quantity","0.6"); positionAmount(opened.positionId(),"reserved_close_quantity","0");
+        amount("balance","10004.4"); amount("used_margin","6"); assertThat(fillCount()).isEqualTo(2);
+        drain();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"LONG,110,80", "SHORT,90,120"})
+    void partialCloseThenLiquidationUsesOnlyRemainingExposureAndClearsBothReservationTypes(Position.Side side,String limit,String adverse) throws Exception {
+        var opened=market(side,"900",10);
+        orders.close(guest.accountId(),opened.positionId(),key(),new ClosePositionRequest(new BigDecimal("300")));
+        var closing=closeLimit(opened.positionId(),"400",limit);
+        var opening=limit(Position.Side.SHORT,"1","200",10);
+        tick(adverse); drain();
+        assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
+        positionAmount(opened.positionId(),"quantity","0"); positionAmount(opened.positionId(),"reserved_close_quantity","0");
+        positionAmount(opened.positionId(),"realized_pnl","-12000");
+        amount("balance","-2000"); amount("used_margin","0"); amount("reserved_margin","0");
+        assertThat(orderStatus(closing.orderId())).isEqualTo("REJECTED"); assertThat(orderStatus(opening.orderId())).isEqualTo("REJECTED");
+        assertThat(orders.pending(guest.accountId())).isEmpty();
+        assertThat(orders.history(guest.accountId(),null,100).stream().filter(o -> o.action().equals("LIQUIDATE")))
+                .extracting(OrderResponse::quantity).containsExactly("600.00000000");
+        assertThat(fillCount()).isEqualTo(3);
+    }
+
+    @Test void liquidationRollbackRestoresCloseReservationAsWellAsRemainingLot() {
+        var opened=market(Position.Side.LONG,"1000",10);
+        var closing=closeLimit(opened.positionId(),"600","110");
+        var price=tick("89");
+        doThrow(new IllegalStateException("injected liquidation fill failure")).when(fills).save(any());
+        assertThatThrownBy(() -> processor.process(guest.accountId(),price,Map.of(symbol,price))).isInstanceOf(IllegalStateException.class);
+        positionAmount(opened.positionId(),"quantity","1000"); positionAmount(opened.positionId(),"reserved_close_quantity","600");
+        amount("balance","10000"); amount("used_margin","10000");
+        assertThat(orderStatus(closing.orderId())).isEqualTo("PENDING"); assertThat(fillCount()).isEqualTo(1);
+    }
+
+    @Test void marketCloseAndLiquidationRaceNeverSettleTheSameQuantityTwice() throws Exception {
+        var opened=market(Position.Side.LONG,"1000",10);
+        var risk=tick("89");
+        doNothing().when(gate).requireCaughtUp(anyMap());
+        var results=concurrentResults(() -> orders.close(guest.accountId(),opened.positionId(),key(),new ClosePositionRequest(new BigDecimal("500"))),
+                () -> { processor.process(guest.accountId(),risk,Map.of(symbol,risk)); return "processed"; });
+        assertThat(results.stream().filter(BusinessException.class::isInstance).map(BusinessException.class::cast))
+                .hasSize(1).allMatch(e -> e.getCode()==ErrorCode.ACCOUNT_AT_RISK || e.getCode()==ErrorCode.ACCOUNT_NOT_ACTIVE);
+        amount("balance","-1000"); amount("used_margin","0"); assertThat(fillCount()).isEqualTo(2);
+        assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
+    }
+
+    @Test void partialCloseThatCommitsFirstReducesSubsequentLiquidationRisk() throws Exception {
+        var opened=market(Position.Side.LONG,"1000",10);
+        CountDownLatch valued=new CountDownLatch(1), release=new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean first=new java.util.concurrent.atomic.AtomicBoolean(true);
+        doAnswer(invocation -> {
+            Object result=invocation.callRealMethod();
+            if(first.getAndSet(false)) {
+                valued.countDown();
+                if(!release.await(3,TimeUnit.SECONDS)) throw new IllegalStateException("Test transaction not released");
+            }
+            return result;
+        }).when(valuation).calculate(any(com.yogimangchi.trading.tradingaccount.entity.Wallet.class),anyList());
+        ExecutorService pool=Executors.newFixedThreadPool(2);
+        try {
+            Future<?> closing=pool.submit(() -> orders.close(guest.accountId(),opened.positionId(),key(),new ClosePositionRequest(new BigDecimal("500"))));
+            assertThat(valued.await(3,TimeUnit.SECONDS)).isTrue();
+            var risk=tick("89");
+            Future<?> riskProcessing=pool.submit(() -> processor.process(guest.accountId(),risk,Map.of(symbol,risk)));
+            release.countDown(); closing.get(3,TimeUnit.SECONDS); riskProcessing.get(3,TimeUnit.SECONDS);
+            positionAmount(opened.positionId(),"quantity","500"); amount("used_margin","5000"); amount("balance","10000");
+            assertThat(positionCount("LIQUIDATED")).isZero();
+        } finally { release.countDown(); pool.shutdownNow(); }
+    }
+
+    @Test void limitCloseAndLiquidationRaceUsesLatestLockedPositionState() throws Exception {
+        var opened=market(Position.Side.LONG,"1000",10);
+        var closing=closeLimit(opened.positionId(),"600","110");
+        var risk=tick("89"); var profit=tick("111");
+        concurrentResults(() -> { processor.process(guest.accountId(),profit,Map.of(symbol,profit)); return "close"; },
+                () -> { processor.process(guest.accountId(),risk,Map.of(symbol,risk)); return "risk"; });
+        String state=orderStatus(closing.orderId());
+        assertThat(state).isIn("FILLED","REJECTED");
+        positionAmount(opened.positionId(),"reserved_close_quantity","0");
+        positionAmount(opened.positionId(),"quantity",state.equals("FILLED") ? "400" : "0");
+        amount("balance",state.equals("FILLED") ? "16600" : "-1000");
+        amount("used_margin",state.equals("FILLED") ? "4000" : "0");
+        assertThat(fillCount()).isEqualTo(2); assertThat(orders.pending(guest.accountId())).isEmpty();
+    }
+
+    private List<Object> concurrentResults(Callable<?> first,Callable<?> second) throws Exception {
+        ExecutorService pool=Executors.newFixedThreadPool(2); CountDownLatch start=new CountDownLatch(1);
+        try {
+            List<Future<Object>> futures=new ArrayList<>();
+            for(Callable<?> action:List.of(first,second)) futures.add(pool.submit(() -> {
+                start.await(); try { return action.call(); } catch(BusinessException exception) { return exception; }
+            }));
+            start.countDown(); List<Object> result=new ArrayList<>();
+            for(Future<Object> future:futures) result.add(future.get(10,TimeUnit.SECONDS));
+            return result;
+        } finally { pool.shutdownNow(); }
+    }
+
+    @Test void rejectedLimitCloseReleasesReservationWithoutRealizingUnfundedLoss() throws Exception {
+        var losing=market(Position.Side.LONG,"200",10);
+        var winning=market(Position.Side.SHORT,"200",10);
+        var closing=closeLimit(losing.positionId(),"200","0.5");
+        tick("1"); drain();
+        assertThat(orderStatus(closing.orderId())).isEqualTo("REJECTED");
+        assertThat(jdbc.queryForObject("select reason from trading.trading_order where id=?",String.class,closing.orderId()))
+                .isEqualTo("INSUFFICIENT_SETTLEMENT_CASH");
+        positionAmount(losing.positionId(),"reserved_close_quantity","0"); positionAmount(losing.positionId(),"quantity","200");
+        amount("balance","10000"); amount("used_margin","4000"); assertThat(fillCount()).isEqualTo(2);
+        orders.close(guest.accountId(),winning.positionId(),key());
+        orders.close(guest.accountId(),losing.positionId(),key());
+        amount("balance","10000"); amount("used_margin","0"); assertThat(positionCount("OPEN")).isZero();
+    }
+
+    @Test void staleCloseTickCannotConsumeItsReservation() {
+        var opened=market(Position.Side.LONG,"1",10);
+        var closing=closeLimit(opened.positionId(),"0.4","110");
+        Instant expired=Instant.now().minusSeconds(6);
+        var old=new LatestMarkPrice(symbol,new BigDecimal("111"),expired,expired);
+        processor.process(guest.accountId(),old,Map.of(symbol,old));
+        assertThat(orderStatus(closing.orderId())).isEqualTo("PENDING");
+        positionAmount(opened.positionId(),"quantity","1"); positionAmount(opened.positionId(),"reserved_close_quantity","0.4");
+        amount("balance","10000"); assertThat(fillCount()).isEqualTo(1);
     }
     private static String key() { return UUID.randomUUID().toString(); }
     private void positionAmount(Long id,String column,String expected) {
