@@ -30,7 +30,8 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/guest").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/orders",
                     "/api/v1/trading/account/orders/{orderId}/cancel",
-                    "/api/v1/trading/account/positions/{positionId}/close").hasRole("TRADER");
+                    "/api/v1/trading/account/positions/{positionId}/close",
+                    "/api/v1/trading/account/positions/{positionId}/close-orders").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/orders", "/api/v1/trading/account/orders/pending").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/wallet",
                     "/api/v1/trading/account/positions", "/api/v1/trading/account/summary").hasRole("TRADER");

@@ -19,6 +19,7 @@ public class Position {
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 8, updatable = false) private Side side;
     @Column(nullable = false, precision = 28, scale = 8) private BigDecimal quantity;
     @Column(nullable = false, precision = 28, scale = 8, updatable = false) private BigDecimal initialQuantity;
+    @Column(nullable = false, precision = 28, scale = 8) private BigDecimal reservedCloseQuantity;
     @Column(nullable = false, precision = 38, scale = 18, updatable = false) private BigDecimal entryPrice;
     @Column(nullable = false, updatable = false) private int leverage;
     @Column(nullable = false, precision = 38, scale = 18) private BigDecimal margin;
@@ -41,6 +42,7 @@ public class Position {
         position.side = Objects.requireNonNull(side);
         position.quantity = quantity.setScale(TradingMath.QUANTITY_SCALE);
         position.initialQuantity = position.quantity;
+        position.reservedCloseQuantity = BigDecimal.ZERO.setScale(TradingMath.QUANTITY_SCALE);
         position.entryPrice = TradingMath.amount(entryPrice);
         position.leverage = leverage;
         position.margin = TradingMath.margin(entryPrice, quantity, leverage);
@@ -53,10 +55,24 @@ public class Position {
 
     public record Settlement(BigDecimal quantity, BigDecimal releasedMargin, BigDecimal realizedPnl) { }
 
+    public void reserveClose(BigDecimal closingQuantity) {
+        TradingMath.validateQuantity(closingQuantity);
+        if (status != Status.OPEN || closingQuantity.compareTo(getFreeCloseQuantity()) > 0)
+            throw new IllegalStateException("Insufficient unreserved close quantity");
+        reservedCloseQuantity = reservedCloseQuantity.add(closingQuantity).setScale(TradingMath.QUANTITY_SCALE);
+    }
+
+    public void releaseCloseReservation(BigDecimal closingQuantity) {
+        TradingMath.validateQuantity(closingQuantity);
+        if (closingQuantity.compareTo(reservedCloseQuantity) > 0) throw new IllegalStateException("Close reservation cannot become negative");
+        reservedCloseQuantity = reservedCloseQuantity.subtract(closingQuantity).setScale(TradingMath.QUANTITY_SCALE);
+    }
+
     public Settlement close(BigDecimal closingQuantity, BigDecimal price, Instant now, boolean liquidated) {
         if (status != Status.OPEN) throw new IllegalStateException("Position is already closed");
         TradingMath.validatePrice(price);
         TradingMath.validateQuantity(closingQuantity);
+        if (closingQuantity.compareTo(getFreeCloseQuantity()) > 0) throw new IllegalStateException("Cannot close reserved quantity");
         if (liquidated && closingQuantity.compareTo(quantity) != 0) throw new IllegalArgumentException("Liquidation closes the remaining lot");
         if (Objects.requireNonNull(now).isBefore(openedAt)) throw new IllegalArgumentException("Close time precedes open time");
         BigDecimal released = TradingMath.releasedMargin(margin, quantity, closingQuantity);
@@ -78,6 +94,8 @@ public class Position {
     public Side getSide() { return side; }
     public BigDecimal getQuantity() { return quantity; }
     public BigDecimal getInitialQuantity() { return initialQuantity; }
+    public BigDecimal getReservedCloseQuantity() { return reservedCloseQuantity; }
+    public BigDecimal getFreeCloseQuantity() { return quantity.subtract(reservedCloseQuantity); }
     public BigDecimal getInitialMargin() { return initialMargin; }
     public BigDecimal getEntryPrice() { return entryPrice; }
     public int getLeverage() { return leverage; }

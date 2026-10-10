@@ -193,6 +193,7 @@ V7은 기존 원래 수량/증거금을 `initial_quantity`/`initial_margin`에 �
 | --- | --- | --- |
 | POST | `/api/v1/trading/account/orders` | `type=MARKET/LIMIT`, `tradingSymbolId`, `side=LONG/SHORT`, 문자열 `quantity`, `leverage`로 주문. LIMIT만 문자열 `limitPrice` 필요 |
 | POST | `/api/v1/trading/account/positions/{positionId}/close` | 시장가 부분/전체 종료. `{"quantity":"0.01"}`; Body/quantity 생략 시 잔여 전체 종료 |
+| POST | `/api/v1/trading/account/positions/{positionId}/close-orders` | 지정가 부분/전체 종료 예약. `{"quantity":"0.01","limitPrice":"70000"}`; quantity 생략 시 현재 잔여 전체 수량 예약 |
 | GET | `/api/v1/trading/account/orders?beforeId=&limit=50` | 자기 주문/체결 이력. ID 내림차순, 최대 100개 |
 | GET | `/api/v1/trading/account/orders/pending` | 자기 PENDING 지정가 목록 |
 | POST | `/api/v1/trading/account/orders/{orderId}/cancel` | 지정가 취소. Body/Idempotency-Key 불필요, 상태 전이 자체가 멱등적 |
@@ -204,6 +205,7 @@ status 외에는 Guest Bearer 인증이 필요하다. 주문/종료의 `Idempote
 지정가가 이미 체결/취소된 경우 그 주문의 현재 상태를 반환하며 새 주문을 만들지 않는다.
 주문/종료 성공은 200이며 Response의 `fill`에 체결가·가격 이벤트 시각·체결 시각·실현 PnL이 있다.
 부분 종료의 동일 Key/다른 수량은 409다. 수량은 양수·최대 소수 8자리이며 잔여량 초과는 409 `CLOSE_QUANTITY_EXCEEDED`다.
+지정가 종료도 같은 멱등성 계약을 사용하며 수량 또는 지정가가 달라지면 충돌한다. 생략한 수량은 최초 주문 시 확정한다.
 종료에는 신규 진입 최소 Notional을 적용하지 않아 작은 잔여량도 정리할 수 있다. Fill은 실제 체결 `quantity`도 반환한다.
 Client의 임의 가격은 사용하지 않는다. 계정별 Key UNIQUE, Position별 OPEN/LIQUIDATE UNIQUE,
 Fill의 order_id UNIQUE와 계정 Row Lock을 함께 사용한다. Position/Wallet/Order/Fill은 하나의 Transaction이다.
@@ -227,13 +229,27 @@ REST Order/Close -----------------+--------------------------+----------------|
                                                         -> Fill + Position + Wallet -> PostgreSQL
 ```
 
-지정가는 먼저 PENDING으로 저장하고 `limitPrice * quantity / leverage`를 예약한다. 계정당 최대 100개다.
-LONG은 새 Mark가 지정가 이하, SHORT는 지정가 이상일 때 전체 체결한다. 정확히 같은 가격을 찍을 필요가 없다.
+지정가 **OPEN**은 먼저 PENDING으로 저장하고 `limitPrice * quantity / leverage`를 예약한다.
+OPEN/CLOSE 합계 계정당 최대 100개다. OPEN LONG은 새 Mark가 지정가 이하, SHORT는 지정가 이상일 때 체결한다.
+지정가 **CLOSE**는 기존 Position ID를 대상으로 수량만 예약한다. CLOSE LONG은 Mark가 지정가 이상,
+CLOSE SHORT는 지정가 이하일 때 체결한다. Side/종목/Leverage는 대상 Lot에서 가져오며 신규 노출이나 증거금을 만들지 않는다.
+정확히 같은 가격을 찍을 필요가 없으며, 체결은 주문 수량 전체에 대해 수행한다(호가 유동성에 따른 분할 체결은 없다).
 현재 가격에 이미 충족되는 지정가도 PENDING으로 생성한 후 다음 유효한 이벤트에서 판정한다.
 체결가는 이벤트의 정규화된 Mark다. Provider 계약 수량/이름은 주문 엔진에 들어오지 않는다.
 실제 체결 시 가격·Margin·Notional·최대 Lot 수를 재검증한다. 부족하면 REJECTED와 원인을 남기고 예약을 반환한다.
 취소와 체결은 같은 계정 Row Lock으로 직렬화한다. 취소가 먼저면 CANCELED, 체결이 먼저면 취소는 409다.
 취소 재전송은 CANCELED를 그대로 반환하며, 가격/Redis 장애 중에도 취소할 수 있다.
+Position의 `reservedCloseQuantity`는 PENDING CLOSE 수량 합계이고 `freeCloseQuantity = quantity - reservedCloseQuantity`다.
+Wallet의 `reservedMargin`은 OPEN 예약 증거금이며 청산 예약 수량과 무관하다. Order 응답에도 두 예약값을 구분한다.
+시장가 종료와 새 지정가 종료는 **예약되지 않은 수량만** 사용한다. 예를 들어 1 BTC 중 0.7 BTC 예약 상태에서
+시장가 0.5 BTC 종료는 409로 거절하며, 기존 지정가를 자동 축소/취소하지 않는다. 먼저 취소하거나 0.3 BTC 이하로 종료한다.
+Body/quantity 없는 전체 종료 역시 예약이 있다면 거절한다. 성공한 부분 종료 후에도 남은 예약은 잔여 수량을 넘지 않는다.
+같은 계정의 생성/취소/체결/강제청산은 DB Row Lock 후 최신 상태로 검증한다. 강제청산은 위험 검사를 먼저 수행하고
+모든 PENDING OPEN 증거금과 CLOSE 수량 예약을 반환한 뒤 **남은 수량만** 정산한다.
+동일 Tick에서 위험 조건이 충족되지 않은 주문은 ID 순서로 처리한다. CLOSE도 현금 잔액을 음수로 만드는 체결은
+`INSUFFICIENT_SETTLEMENT_CASH`로 거절하고 해당 수량 예약을 반환한다. 나머지 주문은 보존한다.
+V8은 수량 예약의 `0 <= reserved <= remaining` 제약과 CLOSE 대상 Position 보존 제약을 추가한다.
+트리거 후보는 종목/OPEN·CLOSE/방향/지정가 부분 인덱스와 계정 ID keyset으로 조회하며 전체 주문을 매 Tick 읽지 않는다.
 종목 비활성화를 실제 관리하는 API는 없다. Trigger 시 이미 INACTIVE인 신규 진입 주문은 REJECTED 처리한다.
 관리 기능 도입 전에는 OPEN Position/PENDING Order가 있는 종목을 임의 비활성화하지 않는다.
 

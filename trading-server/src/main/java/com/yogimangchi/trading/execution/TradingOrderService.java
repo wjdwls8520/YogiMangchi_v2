@@ -129,7 +129,7 @@ public class TradingOrderService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.POSITION_NOT_FOUND));
         if (position.getStatus() != Position.Status.OPEN) throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
         BigDecimal quantity = requestedQuantity == null ? position.getQuantity() : requestedQuantity;
-        if (quantity.compareTo(position.getQuantity()) > 0) throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
+        if (quantity.compareTo(position.getFreeCloseQuantity()) > 0) throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
         AccountValuation.Value value = valuation.calculate(wallet, open);
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
@@ -143,6 +143,43 @@ public class TradingOrderService {
         account.recordFinancialChange(now);
         if (wallet.getBalance().signum() == 0 && open.size() == 1 && position.getStatus() != Position.Status.OPEN) account.declareBankrupt();
         return record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, key, hash, now, pnl);
+    }
+
+    @Transactional
+    public OrderResponse createLimitClose(Long accountId, Long positionId, String key, LimitCloseRequest request) {
+        gate.enterTradingTransaction();
+        validateKey(key);
+        if (request == null) throw new BusinessException(ErrorCode.INVALID_ORDER);
+        try {
+            TradingMath.validatePrice(request.limitPrice());
+            if (request.quantity() != null) TradingMath.validateQuantity(request.quantity());
+        } catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
+        String hash = fingerprint("LIMIT_CLOSE|" + positionId + "|"
+                + (request.quantity() == null ? "ALL" : request.quantity().stripTrailingZeros().toPlainString())
+                + "|" + request.limitPrice().stripTrailingZeros().toPlainString());
+        TradingAccount account = locks.lock(accountId);
+        OrderResponse previous = existing(accountId, key, hash);
+        if (previous != null) return previous;
+        requireActive(account);
+        Wallet wallet = wallet(accountId);
+        List<Position> open = open(accountId);
+        Position position = positions.findById(positionId).filter(p -> p.getAccountId().equals(accountId))
+                .orElseThrow(() -> new BusinessException(ErrorCode.POSITION_NOT_FOUND));
+        if (position.getStatus() != Position.Status.OPEN) throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
+        BigDecimal quantity = request.quantity() == null ? position.getQuantity() : request.quantity();
+        if (quantity.compareTo(position.getFreeCloseQuantity()) > 0) throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
+        if (orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING).size() >= TradingMath.MAX_PENDING_ORDERS)
+            throw new BusinessException(ErrorCode.PENDING_LIMIT_REACHED);
+        AccountValuation.Value value = valuation.calculate(wallet, open);
+        requireFresh(value);
+        gate.requireCaughtUp(value.prices());
+        if (value.equity().compareTo(value.maintenanceMargin()) <= 0) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+        Instant now = now();
+        position.reserveClose(quantity);
+        TradingOrder order = orders.save(TradingOrder.limitClose(position, quantity, request.limitPrice(), key, hash, now));
+        account.recordFinancialChange(now);
+        logCommitted(order, "pending");
+        return OrderResponse.from(order, null);
     }
 
     @Transactional
@@ -169,7 +206,12 @@ public class TradingOrderService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
         if (order.getStatus() == TradingOrder.Status.CANCELED) return OrderResponse.from(order, null);
         if (order.getStatus() != TradingOrder.Status.PENDING) throw new BusinessException(ErrorCode.ORDER_NOT_PENDING);
-        wallet(accountId).releaseReservation(order.getReservedMargin());
+        if (order.getAction() == TradingOrder.Action.CLOSE) {
+            Position target = positions.findById(order.getPositionId()).filter(p -> p.getAccountId().equals(accountId)).orElseThrow();
+            target.releaseCloseReservation(order.getQuantity());
+        } else {
+            wallet(accountId).releaseReservation(order.getReservedMargin());
+        }
         Instant now = now();
         order.cancel(now);
         account.recordFinancialChange(now);

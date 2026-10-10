@@ -67,6 +67,7 @@ public class TradingAccountService {
         BigDecimal mark = fresh ? snapshot.latestPrice().orElseThrow().domainMarkPrice() : null;
         BigDecimal pnl = fresh ? TradingMath.pnl(position.getSide(), position.getEntryPrice(), mark, position.getQuantity()) : null;
         return new PositionResponse(position.getId(), position.getTradingSymbolId(), position.getSide().name(), decimal(position.getQuantity()),
+                decimal(position.getReservedCloseQuantity()), decimal(position.getFreeCloseQuantity()),
                 decimal(position.getEntryPrice()), position.getLeverage(), decimal(position.getMargin()), position.getStatus().name(),
                 decimal(position.getRealizedPnl()), decimal(mark), decimal(pnl), snapshot.status().name(),
                 snapshot.latestPrice().map(price -> price.eventTime()).orElse(null), position.getOpenedAt());

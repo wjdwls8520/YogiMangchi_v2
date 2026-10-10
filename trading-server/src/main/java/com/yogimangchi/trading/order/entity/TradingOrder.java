@@ -74,13 +74,39 @@ public class TradingOrder {
     }
 
     public boolean crosses(BigDecimal price) {
-        return status == Status.PENDING && (side == Position.Side.LONG
+        boolean atOrBelow = (action == Action.OPEN) == (side == Position.Side.LONG);
+        return status == Status.PENDING && (atOrBelow
                 ? price.compareTo(limitPrice) <= 0 : price.compareTo(limitPrice) >= 0);
+    }
+
+    public static TradingOrder limitClose(Position position, BigDecimal quantity, BigDecimal limitPrice,
+            String key, String fingerprint, Instant now) {
+        TradingMath.validateQuantity(quantity);
+        TradingMath.validatePrice(limitPrice);
+        if (position.getStatus() != Position.Status.OPEN || quantity.compareTo(position.getQuantity()) > 0)
+            throw new IllegalArgumentException("Invalid close target");
+        TradingOrder order = new TradingOrder();
+        order.accountId = position.getAccountId();
+        order.positionId = position.getId();
+        order.tradingSymbolId = position.getTradingSymbolId();
+        order.side = position.getSide();
+        order.type = Type.LIMIT;
+        order.action = Action.CLOSE;
+        order.status = Status.PENDING;
+        order.quantity = quantity.setScale(TradingMath.QUANTITY_SCALE);
+        order.leverage = position.getLeverage();
+        order.limitPrice = TradingMath.amount(limitPrice);
+        order.reservedMargin = TradingMath.amount(BigDecimal.ZERO);
+        order.idempotencyKey = key;
+        order.requestFingerprint = fingerprint;
+        order.createdAt = now;
+        return order;
     }
     public void fill(Position position, BigDecimal price, Instant now) {
         requirePending();
         if (!crosses(price) || !position.getAccountId().equals(accountId)
-                || !position.getTradingSymbolId().equals(tradingSymbolId)) throw new IllegalArgumentException("Invalid limit fill");
+                || !position.getTradingSymbolId().equals(tradingSymbolId) || position.getSide() != side
+                || action == Action.CLOSE && !position.getId().equals(positionId)) throw new IllegalArgumentException("Invalid limit fill");
         positionId = position.getId();
         filledPrice = TradingMath.amount(price);
         finish(Status.FILLED, null, now);

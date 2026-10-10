@@ -16,12 +16,20 @@ public class TriggerCandidates {
                     select account_id from trading.position where status='OPEN' and trading_symbol_id=? and account_id>?
                     union
                     select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?
-                        and side='LONG' and limit_price>=? and account_id>?
+                        and action='OPEN' and side='LONG' and limit_price>=? and account_id>?
                     union
                     select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?
-                        and side='SHORT' and limit_price<=? and account_id>?
+                        and action='OPEN' and side='SHORT' and limit_price<=? and account_id>?
+                    union
+                    select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?
+                        and action='CLOSE' and side='LONG' and limit_price<=? and account_id>?
+                    union
+                    select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?
+                        and action='CLOSE' and side='SHORT' and limit_price>=? and account_id>?
                 ) candidates order by account_id limit 100
                 """, Long.class, price.tradingSymbolId(), afterAccountId, price.tradingSymbolId(), price.domainMarkPrice(),
-                afterAccountId, price.tradingSymbolId(), price.domainMarkPrice(), afterAccountId);
+                afterAccountId, price.tradingSymbolId(), price.domainMarkPrice(), afterAccountId,
+                price.tradingSymbolId(), price.domainMarkPrice(), afterAccountId,
+                price.tradingSymbolId(), price.domainMarkPrice(), afterAccountId);
     }
 }

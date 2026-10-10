@@ -274,6 +274,92 @@ class TriggerIntegrationTests {
     private OrderResponse limit(Position.Side side,String quantity,String limit,int leverage) {
         return orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,symbol,side,new BigDecimal(quantity),leverage,new BigDecimal(limit)));
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"LONG,0.4,110,109,111,0.6,4.4", "LONG,1,110,109,111,0,11",
+            "SHORT,0.4,90,91,89,0.6,4.4", "SHORT,1,90,91,89,0,11"})
+    void limitCloseUsesOppositeDirectionAndTriggerMark(Position.Side side, String quantity, String limit,
+            String before, String crossed, String remaining, String pnl) throws Exception {
+        var opened=market(side,"1",10);
+        var close=closeLimit(opened.positionId(),quantity,limit);
+        assertThat(close.action()).isEqualTo("CLOSE");
+        assertThat(close.positionId()).isEqualTo(opened.positionId());
+        assertThat(close.reservedCloseQuantity()).isEqualTo(new BigDecimal(quantity).setScale(8).toPlainString());
+        amount("used_margin","10"); amount("reserved_margin","0");
+        tick(before); drain(); assertThat(orderStatus(close.orderId())).isEqualTo("PENDING");
+        tick(crossed); drain(); assertThat(orderStatus(close.orderId())).isEqualTo("FILLED");
+        assertThat(fillPrice(close.orderId())).isEqualByComparingTo(crossed);
+        positionAmount(opened.positionId(),"quantity",remaining);
+        positionAmount(opened.positionId(),"reserved_close_quantity","0");
+        amount("used_margin",new BigDecimal(remaining).multiply(BigDecimal.TEN).toPlainString());
+        amount("realized_pnl",pnl);
+        assertThat(fillCount()).isEqualTo(2);
+        assertThat(positionCount(remaining.equals("0") ? "CLOSED" : "OPEN")).isEqualTo(1);
+    }
+
+    @Test void reservationsPreventOverCloseAndCancelReleasesOnlyItsQuantityEvenDuringOutage() {
+        var opened=market(Position.Side.LONG,"1",10);
+        var first=closeLimit(opened.positionId(),"0.7","110");
+        assertThatThrownBy(() -> closeLimit(opened.positionId(),"0.4","120"))
+                .isInstanceOfSatisfying(BusinessException.class,e -> assertThat(e.getCode()).isEqualTo(ErrorCode.CLOSE_QUANTITY_EXCEEDED));
+        assertThatThrownBy(() -> orders.close(guest.accountId(),opened.positionId(),key(),new ClosePositionRequest(new BigDecimal("0.5"))))
+                .isInstanceOfSatisfying(BusinessException.class,e -> assertThat(e.getCode()).isEqualTo(ErrorCode.CLOSE_QUANTITY_EXCEEDED));
+        assertThatThrownBy(() -> orders.close(guest.accountId(),opened.positionId(),key()))
+                .isInstanceOfSatisfying(BusinessException.class,e -> assertThat(e.getCode()).isEqualTo(ErrorCode.CLOSE_QUANTITY_EXCEEDED));
+        orders.close(guest.accountId(),opened.positionId(),key(),new ClosePositionRequest(new BigDecimal("0.2")));
+        var second=closeLimit(opened.positionId(),"0.1","120");
+        positionAmount(opened.positionId(),"quantity","0.8"); positionAmount(opened.positionId(),"reserved_close_quantity","0.8");
+        prices.markUnavailable(); gate.recovering();
+        var canceled=orders.cancel(guest.accountId(),first.orderId());
+        assertThat(orders.cancel(guest.accountId(),first.orderId())).isEqualTo(canceled);
+        positionAmount(opened.positionId(),"reserved_close_quantity","0.1");
+        assertThat(orderStatus(second.orderId())).isEqualTo("PENDING");
+        amount("reserved_margin","0"); amount("used_margin","8");
+    }
+
+    @Test void closeLimitReplayUsesPayloadAndFullRequestIsCapturedAtCreation() throws Exception {
+        var opened=market(Position.Side.SHORT,"1",10);
+        String key=key();
+        var request=new LimitCloseRequest(null,new BigDecimal("90"));
+        var pending=orders.createLimitClose(guest.accountId(),opened.positionId(),key,request);
+        prices.markUnavailable(); gate.recovering();
+        assertThat(orders.createLimitClose(guest.accountId(),opened.positionId(),key,request)).isEqualTo(pending);
+        assertThatThrownBy(() -> orders.createLimitClose(guest.accountId(),opened.positionId(),key,new LimitCloseRequest(null,new BigDecimal("89"))))
+                .isInstanceOfSatisfying(BusinessException.class,e -> assertThat(e.getCode()).isEqualTo(ErrorCode.IDEMPOTENCY_CONFLICT));
+        assertThatThrownBy(() -> orders.createLimitClose(guest.accountId(),opened.positionId(),key,new LimitCloseRequest(new BigDecimal("0.5"),new BigDecimal("90"))))
+                .isInstanceOfSatisfying(BusinessException.class,e -> assertThat(e.getCode()).isEqualTo(ErrorCode.IDEMPOTENCY_CONFLICT));
+        prices.beginSubscription(Set.of(symbol)); tick("89"); drain();
+        var filled=orders.createLimitClose(guest.accountId(),opened.positionId(),key,request);
+        assertThat(filled.status()).isEqualTo("FILLED"); assertThat(filled.orderId()).isEqualTo(pending.orderId());
+        assertThat(filled.quantity()).isEqualTo("1.00000000"); assertThat(fillCount()).isEqualTo(2);
+    }
+
+    @Test void closeOrderApiRequiresOwnerAndExposesSeparateReservations() throws Exception {
+        var opened=market(Position.Side.LONG,"1",10);
+        String path="/api/v1/trading/account/positions/"+opened.positionId()+"/close-orders";
+        String body="{\"quantity\":\"0.7\",\"limitPrice\":\"110\"}";
+        mvc.perform(post(path).header("Idempotency-Key",key()).contentType("application/json").content(body)).andExpect(status().isUnauthorized());
+        var other=accounts.createGuest();
+        mvc.perform(post(path).header("Authorization","Bearer "+other.accessToken()).header("Idempotency-Key",key())
+                .contentType("application/json").content(body)).andExpect(status().isNotFound());
+        mvc.perform(post(path).header("Authorization","Bearer "+guest.accessToken()).header("Idempotency-Key",key())
+                .contentType("application/json").content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.action").value("CLOSE"))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.reservedCloseQuantity").value("0.70000000"))
+                .andExpect(jsonPath("$.reservedMargin").value("0.000000000000000000"));
+        mvc.perform(get("/api/v1/trading/account/positions").header("Authorization","Bearer "+guest.accessToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].freeCloseQuantity").value("0.30000000"));
+    }
+
+    private OrderResponse closeLimit(Long positionId,String quantity,String limit) {
+        return orders.createLimitClose(guest.accountId(),positionId,key(),new LimitCloseRequest(
+                quantity==null ? null : new BigDecimal(quantity),new BigDecimal(limit)));
+    }
+    private static String key() { return UUID.randomUUID().toString(); }
+    private void positionAmount(Long id,String column,String expected) {
+        assertThat(jdbc.queryForObject("select "+column+" from trading.position where id=?",BigDecimal.class,id)).isEqualByComparingTo(expected);
+    }
     private OrderResponse market(Position.Side side,String quantity,int leverage) {
         return orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,new BigDecimal(quantity),leverage,null));
     }

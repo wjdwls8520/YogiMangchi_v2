@@ -52,6 +52,8 @@ public class AccountTriggerService {
         if (account.getStatus() != TradingAccount.Status.ACTIVE) return;
         Wallet wallet = wallets.findById(accountId).orElseThrow();
         List<Position> open = new ArrayList<>(positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN));
+        Map<Long, Position> byId = new HashMap<>();
+        open.forEach(position -> byId.put(position.getId(), position));
         List<TradingOrder> pending = orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING);
         Set<Long> required = new HashSet<>(Set.of(tick.tradingSymbolId()));
         open.forEach(p -> required.add(p.getTradingSymbolId()));
@@ -66,6 +68,11 @@ public class AccountTriggerService {
         for (TradingOrder order : pending) {
             if (!order.getTradingSymbolId().equals(tick.tradingSymbolId()) || !order.crosses(tick.domainMarkPrice())
                     || order.getCreatedAt().isAfter(tick.receivedAt())) continue;
+            if (order.getAction() == TradingOrder.Action.CLOSE) {
+                close(order, byId, open, wallet, tick, now);
+                account.recordFinancialChange(now);
+                continue;
+            }
             String rejection = null;
             BigDecimal margin = null;
             try { margin = TradingMath.margin(tick.domainMarkPrice(), order.getQuantity(), order.getLeverage()); }
@@ -88,10 +95,30 @@ public class AccountTriggerService {
                 order.fill(position, tick.domainMarkPrice(), now);
                 fills.save(Fill.execute(order.getId(), tick.domainMarkPrice(), order.getQuantity(), tick.eventTime(), now, BigDecimal.ZERO));
                 open.add(position);
+                byId.put(position.getId(), position);
                 committed("limit-filled", accountId, order.getId(), tick.tradingSymbolId());
             }
             account.recordFinancialChange(now);
         }
+    }
+
+    private void close(TradingOrder order, Map<Long, Position> byId, List<Position> open, Wallet wallet,
+            LatestMarkPrice price, Instant now) {
+        Position target = Objects.requireNonNull(byId.get(order.getPositionId()), "Pending CLOSE must reference an open lot");
+        // Release only this order's reservation. Other pending CLOSE orders keep their reserved quantity.
+        target.releaseCloseReservation(order.getQuantity());
+        BigDecimal pnl = TradingMath.pnl(target.getSide(), target.getEntryPrice(), price.domainMarkPrice(), order.getQuantity());
+        if (wallet.getBalance().add(pnl).signum() < 0) {
+            order.reject("INSUFFICIENT_SETTLEMENT_CASH", now);
+            committed("close-rejected", order.getAccountId(), order.getId(), order.getTradingSymbolId());
+            return;
+        }
+        Position.Settlement settlement = target.close(order.getQuantity(), price.domainMarkPrice(), now, false);
+        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl());
+        order.fill(target, price.domainMarkPrice(), now);
+        fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now, settlement.realizedPnl()));
+        if (target.getStatus() != Position.Status.OPEN) { open.remove(target); byId.remove(target.getId()); }
+        committed("limit-close-filled", order.getAccountId(), order.getId(), order.getTradingSymbolId());
     }
 
     private Map<Long, LatestPriceStore.Snapshot> snapshots(Set<Long> ids, Map<Long, LatestMarkPrice> book, Instant now) {
@@ -109,8 +136,15 @@ public class AccountTriggerService {
 
     private void liquidate(TradingAccount account, Wallet wallet, List<Position> open, List<TradingOrder> pending,
             Map<Long, LatestMarkPrice> book, Instant now) {
+        Map<Long, Position> byId = new HashMap<>();
+        open.forEach(position -> byId.put(position.getId(), position));
         for (TradingOrder order : pending) {
-            wallet.releaseReservation(order.getReservedMargin());
+            if (order.getAction() == TradingOrder.Action.CLOSE) {
+                Objects.requireNonNull(byId.get(order.getPositionId()), "Pending CLOSE must reference an open lot")
+                        .releaseCloseReservation(order.getQuantity());
+            } else {
+                wallet.releaseReservation(order.getReservedMargin());
+            }
             order.reject("ACCOUNT_LIQUIDATION", now);
         }
         for (Position position : open) {

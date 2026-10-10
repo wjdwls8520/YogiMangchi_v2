@@ -32,9 +32,11 @@ paths:
       - order-controller
       summary: Close all or part of an owned position at the fresh server mark price
       description: "Omit body/quantity for the entire remaining lot. Quantity is positive\
-        \ with at most 8 decimal places; no minimum exit notional. LONG closes by\
-        \ selling, SHORT by buying. All held symbols must be fresh. Same key with\
-        \ a different quantity returns 409; 404 for another account's position."
+        \ with at most 8 decimal places; no minimum exit notional. Only unreserved\
+        \ quantity may close; excess returns 409 CLOSE_QUANTITY_EXCEEDED. Cancel pending\
+        \ CLOSE orders before closing their reserved quantity. LONG closes by selling,\
+        \ SHORT by buying. All held symbols must be fresh. Same key with a different\
+        \ quantity returns 409; 404 for another account's position."
       operationId: close
       parameters:
       - name: positionId
@@ -53,6 +55,53 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ClosePositionRequest"
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponse"
+      security:
+      - guestBearer: []
+  /api/v1/trading/account/positions/{positionId}/close-orders:
+    post:
+      tags:
+      - order-controller
+      summary: Reserve a LIMIT CLOSE for part or all of an owned position
+      description: "Returns PENDING; creates no new position and reserves quantity,\
+        \ not wallet margin. Side/leverage/symbol are inherited from the target lot.\
+        \ LONG CLOSE triggers at Mark >= limit; SHORT CLOSE at Mark <= limit. The\
+        \ triggering Mark is the execution price. Omit quantity for the entire remaining\
+        \ lot. Existing reservations cannot be exceeded (409). Fresh portfolio prices\
+        \ and READY engine required (503 otherwise). Same account/key/payload replays\
+        \ the current order; different payload returns 409. Other account's target\
+        \ returns 404."
+      operationId: limitClose
+      parameters:
+      - name: positionId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LimitCloseRequest"
+        required: true
       responses:
         "500":
           description: Internal Server Error
@@ -147,7 +196,7 @@ paths:
     post:
       tags:
       - order-controller
-      summary: Cancel an owned pending order and release margin
+      summary: Cancel an owned pending order and release its margin or close quantity
       description: Repeated cancel is idempotent. A fill that wins the race returns
         409. Cancellation remains available during price/Redis outages.
       operationId: cancel
@@ -270,7 +319,7 @@ paths:
     get:
       tags:
       - order-controller
-      summary: Read own pending limit orders and reserved margin
+      summary: Read own pending OPEN/CLOSE orders and their margin/quantity reservations
       operationId: pending
       responses:
         "500":
@@ -416,6 +465,8 @@ components:
           type: string
         reservedMargin:
           type: string
+        reservedCloseQuantity:
+          type: string
         createdAt:
           type: string
           format: date-time
@@ -426,6 +477,20 @@ components:
           type: string
         fill:
           $ref: "#/components/schemas/FillResponse"
+    LimitCloseRequest:
+      type: object
+      properties:
+        quantity:
+          type: string
+          description: "Positive domain quantity, maximum 8 decimals. Omit to reserve\
+            \ the entire remaining lot; existing reservations may cause 409."
+          example: "0.01"
+        limitPrice:
+          type: string
+          description: "Required positive USDT limit, maximum 18 decimals. LONG CLOSE\
+            \ triggers at or above; SHORT CLOSE at or below. Execution uses the triggering\
+            \ server Mark."
+          example: "70000"
     CreateOrderRequest:
       type: object
       properties:
@@ -518,6 +583,14 @@ components:
           type: string
         quantity:
           type: string
+        reservedCloseQuantity:
+          type: string
+          description: "Quantity reserved by PENDING CLOSE orders, independent of\
+            \ wallet reservedMargin"
+        freeCloseQuantity:
+          type: string
+          description: Remaining quantity minus reservedCloseQuantity; available for
+            MARKET or new LIMIT CLOSE
         entryPrice:
           type: string
         leverage:
