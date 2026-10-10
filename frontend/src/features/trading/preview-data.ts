@@ -37,7 +37,7 @@ export const previewPositions = [
     markPrice: "64,579.80",
     leverage: "10×",
     pnl: "+144.95 USDT",
-    margin: "1,600.00 USDT",
+    margin: "1600.00",
     trend: "up",
   },
   {
@@ -49,7 +49,7 @@ export const previewPositions = [
     markPrice: "3,421.80",
     leverage: "5×",
     pnl: "−2.57 USDT",
-    margin: "512.76 USDT",
+    margin: "512.76",
     trend: "down",
   },
 ] as const;

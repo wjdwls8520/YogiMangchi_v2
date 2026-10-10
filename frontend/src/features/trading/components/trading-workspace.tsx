@@ -1,6 +1,5 @@
 import { MarketHeader } from "./market-header";
-import { SymbolSelector } from "./symbol-selector";
-import { TradingChart } from "./trading-chart";
+import { MarketChartPanel } from "./market-chart-panel";
 import { OrderPanel } from "./order-panel";
 import { TradingAccountTabs } from "./trading-account-tabs";
 
@@ -28,14 +27,12 @@ export function TradingWorkspace() {
       <main id="trading-main" tabIndex={-1} className="mx-auto max-w-screen-2xl px-3 py-4 sm:px-5 sm:py-5 xl:px-8 xl:py-6">
         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
           <h1 className="text-xl font-bold tracking-tight">선물 모의투자</h1>
-          <p id="preview-notice" className="max-w-prose text-xs leading-relaxed text-slate-500">표시된 가격과 거래 내역은 예시입니다. 주문은 실행되지 않습니다.</p>
+          <p id="preview-notice" className="max-w-prose text-xs leading-relaxed text-slate-500">차트만 Trading Server 시세를 사용합니다. 나머지 가격·계정·거래 내역은 예시이며 주문은 실행되지 않습니다.</p>
         </div>
         <MarketHeader />
-        <SymbolSelector />
-        <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-          <TradingChart />
+        <MarketChartPanel>
           <OrderPanel />
-        </div>
+        </MarketChartPanel>
         <TradingAccountTabs />
       </main>
       <footer className="mx-auto flex max-w-screen-2xl flex-col gap-2 px-3 pb-6 pt-2 text-xs text-slate-500 sm:flex-row sm:justify-between sm:px-5 xl:px-8">

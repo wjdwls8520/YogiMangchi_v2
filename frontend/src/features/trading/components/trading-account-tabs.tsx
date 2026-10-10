@@ -1,4 +1,4 @@
-import { previewAccount } from "../preview-data";
+import { previewAccount, previewPositions } from "../preview-data";
 import { OrderHistoryTable, PendingOrderTable, PositionTable } from "./account-tables";
 import { PortfolioAllocationChart } from "./portfolio-allocation-chart";
 
@@ -12,7 +12,7 @@ export function TradingAccountTabs() {
         <div><dt>사용 중인 증거금</dt><dd>{previewAccount.margin} <span>USDT</span></dd></div>
         <div><dt>미실현 손익</dt><dd data-trend="up">{previewAccount.unrealizedPnl} <span>USDT</span></dd></div>
       </dl>
-      <PortfolioAllocationChart />
+      <PortfolioAllocationChart positions={previewPositions} />
       {/* Native anchors expose all preview sections without implementing tab state. */}
       <nav aria-label="포지션 및 주문 내역" className="flex border-b border-slate-200">
         <a href="#positions" className="account-tab"><span>Positions</span> <span className="account-tab-count">2</span></a>

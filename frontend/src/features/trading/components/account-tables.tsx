@@ -1,5 +1,6 @@
 import { previewOrderHistory, previewPendingOrders, previewPositions } from "../preview-data";
 import { TradingTable } from "./trading-table";
+import { formatMargin } from "../portfolio/allocation";
 
 export function PositionTable() {
   return <TradingTable caption="포지션 예시" columns={[
@@ -14,7 +15,7 @@ export function PositionTable() {
       symbol: position.symbol, side: <span data-side={position.side}>{position.side}</span>,
       size: position.size, entry: position.entryPrice, mark: position.markPrice,
       leverage: position.leverage, pnl: <span data-trend={position.trend}>{position.pnl}</span>,
-      margin: position.margin,
+      margin: formatMargin(position.margin),
       action: <button type="button" disabled aria-label={`${position.symbol} ${position.side} 포지션 청산 (미리보기)`}>청산</button>,
     },
   }))} />;

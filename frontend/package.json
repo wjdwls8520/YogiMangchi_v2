@@ -7,12 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test .test-build/tests/charts.test.js .test-build/tests/market-stream.test.js"
   },
   "engines": {
     "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
   },
   "dependencies": {
+    "chart.js": "4.5.1",
+    "lightweight-charts": "5.2.1",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
