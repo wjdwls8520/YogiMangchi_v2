@@ -1,1 +1,178 @@
 @import "tailwindcss";
+
+@theme {
+  --font-sans: Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-gain: #047857;
+  --color-loss: #be123c;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-100 font-sans text-sm text-slate-900 antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-4 outline-brand-600;
+  }
+
+  :disabled,
+  fieldset:disabled label {
+    @apply cursor-not-allowed;
+  }
+
+  input:disabled,
+  select:disabled {
+    opacity: 1;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+@layer components {
+  .trading-section {
+    @apply min-w-0 border border-slate-200 bg-white;
+  }
+
+  .section-heading {
+    @apply flex min-h-14 items-center justify-between gap-3 border-b border-slate-200 px-4 lg:min-h-12;
+  }
+
+  .section-title {
+    @apply text-sm font-semibold tracking-tight;
+  }
+
+  .preview-label {
+    @apply whitespace-nowrap rounded-sm border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600;
+  }
+
+  .field-label {
+    @apply mb-2 block text-xs font-medium text-slate-600;
+  }
+
+  .order-choices {
+    @apply flex min-h-11 w-full overflow-hidden rounded-sm border border-slate-200 bg-slate-50 lg:min-h-9;
+  }
+
+  .order-choice {
+    @apply relative flex min-h-11 min-w-0 flex-1 items-center justify-center border-r border-slate-200 px-2 text-sm font-medium text-slate-500 last:border-r-0 has-checked:bg-brand-50 has-checked:text-brand-700 has-checked:ring-1 has-checked:ring-inset has-checked:ring-brand-600 lg:min-h-9;
+  }
+
+  .order-choice:has(input[value="long"]:checked) {
+    @apply bg-emerald-50 text-gain ring-emerald-600;
+  }
+
+  .order-choice:has(input[value="short"]) {
+    @apply text-loss;
+  }
+
+  .order-choice:has(input[value="short"]:checked) {
+    @apply bg-rose-50 ring-rose-600;
+  }
+
+  .order-input {
+    @apply flex min-h-11 items-center gap-2 rounded-sm border border-slate-200 bg-slate-50 px-3 lg:min-h-10;
+  }
+
+  .account-tab {
+    @apply flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-1 border-b-2 border-transparent px-1 py-2 text-center text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-brand-700 sm:flex-none sm:flex-row sm:gap-2 sm:px-5 sm:text-sm;
+  }
+
+  .account-tab-count {
+    @apply rounded-sm bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600;
+  }
+
+  [data-trend="up"],
+  [data-side="LONG"] {
+    @apply text-gain;
+  }
+
+  [data-trend="down"],
+  [data-side="SHORT"] {
+    @apply text-loss;
+  }
+
+  /* Keep the same semantic table and rows on every screen size. */
+  .trading-table {
+    @apply block w-full text-xs tabular-nums;
+  }
+
+  .trading-table thead {
+    @apply sr-only;
+  }
+
+  .trading-table tbody {
+    @apply block;
+  }
+
+  .trading-table tbody tr {
+    @apply grid grid-cols-2 gap-x-4 gap-y-3 border-b border-slate-200 px-4 py-4 last:border-b-0 sm:grid-cols-4;
+  }
+
+  .trading-table td {
+    @apply flex min-w-0 flex-col gap-1 break-words;
+  }
+
+  .trading-table td::before {
+    content: attr(data-label);
+    @apply text-xs font-normal text-slate-500;
+  }
+
+  .trading-table td:first-child {
+    @apply col-span-2 text-sm font-semibold sm:col-span-4;
+  }
+
+  .trading-table td:first-child::before {
+    @apply hidden;
+  }
+
+  .trading-table button {
+    @apply min-h-11 rounded-sm border border-slate-300 bg-white px-3 text-xs font-medium text-slate-600;
+  }
+
+  @media (width >= 64rem) {
+    .trading-table {
+      @apply table;
+    }
+
+    .trading-table thead {
+      @apply not-sr-only table-header-group;
+    }
+
+    .trading-table tbody {
+      @apply table-row-group;
+    }
+
+    .trading-table thead tr,
+    .trading-table tbody tr {
+      @apply table-row;
+    }
+
+    .trading-table th {
+      @apply whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-left text-xs font-medium text-slate-500;
+    }
+
+    .trading-table td,
+    .trading-table td:first-child {
+      @apply table-cell whitespace-nowrap border-b border-slate-100 px-4 py-4 align-middle text-xs;
+    }
+
+    .trading-table tbody tr:last-child td {
+      @apply border-b-0;
+    }
+
+    .trading-table td:first-child {
+      @apply font-semibold;
+    }
+
+    .trading-table td::before {
+      @apply hidden;
+    }
+
+    .trading-table button {
+      @apply min-h-9;
+    }
+  }
+}

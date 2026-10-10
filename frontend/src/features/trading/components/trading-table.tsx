@@ -10,14 +10,14 @@ export function TradingTable({ caption, columns, rows }: {
   rows: readonly TradingRow[];
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table>
+    <div className="min-w-0 overflow-x-auto">
+      <table className="trading-table" role="table">
         <caption className="sr-only">{caption}</caption>
-        <thead><tr>{columns.map((column) => <th key={column.key} scope="col">{column.label}</th>)}</tr></thead>
-        <tbody>
+        <thead role="rowgroup"><tr role="row">{columns.map((column) => <th key={column.key} scope="col" role="columnheader">{column.label}</th>)}</tr></thead>
+        <tbody role="rowgroup">
           {rows.map((row) => (
-            <tr key={row.id}>
-              {columns.map((column) => <td key={column.key} data-label={column.label}>{row.cells[column.key]}</td>)}
+            <tr key={row.id} role="row">
+              {columns.map((column) => <td key={column.key} data-label={column.label} role="cell">{row.cells[column.key]}</td>)}
             </tr>
           ))}
         </tbody>
