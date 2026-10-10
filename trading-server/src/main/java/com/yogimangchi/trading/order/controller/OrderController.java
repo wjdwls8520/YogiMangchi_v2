@@ -20,10 +20,12 @@ public class OrderController {
     public OrderResponse create(@AuthenticationPrincipal GuestPrincipal principal, @RequestHeader("Idempotency-Key") String key,
             @RequestBody CreateOrderRequest request) { return engine.create(principal.accountId(), key, request); }
     @PostMapping("/positions/{positionId}/close")
-    @Operation(summary="Close one entire owned position at the fresh server mark price",
-            description="LONG closes by selling, SHORT by buying. All held symbols must be fresh. Same idempotency contract as opening; 404 for another account's position.")
+    @Operation(summary="Close all or part of an owned position at the fresh server mark price",
+            description="Omit body/quantity for the entire remaining lot. Quantity is positive with at most 8 decimal places; no minimum exit notional. LONG closes by selling, SHORT by buying. All held symbols must be fresh. Same key with a different quantity returns 409; 404 for another account's position.")
     public OrderResponse close(@AuthenticationPrincipal GuestPrincipal principal, @PathVariable Long positionId,
-            @RequestHeader("Idempotency-Key") String key) { return engine.close(principal.accountId(), positionId, key); }
+            @RequestHeader("Idempotency-Key") String key, @RequestBody(required=false) ClosePositionRequest request) {
+        return engine.close(principal.accountId(), positionId, key, request);
+    }
     @GetMapping("/orders")
     @Operation(summary="Read own order/fill history, newest first",
             description="Use the last returned orderId as beforeId for the next page; limit 1-100, default 50.")

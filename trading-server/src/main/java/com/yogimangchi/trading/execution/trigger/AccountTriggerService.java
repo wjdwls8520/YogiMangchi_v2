@@ -115,13 +115,13 @@ public class AccountTriggerService {
         }
         for (Position position : open) {
             LatestMarkPrice price = book.get(position.getTradingSymbolId());
-            BigDecimal pnl = position.close(price.domainMarkPrice(), now, true);
-            wallet.settle(position.getMargin(), pnl);
+            Position.Settlement settlement = position.close(position.getQuantity(), price.domainMarkPrice(), now, true);
+            wallet.settle(settlement.releasedMargin(), settlement.realizedPnl());
             // ':' cannot occur in any accepted client key, including orders created before this migration.
             String key = "liquidation:position:" + position.getId();
             TradingOrder order = orders.save(TradingOrder.market(position, TradingOrder.Action.LIQUIDATE,
-                    price.domainMarkPrice(), key, "0".repeat(64), now));
-            fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), position.getQuantity(), price.eventTime(), now, pnl));
+                    settlement.quantity(), price.domainMarkPrice(), key, "0".repeat(64), now));
+            fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now, settlement.realizedPnl()));
             committed("liquidated", account.getId(), order.getId(), position.getTradingSymbolId());
         }
         if (wallet.getBalance().signum() <= 0) account.declareBankrupt();

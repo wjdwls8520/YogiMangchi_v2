@@ -6,6 +6,7 @@ import com.yogimangchi.trading.fill.repository.FillRepository;
 import com.yogimangchi.trading.marketdata.LatestMarkPrice;
 import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import com.yogimangchi.trading.order.dto.CreateOrderRequest;
+import com.yogimangchi.trading.order.dto.ClosePositionRequest;
 import com.yogimangchi.trading.order.dto.OrderResponse;
 import com.yogimangchi.trading.order.entity.TradingOrder;
 import com.yogimangchi.trading.position.entity.Position;
@@ -162,6 +163,82 @@ class MarketOrderIntegrationTests {
 
     private OrderResponse create(String quantity, Position.Side side, int leverage, String key) {
         return service.create(guest.accountId(), key, new CreateOrderRequest(TradingOrder.Type.MARKET, symbol, side, new BigDecimal(quantity), leverage, null));
+    }
+
+    @Test void partialLongClosePreservesEntryAndReleasesOnlyProportionalMargin() {
+        var opened = create("1", Position.Side.LONG, 10, key());
+        price("1100");
+        var closed = service.close(guest.accountId(), opened.positionId(), key(), new ClosePositionRequest(new BigDecimal("0.4")));
+        assertThat(closed.quantity()).isEqualTo("0.40000000");
+        assertThat(closed.fill().quantity()).isEqualTo(closed.quantity());
+        assertThat(closed.fill().realizedPnl()).isEqualTo("40.000000000000000000");
+        var remaining = accounts.summary(guest.accountId()).positions().get(0);
+        assertThat(remaining.quantity()).isEqualTo("0.60000000");
+        assertThat(remaining.entryPrice()).isEqualTo(opened.fill().price());
+        assertThat(remaining.unrealizedPnl()).isEqualTo("60.000000000000000000");
+        assertThat(remaining.realizedPnl()).isEqualTo("40.000000000000000000");
+        amount("balance", "10040"); amount("used_margin", "60");
+    }
+
+    @Test void repeatedPartialClosesFinishExactlyAndPreserveOriginalLotAndEveryFill() {
+        var opened = create("1", Position.Side.SHORT, 3, key());
+        price("900");
+        for (String quantity : List.of("0.3", "0.3", "0.4"))
+            service.close(guest.accountId(), opened.positionId(), key(), new ClosePositionRequest(new BigDecimal(quantity)));
+        assertThat(accounts.summary(guest.accountId()).positions()).isEmpty();
+        amount("used_margin", "0"); amount("balance", "10100"); amount("realized_pnl", "100");
+        assertThat(jdbc.queryForObject("select quantity from trading.position where id=?", BigDecimal.class, opened.positionId())).isZero();
+        assertThat(jdbc.queryForObject("select initial_quantity from trading.position where id=?", BigDecimal.class, opened.positionId())).isEqualByComparingTo("1");
+        assertThat(jdbc.queryForObject("select status from trading.position where id=?", String.class, opened.positionId())).isEqualTo("CLOSED");
+        assertThat(service.history(guest.accountId(), null, 100).stream().filter(o -> o.action().equals("CLOSE")))
+                .extracting(OrderResponse::quantity).containsExactly("0.40000000", "0.30000000", "0.30000000");
+        assertThat(fillCount()).isEqualTo(4);
+    }
+
+    @Test void partialCloseReplayChecksQuantityAndRollbackRestoresTheEntireLot() {
+        var opened = create("1", Position.Side.LONG, 10, key());
+        String closeKey = key();
+        var request = new ClosePositionRequest(new BigDecimal("0.4"));
+        doThrow(new IllegalStateException("partial settlement failure")).when(fills).save(any());
+        assertThatThrownBy(() -> service.close(guest.accountId(), opened.positionId(), closeKey, request)).isInstanceOf(IllegalStateException.class);
+        assertThat(accounts.summary(guest.accountId()).positions().get(0).quantity()).isEqualTo("1.00000000");
+        amount("used_margin", "100"); assertThat(fillCount()).isEqualTo(1);
+        reset(fills);
+        var result = service.close(guest.accountId(), opened.positionId(), closeKey, request);
+        prices.markUnavailable();
+        assertThat(service.close(guest.accountId(), opened.positionId(), closeKey, new ClosePositionRequest(new BigDecimal("0.40")))).isEqualTo(result);
+        rejects(() -> service.close(guest.accountId(), opened.positionId(), closeKey, new ClosePositionRequest(new BigDecimal("0.5"))), ErrorCode.IDEMPOTENCY_CONFLICT);
+        assertThat(fillCount()).isEqualTo(2);
+    }
+
+    @Test void concurrentPartialClosesCannotExceedTheRemainingQuantity() throws Exception {
+        var opened = create("1", Position.Side.LONG, 10, key());
+        var results = concurrent(2, i -> service.close(guest.accountId(), opened.positionId(), key(), new ClosePositionRequest(new BigDecimal("0.7"))));
+        assertThat(results.stream().filter(OrderResponse.class::isInstance)).hasSize(1);
+        assertThat(results.stream().filter(BusinessException.class::isInstance).map(BusinessException.class::cast))
+                .extracting(BusinessException::getCode).containsExactly(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
+        assertThat(accounts.summary(guest.accountId()).positions().get(0).quantity()).isEqualTo("0.30000000");
+        amount("used_margin", "30");
+    }
+
+    @Test void closeApiAcceptsPartialBodyAndStillAcceptsBodylessFullClose() throws Exception {
+        var opened = create("1", Position.Side.SHORT, 5, key());
+        mvc.perform(post("/api/v1/trading/account/positions/" + opened.positionId() + "/close")
+                .header("Authorization", "Bearer " + guest.accessToken()).header("Idempotency-Key", key())
+                .contentType("application/json").content("{\"quantity\":\"0.4\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.fill.quantity").value("0.40000000"));
+        mvc.perform(post("/api/v1/trading/account/positions/" + opened.positionId() + "/close")
+                .header("Authorization", "Bearer " + guest.accessToken()).header("Idempotency-Key", key()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.quantity").value("0.60000000"));
+        amount("used_margin", "0");
+    }
+
+    @Test void invalidCloseQuantityIsRejectedButSmallExitNotionalIsAllowed() {
+        var opened = create("1", Position.Side.LONG, 5, key());
+        for (String quantity : List.of("0", "-1", "0.000000001", "1E+100000"))
+            rejects(() -> service.close(guest.accountId(), opened.positionId(), key(), new ClosePositionRequest(new BigDecimal(quantity))), ErrorCode.INVALID_ORDER);
+        var small = service.close(guest.accountId(), opened.positionId(), key(), new ClosePositionRequest(new BigDecimal("0.00000001")));
+        assertThat(small.fill().quantity()).isEqualTo("0.00000001");
     }
     private void price(String price) { Instant now = Instant.now(); prices.update(new LatestMarkPrice(symbol, new BigDecimal(price), now, now)); }
     private static String key() { return UUID.randomUUID().toString(); }

@@ -32,7 +32,7 @@ public class TradingOrder {
     @Column(nullable = false) private Instant createdAt;
     protected TradingOrder() { }
 
-    public static TradingOrder market(Position position, Action action, BigDecimal price,
+    public static TradingOrder market(Position position, Action action, BigDecimal quantity, BigDecimal price,
             String key, String fingerprint, Instant now) {
         TradingOrder order = new TradingOrder();
         order.accountId = position.getAccountId();
@@ -42,7 +42,8 @@ public class TradingOrder {
         order.type = Type.MARKET;
         order.action = action;
         order.status = Status.FILLED;
-        order.quantity = position.getQuantity();
+        TradingMath.validateQuantity(quantity);
+        order.quantity = quantity.setScale(TradingMath.QUANTITY_SCALE);
         order.leverage = position.getLeverage();
         order.filledPrice = TradingMath.amount(price);
         order.idempotencyKey = key;

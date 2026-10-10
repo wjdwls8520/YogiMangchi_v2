@@ -27,17 +27,33 @@ public final class TradingMath {
     }
 
     public static void validateOrder(BigDecimal quantity, int leverage, BigDecimal price) {
-        if (quantity == null || quantity.signum() <= 0 || quantity.stripTrailingZeros().scale() > QUANTITY_SCALE
-                || quantity.compareTo(MAX_QUANTITY) > 0) {
-            throw new IllegalArgumentException("Quantity must be positive with at most 8 decimal places");
-        }
+        validateQuantity(quantity);
         if (leverage < 1 || leverage > MAX_LEVERAGE) throw new IllegalArgumentException("Leverage must be between 1 and 20");
-        if (price == null || price.signum() <= 0 || price.stripTrailingZeros().scale() > AMOUNT_SCALE
-                || price.precision() - price.scale() > 20) throw new IllegalArgumentException("Invalid price precision");
+        validatePrice(price);
         BigDecimal notional = quantity.multiply(price);
         if (notional.compareTo(MIN_NOTIONAL) < 0 || notional.compareTo(MAX_NOTIONAL) > 0) {
             throw new IllegalArgumentException("Notional must be between 1 and 1000000 USDT");
         }
+    }
+
+    public static void validateQuantity(BigDecimal quantity) {
+        if (quantity == null || quantity.signum() <= 0 || quantity.stripTrailingZeros().scale() > QUANTITY_SCALE
+                || quantity.compareTo(MAX_QUANTITY) > 0) {
+            throw new IllegalArgumentException("Quantity must be positive with at most 8 decimal places");
+        }
+    }
+
+    public static void validatePrice(BigDecimal price) {
+        if (price == null || price.signum() <= 0 || price.stripTrailingZeros().scale() > AMOUNT_SCALE
+                || price.precision() - price.scale() > 20) throw new IllegalArgumentException("Invalid price precision");
+    }
+
+    /** Keep rounding dust on the remaining lot; the final close releases every remaining unit. */
+    public static BigDecimal releasedMargin(BigDecimal margin, BigDecimal remaining, BigDecimal closing) {
+        validateQuantity(closing);
+        if (closing.compareTo(remaining) > 0) throw new IllegalArgumentException("Close exceeds remaining quantity");
+        return closing.compareTo(remaining) == 0 ? margin
+                : margin.multiply(closing).divide(remaining, AMOUNT_SCALE, RoundingMode.DOWN);
     }
 
     public static BigDecimal margin(BigDecimal price, BigDecimal quantity, int leverage) {

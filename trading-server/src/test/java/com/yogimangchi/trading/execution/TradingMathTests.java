@@ -8,6 +8,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TradingMathTests {
+    @Test void proportionalMarginKeepsRoundingRemainderUntilFinalClose() {
+        BigDecimal margin = TradingMath.margin(n("1"), n("1"), 3);
+        BigDecimal first = TradingMath.releasedMargin(margin, n("1"), n("0.3"));
+        BigDecimal second = TradingMath.releasedMargin(margin.subtract(first), n("0.7"), n("0.3"));
+        BigDecimal last = TradingMath.releasedMargin(margin.subtract(first).subtract(second), n("0.4"), n("0.4"));
+        assertThat(first.add(second).add(last)).isEqualByComparingTo(margin);
+        assertThat(TradingMath.releasedMargin(n("0.000000000000000001"), n("1"), n("0.1"))).isZero();
+    }
     private static BigDecimal n(String value) { return new BigDecimal(value); }
 
     @Test

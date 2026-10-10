@@ -3,6 +3,7 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    CLOSE_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Close quantity exceeds the unreserved remaining position quantity"),
     ENGINE_RECOVERING(HttpStatus.SERVICE_UNAVAILABLE, "Price trigger processing is recovering; retry shortly"),
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Order was not found"),
     ORDER_NOT_PENDING(HttpStatus.CONFLICT, "Order is no longer pending"),

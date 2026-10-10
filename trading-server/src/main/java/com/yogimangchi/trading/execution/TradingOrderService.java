@@ -99,14 +99,26 @@ public class TradingOrderService {
                 request.quantity(), price.domainMarkPrice(), request.leverage(), now));
         wallet.openMargin(margin);
         account.recordFinancialChange(now);
-        return record(position, TradingOrder.Action.OPEN, price, key, hash, now, BigDecimal.ZERO);
+        return record(position, TradingOrder.Action.OPEN, position.getQuantity(), price, key, hash, now, BigDecimal.ZERO);
     }
 
     @Transactional
     public OrderResponse close(Long accountId, Long positionId, String key) {
+        return close(accountId, positionId, key, null);
+    }
+
+    @Transactional
+    public OrderResponse close(Long accountId, Long positionId, String key, ClosePositionRequest request) {
         gate.enterTradingTransaction();
         validateKey(key);
-        String hash = fingerprint("CLOSE|" + positionId);
+        BigDecimal requestedQuantity = request == null ? null : request.quantity();
+        if (requestedQuantity != null) {
+            try { TradingMath.validateQuantity(requestedQuantity); }
+            catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
+        }
+        // Preserve the original bodyless full-close idempotency contract.
+        String hash = fingerprint("CLOSE|" + positionId + (requestedQuantity == null ? ""
+                : "|" + requestedQuantity.stripTrailingZeros().toPlainString()));
         TradingAccount account = locks.lock(accountId);
         OrderResponse previous = existing(accountId, key, hash);
         if (previous != null) return previous;
@@ -116,19 +128,21 @@ public class TradingOrderService {
         Position position = positions.findById(positionId).filter(p -> p.getAccountId().equals(accountId))
                 .orElseThrow(() -> new BusinessException(ErrorCode.POSITION_NOT_FOUND));
         if (position.getStatus() != Position.Status.OPEN) throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
+        BigDecimal quantity = requestedQuantity == null ? position.getQuantity() : requestedQuantity;
+        if (quantity.compareTo(position.getQuantity()) > 0) throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
         AccountValuation.Value value = valuation.calculate(wallet, open);
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
         if (value.equity().compareTo(value.maintenanceMargin()) <= 0) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         LatestMarkPrice price = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow();
-        BigDecimal pnl = TradingMath.pnl(position.getSide(), position.getEntryPrice(), price.domainMarkPrice(), position.getQuantity());
+        BigDecimal pnl = TradingMath.pnl(position.getSide(), position.getEntryPrice(), price.domainMarkPrice(), quantity);
         if (wallet.getBalance().add(pnl).signum() < 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
         Instant now = now();
-        position.close(price.domainMarkPrice(), now, false);
-        wallet.settle(position.getMargin(), pnl);
+        Position.Settlement settlement = position.close(quantity, price.domainMarkPrice(), now, false);
+        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl());
         account.recordFinancialChange(now);
-        if (wallet.getBalance().signum() == 0 && open.size() == 1) account.declareBankrupt();
-        return record(position, TradingOrder.Action.CLOSE, price, key, hash, now, pnl);
+        if (wallet.getBalance().signum() == 0 && open.size() == 1 && position.getStatus() != Position.Status.OPEN) account.declareBankrupt();
+        return record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, key, hash, now, pnl);
     }
 
     @Transactional
@@ -163,10 +177,10 @@ public class TradingOrderService {
         return OrderResponse.from(order, null);
     }
 
-    private OrderResponse record(Position position, TradingOrder.Action action, LatestMarkPrice price,
+    private OrderResponse record(Position position, TradingOrder.Action action, BigDecimal quantity, LatestMarkPrice price,
             String key, String hash, Instant now, BigDecimal pnl) {
-        TradingOrder order = orders.save(TradingOrder.market(position, action, price.domainMarkPrice(), key, hash, now));
-        Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), position.getQuantity(), price.eventTime(), now, pnl));
+        TradingOrder order = orders.save(TradingOrder.market(position, action, quantity, price.domainMarkPrice(), key, hash, now));
+        Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), quantity, price.eventTime(), now, pnl));
         logCommitted(order, "filled");
         return OrderResponse.from(order, fill);
     }

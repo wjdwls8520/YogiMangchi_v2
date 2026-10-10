@@ -30,10 +30,11 @@ paths:
     post:
       tags:
       - order-controller
-      summary: Close one entire owned position at the fresh server mark price
-      description: "LONG closes by selling, SHORT by buying. All held symbols must\
-        \ be fresh. Same idempotency contract as opening; 404 for another account's\
-        \ position."
+      summary: Close all or part of an owned position at the fresh server mark price
+      description: "Omit body/quantity for the entire remaining lot. Quantity is positive\
+        \ with at most 8 decimal places; no minimum exit notional. LONG closes by\
+        \ selling, SHORT by buying. All held symbols must be fresh. Same key with\
+        \ a different quantity returns 409; 404 for another account's position."
       operationId: close
       parameters:
       - name: positionId
@@ -47,6 +48,11 @@ paths:
         required: true
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClosePositionRequest"
       responses:
         "500":
           description: Internal Server Error
@@ -106,9 +112,9 @@ paths:
       - order-controller
       summary: Create a MARKET execution or reserve a PENDING LIMIT order
       description: "Idempotency-Key: 8-100 letters, digits, underscore or hyphen.\
-        \ Replay returns the same order with its current state. 400 invalid request; 401 credential; 409\
-        \ margin/risk/idempotency conflict; 503 unavailable price or recovering engine. No client execution\
-        \ price."
+        \ Replay returns the same order with its current state. 400 invalid request;\
+        \ 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price\
+        \ or recovering engine. No client execution price."
       operationId: create
       parameters:
       - name: Idempotency-Key
@@ -355,12 +361,22 @@ components:
         expiresAt:
           type: string
           format: date-time
+    ClosePositionRequest:
+      type: object
+      properties:
+        quantity:
+          type: string
+          description: "Quantity to close, maximum 8 decimal places. Omit for the\
+            \ entire remaining lot."
+          example: "0.01"
     FillResponse:
       type: object
       properties:
         fillId:
           type: integer
           format: int64
+        quantity:
+          type: string
         price:
           type: string
         priceEventTime:
@@ -488,8 +504,9 @@ components:
           format: date-time
     PositionResponse:
       type: object
-      description: Independent position lot in domain asset units. markPrice/unrealizedPnl
-        are null unless the server price is FRESH.
+      description: Independent position lot. quantity/margin are remaining values;
+        realizedPnl is cumulative. markPrice/unrealizedPnl are null unless the server
+        price is FRESH.
       properties:
         id:
           type: integer

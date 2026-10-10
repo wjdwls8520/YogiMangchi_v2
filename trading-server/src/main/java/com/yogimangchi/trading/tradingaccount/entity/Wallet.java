@@ -50,7 +50,8 @@ public class Wallet {
 
     /** Called only after account-wide fresh valuation and margin validation under the account DB lock. */
     public void settle(BigDecimal releasedMargin, BigDecimal pnl) {
-        BigDecimal released = positive(releasedMargin);
+        BigDecimal released = TradingMath.amount(releasedMargin);
+        if (released.signum() < 0) throw new IllegalArgumentException("Released margin cannot be negative");
         if (released.compareTo(usedMargin) > 0) throw new IllegalStateException("Used margin cannot become negative");
         BigDecimal delta = TradingMath.amount(pnl);
         BigDecimal newBalance = TradingMath.amount(balance.add(delta));

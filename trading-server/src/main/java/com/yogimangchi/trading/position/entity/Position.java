@@ -17,10 +17,12 @@ public class Position {
     @Column(nullable = false, updatable = false) private Long accountId;
     @Column(nullable = false, updatable = false) private Long tradingSymbolId;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 8, updatable = false) private Side side;
-    @Column(nullable = false, precision = 28, scale = 8, updatable = false) private BigDecimal quantity;
+    @Column(nullable = false, precision = 28, scale = 8) private BigDecimal quantity;
+    @Column(nullable = false, precision = 28, scale = 8, updatable = false) private BigDecimal initialQuantity;
     @Column(nullable = false, precision = 38, scale = 18, updatable = false) private BigDecimal entryPrice;
     @Column(nullable = false, updatable = false) private int leverage;
-    @Column(nullable = false, precision = 38, scale = 18, updatable = false) private BigDecimal margin;
+    @Column(nullable = false, precision = 38, scale = 18) private BigDecimal margin;
+    @Column(nullable = false, precision = 38, scale = 18, updatable = false) private BigDecimal initialMargin;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 16) private Status status;
     @Column(nullable = false, precision = 38, scale = 18) private BigDecimal realizedPnl;
     @Column(precision = 38, scale = 18) private BigDecimal exitPrice;
@@ -38,25 +40,36 @@ public class Position {
         position.tradingSymbolId = symbolId;
         position.side = Objects.requireNonNull(side);
         position.quantity = quantity.setScale(TradingMath.QUANTITY_SCALE);
+        position.initialQuantity = position.quantity;
         position.entryPrice = TradingMath.amount(entryPrice);
         position.leverage = leverage;
         position.margin = TradingMath.margin(entryPrice, quantity, leverage);
+        position.initialMargin = position.margin;
         position.status = Status.OPEN;
         position.realizedPnl = TradingMath.amount(BigDecimal.ZERO);
         position.openedAt = Objects.requireNonNull(now);
         return position;
     }
 
-    public BigDecimal close(BigDecimal price, Instant now, boolean liquidated) {
+    public record Settlement(BigDecimal quantity, BigDecimal releasedMargin, BigDecimal realizedPnl) { }
+
+    public Settlement close(BigDecimal closingQuantity, BigDecimal price, Instant now, boolean liquidated) {
         if (status != Status.OPEN) throw new IllegalStateException("Position is already closed");
-        if (price == null || price.signum() <= 0 || price.stripTrailingZeros().scale() > TradingMath.AMOUNT_SCALE) throw new IllegalArgumentException("Invalid close price");
+        TradingMath.validatePrice(price);
+        TradingMath.validateQuantity(closingQuantity);
+        if (liquidated && closingQuantity.compareTo(quantity) != 0) throw new IllegalArgumentException("Liquidation closes the remaining lot");
         if (Objects.requireNonNull(now).isBefore(openedAt)) throw new IllegalArgumentException("Close time precedes open time");
-        BigDecimal pnl = TradingMath.pnl(side, entryPrice, price, quantity);
-        exitPrice = TradingMath.amount(price);
-        realizedPnl = pnl;
-        closedAt = now;
-        status = liquidated ? Status.LIQUIDATED : Status.CLOSED;
-        return pnl;
+        BigDecimal released = TradingMath.releasedMargin(margin, quantity, closingQuantity);
+        BigDecimal pnl = TradingMath.pnl(side, entryPrice, price, closingQuantity);
+        quantity = quantity.subtract(closingQuantity).setScale(TradingMath.QUANTITY_SCALE);
+        margin = margin.subtract(released);
+        realizedPnl = TradingMath.amount(realizedPnl.add(pnl));
+        if (quantity.signum() == 0) {
+            exitPrice = TradingMath.amount(price);
+            closedAt = now;
+            status = liquidated ? Status.LIQUIDATED : Status.CLOSED;
+        }
+        return new Settlement(closingQuantity.setScale(TradingMath.QUANTITY_SCALE), released, pnl);
     }
 
     public Long getId() { return id; }
@@ -64,6 +77,8 @@ public class Position {
     public Long getTradingSymbolId() { return tradingSymbolId; }
     public Side getSide() { return side; }
     public BigDecimal getQuantity() { return quantity; }
+    public BigDecimal getInitialQuantity() { return initialQuantity; }
+    public BigDecimal getInitialMargin() { return initialMargin; }
     public BigDecimal getEntryPrice() { return entryPrice; }
     public int getLeverage() { return leverage; }
     public BigDecimal getMargin() { return margin; }

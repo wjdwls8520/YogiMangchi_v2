@@ -184,12 +184,15 @@ V4는 `trading_account`, `wallet`, `position`을 생성한다. 계정은 내부 
 생성 시간과 마지막 재무 변경 시각을 가진다. Wallet은 계정당 하나이며 실제 잔액, 사용/예약 Margin,
 누적 실현 PnL을 보존한다. Position은 개별 체결 Lot 단위로 독립된 LONG/SHORT 수량·진입가·Leverage·Margin,
 OPEN/CLOSED/LIQUIDATED 상태·실현 PnL·청산가·생성/종료 시각을 가진다. 같은 종목의 여러 Lot도 USDT Wallet을 공유한다.
-시장가 주문은 개별 Position Lot을 만들고 전체 종료만 지원한다. 부분 종료/동일 종목 합산은 제공하지 않는다.
+시장가 주문은 개별 Position Lot을 만들고 부분/전체 종료를 지원한다. 동일 종목 합산은 하지 않는다.
+Position의 `quantity`와 `margin`은 잔여 값이며 `realizedPnl`은 누적 실현 손익이다.
+V7은 기존 원래 수량/증거금을 `initial_quantity`/`initial_margin`에 보존하고 종료된 Lot의 잔여 값을 0으로 이관한다.
+진입가/Leverage는 유지하며 마지막 종료 가격과 시각은 Position에, 각 부분 체결은 Order/Fill에 보존한다.
 
 | Method | Endpoint | 목적 |
 | --- | --- | --- |
 | POST | `/api/v1/trading/account/orders` | `type=MARKET/LIMIT`, `tradingSymbolId`, `side=LONG/SHORT`, 문자열 `quantity`, `leverage`로 주문. LIMIT만 문자열 `limitPrice` 필요 |
-| POST | `/api/v1/trading/account/positions/{positionId}/close` | 해당 Lot 전체 종료. Body 없음 |
+| POST | `/api/v1/trading/account/positions/{positionId}/close` | 시장가 부분/전체 종료. `{"quantity":"0.01"}`; Body/quantity 생략 시 잔여 전체 종료 |
 | GET | `/api/v1/trading/account/orders?beforeId=&limit=50` | 자기 주문/체결 이력. ID 내림차순, 최대 100개 |
 | GET | `/api/v1/trading/account/orders/pending` | 자기 PENDING 지정가 목록 |
 | POST | `/api/v1/trading/account/orders/{orderId}/cancel` | 지정가 취소. Body/Idempotency-Key 불필요, 상태 전이 자체가 멱등적 |
@@ -200,7 +203,9 @@ status 외에는 Guest Bearer 인증이 필요하다. 주문/종료의 `Idempote
 네트워크 응답 유실 시 같은 Key로 재시도한다. 재전송은 가격이 unavailable이어도 동일 주문을 돌려준다.
 지정가가 이미 체결/취소된 경우 그 주문의 현재 상태를 반환하며 새 주문을 만들지 않는다.
 주문/종료 성공은 200이며 Response의 `fill`에 체결가·가격 이벤트 시각·체결 시각·실현 PnL이 있다.
-Client의 임의 가격은 사용하지 않는다. V5의 계정별 Key UNIQUE, Position별 OPEN/CLOSE UNIQUE,
+부분 종료의 동일 Key/다른 수량은 409다. 수량은 양수·최대 소수 8자리이며 잔여량 초과는 409 `CLOSE_QUANTITY_EXCEEDED`다.
+종료에는 신규 진입 최소 Notional을 적용하지 않아 작은 잔여량도 정리할 수 있다. Fill은 실제 체결 `quantity`도 반환한다.
+Client의 임의 가격은 사용하지 않는다. 계정별 Key UNIQUE, Position별 OPEN/LIQUIDATE UNIQUE,
 Fill의 order_id UNIQUE와 계정 Row Lock을 함께 사용한다. Position/Wallet/Order/Fill은 하나의 Transaction이다.
 Commit 이후에만 성공 로그를 남긴다. Lock timeout/교착은 전체 rollback하며 무한 재시도하지 않는다.
 신규 주문에는 ACTIVE 종목과 보유 종목 전체의 fresh 가격, 충분한 가용 Margin이 필요하다.
@@ -277,6 +282,8 @@ Producer 유실은 경고와 DB `gap_count`로 기록한다. 복구 시 현재 f
 LONG PnL은 `(mark-entry)*quantity`, SHORT는 그 반대다. 평가자산은 `balance + unrealizedPnl`이며
 사용 가능 금액은 `max(0, min(balance, equity) - usedMargin - reservedMargin)`이다.
 미실현 이익으로 추가 Margin을 만들지 않으며 손실은 구매력을 줄인다. Margin은 현금 지출이 아닌 사용 제한이다.
+부분 종료의 반환 Margin은 `남은 Margin * 종료 수량 / 남은 수량`을 18자리 내림한다.
+마지막 종료에서는 잔여 Margin 전부를 반환하므로 반복 부분 종료 후 증거금 잔재가 남지 않는다.
 
 계정 Snapshot은 PostgreSQL 계정 Row Lock → Wallet → Position 순서로 읽어 동시 재무 변경과 섞이지 않게 한다.
 Lock 대기는 최대 2초이며 경합 실패는 409 `TRADING_BUSY`다. 가격은 하나의 메모리 Snapshot으로 평가한다.
@@ -471,4 +478,4 @@ Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/tra
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
 자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-JWT/Content 인증, Admin, 부분 종료, Funding/수수료, Competition/Ranking과 다중 노드 조정은 구현하지 않았다.
+JWT/Content 인증, Admin, Funding/수수료, Competition/Ranking과 다중 노드 조정은 구현하지 않았다.
