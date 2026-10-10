@@ -49,5 +49,7 @@ marketdata:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
 
 trading:
+  trigger:
+    enabled: ${TRADING_TRIGGER_ENABLED:true}
   http:
     allowed-origins: ${TRADING_HTTP_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}

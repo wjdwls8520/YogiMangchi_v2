@@ -25,11 +25,13 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http, GuestCredentialService credentials) throws Exception {
         http.authorizeHttpRequests(authorize -> {
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/symbols").permitAll();
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/status").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/guest").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/orders",
+                    "/api/v1/trading/account/orders/{orderId}/cancel",
                     "/api/v1/trading/account/positions/{positionId}/close").hasRole("TRADER");
-            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/orders").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/orders", "/api/v1/trading/account/orders/pending").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/wallet",
                     "/api/v1/trading/account/positions", "/api/v1/trading/account/summary").hasRole("TRADER");
             authorize.requestMatchers(

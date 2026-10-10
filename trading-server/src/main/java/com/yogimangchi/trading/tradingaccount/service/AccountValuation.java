@@ -29,7 +29,12 @@ public class AccountValuation {
         positions.forEach(position -> ids.add(position.getTradingSymbolId()));
         Map<Long, LatestPriceStore.Snapshot> snapshots = prices.findAll(
                 ids);
-        boolean fresh = snapshots.values().stream().allMatch(snapshot -> snapshot.status() == LatestPriceStore.Status.FRESH);
+        return evaluate(wallet, positions, snapshots, capturedAt);
+    }
+
+    public Value evaluate(Wallet wallet, List<Position> positions, Map<Long, LatestPriceStore.Snapshot> snapshots, Instant capturedAt) {
+        boolean fresh = positions.stream().allMatch(position -> snapshots.containsKey(position.getTradingSymbolId()))
+                && snapshots.values().stream().allMatch(snapshot -> snapshot.status() == LatestPriceStore.Status.FRESH);
         if (!fresh) return new Value(capturedAt, snapshots, false, null, null, null, null);
         BigDecimal pnl = BigDecimal.ZERO;
         BigDecimal maintenance = BigDecimal.ZERO;

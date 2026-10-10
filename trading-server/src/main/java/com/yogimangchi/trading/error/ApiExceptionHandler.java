@@ -17,6 +17,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
     public ProblemDetail handleBusinessException(BusinessException exception) {
+        log.info("Business request rejected code={}", exception.getCode());
         return businessProblem(exception.getCode());
     }
 

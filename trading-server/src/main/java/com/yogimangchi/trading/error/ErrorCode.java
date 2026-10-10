@@ -3,6 +3,10 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    ENGINE_RECOVERING(HttpStatus.SERVICE_UNAVAILABLE, "Price trigger processing is recovering; retry shortly"),
+    ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Order was not found"),
+    ORDER_NOT_PENDING(HttpStatus.CONFLICT, "Order is no longer pending"),
+    PENDING_LIMIT_REACHED(HttpStatus.CONFLICT, "Maximum pending orders reached"),
     INVALID_ORDER(HttpStatus.BAD_REQUEST, "Invalid order or supported quantity/notional/leverage exceeded"),
     INVALID_IDEMPOTENCY_KEY(HttpStatus.BAD_REQUEST, "Idempotency-Key must be 8-100 letters, digits, underscores or hyphens"),
     IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "This key was used for a different request"),

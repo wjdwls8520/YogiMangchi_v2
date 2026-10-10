@@ -8,6 +8,10 @@ import org.testcontainers.containers.GenericContainer;
 
 @TestConfiguration(proxyBeanMethods = false)
 public class PostgresTestConfiguration {
+    @Bean
+    org.springframework.test.context.DynamicPropertyRegistrar deterministicTrigger() {
+        return registry -> registry.add("trading.trigger.enabled", () -> "false");
+    }
 
     @Bean
     @ServiceConnection

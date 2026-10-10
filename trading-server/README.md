@@ -2,7 +2,7 @@
 
 Yogimangchi V2의 독립 Spring Boot 애플리케이션이다. 현재 PostgreSQL/JPA 기반
 TradingSymbol 구조, 공개 거래 종목 조회 API, Binance Mark Price 수신과 정규화된 최신 가격 상태,
-Redis 기반 시세 공유를 제공한다. 루트 `readme.md`,
+Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/지정가 주문과 교차증거금 청산을 제공한다. 루트 `readme.md`,
 루트 및 이 디렉터리의 `AGENTS.md`를 따른다.
 
 ## 버전과 의존성
@@ -28,6 +28,7 @@ Java 17 이상과 Gradle 8.4 이상의 8.x를 지원하므로 기존 Wrapper를 
 | `spring-boot-starter-security` | 공개 경로 지정과 나머지 요청 차단 |
 | `spring-boot-starter-data-jpa` | TradingSymbol 영속성과 트랜잭션 |
 | `spring-boot-starter-data-redis` | Lettuce 연결, 공유 Snapshot, Pub/Sub와 재생 가능한 Stream |
+| `spring-boot-starter-websocket` | Browser HTTP Upgrade, Session과 Raw JSON WebSocket 전송 |
 | `postgresql` (runtime) | PostgreSQL JDBC 연결 |
 | `flyway-core`, `flyway-database-postgresql` (DB 모듈은 runtime) | SQL 마이그레이션과 Seed 이력 |
 | `springdoc-openapi-starter-webmvc-ui` | Swagger와 OpenAPI 생성 |
@@ -40,7 +41,7 @@ Boot 4의 `starter-webmvc`, `starter-webmvc-test`, `starter-security-test`를 �
 Gradle `platform`으로 Boot BOM을 사용하며 별도의 dependency-management 플러그인은 없다.
 Redis는 현재 공유 가격/이벤트 기능에 사용한다. 기존 JDK WebSocket과 JPA는 Redis 프로토콜을
 제공하지 않으므로 Boot BOM이 관리하는 Spring Data Redis/Lettuce를 사용한다. 별도 버전을 고정하지 않는다.
-Validation, Lombok, JWT/OAuth2, H2, Browser WebSocket 의존성은 아직 추가하지 않았다.
+Validation, Lombok, JWT/OAuth2, H2 의존성은 추가하지 않았다. 트리거/주문은 기존 JPA/JDBC와 Redis 기능을 재사용한다.
 
 ## PostgreSQL과 마이그레이션
 
@@ -187,13 +188,17 @@ OPEN/CLOSED/LIQUIDATED 상태·실현 PnL·청산가·생성/종료 시각을 �
 
 | Method | Endpoint | 목적 |
 | --- | --- | --- |
-| POST | `/api/v1/trading/account/orders` | `type=MARKET`, `tradingSymbolId`, `side=LONG/SHORT`, 문자열 `quantity`, `leverage`로 주문 |
+| POST | `/api/v1/trading/account/orders` | `type=MARKET/LIMIT`, `tradingSymbolId`, `side=LONG/SHORT`, 문자열 `quantity`, `leverage`로 주문. LIMIT만 문자열 `limitPrice` 필요 |
 | POST | `/api/v1/trading/account/positions/{positionId}/close` | 해당 Lot 전체 종료. Body 없음 |
 | GET | `/api/v1/trading/account/orders?beforeId=&limit=50` | 자기 주문/체결 이력. ID 내림차순, 최대 100개 |
+| GET | `/api/v1/trading/account/orders/pending` | 자기 PENDING 지정가 목록 |
+| POST | `/api/v1/trading/account/orders/{orderId}/cancel` | 지정가 취소. Body/Idempotency-Key 불필요, 상태 전이 자체가 멱등적 |
+| GET | `/api/v1/trading/status` | 공개. Trigger 기반시설 READY/RECOVERING |
 
-모두 Guest Bearer 인증이 필요하다. 변경 요청의 `Idempotency-Key`는 8~100자 영문/숫자/`_`/`-`다.
+status 외에는 Guest Bearer 인증이 필요하다. 주문/종료의 `Idempotency-Key`는 8~100자 영문/숫자/`_`/`-`다.
 계정별 동일 Key/동일 요청은 최초 결과를 반환하고 다른 요청은 409 `IDEMPOTENCY_CONFLICT`다.
-네트워크 응답 유실 시 같은 Key로 재시도한다. 재전송은 가격이 unavailable이어도 기존 결과를 돌려준다.
+네트워크 응답 유실 시 같은 Key로 재시도한다. 재전송은 가격이 unavailable이어도 동일 주문을 돌려준다.
+지정가가 이미 체결/취소된 경우 그 주문의 현재 상태를 반환하며 새 주문을 만들지 않는다.
 주문/종료 성공은 200이며 Response의 `fill`에 체결가·가격 이벤트 시각·체결 시각·실현 PnL이 있다.
 Client의 임의 가격은 사용하지 않는다. V5의 계정별 Key UNIQUE, Position별 OPEN/CLOSE UNIQUE,
 Fill의 order_id UNIQUE와 계정 Row Lock을 함께 사용한다. Position/Wallet/Order/Fill은 하나의 Transaction이다.
@@ -201,7 +206,70 @@ Commit 이후에만 성공 로그를 남긴다. Lock timeout/교착은 전체 ro
 신규 주문에는 ACTIVE 종목과 보유 종목 전체의 fresh 가격, 충분한 가용 Margin이 필요하다.
 종료도 전체 fresh 평가를 요구하며 유지증거금 이하의 계정은 `ACCOUNT_AT_RISK`로 차단한다.
 손실 Lot 종료로 현금이 음수가 되면 거절한다. 수익 Lot을 먼저 종료해야 하는 경우가 있다.
-지정가/자동 강제청산은 다음 단계에서 추가하며, 이 단계만 인터넷 서비스로 배포하지 않는다.
+가격이 새로 도착했지만 위험 처리가 끝나지 않았으면 503 `ENGINE_RECOVERING`이다. 동일 Key로 짧은 간격을 두고 재시도한다.
+단순 READY 상태도 개별 종목의 freshness 또는 주문 허용을 보장하지 않는다.
+
+### 지정가·가격 Trigger·강제청산
+
+```text
+Binance -> normalization -> LatestPriceStore -> bounded publisher -> Redis
+                                  |                          |       |- Snapshot (TTL)
+                                  |                          |       |- Pub/Sub -> Client WS -> Browser
+                                  |                          |       `- Stream -> ordered Trigger Worker
+REST Order/Close -----------------+--------------------------+----------------|
+                                                                            v
+                                                      Account DB Row Lock -> risk / order
+                                                        -> Fill + Position + Wallet -> PostgreSQL
+```
+
+지정가는 먼저 PENDING으로 저장하고 `limitPrice * quantity / leverage`를 예약한다. 계정당 최대 100개다.
+LONG은 새 Mark가 지정가 이하, SHORT는 지정가 이상일 때 전체 체결한다. 정확히 같은 가격을 찍을 필요가 없다.
+현재 가격에 이미 충족되는 지정가도 PENDING으로 생성한 후 다음 유효한 이벤트에서 판정한다.
+체결가는 이벤트의 정규화된 Mark다. Provider 계약 수량/이름은 주문 엔진에 들어오지 않는다.
+실제 체결 시 가격·Margin·Notional·최대 Lot 수를 재검증한다. 부족하면 REJECTED와 원인을 남기고 예약을 반환한다.
+취소와 체결은 같은 계정 Row Lock으로 직렬화한다. 취소가 먼저면 CANCELED, 체결이 먼저면 취소는 409다.
+취소 재전송은 CANCELED를 그대로 반환하며, 가격/Redis 장애 중에도 취소할 수 있다.
+종목 비활성화를 실제 관리하는 API는 없다. Trigger 시 이미 INACTIVE인 신규 진입 주문은 REJECTED 처리한다.
+관리 기능 도입 전에는 OPEN Position/PENDING Order가 있는 종목을 임의 비활성화하지 않는다.
+
+유지증거금은 `sum(mark * quantity * 0.005)`다. 교차증거금의 `equity <= maintenanceMargin`이면
+계정의 모든 OPEN Lot을 같은 fresh 가격 벡터로 청산하고 모든 PENDING 예약을 반환·REJECTED 처리한다.
+청산가를 정확히 찍지 않고 건너뛰어도 `<=` 비교로 감지한다. 반대 방향/다른 종목의 PnL도 합산한다.
+청산 Position/Order/Fill과 Wallet은 계정 단위 하나의 Transaction이다. 이력 Action은 LIQUIDATE다.
+큰 가격 Gap의 손실을 0으로 잘라내지 않는다. 잔액이 0 이하면 BANKRUPT로 신규 거래를 차단하고 실제 손실을 보존한다.
+청산 후 잔액이 양수면 ACTIVE이며 새 거래가 가능하다. 자동 부채 보전/보험 기금은 제공하지 않는다.
+이것은 명시적인 모의투자 정책이며 Binance Maintenance Tier, Funding, 수수료 또는 실제 매칭 엔진의 복제가 아니다.
+
+Worker는 매 Tick 전체 주문을 읽지 않는다. 종목별 OPEN Position 인덱스와 LONG/SHORT 지정가 범위 인덱스로
+후보 계정을 100개씩 Keyset 조회하고, 계정 잠금 후 최대 100개 PENDING/OPEN 항목을 재검증한다.
+가격 수신 Thread에는 DB/Redis/socket I/O를 추가하지 않는다. HTTP 요청과 Worker가 잠그는 업무 단위는 항상 계정 하나다.
+Wallet/Position/Order는 그 뒤에 읽으므로 서로 다른 계정을 역순으로 잠그는 경로가 없다.
+단일 서버의 주문/수동 종료는 DB 계정 잠금 전에 짧은 읽기 Gate를 얻고 Commit까지 유지한다.
+가격 이벤트 처리는 같은 Gate의 쓰기 권한으로 후보 조회부터 체크포인트까지 진행한다.
+따라서 아직 Commit되지 않은 새 Position을 건너뛰어 순간 가격 crossing을 놓치지 않는다.
+Gate는 현재 노드의 처리 순서를 위한 것이며 재무 정합성은 PostgreSQL이 보장한다. Gate 대기도 유한하다.
+DB 교착/Lock timeout이면 해당 Transaction 전체가 rollback한다. HTTP는 409, Worker는 1~30초 Backoff로 재처리한다.
+잘못된 이벤트/계속 실패하는 DB 작업을 조용히 건너뛰지 않고 RECOVERING으로 거래를 막고 로그에 남긴다.
+
+V6는 지정가 상태/예약/완료 시각/거절 원인, 필요한 Partial Index와 `market_trigger_cursor`를 추가한다.
+단일 순서 Worker는 Redis XRANGE와 PostgreSQL의 Stream ID/가격 벡터 체크포인트를 사용한다.
+모든 후보 계정 Transaction이 Commit된 뒤에만 체크포인트를 전진시킨다. 직전 중단 이벤트는 다시 처리하며
+이미 종료된 Order/Position과 Fill UNIQUE 제약으로 중복 반영하지 않는다. Redis Consumer Group과 별도 ACK 상태를
+중복 관리하지 않는 이유는 현재 단일 순서 Worker의 완료 위치가 이미 PostgreSQL에 있기 때문이다.
+서버 재시작으로 메모리 인덱스가 사라져도 PostgreSQL 후보 조회와 체크포인트로 재개한다.
+
+Redis 장애/Producer 누락/처리 지연 중에는 신규 주문과 수동 종료를 차단한다. UI는 유효한 로컬 가격을 계속 볼 수 있다.
+Redis 복구 후 fresh 이벤트로 DB 노출을 재평가하고, 해당 가격까지 위험 처리가 끝나야 주문을 받는다.
+Stream 보존 구간에서 짧은 지연의 `100 -> 98 -> 102`는 순서대로 처리하여 중간 crossing을 보존한다.
+단, **freshness 한도 5초를 넘긴 이벤트로 과거 가격 체결을 소급하지 않는다.** 만료된 이벤트, Stream 삭제/Trim,
+Producer 유실은 경고와 DB `gap_count`로 기록한다. 복구 시 현재 fresh 가격으로 보유 포지션·대기 주문을 재평가한다.
+장애 구간의 모든 중간 가격을 복원하거나 이미 지나간 청산을 정확히 재현한다고 보장하지 않는다.
+이를 요구하는 실제 운영 단계에서는 영속 가격 원장과 역사적 평가/복구 정책을 추가로 설계해야 한다.
+
+현재 한 개의 Binance 수집자/Trigger Worker만 실행한다. PostgreSQL 잠금·Unique 제약·공유 Redis 이벤트는
+다중 노드에서도 재사용할 수 있지만, 여러 Worker의 순서/체크포인트 소유권은 아직 조정하지 않는다.
+서버 2/3을 추가하기 전에 수집 Leader와 Trigger Partition/Ownership, 재분배 정책을 구현해야 한다.
+`TRADING_TRIGGER_ENABLED=false`는 문서 추출/격리 테스트용이며 주문 Gate를 우회하지 않는다.
 
 금액/가격은 NUMERIC(38,18), Domain 자산 수량은 NUMERIC(28,8)이다. `execution.TradingMath`에서
 금액/PnL HALF_EVEN 18자리, 최초 Margin CEILING 18자리, Leverage 1~20, 1~1,000,000 USDT Notional,
@@ -266,7 +334,7 @@ BigDecimal의 정확한 나눗셈을 사용하며 임의 rounding이나 Symbol �
 재연결 후에도 종목마다 새 가격을 받아야 FRESH가 되며 구독에서 빠진 종목은 제거한다.
 현재 연결 중 DB Mapping/활성 상태 변경을 즉시 감지하는 기능은 없다.
 재시작 시 Store는 비어 있으며, 이 Store는 Tick 이력이나 가격 crossing 범위를 보존하지 않는다.
-가격 조회 Controller와 주문/체결 기능은 아직 추가하지 않았다. Browser에는 아래 WebSocket으로 전달한다.
+별도 가격 REST Controller는 제공하지 않는다. Browser에는 아래 WebSocket으로 전달하고 주문은 서버 내부 가격을 사용한다.
 
 ### Redis 공유 가격과 이벤트
 
@@ -299,8 +367,8 @@ Redis 장애 시 현재 노드의 유효한 로컬 가격은 계속 조회할 �
 
 Stream은 Pub/Sub와 달리 보존 구간을 다시 읽을 수 있지만 영구 원본은 아니다.
 12개 종목의 1초 이벤트 기준 보존량은 약 2시간이며 실제 유입량에 따라 달라진다.
-현재 단계는 Producer만 구현한다. 지정가/청산 Worker가 추가될 때 소비자 그룹, DB Commit 이후 ACK,
-Pending 재처리와 보존 구간/Redis 유실 감지 정책을 함께 적용한다. Redis Volume이나 영구 보존을 가정하지 않는다.
+지정가/청산 Worker는 위의 PostgreSQL 체크포인트를 기준으로 Stream을 재생한다.
+Redis Volume이나 이벤트의 영구 보존을 가정하지 않는다.
 
 ### Browser 실시간 가격 WebSocket
 
@@ -403,4 +471,4 @@ Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/tra
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
 자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-지정가 Trigger/자동 강제청산, JWT, Admin은 다음 단계에서 필요한 범위를 구현한다.
+JWT/Content 인증, Admin, 부분 종료, Funding/수수료, Competition/Ranking과 다중 노드 조정은 구현하지 않았다.

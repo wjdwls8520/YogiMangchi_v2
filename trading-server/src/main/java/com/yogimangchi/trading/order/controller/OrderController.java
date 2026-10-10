@@ -1,5 +1,5 @@
 package com.yogimangchi.trading.order.controller;
-import com.yogimangchi.trading.execution.MarketOrderService;
+import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.order.dto.*;
 import com.yogimangchi.trading.tradingaccount.security.GuestPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -12,11 +12,11 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping(value="/api/v1/trading/account", produces="application/json")
 @SecurityRequirement(name="guestBearer")
 public class OrderController {
-    private final MarketOrderService engine;
-    public OrderController(MarketOrderService engine) { this.engine = engine; }
+    private final TradingOrderService engine;
+    public OrderController(TradingOrderService engine) { this.engine = engine; }
     @PostMapping("/orders")
-    @Operation(summary="Open a LONG or SHORT position at the fresh server mark price",
-            description="Idempotency-Key: 8-100 letters, digits, underscore or hyphen. Replay returns original result. 400 invalid request; 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price. No client execution price.")
+    @Operation(summary="Create a MARKET execution or reserve a PENDING LIMIT order",
+            description="Idempotency-Key: 8-100 letters, digits, underscore or hyphen. Replay returns the same order with its current state. 400 invalid request; 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price or recovering engine. No client execution price.")
     public OrderResponse create(@AuthenticationPrincipal GuestPrincipal principal, @RequestHeader("Idempotency-Key") String key,
             @RequestBody CreateOrderRequest request) { return engine.create(principal.accountId(), key, request); }
     @PostMapping("/positions/{positionId}/close")
@@ -31,5 +31,13 @@ public class OrderController {
             @RequestParam(required=false) Long beforeId, @RequestParam(defaultValue="50") int limit) {
         return engine.history(principal.accountId(), beforeId, limit);
     }
+    @GetMapping("/orders/pending")
+    @Operation(summary="Read own pending limit orders and reserved margin")
+    public List<OrderResponse> pending(@AuthenticationPrincipal GuestPrincipal principal) { return engine.pending(principal.accountId()); }
+    @PostMapping("/orders/{orderId}/cancel")
+    @Operation(summary="Cancel an owned pending order and release margin",
+            description="Repeated cancel is idempotent. A fill that wins the race returns 409. Cancellation remains available during price/Redis outages.")
+    public OrderResponse cancel(@AuthenticationPrincipal GuestPrincipal principal, @PathVariable Long orderId) {
+        return engine.cancel(principal.accountId(), orderId);
+    }
 }
-

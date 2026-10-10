@@ -13,6 +13,7 @@ public final class TradingMath {
     public static final BigDecimal MAX_QUANTITY = new BigDecimal("1000000000000");
     public static final int MAX_LEVERAGE = 20;
     public static final int MAX_OPEN_POSITIONS = 100;
+    public static final int MAX_PENDING_ORDERS = 100;
     public static final BigDecimal MAINTENANCE_RATE = new BigDecimal("0.005");
     public static final int AMOUNT_SCALE = 18;
     public static final int QUANTITY_SCALE = 8;

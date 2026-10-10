@@ -38,12 +38,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(PostgresTestConfiguration.class)
 @AutoConfigureMockMvc
 class MarketOrderIntegrationTests {
-    @Autowired MarketOrderService service;
+    @Autowired TradingOrderService service;
     @Autowired TradingAccountService accounts;
     @Autowired LatestPriceStore prices;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
     @MockitoSpyBean FillRepository fills;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.yogimangchi.trading.execution.trigger.TradingEngineGate gate;
     GuestAccountResponse guest;
     long symbol;
 
@@ -159,7 +161,7 @@ class MarketOrderIntegrationTests {
     }
 
     private OrderResponse create(String quantity, Position.Side side, int leverage, String key) {
-        return service.create(guest.accountId(), key, new CreateOrderRequest(TradingOrder.Type.MARKET, symbol, side, new BigDecimal(quantity), leverage));
+        return service.create(guest.accountId(), key, new CreateOrderRequest(TradingOrder.Type.MARKET, symbol, side, new BigDecimal(quantity), leverage, null));
     }
     private void price(String price) { Instant now = Instant.now(); prices.update(new LatestMarkPrice(symbol, new BigDecimal(price), now, now)); }
     private static String key() { return UUID.randomUUID().toString(); }

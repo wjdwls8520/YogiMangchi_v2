@@ -104,10 +104,10 @@ paths:
     post:
       tags:
       - order-controller
-      summary: Open a LONG or SHORT position at the fresh server mark price
+      summary: Create a MARKET execution or reserve a PENDING LIMIT order
       description: "Idempotency-Key: 8-100 letters, digits, underscore or hyphen.\
-        \ Replay returns original result. 400 invalid request; 401 credential; 409\
-        \ margin/risk/idempotency conflict; 503 unavailable price. No client execution\
+        \ Replay returns the same order with its current state. 400 invalid request; 401 credential; 409\
+        \ margin/risk/idempotency conflict; 503 unavailable price or recovering engine. No client execution\
         \ price."
       operationId: create
       parameters:
@@ -137,6 +137,58 @@ paths:
                 $ref: "#/components/schemas/OrderResponse"
       security:
       - guestBearer: []
+  /api/v1/trading/account/orders/{orderId}/cancel:
+    post:
+      tags:
+      - order-controller
+      summary: Cancel an owned pending order and release margin
+      description: Repeated cancel is idempotent. A fill that wins the race returns
+        409. Cancellation remains available during price/Redis outages.
+      operationId: cancel
+      parameters:
+      - name: orderId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponse"
+      security:
+      - guestBearer: []
+  /api/v1/trading/status:
+    get:
+      tags:
+      - trading-engine-status-controller
+      summary: Read trigger infrastructure status
+      description: "READY means the worker is running with healthy Redis. Each order\
+        \ still requires fresh prices and a processed price vector; RECOVERING blocks\
+        \ new exposure and manual closes, but not cancellations."
+      operationId: status
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
   /api/v1/trading/account/wallet:
     get:
       tags:
@@ -206,6 +258,29 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PositionResponse"
+      security:
+      - guestBearer: []
+  /api/v1/trading/account/orders/pending:
+    get:
+      tags:
+      - order-controller
+      summary: Read own pending limit orders and reserved margin
+      operationId: pending
+      responses:
+        "500":
+          description: Internal Server Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OrderResponse"
       security:
       - guestBearer: []
   /api/v1/symbols:
@@ -321,9 +396,18 @@ components:
         leverage:
           type: integer
           format: int32
+        limitPrice:
+          type: string
+        reservedMargin:
+          type: string
         createdAt:
           type: string
           format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
         fill:
           $ref: "#/components/schemas/FillResponse"
     CreateOrderRequest:
@@ -333,6 +417,7 @@ components:
           type: string
           enum:
           - MARKET
+          - LIMIT
         tradingSymbolId:
           type: integer
           format: int64
@@ -348,6 +433,16 @@ components:
         leverage:
           type: integer
           format: int32
+        limitPrice:
+          type: string
+          description: Required only for LIMIT. LONG fills at or below; SHORT at or
+            above this price
+          example: "60000"
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
     WalletResponse:
       type: object
       description: USDT amounts are decimal strings. Valuation-dependent fields are

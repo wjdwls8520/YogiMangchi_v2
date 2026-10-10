@@ -5,5 +5,5 @@ import java.math.BigDecimal;
 import io.swagger.v3.oas.annotations.media.Schema;
 public record CreateOrderRequest(TradingOrder.Type type, Long tradingSymbolId, Position.Side side,
         @Schema(type = "string", example = "0.001", description = "Domain asset quantity, maximum 8 decimal places") BigDecimal quantity,
-        Integer leverage) { }
-
+        Integer leverage,
+        @Schema(type = "string", example = "60000", description = "Required only for LIMIT. LONG fills at or below; SHORT at or above this price") BigDecimal limitPrice) { }
