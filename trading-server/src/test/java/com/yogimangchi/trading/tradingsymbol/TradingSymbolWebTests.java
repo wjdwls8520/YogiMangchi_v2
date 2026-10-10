@@ -30,6 +30,7 @@ class TradingSymbolWebTests {
 
     @Autowired private MockMvc mockMvc;
     @MockitoBean private TradingSymbolService service;
+    @MockitoBean private com.yogimangchi.trading.tradingaccount.security.GuestCredentialService credentials;
 
     @Test
     void unexpectedServerErrorIsSanitized() throws Exception {

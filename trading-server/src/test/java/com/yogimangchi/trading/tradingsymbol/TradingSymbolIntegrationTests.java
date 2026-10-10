@@ -20,7 +20,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,9 +30,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = "binance.mark-price.enabled=false")
 @AutoConfigureMockMvc
-@ActiveProfiles("local")
 @Import(PostgresTestConfiguration.class)
 @Transactional
 class TradingSymbolIntegrationTests {
@@ -63,9 +61,11 @@ class TradingSymbolIntegrationTests {
             assertThat(symbol.getQuoteAsset()).isEqualTo("USDT");
             assertThat(symbol.getProvider()).isEqualTo(TradingSymbolProvider.BINANCE);
             assertThat(symbol.getStatus()).isEqualTo(TradingSymbolStatus.ACTIVE);
+            assertThat(symbol.getProviderUnitMultiplier()).isEqualTo(
+                    Set.of("PEPE", "SHIB").contains(symbol.getSymbol()) ? 1000L : 1L);
         });
         assertThat(jdbc.queryForList("select version from trading.flyway_schema_history where type = 'SQL' order by installed_rank", String.class))
-                .containsExactly("1", "2");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
     }
 
     @Test
@@ -105,13 +105,14 @@ class TradingSymbolIntegrationTests {
     void providerMappingChangeKeepsInternalIdAndPublicSymbol() throws Exception {
         TradingSymbol symbol = findSymbol("PEPE");
         Long id = symbol.getId();
-        symbol.changeProviderSymbol("TESTPEPEUSDT");
+        symbol.changeProviderMapping("TESTPEPEUSDT", 1L);
         entityManager.flush();
         entityManager.clear();
 
         TradingSymbol reloaded = entityManager.find(TradingSymbol.class, id);
         assertThat(reloaded.getSymbol()).isEqualTo("PEPE");
         assertThat(reloaded.getProviderSymbol()).isEqualTo("TESTPEPEUSDT");
+        assertThat(reloaded.getProviderUnitMultiplier()).isEqualTo(1L);
         mockMvc.perform(get("/api/v1/symbols"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.symbol == 'PEPE')].id").value(org.hamcrest.Matchers.contains(id.intValue())))
@@ -120,7 +121,7 @@ class TradingSymbolIntegrationTests {
 
     @Test
     void registeredSymbolIsInactiveUntilActivatedAndListIsDbManaged() throws Exception {
-        TradingSymbol symbol = TradingSymbol.register("Test Coin", "TEST", "USDT", TradingSymbolProvider.BINANCE, "TESTUSDT");
+        TradingSymbol symbol = TradingSymbol.register("Test Coin", "TEST", "USDT", TradingSymbolProvider.BINANCE, "TESTUSDT", 1L);
         entityManager.persist(symbol);
         entityManager.flush();
         assertThat(symbol.getId()).isPositive();
@@ -151,7 +152,25 @@ class TradingSymbolIntegrationTests {
             "('Invalid status', 'TEST', 'USDT', 'BINANCE', 'TESTUSDT', 'DELETED')"
     })
     void databaseRejectsInvalidOrDuplicateSymbolData(String values) {
-        assertThatThrownBy(() -> jdbc.update("insert into trading.trading_symbol (name, symbol, quote_asset, provider, provider_symbol, status) values " + values))
+        assertThatThrownBy(() -> jdbc.update("insert into trading.trading_symbol (name, symbol, quote_asset, provider, provider_symbol, status, provider_unit_multiplier) values " + values.replace(")", ", 1)")))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1, 3})
+    void invalidMappingCannotPartiallyChangeProviderSymbol(long multiplier) {
+        TradingSymbol pepe = findSymbol("PEPE");
+        assertThatThrownBy(() -> pepe.changeProviderMapping("NEWPEPEUSDT", multiplier))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(pepe.getProviderSymbol()).isEqualTo("1000PEPEUSDT");
+        assertThat(pepe.getProviderUnitMultiplier()).isEqualTo(1000L);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1})
+    void databaseRejectsNonPositiveMultiplier(long multiplier) {
+        assertThatThrownBy(() -> jdbc.update(
+                "update trading.trading_symbol set provider_unit_multiplier = ? where symbol = 'BTC'", multiplier))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 

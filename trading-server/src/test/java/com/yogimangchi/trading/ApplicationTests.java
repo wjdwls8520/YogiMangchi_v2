@@ -12,7 +12,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
-import org.springframework.test.context.ActiveProfiles;
+import org.springframework.context.ApplicationContext;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -20,17 +21,30 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+@SpringBootTest(properties = "binance.mark-price.enabled=false")
 @AutoConfigureMockMvc
-@ActiveProfiles("local")
 @Import(PostgresTestConfiguration.class)
-class LocalApplicationTests {
+class ApplicationTests {
 
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private ApplicationContext context;
+
     @Test
-    void localOpenApiIsAvailable() throws Exception {
+    void defaultUserIsNotGenerated() {
+        assertThat(context.getBeansOfType(UserDetailsService.class)).isEmpty();
+    }
+
+    @Test
+    void externalBinanceConnectionIsDisabledInAutomatedTests() {
+        assertThat(context.getBeansOfType(
+                com.yogimangchi.trading.binance.markprice.BinanceMarkPriceClient.class)).isEmpty();
+    }
+
+    @Test
+    void openApiAndSwaggerAreAvailable() throws Exception {
         mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.openapi").exists());

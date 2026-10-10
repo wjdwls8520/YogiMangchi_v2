@@ -214,6 +214,11 @@ Nginx Container
 
 전체 Container는 Docker Compose로 관리한다.
 
+공용 Docker Compose는 Repository 루트의 `docker-compose.yml`에서 관리하며,
+로컬 인프라는 Repository 루트에서 `docker compose up -d`로 실행한다.
+현재 로컬 Compose에는 PostgreSQL과 Redis만 포함하며, Spring Boot는 IDE에서 직접 실행한다.
+아래는 향후 운영/배포 단계의 구성이다.
+
 ```text id="18p1wh"
 docker-compose.yml
 
@@ -270,7 +275,7 @@ Trading 알림
 
 # 8. 애플리케이션 데이터 소유권
 
-현재는 하나의 PostgreSQL 인스턴스를 사용하더라도 `content-server`와 `trading-server`의 **데이터 소유권은 논리적으로 분리한다.**
+현재는 공용 PostgreSQL Database `yogimangchi`를 사용하며, Trading은 `trading`, 향후 Content는 `content` Schema로 **데이터 소유권을 논리적으로 분리한다.** 현재 `content` Schema는 미리 생성하지 않는다.
 
 ```text id="z9tqmv"
                 PostgreSQL
@@ -317,7 +322,7 @@ memberId = 10
 
 Trading은 필요한 사용자의 `memberId`만 저장한다.
 
-이를 통해 현재 하나의 PostgreSQL을 사용하더라도 향후 Content DB와 Trading DB를 물리적으로 분리할 수 있는 구조를 유지한다.
+이를 통해 현재 하나의 PostgreSQL Database를 사용하더라도 향후 필요하면 애플리케이션별 데이터를 물리적으로 분리할 수 있는 구조를 유지한다.
 
 ---
 

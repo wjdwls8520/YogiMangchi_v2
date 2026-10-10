@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 
 // Expose only the query needed now; no inherited hard-delete or administration operations.
 public interface TradingSymbolRepository extends Repository<TradingSymbol, Long> {
+    java.util.Optional<TradingSymbol> findById(Long id);
 
     @Query("""
             select new com.yogimangchi.trading.tradingsymbol.dto.TradingSymbolResponse(
