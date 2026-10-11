@@ -1,25 +1,36 @@
-import { previewMarket } from "../preview-data";
+import { previewMarket, previewSymbols } from "../preview-data";
+import type { TradingSymbol } from "../market/catalog";
 
-export function MarketHeader() {
+export function MarketHeader({ symbol }: { symbol: TradingSymbol | null }) {
+  const market = previewSymbols.find((entry) => entry.symbol === symbol?.symbol) ?? previewSymbols[0];
+  const isBtc = market.symbol === "BTC";
   return (
-    <section aria-labelledby="market-heading" aria-describedby="preview-notice" className="trading-section grid gap-4 px-4 py-4 sm:grid-cols-2 lg:grid-cols-5 lg:items-center lg:gap-6">
-      <div className="flex items-center gap-3">
-        <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-2xl font-semibold text-amber-700">₿</span>
-        <div>
-          <h2 id="market-heading" className="whitespace-nowrap text-base font-bold tracking-tight">{previewMarket.symbol} <span className="font-normal text-slate-400">/</span> {previewMarket.quote}</h2>
-          <p className="mt-1 whitespace-nowrap text-xs text-slate-500">{previewMarket.name} · 무기한 선물</p>
+    <section aria-labelledby="market-heading" aria-describedby="preview-notice" className="market-summary trading-section">
+      <header className="market-summary-header">
+        <a href="#symbols-heading" aria-label="차트 종목 선택으로 이동" className="market-back">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m14 6-6 6 6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </a>
+        <div className="market-symbol">
+          <h2 id="market-heading">{market.symbol}USDT</h2>
+          <p>무기한 선물 <span>Demo Trading</span></p>
         </div>
+        <div className="market-tools" role="group" aria-label="거래 도구 (미지원)">
+          <button type="button" disabled aria-label="즐겨찾기 (미지원)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.4 1.1 6.3-5.6-3-5.6 3 1.1-6.3L3 9.6l6.2-.9L12 3Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg></button>
+          <button type="button" disabled aria-label="더 보기 (미지원)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></svg></button>
+        </div>
+      </header>
+      <div className="market-summary-body">
+        <div className="market-primary-price tabular-nums">
+          <p className="market-price-label">{isBtc ? "Mark Price" : "참고 가격"} <span>예시</span></p>
+          <p className="market-price" data-trend={market.trend}>{isBtc ? previewMarket.markPrice : market.price} <span>USDT</span></p>
+          <p className="market-change" data-trend={market.trend}>24h {market.change} <span>예시</span></p>
+        </div>
+        <dl className="market-statistics tabular-nums">
+          <div><dt>24h 최고 · 예시</dt><dd>{isBtc ? previewMarket.high : "—"}</dd></div>
+          <div><dt>24h 최저 · 예시</dt><dd>{isBtc ? previewMarket.low : "—"}</dd></div>
+          <div><dt>24h 거래대금 · 예시</dt><dd>{isBtc ? previewMarket.volume : "—"}</dd></div>
+        </dl>
       </div>
-      <div className="tabular-nums">
-        <p className="whitespace-nowrap text-3xl font-semibold tracking-tight"><span className="sr-only">현재 가격 </span>{previewMarket.price} <span className="text-xs font-medium text-slate-500 lg:hidden">USDT</span></p>
-        <p className="mt-1.5 text-xs font-medium text-gain"><span className="sr-only">24시간 상승 </span>↗ {previewMarket.change} <span className="ml-1 font-normal">({previewMarket.changeAmount})</span></p>
-      </div>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-slate-100 pt-4 text-xs tabular-nums sm:col-span-2 sm:grid-cols-4 lg:col-span-3 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 [&_dd]:mt-1.5 [&_dd]:font-medium [&_dt]:text-slate-500">
-        <div><dt>Mark Price</dt><dd>{previewMarket.markPrice}</dd></div>
-        <div><dt>24h 최고</dt><dd>{previewMarket.high}</dd></div>
-        <div><dt>24h 최저</dt><dd>{previewMarket.low}</dd></div>
-        <div><dt>24h 거래대금</dt><dd>{previewMarket.volume} USDT</dd></div>
-      </dl>
     </section>
   );
 }

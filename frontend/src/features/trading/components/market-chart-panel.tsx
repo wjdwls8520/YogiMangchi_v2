@@ -6,6 +6,7 @@ import { retryDelay } from "../market/stream";
 import { previewSymbols } from "../preview-data";
 import { SymbolSelector } from "./symbol-selector";
 import { TradingChart } from "./trading-chart";
+import { MarketHeader } from "./market-header";
 
 export function MarketChartPanel({ children }: { children: ReactNode }) {
   const [catalog, setCatalog] = useState<{ symbols: TradingSymbol[]; state: "loading" | "unavailable" | "empty" | "ready"; socket: string }>({ symbols: [], state: "loading", socket: "" });
@@ -49,8 +50,9 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
   return (
     <>
+      <MarketHeader symbol={selected} />
       <SymbolSelector symbols={catalog.symbols} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
-      <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="market-order-layout mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <TradingChart key={selected?.id ?? "catalog"} symbol={selected} socketUrl={catalog.socket} catalogView={catalog.state} onSymbolUnavailable={refreshAfterSymbolError} />
         {children}
       </div>

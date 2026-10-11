@@ -3,10 +3,11 @@ import { TradingTable } from "./trading-table";
 import { formatMargin } from "../portfolio/allocation";
 
 export function PositionTable() {
-  return <TradingTable caption="포지션 예시" columns={[
+  return <TradingTable caption="포지션 예시" variant="positions" columns={[
     { key: "symbol", label: "Symbol" }, { key: "side", label: "Side" },
+    { key: "leverage", label: "Leverage" },
     { key: "size", label: "Size" }, { key: "entry", label: "Entry Price" },
-    { key: "mark", label: "Mark Price" }, { key: "leverage", label: "Leverage" },
+    { key: "mark", label: "Mark Price" },
     { key: "pnl", label: "PnL" }, { key: "margin", label: "Margin" },
     { key: "action", label: "Close" },
   ]} rows={previewPositions.map((position) => ({
