@@ -29,6 +29,7 @@ export function openMarketStream(options: {
   url: string; symbolId: number;
   onState: (state: MarketState) => void;
   onPrice: (price: MarketPrice) => void;
+  onSymbolUnavailable?: (symbolId: number) => void;
 }, runtime: Runtime = browserRuntime) {
   let stopped = false;
   let socket: Socket | null = null;
@@ -152,7 +153,18 @@ export function openMarketStream(options: {
         else if (message.status === "STALE" || message.status === "UNAVAILABLE") emit("UNAVAILABLE");
         // RECOVERED alone is not a valid price. INFRA_STATUS is independent of
         // price freshness because the server can use its memory fallback.
-      } else if (message.type === "ERROR") reconnect();
+      } else if (message.type === "ERROR") {
+        const code = typeof message.code === "string" ? message.code : null;
+        if (code === "TEMPORARILY_UNAVAILABLE") reconnect();
+        else {
+          // Application errors are terminal for this subscription. Detach before
+          // closing so neither transport callbacks nor heartbeat restart it.
+          detach();
+          emit("UNAVAILABLE");
+          stopped = true;
+          if (code === "SYMBOL_NOT_AVAILABLE") options.onSymbolUnavailable?.(options.symbolId);
+        }
+      }
     };
   }
   connect();

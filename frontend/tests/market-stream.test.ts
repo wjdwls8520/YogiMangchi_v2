@@ -14,6 +14,7 @@ class FakeSocket {
   open() { this.readyState = 1; this.onopen?.call(this as unknown as WebSocket, new Event("open")); }
   message(input: object) { this.onmessage?.call(this as unknown as WebSocket, new MessageEvent("message", { data: JSON.stringify({ version: 1, ...input }) })); }
   disconnect() { this.readyState = 3; this.onclose?.call(this as unknown as WebSocket, new Event("close") as CloseEvent); }
+  fail() { this.onerror?.call(this as unknown as WebSocket, new Event("error")); }
 }
 function harness() {
   let now = Date.UTC(2026, 9, 11);
@@ -22,13 +23,14 @@ function harness() {
   const sockets: FakeSocket[] = [];
   const states: MarketState[] = [];
   const prices: MarketPrice[] = [];
+  const unavailableSymbols: number[] = [];
   const runtime = {
     socket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
     now: () => now, random: () => 0.5,
     later: (fn: () => void, ms: number) => { const id = ++nextId; timers.set(id, { fn, at: now + ms }); return id as unknown as ReturnType<typeof setTimeout>; },
     cancel: (id: ReturnType<typeof setTimeout>) => { timers.delete(id as unknown as number); },
   };
-  const start = (id = 927) => openMarketStream({ url: "ws://localhost:8081/ws/market", symbolId: id, onState: (state) => states.push(state), onPrice: (price) => prices.push(price) }, runtime);
+  const start = (id = 927) => openMarketStream({ url: "ws://localhost:8081/ws/market", symbolId: id, onState: (state) => states.push(state), onPrice: (price) => prices.push(price), onSymbolUnavailable: (symbolId) => unavailableSymbols.push(symbolId) }, runtime);
   const handshake = (socket = sockets.at(-1)!, clockOffset = 0) => { socket.open(); socket.message({ type: "CONNECTED", maxSubscriptions: 32, heartbeatSeconds: 20, idleTimeoutSeconds: 60 }); socket.message({ type: "PONG", serverTime: new Date(now + clockOffset).toISOString() }); };
   const tick = (overrides = {}) => ({ type: "MARKET_PRICE", tradingSymbolId: 927, price: "64579.80000000", status: "FRESH", eventTime: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), ...overrides });
   const advance = (ms: number) => {
@@ -40,7 +42,7 @@ function harness() {
     }
     now = until;
   };
-  return { start, handshake, tick, advance, sockets, states, prices, timers };
+  return { start, handshake, tick, advance, sockets, states, prices, timers, unavailableSymbols };
 }
 test("handshake, heartbeat, valid price, expiry and recovery follow v1", () => {
   const h = harness(); const stop = h.start(); h.handshake();
@@ -98,18 +100,52 @@ test("handshake timeout and silent first-price timeout are bounded", () => {
   h.advance(10_000); assert.equal(h.states.at(-1), "UNAVAILABLE");
   stop(); assert.equal(h.timers.size, 0);
 });
-test("server errors and lost heartbeats reconnect without accumulating timers", () => {
+test("TEMPORARILY_UNAVAILABLE retries with existing backoff; lost heartbeats still reconnect", () => {
   const h = harness(); const stop = h.start(); h.handshake();
   h.sockets[0].message({ type: "ERROR", code: "TEMPORARILY_UNAVAILABLE", message: "The subscription could not be processed" });
   assert.equal(h.states.at(-1), "RECONNECTING");
   assert.equal(h.timers.size, 1);
-  h.advance(1000); h.handshake();
+  h.advance(999); assert.equal(h.sockets.length, 1);
+  h.advance(1); assert.equal(h.sockets.length, 2); h.handshake();
   h.advance(60_000);
   assert.equal(h.states.at(-1), "RECONNECTING");
   assert.equal(h.sockets[1].readyState, 3);
   assert.equal(h.timers.size, 1);
   stop(); assert.equal(h.timers.size, 0);
 });
+for (const code of ["INVALID_COMMAND", "UNKNOWN_COMMAND", "SUBSCRIPTION_LIMIT", "SYMBOL_NOT_AVAILABLE", "FUTURE_SERVER_ERROR", undefined, null, 42, { type: "TEMPORARILY_UNAVAILABLE" }]) {
+  test(`application ERROR ${JSON.stringify(code)} is terminal and cannot reconnect`, () => {
+    const h = harness(); const stop = h.start(); h.handshake();
+    h.sockets[0].message(h.tick());
+    const oldClose = h.sockets[0].onclose;
+    const oldError = h.sockets[0].onerror;
+    const oldMessage = h.sockets[0].onmessage;
+    h.sockets[0].message({ type: "ERROR", code, message: "TEMPORARILY_UNAVAILABLE" });
+    assert.equal(h.states.at(-1), "UNAVAILABLE");
+    assert.equal(h.sockets[0].readyState, 3);
+    assert.equal(h.timers.size, 0);
+    // Even callbacks queued before detaching must not restart a terminal stream.
+    oldClose?.call(h.sockets[0] as unknown as WebSocket, new Event("close") as CloseEvent);
+    oldError?.call(h.sockets[0] as unknown as WebSocket, new Event("error"));
+    oldMessage?.call(h.sockets[0] as unknown as WebSocket, new MessageEvent("message", { data: JSON.stringify({ version: 1, ...h.tick() }) }));
+    h.advance(300_000);
+    assert.equal(h.sockets.length, 1);
+    assert.equal(h.states.at(-1), "UNAVAILABLE");
+    assert.equal(h.prices.length, 1);
+    assert.deepEqual(h.unavailableSymbols, code === "SYMBOL_NOT_AVAILABLE" ? [927] : []);
+    stop(); assert.equal(h.timers.size, 0);
+  });
+}
+for (const event of ["close", "error"] as const) {
+  test(`transport on${event} continues to reconnect`, () => {
+    const h = harness(); const stop = h.start(); h.handshake();
+    if (event === "close") h.sockets[0].disconnect(); else h.sockets[0].fail();
+    assert.equal(h.states.at(-1), "RECONNECTING");
+    h.advance(1000); assert.equal(h.sockets.length, 2);
+    assert.deepEqual(h.unavailableSymbols, []);
+    stop(); assert.equal(h.timers.size, 0);
+  });
+}
 test("server PONG clock handles browser clock differences, while delayed prices remain unavailable", () => {
   const h = harness(); const stop = h.start(); h.handshake(h.sockets[0], 60_000);
   h.sockets[0].message(h.tick({ eventTime: "2026-10-11T00:01:00.000Z", receivedAt: "2026-10-11T00:01:00.000Z" }));

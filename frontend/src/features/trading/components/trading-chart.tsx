@@ -17,9 +17,11 @@ const messages = {
   empty: "표시할 가격 데이터가 없습니다.",
 } as const;
 
-export function TradingChart({ symbol, socketUrl, catalogView }: {
+export function TradingChart({ symbol, socketUrl, catalogView, onSymbolUnavailable }: {
   symbol: TradingSymbol | null; socketUrl: string; catalogView: "loading" | "ready" | "empty" | "unavailable";
+  onSymbolUnavailable: (symbolId: number) => void;
 }) {
+  const symbolId = symbol?.id;
   const mount = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<MarketState>("CONNECTING");
   const [rendererFailed, setRendererFailed] = useState(false);
@@ -44,8 +46,8 @@ export function TradingChart({ symbol, socketUrl, catalogView }: {
           type: "custom", minMove: 0.00000001,
           formatter: (value: number) => value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }),
         } });
-        if (!symbol) return;
-        stop = openMarketStream({ url: socketUrl, symbolId: symbol.id, onState: setState, onPrice: (price) => {
+        if (symbolId === undefined) return;
+        stop = openMarketStream({ url: socketUrl, symbolId, onState: setState, onSymbolUnavailable, onPrice: (price) => {
           if (disposed) return;
           try {
             const update = history.append(price.eventTime, price.value);
@@ -58,7 +60,7 @@ export function TradingChart({ symbol, socketUrl, catalogView }: {
     }
     void start();
     return () => { disposed = true; stop?.(); chart?.remove(); };
-  }, [symbol, socketUrl]);
+  }, [symbolId, socketUrl, onSymbolUnavailable]);
   const view: MarketChartView = rendererFailed ? "unavailable"
     : !symbol ? catalogView === "ready" ? "empty" : catalogView
     : state === "READY" ? "ready" : state === "UNAVAILABLE" || state === "RECONNECTING" ? "unavailable" : "loading";
