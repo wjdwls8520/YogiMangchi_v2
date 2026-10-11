@@ -67,25 +67,25 @@ export function TradingChart({ symbol, socketUrl, catalogView, onSymbolUnavailab
   const title = rendererFailed ? "차트를 표시할 수 없습니다." : state === "RECONNECTING" && symbol ? "시세 연결을 복구하는 중입니다." : messages[view as keyof typeof messages];
   const label = !symbol ? catalogView === "empty" ? "종목 없음" : catalogView === "unavailable" ? "서버 연결 불가" : "연결 중" : statusLabels[state];
   return (
-    <section aria-labelledby="chart-heading" className="trading-section flex flex-col">
+    <section aria-labelledby="chart-heading" className="market-chart trading-section">
       <header className="section-heading">
-        <h2 id="chart-heading" className="section-title">차트 <span className="ml-2 text-xs font-normal text-slate-500">{symbol?.displaySymbol ?? "BTC / USDT"}</span></h2>
+        <h2 id="chart-heading" className="section-title">차트 <span className="ml-2 text-trade-meta font-normal text-slate-500">{symbol?.displaySymbol ?? "BTC / USDT"}</span></h2>
         <span className="preview-label">{rendererFailed ? "차트 이용 불가" : label}</span>
       </header>
-      <div role="group" aria-label="차트 주기 (현재 미지원)" className="flex min-h-12 flex-wrap items-center gap-1 border-b border-slate-100 px-3 py-1">
+      <div role="group" aria-label="차트 주기 (현재 미지원)" className="chart-timeframes">
         {["1m", "5m", "15m", "1h", "4h", "1d"].map((timeframe) => (
-          <button key={timeframe} type="button" disabled className="min-h-11 min-w-9 rounded-sm px-2 text-xs font-medium text-slate-500">
+          <button key={timeframe} type="button" disabled className="chart-timeframe">
             {timeframe}
           </button>
         ))}
-        <span className="px-2 text-xs text-slate-500">Timeframe 미지원</span>
+        <span className="chart-timeframe-note">Timeframe 미지원</span>
       </div>
-      <figure aria-labelledby="chart-caption" className="flex min-h-80 flex-1 flex-col sm:min-h-96">
-        <div data-market-chart-frame data-view={view} data-connection={symbol ? state : catalogView} aria-busy={view === "loading"} className="relative min-h-80 flex-1 sm:min-h-96">
+      <figure aria-labelledby="chart-caption" className="market-chart-figure">
+        <div data-market-chart-frame data-view={view} data-connection={symbol ? state : catalogView} aria-busy={view === "loading"} className="market-chart-frame">
           <div ref={mount} data-chart-mount aria-label={`${symbol?.displaySymbol ?? "선택 종목"} Mark Price 선 그래프`} role="img" className="absolute inset-0 overflow-hidden" />
           {view !== "ready" && <ChartState title={title} detail={view === "unavailable" ? "이전 그래프는 수신 이력이며 현재 유효한 가격이 아닙니다." : undefined} />}
         </div>
-        <figcaption id="chart-caption" className="flex flex-wrap justify-between gap-2 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+        <figcaption id="chart-caption" className="market-chart-caption">
           <span>Mark Price · 접속 후 수신한 가격 흐름</span>
           <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc.</a>
         </figcaption>

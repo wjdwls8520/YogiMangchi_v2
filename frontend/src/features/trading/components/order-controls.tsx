@@ -45,10 +45,10 @@ export function OrderInput({
     <div>
       <label htmlFor={id} className="field-label">{label}</label>
       <div className="order-input">
-        <input id={id} name={id} type="text" inputMode="decimal" placeholder={placeholder} disabled aria-describedby={hint ? `${id}-hint` : undefined} className="w-full min-w-0 bg-transparent py-2.5 text-sm tabular-nums placeholder:text-slate-400 lg:py-2" />
-        <span className="text-xs font-medium text-slate-500">{unit}</span>
+        <input id={id} name={id} type="text" inputMode="decimal" placeholder={placeholder} disabled aria-describedby={hint ? `${id}-hint` : undefined} className="w-full min-w-0 bg-transparent py-2.5 text-trade-body tabular-nums placeholder:text-slate-400 lg:py-2" />
+        <span className="text-trade-meta font-medium text-slate-500">{unit}</span>
       </div>
-      {hint && <p id={`${id}-hint`} className="mt-1.5 text-xs text-slate-500">{hint}</p>}
+      {hint && <p id={`${id}-hint`} className="order-input-hint">{hint}</p>}
     </div>
   );
 }

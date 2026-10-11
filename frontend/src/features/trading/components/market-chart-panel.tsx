@@ -52,7 +52,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     <>
       <MarketHeader symbol={selected} />
       <SymbolSelector symbols={catalog.symbols} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
-      <div className="market-order-layout mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="market-order-layout">
         <TradingChart key={selected?.id ?? "catalog"} symbol={selected} socketUrl={catalog.socket} catalogView={catalog.state} onSymbolUnavailable={refreshAfterSymbolError} />
         {children}
       </div>

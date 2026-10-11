@@ -35,23 +35,23 @@ export function PortfolioAllocationChart({ positions, view: requestedView }: { p
   }, [allocation, view]);
   useEffect(() => () => { instance.current?.destroy(); instance.current = null; }, []);
   return (
-    <section aria-labelledby="portfolio-heading" aria-describedby="portfolio-description" className="border-b border-slate-200 p-4">
-      <header className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
-        <h3 id="portfolio-heading" className="text-xs font-semibold text-slate-700">Portfolio Allocation</h3>
-        <p id="portfolio-description" className="text-xs text-slate-500">종목별 사용 증거금 비중 · 포지션 예시 데이터</p>
+    <section aria-labelledby="portfolio-heading" aria-describedby="portfolio-description" className="portfolio-allocation">
+      <header className="portfolio-heading">
+        <h3 id="portfolio-heading" className="section-title">Portfolio Allocation</h3>
+        <p id="portfolio-description" className="text-trade-meta text-slate-500">종목별 사용 증거금 비중 · 포지션 예시 데이터</p>
       </header>
-      <div data-portfolio-frame data-view={view} aria-busy={view === "loading"} className="relative grid min-h-96 w-full max-w-3xl grid-cols-1 items-center gap-4 sm:min-h-56 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-8">
-        <figure aria-labelledby="portfolio-caption" aria-hidden={view !== "data"} className={`flex flex-col items-center gap-2 ${view !== "data" ? "invisible" : ""}`}>
-          <div data-doughnut-mount role="img" aria-label="종목별 사용 증거금 비중 Doughnut Chart 영역" className="relative size-44 shrink-0 sm:size-48">
+      <div data-portfolio-frame data-view={view} aria-busy={view === "loading"} className="portfolio-frame">
+        <figure aria-labelledby="portfolio-caption" aria-hidden={view !== "data"} className={`portfolio-figure ${view !== "data" ? "invisible" : ""}`}>
+          <div data-doughnut-mount role="img" aria-label="종목별 사용 증거금 비중 Doughnut Chart 영역" className="portfolio-doughnut">
             <canvas ref={canvas} aria-hidden="true" />
-            <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-slate-500">증거금 구성</span>
+            <span className="portfolio-doughnut-label">증거금 구성</span>
           </div>
-          <figcaption id="portfolio-caption" className="text-xs text-slate-500">사용 증거금 구성</figcaption>
+          <figcaption id="portfolio-caption" className="text-trade-meta text-slate-500">사용 증거금 구성</figcaption>
         </figure>
         {view === "data" && (
-          <dl aria-label="종목별 증거금과 비중" className="w-full min-w-0 text-xs tabular-nums">
+          <dl aria-label="종목별 증거금과 비중" className="portfolio-legend">
             {allocation.entries.map((entry) => (
-              <div key={entry.symbol} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-b border-slate-100 py-3 last:border-b-0">
+              <div key={entry.symbol} className="portfolio-legend-row">
                 <dt className="flex items-center gap-2 font-medium"><span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: entry.color }} />{entry.symbol}</dt>
                 <dd className="text-right font-semibold">{entry.percent.toFixed(1)}%</dd>
                 <dd className="col-span-2 break-all pl-4.5 text-slate-500">{formatMargin(entry.margin)}</dd>
