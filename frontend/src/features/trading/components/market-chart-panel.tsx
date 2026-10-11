@@ -7,6 +7,8 @@ import { previewSymbols } from "../preview-data";
 import { SymbolSelector } from "./symbol-selector";
 import { TradingChart } from "./trading-chart";
 import { MarketHeader } from "./market-header";
+import { TradingAccountTabs } from "./trading-account-tabs";
+import { TradingNavigation } from "./trading-navigation";
 
 export function MarketChartPanel({ children }: { children: ReactNode }) {
   const [catalog, setCatalog] = useState<{ symbols: TradingSymbol[]; state: "loading" | "unavailable" | "empty" | "ready"; socket: string }>({ symbols: [], state: "loading", socket: "" });
@@ -48,14 +50,40 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   }, [catalogRevision]);
   const selected = catalog.symbols.find((entry) => entry.id === selectedId)
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
+  const selectedPreview = previewSymbols.find((entry) => entry.symbol === selected?.symbol);
   return (
-    <>
-      <MarketHeader symbol={selected} />
-      <SymbolSelector symbols={catalog.symbols} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
-      <div className="market-order-layout">
+    <div className="trading-grid" data-main-view="chart">
+      <aside className="market-sidebar" aria-labelledby="sidebar-heading">
+        <header className="section-heading"><h2 id="sidebar-heading" className="section-title">Markets</h2></header>
+        <p className="market-list-note">가격 · 24h 등락률은 예시입니다.</p>
+        <SymbolSelector symbols={catalog.symbols} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
+      </aside>
+      <header className="mobile-market-header">
+        <button type="button" disabled aria-haspopup="dialog" aria-controls="market-symbol-sheet" aria-expanded="false" className="market-sheet-trigger">
+          <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selectedPreview?.name ?? "거래 가능 종목 확인 중"}</span></span>
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+        <span className="preview-label">무기한 선물</span>
+      </header>
+      <TradingNavigation label="모바일 거래 화면" prefix="main" activeId="chart" className="main-navigation" tabs={[
+        { id: "chart", label: "Chart", controls: "chart-view" },
+        { id: "order", label: "Order", controls: "order-view trading-account" },
+        { id: "portfolio", label: "Portfolio", controls: "portfolio-view" },
+      ]} />
+      <section id="chart-view" role="tabpanel" aria-labelledby="main-chart-tab" tabIndex={0} className="chart-view">
+        <MarketHeader symbol={selected} />
         <TradingChart key={selected?.id ?? "catalog"} symbol={selected} socketUrl={catalog.socket} catalogView={catalog.state} onSymbolUnavailable={refreshAfterSymbolError} />
-        {children}
-      </div>
-    </>
+      </section>
+      <div id="order-view" role="tabpanel" aria-labelledby="order-heading" tabIndex={0} className="order-view">{children}</div>
+      <TradingAccountTabs />
+      <dialog id="market-symbol-sheet" aria-modal="true" aria-labelledby="sheet-heading" className="market-symbol-sheet">
+        <div className="market-sheet-content">
+          <header className="section-heading"><h2 id="sheet-heading" className="section-title">Markets</h2><button type="button" disabled aria-label="종목 선택 닫기" className="market-sheet-close">닫기</button></header>
+          <p className="market-list-note">Trading Server에서 제공하는 종목을 선택하세요.</p>
+          <SymbolSelector symbols={catalog.symbols} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
+          <p className="market-list-note">가격 · 24h 등락률은 예시입니다.</p>
+        </div>
+      </dialog>
+    </div>
   );
 }

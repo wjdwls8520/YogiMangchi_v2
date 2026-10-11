@@ -1,6 +1,5 @@
 import { MarketChartPanel } from "./market-chart-panel";
 import { OrderPanel } from "./order-panel";
-import { TradingAccountTabs } from "./trading-account-tabs";
 
 export function TradingWorkspace() {
   return (
@@ -31,7 +30,6 @@ export function TradingWorkspace() {
         <MarketChartPanel>
           <OrderPanel />
         </MarketChartPanel>
-        <TradingAccountTabs />
       </main>
       <footer className="trading-footer">
         <p className="font-medium tracking-wide">YOGIMANGCHI · 선물 모의투자</p>

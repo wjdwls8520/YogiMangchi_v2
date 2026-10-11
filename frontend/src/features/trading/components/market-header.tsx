@@ -7,9 +7,6 @@ export function MarketHeader({ symbol }: { symbol: TradingSymbol | null }) {
   return (
     <section aria-labelledby="market-heading" aria-describedby="preview-notice" className="market-summary trading-section">
       <header className="market-summary-header">
-        <a href="#symbols-heading" aria-label="차트 종목 선택으로 이동" className="market-back">
-          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m14 6-6 6 6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        </a>
         <div className="market-symbol">
           <h2 id="market-heading">{market.symbol}USDT</h2>
           <p>무기한 선물 <span>Demo Trading</span></p>

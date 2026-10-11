@@ -10,10 +10,6 @@ export function OrderPanel() {
       </header>
       <div className="order-panel-body">
         <dl className="order-wallet"><div><dt>사용 가능 · 예시</dt><dd>{previewAccount.available} <span>USDT</span></dd></div></dl>
-        <div className="order-actions" role="group" aria-label="포지션 진입 (미리보기)">
-          <button type="button" disabled data-side="LONG">↗ Long <span>매수</span></button>
-          <button type="button" disabled data-side="SHORT">↘ Short <span>매도</span></button>
-        </div>
         <details className="order-settings" open>
           <summary>주문 설정 <span>Market · 10× · 미지원</span></summary>
           <div className="order-settings-fields">
@@ -45,6 +41,10 @@ export function OrderPanel() {
             </dl>
           </div>
         </details>
+        <div className="order-actions" role="group" aria-label="포지션 진입 (미리보기)">
+          <button type="button" disabled data-side="LONG">↗ Long <span>매수</span></button>
+          <button type="button" disabled data-side="SHORT">↘ Short <span>매도</span></button>
+        </div>
         <p id="order-preview-note" className="order-preview-note">미리보기에서는 주문할 수 없습니다.</p>
       </div>
     </section>
