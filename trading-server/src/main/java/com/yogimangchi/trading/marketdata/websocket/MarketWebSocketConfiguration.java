@@ -14,7 +14,7 @@ public class MarketWebSocketConfiguration implements WebSocketConfigurer {
     private final String[] allowedOrigins;
 
     public MarketWebSocketConfiguration(MarketWebSocketHandler handler,
-            @Value("${marketdata.websocket.allowed-origins:http://localhost:5173,http://127.0.0.1:5173}") String origins) {
+            @Value("${marketdata.websocket.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String origins) {
         this.handler = handler;
         this.allowedOrigins = Arrays.stream(origins.split(",")).map(String::trim)
                 .filter(origin -> !origin.isBlank()).toArray(String[]::new);

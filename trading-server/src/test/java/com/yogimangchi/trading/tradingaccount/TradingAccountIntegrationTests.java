@@ -128,9 +128,9 @@ class TradingAccountIntegrationTests {
 
     @Test
     void corsAcceptsConfiguredReactOriginAndRejectsOthers() throws Exception {
-        mvc.perform(options("/api/v1/trading/account/wallet").header("Origin", "http://localhost:5173")
+        mvc.perform(options("/api/v1/trading/account/wallet").header("Origin", "http://localhost:3000")
                         .header("Access-Control-Request-Method", "GET").header("Access-Control-Request-Headers", "Authorization"))
-                .andExpect(status().isOk()).andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:5173"))
+                .andExpect(status().isOk()).andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))
                 .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
         mvc.perform(options("/api/v1/trading/account/wallet").header("Origin", "https://untrusted.example")
                         .header("Access-Control-Request-Method", "GET"))
