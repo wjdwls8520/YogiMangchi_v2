@@ -22,6 +22,9 @@
   body {
     @apply bg-slate-100 font-sans text-sm text-slate-900 antialiased;
   }
+  body:has(.market-symbol-sheet[open]) {
+    overflow: hidden;
+  }
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-brand-600;
   }
