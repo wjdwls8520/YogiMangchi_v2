@@ -593,8 +593,8 @@ README
 
 API는 OpenAPI 3 기반으로 문서화한다.
 
-- Content API: `docs/content-openapi.yaml`
-- Trading API: `docs/trading-openapi.yaml`
+- Trading API 계약은 Controller/DTO에서 생성되는 개발 서버의 `/v3/api-docs`로 확인한다.
+- Content API 문서는 해당 애플리케이션 구현 시 제공한다.
 
 개발 환경에서는 Swagger UI를 통해 API를 확인하고 테스트할 수 있다.
 운영 환경에서는 Swagger UI와 OpenAPI Docs endpoint를 외부에 노출하지 않는다.

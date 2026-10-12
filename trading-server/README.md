@@ -487,15 +487,12 @@ DB 없이 웹/보안/오류 응답 테스트만 실행하려면:
 .\gradlew.bat test --tests '*TradingSymbolWebTests'
 ```
 
-루트 `docs/trading-openapi.yaml`은 실제 로컬 endpoint에서 생성한다.
-API 변경 후 서버를 실행하고 `trading-server`에서 아래 명령으로 갱신해 코드와 함께 리뷰한다.
-별도 생성 플러그인이나 수작업으로 중복 관리하는 DTO 스키마는 사용하지 않는다.
-
-```powershell
-Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/trading-openapi.yaml'
-```
+API 계약은 Controller/DTO에서 springdoc이 생성하는 `/v3/api-docs`를 기준으로 확인한다.
+별도 정적 YAML 사본을 저장·동기화하지 않는다. 필요한 경우 `/v3/api-docs.yaml`을
+공유용으로 내려받을 수 있지만 저장소의 계약 원본으로 사용하지 않는다.
 
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
-자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
+자동 테스트는 실제 Spring 컨텍스트의 `/v3/api-docs`에서 Guest 생성, 조회 경로,
+Bearer 인증, 응답 연결 및 금융 Decimal 문자열 계약을 검증한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
 JWT/Content 인증, Admin, Funding/수수료, Competition/Ranking과 다중 노드 조정은 구현하지 않았다.
