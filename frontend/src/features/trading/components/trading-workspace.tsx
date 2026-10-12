@@ -1,5 +1,6 @@
 import { MarketChartPanel } from "./market-chart-panel";
 import { OrderPanel } from "./order-panel";
+import { TradingDataProvider } from "./trading-data-provider";
 
 export function TradingWorkspace() {
   return (
@@ -27,9 +28,9 @@ export function TradingWorkspace() {
           <h1 className="sr-only">선물 모의투자</h1>
           <p id="preview-notice">차트만 Trading Server 시세를 사용합니다. 나머지 가격·계정·거래 내역은 예시이며 주문은 실행되지 않습니다.</p>
         </div>
-        <MarketChartPanel>
+        <TradingDataProvider><MarketChartPanel>
           <OrderPanel />
-        </MarketChartPanel>
+        </MarketChartPanel></TradingDataProvider>
       </main>
       <footer className="trading-footer">
         <p className="font-medium tracking-wide">YOGIMANGCHI · 선물 모의투자</p>
