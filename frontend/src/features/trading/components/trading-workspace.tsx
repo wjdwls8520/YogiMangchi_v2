@@ -26,7 +26,7 @@ export function TradingWorkspace() {
       <main id="trading-main" tabIndex={-1} className="trading-workspace">
         <div className="trading-page-intro">
           <h1 className="sr-only">선물 모의투자</h1>
-          <p id="preview-notice">차트만 Trading Server 시세를 사용합니다. 나머지 가격·계정·거래 내역은 예시이며 주문은 실행되지 않습니다.</p>
+          <p id="preview-notice">차트는 실시간 시세, 계정·포지션은 실제 Guest 조회 데이터입니다. 종목 통계와 주문 내역은 아직 예시이며 주문은 실행되지 않습니다.</p>
         </div>
         <TradingDataProvider><MarketChartPanel>
           <OrderPanel />

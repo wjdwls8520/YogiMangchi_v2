@@ -16,7 +16,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheet = useRef<HTMLDialogElement>(null);
   const sheetTrigger = useRef<HTMLButtonElement>(null);
-  const [catalog, setCatalog] = useState<{ symbols: TradingSymbol[]; state: "loading" | "unavailable" | "empty" | "ready"; socket: string }>({ symbols: [], state: "loading", socket: "" });
+  const [catalog, setCatalog] = useState<{ symbols: TradingSymbol[]; allSymbols: TradingSymbol[]; state: "loading" | "unavailable" | "empty" | "ready"; socket: string }>({ symbols: [], allSymbols: [], state: "loading", socket: "" });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const unavailableIds = useRef(new Set<number>());
   const [catalogRevision, setCatalogRevision] = useState(0);
@@ -40,12 +40,13 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         if (!response.ok) throw new Error("Symbol catalog unavailable");
         // A refreshed catalog can briefly still advertise the rejected ID.
         // Exclude it for this mounted screen instead of resubscribing in a loop.
-        const symbols = parseSymbols(await response.json()).filter((entry) => !unavailableIds.current.has(entry.id)
+        const allSymbols = parseSymbols(await response.json());
+        const symbols = allSymbols.filter((entry) => !unavailableIds.current.has(entry.id)
           && entry.quoteAsset === "USDT" && previewSymbols.some((item) => item.symbol === entry.symbol));
-        if (!disposed) setCatalog({ symbols, socket: endpoints.socket, state: symbols.length ? "ready" : "empty" });
+        if (!disposed) setCatalog({ symbols, allSymbols, socket: endpoints.socket, state: symbols.length ? "ready" : "empty" });
       } catch {
         if (!disposed) {
-          setCatalog({ symbols: [], socket: "", state: "unavailable" });
+          setCatalog({ symbols: [], allSymbols: [], socket: "", state: "unavailable" });
           retry = setTimeout(load, retryDelay(attempt++));
         }
       } finally { clearTimeout(timeout); }
@@ -109,7 +110,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         <TradingChart key={selected?.id ?? "catalog"} symbol={selected} socketUrl={catalog.socket} catalogView={catalog.state} onSymbolUnavailable={refreshAfterSymbolError} />
       </section>
       <div id="order-view" role="tabpanel" aria-labelledby="order-heading" tabIndex={0} className="order-view">{children}</div>
-      <TradingAccountTabs activeTab={accountView} onSelect={setAccountView} />
+      <TradingAccountTabs activeTab={accountView} onSelect={setAccountView} symbols={catalog.allSymbols} />
       <dialog ref={sheet} id="market-symbol-sheet" aria-modal="true" aria-labelledby="sheet-heading" className="market-symbol-sheet"
         onClick={(event) => {
           // A second trigger click lands on the newly opened overlay.

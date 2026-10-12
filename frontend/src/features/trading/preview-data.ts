@@ -20,40 +20,6 @@ export const previewSymbols = [
   { symbol: "DOGE", name: "Dogecoin", price: "0.1248", change: "−1.12%", trend: "down" },
 ] as const;
 
-export const previewAccount = {
-  equity: "10,142.38",
-  available: "7,887.24",
-  margin: "2,112.76",
-  unrealizedPnl: "+142.38",
-} as const;
-
-export const previewPositions = [
-  {
-    id: "preview-btc-long",
-    symbol: "BTC / USDT",
-    side: "LONG",
-    size: "0.250 BTC",
-    entryPrice: "64,000.00",
-    markPrice: "64,579.80",
-    leverage: "10×",
-    pnl: "+144.95 USDT",
-    margin: "1600.00",
-    trend: "up",
-  },
-  {
-    id: "preview-eth-short",
-    symbol: "ETH / USDT",
-    side: "SHORT",
-    size: "0.750 ETH",
-    entryPrice: "3,418.37",
-    markPrice: "3,421.80",
-    leverage: "5×",
-    pnl: "−2.57 USDT",
-    margin: "512.76",
-    trend: "down",
-  },
-] as const;
-
 export const previewPendingOrders = [
   {
     id: "preview-btc-limit",

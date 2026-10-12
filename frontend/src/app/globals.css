@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+.account-query-state { padding: 1.25rem; color: #64748b; font-size: .8125rem; line-height: 1.6; }
+.account-refresh { min-height: 44px; padding: .5rem .75rem; color: #4338ca; font-size: .8125rem; font-weight: 600; cursor: pointer; }
+.account-refresh:disabled { opacity: .5; cursor: wait; }
+.account-refresh:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
+.account-snapshot-note { padding: .5rem 1rem; color: #64748b; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
+.account-summary dd, .order-wallet dd { overflow-wrap: anywhere; }
+
 @theme {
   --font-sans: Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --color-brand-50: #eef2ff;
@@ -385,7 +392,7 @@
     @apply min-w-0 scroll-mt-3 border-b border-slate-200;
   }
   .account-records-heading {
-    @apply flex min-h-9 items-center gap-2 bg-slate-50 px-3 text-trade-body font-semibold text-slate-700;
+      @apply flex min-h-9 flex-wrap items-center gap-2 bg-slate-50 px-3 text-trade-body font-semibold text-slate-700;
   }
   .account-records-heading span {
     @apply text-trade-meta font-normal text-slate-500;

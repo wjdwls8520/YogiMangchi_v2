@@ -1,23 +1,25 @@
-import { previewOrderHistory, previewPendingOrders, previewPositions } from "../preview-data";
+import { previewOrderHistory, previewPendingOrders } from "../preview-data";
+import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/account";
+import type { TradingSymbol } from "../market/catalog";
 import { TradingTable } from "./trading-table";
-import { formatMargin } from "../portfolio/allocation";
 
-export function PositionTable() {
-  return <TradingTable caption="포지션 예시" variant="positions" columns={[
+export function PositionTable({ positions, symbols }: { positions: readonly Position[]; symbols: readonly TradingSymbol[] }) {
+  return <TradingTable caption="보유 포지션" variant="positions" columns={[
     { key: "symbol", label: "Symbol" }, { key: "side", label: "Side" },
     { key: "leverage", label: "Leverage" },
     { key: "size", label: "Size" }, { key: "entry", label: "Entry Price" },
     { key: "mark", label: "Mark Price" },
     { key: "pnl", label: "PnL" }, { key: "margin", label: "Margin" },
     { key: "action", label: "Close" },
-  ]} rows={previewPositions.map((position) => ({
-    id: position.id,
+  ]} rows={positions.map((position) => ({
+    id: String(position.id),
     cells: {
-      symbol: position.symbol, side: <span data-side={position.side}>{position.side}</span>,
-      size: position.size, entry: position.entryPrice, mark: position.markPrice,
-      leverage: position.leverage, pnl: <span data-trend={position.trend}>{position.pnl}</span>,
-      margin: formatMargin(position.margin),
-      action: <button type="button" disabled aria-label={`${position.symbol} ${position.side} 포지션 청산 (미리보기)`}>청산</button>,
+      symbol: symbolLabel(position.tradingSymbolId, symbols), side: <span data-side={position.side}>{position.side}</span>,
+      size: formatDecimal(position.quantity), entry: formatDecimal(position.entryPrice),
+      mark: <span title={position.priceStatus}>{formatDecimal(position.markPrice)}</span>,
+      leverage: `${position.leverage}×`, pnl: <span data-trend={pnlTrend(position.unrealizedPnl)}>{formatDecimal(position.unrealizedPnl)} USDT</span>,
+      margin: formatDecimal(position.margin),
+      action: <button type="button" disabled aria-label={`${symbolLabel(position.tradingSymbolId, symbols)} ${position.side} 포지션 청산 (미지원)`}>청산</button>,
     },
   }))} />;
 }

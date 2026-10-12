@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { marketEndpoints, parseSymbols } from "../src/features/trading/market/catalog";
 import { PriceHistory, MAX_PRICE_POINTS } from "../src/features/trading/market/history";
 import { portfolioAllocation, formatMargin } from "../src/features/trading/portfolio/allocation";
-import { previewPositions } from "../src/features/trading/preview-data";
 
 test("catalog uses actual safe server IDs and HTTP/WS origins", () => {
   assert.equal(parseSymbols([{ id: 927, symbol: "BTC", name: "Bitcoin", quoteAsset: "USDT", displaySymbol: "BTC / USDT" }])[0].id, 927);
@@ -35,7 +34,7 @@ test("long sessions bound library data too, with occasional batch pruning", () =
   assert.ok(prunes > 0 && prunes < 100);
 });
 test("portfolio shares position source and weights margin, combining same-symbol lots", () => {
-  const preview = portfolioAllocation(previewPositions);
+  const preview = portfolioAllocation([{ symbol: "BTC", margin: "1600.00" }, { symbol: "ETH", margin: "512.76" }]);
   assert.equal(preview.view, "data");
   assert.equal(preview.entries[0].percent.toFixed(1), "75.7");
   assert.equal(preview.entries[1].percent.toFixed(1), "24.3");

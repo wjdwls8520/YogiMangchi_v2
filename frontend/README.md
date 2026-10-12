@@ -104,3 +104,11 @@ REST 읽기는 네트워크 오류와 500/502/503/504만 최대 두 번 재시�
 도입 시 npm audit: 새 TanStack 패키지 경고 없음. 기존 ESLint 개발 도구 체인의
 braces → micromatch → fast-glob 경로에 high 5건이 보고되었다. 제안된 해결은 Next ESLint의
 major downgrade이므로 이 작업에서 강제 변경하지 않는다.
+
+Account/Wallet/Positions는 `GET /api/v1/trading/account/summary`의 동일 시점 스냅샷을 공유한다.
+별도 `/wallet`, `/positions`도 있지만 같은 Summary를 내부에서 계산하므로 중복 호출하지 않는다.
+화면과 Doughnut은 같은 positions를 사용하고 기존 BigInt 증거금 배분 계산을 유지한다.
+활성 종목 목록에 없는 과거 종목은 이름을 추측하지 않고 `종목 #ID`로 표시한다.
+금융 값은 문자열로 보관하고 null 평가 값은 `—`로 표시한다. Preview 계정/포지션은 제거했다.
+조회 시각을 표시하며 15초 staleTime 후 포커스/재연결 및 수동 새로고침으로 갱신한다.
+Account REST는 실시간 WebSocket이 아니며 Market Chart 오류 상태와 분리된다.

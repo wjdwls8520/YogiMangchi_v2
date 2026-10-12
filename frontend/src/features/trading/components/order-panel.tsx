@@ -1,4 +1,4 @@
-import { previewAccount } from "../preview-data";
+import { AccountWallet } from "./account-wallet";
 import { OrderChoices, OrderInput } from "./order-controls";
 
 export function OrderPanel() {
@@ -9,7 +9,7 @@ export function OrderPanel() {
         <span className="preview-label">예시 주문</span>
       </header>
       <div className="order-panel-body">
-        <dl className="order-wallet"><div><dt>사용 가능 · 예시</dt><dd>{previewAccount.available} <span>USDT</span></dd></div></dl>
+        <AccountWallet />
         <details className="order-settings" open>
           <summary>주문 설정 <span>Market · 10× · 미지원</span></summary>
           <div className="order-settings-fields">
