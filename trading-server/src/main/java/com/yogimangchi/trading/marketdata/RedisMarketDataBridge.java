@@ -149,7 +149,7 @@ public class RedisMarketDataBridge {
 
     public static String snapshotKey(long symbolId) { return "trading:market:v1:snapshot:" + symbolId; }
     public static String watermarkKey(long symbolId) { return "trading:market:v1:watermark:" + symbolId; }
-    private static String stateKey(long symbolId) { return "trading:market:v1:state:" + symbolId; }
+    public static String stateKey(long symbolId) { return "trading:market:v1:state:" + symbolId; }
 
     private void pump() {
         if (closed) {

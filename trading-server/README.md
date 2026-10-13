@@ -494,7 +494,41 @@ WebSocket은 REST가 아니므로 OpenAPI path에 중복 선언하지 않고 이
 실제 HTTP Upgrade, Redis 경유 live 전달, Origin 거절, 구독 검증/해제, stale/복구와
 느린 소켓의 비동기 격리를 외부 Binance 없이 자동 테스트한다.
 
-## 테스트와 OpenAPI 갱신
+## Market Summary 조회
+
+인증 없이 `GET /api/v1/market/tickers`를 호출하면 DB의 ACTIVE 종목 전체를 Symbol 순서로 반환한다.
+PostgreSQL 조회 Transaction 종료 후 공유 Redis의 Mark snapshot/state와 Ticker snapshot을 하나의
+MGET으로 읽는다. JVM `LatestPriceStore`를 조회하거나 Ticker의 Last Price로 Mark를 대체하지 않는다.
+이 API는 표시/정렬용이며 주문·청산의 가격 정책을 변경하지 않는다.
+
+```json
+[
+  {
+    "tradingSymbolId": 1,
+    "symbol": "BTC",
+    "quoteAsset": "USDT",
+    "markPrice": "114230.10000000",
+    "changePercent24h": "2.37",
+    "highPrice24h": "115100.00",
+    "lowPrice24h": "109800.00",
+    "quoteVolume24h": "1234567890.12",
+    "status": "FRESH",
+    "updatedAt": "2026-10-13T09:00:00Z"
+  }
+]
+```
+
+금융 값은 정확한 decimal string이다. Mark freshness는 기존 5초, 통계 freshness는 10초이며
+응답 시 두 timestamp를 다시 검증한다. `FRESH`는 둘 다 최신인 경우다.
+읽힌 데이터가 시각 범위를 벗어나면 `STALE`, 일부 누락/잘못된 payload/연결 상태 불가/Redis 실패는
+`UNAVAILABLE`이다. 만료된 값은 null로 숨기며 남아 있는 유효 값만 제공한다.
+TTL 만료로 snapshot 자체가 사라진 경우에는 누락이므로 `UNAVAILABLE`이다.
+Redis 장애에서도 현재 ACTIVE 목록과 null 필드를 HTTP 200으로 반환한다.
+DB 조회 자체가 실패한 경우에는 기존 전역 서버 오류 정책을 따른다.
+`updatedAt`은 반환한 유효 데이터 중 가장 오래된 Provider eventTime(ISO-8601 UTC), 유효 값이 없으면 null이다.
+한 종목의 누락/손상 때문에 다른 종목의 유효 값을 버리지 않는다.
+
+## 테스트와 Runtime OpenAPI
 
 ```powershell
 .\gradlew.bat --no-daemon clean build
@@ -512,15 +546,9 @@ DB 없이 웹/보안/오류 응답 테스트만 실행하려면:
 .\gradlew.bat test --tests '*TradingSymbolWebTests'
 ```
 
-루트 `docs/trading-openapi.yaml`은 실제 로컬 endpoint에서 생성한다.
-API 변경 후 서버를 실행하고 `trading-server`에서 아래 명령으로 갱신해 코드와 함께 리뷰한다.
-별도 생성 플러그인이나 수작업으로 중복 관리하는 DTO 스키마는 사용하지 않는다.
-
-```powershell
-Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/trading-openapi.yaml'
-```
-
+Runtime Springdoc `/v3/api-docs`가 현재 API 계약의 원본이다. 정적 YAML을 중복 생성/갱신하지 않는다.
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
-자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
+자동 테스트는 Runtime 명세에서 기존 Trading API, 인증 경계와 Market Summary 필드/타입을 검증한다.
+루트의 기존 `docs/trading-openapi.yaml`은 과거 Snapshot이며 최신 계약 확인에는 Runtime 문서를 사용한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
 JWT/Content 인증, Admin, Funding/수수료, Competition/Ranking과 다중 노드 조정은 구현하지 않았다.
