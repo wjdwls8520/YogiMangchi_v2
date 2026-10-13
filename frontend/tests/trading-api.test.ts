@@ -79,7 +79,7 @@ test("Bearer goes only in the header and server/network errors never expose cred
       assert.equal(options?.credentials, "omit");
       assert.equal(options?.redirect, "error");
       if (networkFailure) throw new Error(token);
-      return json({ detail: token }, 503);
+      return json({ code: token, detail: token, message: token, accessToken: token, headers: { Authorization: `Bearer ${token}` }, instance: `${origin}/${token}` }, 503);
     }), (error: unknown) => error instanceof TradingApiError && !String(error).includes(token) && !JSON.stringify(error).includes(token));
   }
 });
@@ -88,6 +88,47 @@ test("read retry is bounded and does not retry auth, client or contract errors",
   for (const code of [0, 500, 502, 503, 504]) { assert.equal(retryTradingQuery(1, new TradingApiError(code)), true); assert.equal(retryTradingQuery(2, new TradingApiError(code)), false); }
   for (const code of [400, 401, 403, 404, 409, 422]) assert.equal(retryTradingQuery(0, new TradingApiError(code)), false);
   assert.equal(retryTradingQuery(0, new DOMException("cancelled", "AbortError")), false);
+});
+
+test("only HTTP 409 TRADING_BUSY is a bounded retryable conflict", async () => {
+  for (const code of ["TRADING_BUSY", "INSUFFICIENT_MARGIN", "ACCOUNT_AT_RISK", "IDEMPOTENCY_CONFLICT", "POSITION_NOT_OPEN", "OTHER_CONFLICT", undefined]) {
+    await assert.rejects(tradingJson(origin, "account/summary", {}, async () => json({ status: 409, code }, 409)), (error: unknown) => {
+      assert.ok(error instanceof TradingApiError);
+      assert.equal(error.status, 409);
+      assert.equal(error.code, code === "TRADING_BUSY" ? code : undefined);
+      assert.equal(retryTradingQuery(0, error), code === "TRADING_BUSY");
+      assert.equal(retryTradingQuery(1, error), code === "TRADING_BUSY");
+      assert.equal(retryTradingQuery(2, error), false);
+      return true;
+    });
+  }
+  for (const status of [400, 401, 403, 404, 422]) assert.equal(retryTradingQuery(0, new TradingApiError(status, undefined, "TRADING_BUSY")), false);
+});
+
+test("unreadable or malformed ProblemDetail keeps the HTTP status and cannot enable conflict retries", async () => {
+  for (const body of ["invalid JSON", "null", "[]", '{"code":409}', '{"properties":{"code":"TRADING_BUSY"}}']) {
+    for (const status of [409, 503]) {
+      await assert.rejects(tradingJson(origin, "account/summary", {}, async () => new Response(body, { status })), (error: unknown) => {
+        assert.ok(error instanceof TradingApiError);
+        assert.equal(error.status, status);
+        assert.equal(error.code, undefined);
+        assert.equal(retryTradingQuery(0, error), status === 503);
+        return true;
+      });
+    }
+  }
+});
+
+test("a recognized busy code never exposes sensitive ProblemDetail fields or trusts its body status", async () => {
+  const token = guest().accessToken;
+  await assert.rejects(tradingJson(origin, "account/summary", { token }, async () => json({ code: "TRADING_BUSY", status: 500, detail: token, message: token, accessToken: token, instance: `${origin}/${token}` }, 409)), (error: unknown) => {
+    assert.ok(error instanceof TradingApiError);
+    assert.equal(error.status, 409);
+    assert.equal(error.code, "TRADING_BUSY");
+    assert.equal(String(error).includes(token), false);
+    assert.equal(JSON.stringify(error, Object.getOwnPropertyNames(error)).includes(token), false);
+    return true;
+  });
 });
 
 test("guest parser rejects unsafe identity, invalid credential and numeric money", () => {

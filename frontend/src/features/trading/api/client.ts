@@ -1,7 +1,7 @@
 import { marketEndpoints } from "../market/catalog";
 
 export class TradingApiError extends Error {
-  constructor(readonly status: number, message = "Trading 데이터를 불러올 수 없습니다.") {
+  constructor(readonly status: number, message = "Trading 데이터를 불러올 수 없습니다.", readonly code?: string) {
     super(message);
     this.name = "TradingApiError";
   }
@@ -22,7 +22,16 @@ export async function tradingJson(origin: string, path: string, options: {
       method: options.method ?? "GET", credentials: "omit", cache: "no-store", redirect: "error", signal,
       headers: options.token ? { Authorization: `Bearer ${options.token}` } : {},
     });
-    if (!response.ok) throw new TradingApiError(response.status);
+    if (!response.ok) {
+      let code: string | undefined;
+      try {
+        const problem: unknown = await response.json();
+        // Retain only the known retry code, never arbitrary server strings.
+        if (problem && typeof problem === "object" && !Array.isArray(problem)
+          && (problem as Record<string, unknown>).code === "TRADING_BUSY") code = "TRADING_BUSY";
+      } catch { /* An unreadable error body must not replace the HTTP status. */ }
+      throw new TradingApiError(response.status, undefined, code);
+    }
     try { return await response.json(); }
     catch { throw new TradingApiError(422, "서버 응답 형식을 확인할 수 없습니다."); }
   } catch (error) {
@@ -33,5 +42,6 @@ export async function tradingJson(origin: string, path: string, options: {
 }
 
 export function retryTradingQuery(failureCount: number, error: unknown) {
-  return failureCount < 2 && error instanceof TradingApiError && [0, 500, 502, 503, 504].includes(error.status);
+  return failureCount < 2 && error instanceof TradingApiError
+    && ([0, 500, 502, 503, 504].includes(error.status) || (error.status === 409 && error.code === "TRADING_BUSY"));
 }
