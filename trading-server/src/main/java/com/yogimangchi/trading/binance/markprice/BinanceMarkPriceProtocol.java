@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTarget;
+import com.yogimangchi.trading.binance.ticker.BinanceTickerProtocol;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
@@ -20,8 +21,8 @@ final class BinanceMarkPriceProtocol {
     private final ObjectMapper mapper;
 
     BinanceMarkPriceProtocol(List<BinanceSubscriptionTarget> subscriptions, ObjectMapper mapper) {
-        if (subscriptions.isEmpty() || subscriptions.size() > 1024) {
-            throw new IllegalArgumentException("Combined stream requires 1..1024 targets");
+        if (subscriptions.isEmpty() || subscriptions.size() > 512) {
+            throw new IllegalArgumentException("Combined stream requires 1..512 targets (two streams each)");
         }
         this.mapper = mapper;
         for (var target : subscriptions) {
@@ -39,7 +40,7 @@ final class BinanceMarkPriceProtocol {
 
     URI uri() {
         return URI.create("wss://fstream.binance.com/market/stream?streams="
-                + targets.keySet().stream().map(BinanceMarkPriceProtocol::streamName)
+                + targets.keySet().stream().map(symbol -> streamName(symbol) + "/" + BinanceTickerProtocol.streamName(symbol))
                 .collect(Collectors.joining("/")));
     }
 

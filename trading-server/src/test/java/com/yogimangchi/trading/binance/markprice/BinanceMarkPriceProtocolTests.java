@@ -23,7 +23,7 @@ class BinanceMarkPriceProtocolTests {
     @Test
     void buildsOneRoutedCombinedStreamFromDatabaseTargets() {
         assertThat(protocol.uri().toString()).isEqualTo("wss://fstream.binance.com/market/stream?streams="
-                + "btcusdt@markPrice@1s/1000pepeusdt@markPrice@1s");
+                + "btcusdt@markPrice@1s/btcusdt@ticker/1000pepeusdt@markPrice@1s/1000pepeusdt@ticker");
         assertThat(protocol.size()).isEqualTo(2);
     }
 
@@ -102,7 +102,7 @@ class BinanceMarkPriceProtocolTests {
         var target = new BinanceSubscriptionTarget(1L, "BTC", "BTCUSDT", 1L);
         assertThatThrownBy(() -> new BinanceMarkPriceProtocol(List.of(), new ObjectMapper()))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new BinanceMarkPriceProtocol(java.util.Collections.nCopies(1025, target),
+        assertThatThrownBy(() -> new BinanceMarkPriceProtocol(java.util.Collections.nCopies(513, target),
                 new ObjectMapper())).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new BinanceMarkPriceProtocol(List.of(target, target), new ObjectMapper()))
                 .isInstanceOf(IllegalArgumentException.class);

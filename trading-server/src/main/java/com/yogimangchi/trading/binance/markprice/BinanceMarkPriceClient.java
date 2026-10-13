@@ -3,6 +3,9 @@ package com.yogimangchi.trading.binance.markprice;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTarget;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTargetLoader;
+import com.yogimangchi.trading.binance.ticker.BinanceTickerProtocol;
+import com.yogimangchi.trading.marketdata.ticker.MarketTicker;
+import com.yogimangchi.trading.marketdata.ticker.RedisTickerStore;
 import com.yogimangchi.trading.marketdata.LatestMarkPrice;
 import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import java.util.stream.Collectors;
@@ -26,6 +29,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -57,6 +61,7 @@ public class BinanceMarkPriceClient {
     private final ReconnectBackoff backoff;
     private final boolean logPrices;
     private final LatestPriceStore latestPrices;
+    private final Consumer<MarketTicker> tickers;
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean stopping = new AtomicBoolean();
 
@@ -75,20 +80,21 @@ public class BinanceMarkPriceClient {
 
     @Autowired
     public BinanceMarkPriceClient(BinanceSubscriptionTargetLoader loader, ObjectMapper mapper,
-            LatestPriceStore latestPrices, @Value("${binance.mark-price.log-prices:false}") boolean logPrices) {
+            LatestPriceStore latestPrices, RedisTickerStore tickers,
+            @Value("${binance.mark-price.log-prices:false}") boolean logPrices) {
         this(loader::loadActiveTargets, mapper, connector(),
                 Executors.newSingleThreadScheduledExecutor(task -> {
                     Thread thread = new Thread(task, "binance-mark-price");
                     thread.setDaemon(true);
                     return thread;
                 }), Clock.systemUTC(), System::nanoTime,
-                new ReconnectBackoff(() -> ThreadLocalRandom.current().nextDouble()), logPrices, latestPrices);
+                new ReconnectBackoff(() -> ThreadLocalRandom.current().nextDouble()), logPrices, latestPrices, tickers::accept);
     }
 
     BinanceMarkPriceClient(Supplier<List<BinanceSubscriptionTarget>> loadTargets, ObjectMapper mapper,
             BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect,
             ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime,
-            ReconnectBackoff backoff, boolean logPrices, LatestPriceStore latestPrices) {
+            ReconnectBackoff backoff, boolean logPrices, LatestPriceStore latestPrices, Consumer<MarketTicker> tickers) {
         this.loadTargets = loadTargets;
         this.mapper = mapper;
         this.connect = connect;
@@ -98,6 +104,7 @@ public class BinanceMarkPriceClient {
         this.backoff = backoff;
         this.logPrices = logPrices;
         this.latestPrices = latestPrices;
+        this.tickers = tickers;
     }
 
     private static BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connector() {
@@ -138,7 +145,7 @@ public class BinanceMarkPriceClient {
                 retry = executor.schedule(this::attemptConnection, 30, TimeUnit.SECONDS);
                 return;
             }
-            Session session = new Session(new BinanceMarkPriceProtocol(targets, mapper));
+            Session session = new Session(new BinanceMarkPriceProtocol(targets, mapper), new BinanceTickerProtocol(targets, mapper));
             latestPrices.beginSubscription(targets.stream().map(BinanceSubscriptionTarget::tradingSymbolId)
                     .collect(Collectors.toSet()));
             current = session;
@@ -165,7 +172,7 @@ public class BinanceMarkPriceClient {
         session.lastDataAt = session.openedAt;
         state = State.CONNECTED;
         log.info("[Binance WS] CONNECTED streams={} reconnectAttempt={} awaitingValidPrice=true",
-                session.protocol.size(), retryAttempt);
+                session.protocol.size() * 2, retryAttempt);
         socket.request(1);
     }
 
@@ -218,6 +225,12 @@ public class BinanceMarkPriceClient {
     private void received(Session session, String text) {
         var event = session.protocol.parse(text, clock.instant());
         if (event.isEmpty()) {
+            var ticker = session.tickerProtocol.parse(text, clock.instant());
+            if (ticker.isPresent()) {
+                tickers.accept(ticker.get());
+                // Statistics cannot make the Mark Price connection healthy or enter its execution event stream.
+                return;
+            }
             rejectedEvents++;
             return;
         }
@@ -329,6 +342,7 @@ public class BinanceMarkPriceClient {
 
     private final class Session implements WebSocket.Listener {
         private final BinanceMarkPriceProtocol protocol;
+        private final BinanceTickerProtocol tickerProtocol;
         private final StringBuilder text = new StringBuilder();
         private final CompletableFuture<Void> closeReceived = new CompletableFuture<>();
         private volatile WebSocket socket;
@@ -337,8 +351,9 @@ public class BinanceMarkPriceClient {
         private long lastDataAt;
         private boolean healthy;
 
-        private Session(BinanceMarkPriceProtocol protocol) {
+        private Session(BinanceMarkPriceProtocol protocol, BinanceTickerProtocol tickerProtocol) {
             this.protocol = protocol;
+            this.tickerProtocol = tickerProtocol;
         }
 
         private void abort() {
