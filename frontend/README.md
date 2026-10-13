@@ -91,6 +91,8 @@ Guest는 서버에서 발급하는 7일 만료 opaque Bearer credential이다. J
 토큰은 API 모듈 내부와 해당 서버 origin 전용 `sessionStorage`에만 보관한다.
 새로고침에는 유지되고 탭 세션 종료 시 사라진다. localStorage의 장기 보존을 피하고,
 HttpOnly cookie/BFF는 현재 브라우저 직접 Bearer API 구조와 맞지 않아 도입하지 않는다.
+일반 Cookie도 현재 서버의 Authorization Header 인증을 대체하지 못하고,
+JavaScript로 읽는 Cookie는 토큰 노출 측면에서 이점이 없어 사용하지 않는다.
 sessionStorage도 XSS에는 노출될 수 있으므로 로그·URL·오류·Query 캐시에 토큰을 넣지 않는다.
 저장소가 차단되면 계정을 생성하기 전에 오류를 표시한다.
 
@@ -112,3 +114,21 @@ Account/Wallet/Positions는 `GET /api/v1/trading/account/summary`의 동일 시�
 금융 값은 문자열로 보관하고 null 평가 값은 `—`로 표시한다. Preview 계정/포지션은 제거했다.
 조회 시각을 표시하며 15초 staleTime 후 포커스/재연결 및 수동 새로고침으로 갱신한다.
 Account REST는 실시간 WebSocket이 아니며 Market Chart 오류 상태와 분리된다.
+
+주문 조회는 `/api/v1/trading/account/orders/pending`와 `/api/v1/trading/account/orders?limit=50`을 사용한다.
+후자가 주문/체결 이력 API이며 별도의 `/history` 경로는 없다. 서버는 `beforeId` 커서를 지원하지만
+현재 화면은 최신 첫 페이지 최대 50건으로 명시한다. 체결 가격은 `fill.price`만 표시한다.
+미체결/이력은 독립 Query와 오류·재시도 UI를 가진다. 가짜 계정/포지션/주문 데이터는 유지하지 않는다.
+아직 종목 가격 요약·24h 통계와 주문 입력은 예시이며 주문 실행·청산·취소는 구현하지 않았다.
+
+### 조회 연동 검증
+
+- Backend 전체 184개 테스트 통과. Frontend 39개 테스트, lint, typecheck, build 통과.
+- 실제 PostgreSQL/Redis/Trading Server에서 새 Guest 생성, Summary, 미체결/최근 주문의 빈 상태,
+  새로고침 후 동일 Guest 복구 및 Market READY 확인. 새로고침 전후 DB 계정 개수는 동일했다.
+- 320/390/768/1024/1440/1920px에서 실제 빈 계정과 별도 테스트 응답의 보유 데이터 화면을 확인했다.
+- 테스트 응답으로 포지션/주문 Decimal 표시, Doughnut 비중, Summary 503 재시도 한도,
+  주문 400 재시도 차단, 동시 401 한 번 복구, 재인증 실패 중단 및 재시도 더블클릭을 검증했다.
+  화면 크기 변경에도 초기 Summary/미체결/이력 요청은 각각 한 번이었다. 주문 Mutation 요청은 없었다.
+- 보유 데이터의 브라우저 검증은 격리된 DTO 테스트 응답 기준이다. 기존 실계정의 보유 포지션은
+  접근 credential이 없어 직접 검증하지 않았다. 테스트 응답은 제품 코드/실제 DB에 넣지 않았다.

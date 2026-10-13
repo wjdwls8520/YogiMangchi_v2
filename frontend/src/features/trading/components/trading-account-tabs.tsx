@@ -1,4 +1,4 @@
-import { useTradingSummary } from "../api/queries";
+import { useTradingOrders, useTradingSummary } from "../api/queries";
 import { formatDecimal, pnlTrend, portfolioPositions } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
 import { AccountQueryState } from "./account-query-state";
@@ -14,11 +14,13 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
   onSelect?: (view: AccountView) => void;
 }) {
   const query = useTradingSummary();
+  const pending = useTradingOrders("pending");
+  const history = useTradingOrders("history");
   const wallet = query.data?.wallet;
   const positions = query.data?.positions ?? [];
   const accountTabs: readonly TradingTab[] = [
     { id: "positions", label: "Positions", controls: "positions", count: query.data ? positions.length : undefined },
-    { id: "orders", label: "Orders", controls: "orders", count: 1 },
+    { id: "orders", label: "Orders", controls: "orders", count: pending.data?.length },
     { id: "portfolio", label: "Portfolio", controls: "portfolio-view" },
   ];
   const select = onSelect ? (id: string) => {
@@ -35,12 +37,14 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
       </section>
       <section id="orders" role="tabpanel" aria-labelledby="orders-heading" tabIndex={0} className="account-content">
         <section id="pending-orders" aria-labelledby="orders-heading" className="account-records">
-          <h3 id="orders-heading" className="account-records-heading">Pending Orders <span>미체결 주문 · 예시</span></h3>
-          <PendingOrderTable />
+          <h3 id="orders-heading" className="account-records-heading">Pending Orders <span>미체결 주문</span><button className="account-refresh" type="button" disabled={pending.busy} onClick={pending.retry}>새로고침</button></h3>
+          <AccountQueryState loading={pending.loading} error={pending.error} empty={pending.data?.length === 0 ? "미체결 주문이 없습니다." : undefined} onRetry={pending.retry} busy={pending.busy} />
+          {pending.data && pending.data.length > 0 && <PendingOrderTable orders={pending.data} symbols={symbols} />}
         </section>
         <section id="order-history" aria-labelledby="history-heading" className="account-records">
-          <h3 id="history-heading" className="account-records-heading">Order History <span>주문 내역 · 예시</span></h3>
-          <OrderHistoryTable />
+          <h3 id="history-heading" className="account-records-heading">Order History <span>최근 주문 최대 50건</span><button className="account-refresh" type="button" disabled={history.busy} onClick={history.retry}>새로고침</button></h3>
+          <AccountQueryState loading={history.loading} error={history.error} empty={history.data?.length === 0 ? "주문 내역이 없습니다." : undefined} onRetry={history.retry} busy={history.busy} />
+          {history.data && history.data.length > 0 && <OrderHistoryTable orders={history.data} symbols={symbols} />}
         </section>
       </section>
       <section id="portfolio-view" role="tabpanel" aria-labelledby="portfolio-summary-heading" tabIndex={0} className="account-content portfolio-view">

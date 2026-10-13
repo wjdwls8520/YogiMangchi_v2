@@ -1,4 +1,4 @@
-import { previewOrderHistory, previewPendingOrders } from "../preview-data";
+import type { TradingOrder } from "../api/orders";
 import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
 import { TradingTable } from "./trading-table";
@@ -24,34 +24,34 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
   }))} />;
 }
 
-export function PendingOrderTable() {
-  return <TradingTable caption="미체결 주문 예시" columns={[
+export function PendingOrderTable({ orders, symbols }: { orders: readonly TradingOrder[]; symbols: readonly TradingSymbol[] }) {
+  return <TradingTable caption="미체결 주문" columns={[
     { key: "symbol", label: "Symbol" }, { key: "type", label: "Type" },
-    { key: "side", label: "Side" }, { key: "quantity", label: "Quantity" },
+    { key: "intent", label: "Action" }, { key: "side", label: "Side" }, { key: "quantity", label: "Quantity" },
     { key: "price", label: "Limit Price" }, { key: "status", label: "Status" },
     { key: "action", label: "Cancel" },
-  ]} rows={previewPendingOrders.map((order) => ({
-    id: order.id,
+  ]} rows={orders.map((order) => ({
+    id: String(order.orderId),
     cells: {
-      symbol: order.symbol, type: order.type, side: <span data-side={order.side}>{order.side}</span>,
-      quantity: order.quantity, price: order.limitPrice, status: order.status,
-      action: <button type="button" disabled aria-label={`${order.symbol} 미체결 주문 취소 (미리보기)`}>취소</button>,
+      symbol: symbolLabel(order.tradingSymbolId, symbols), type: order.type, intent: order.action, side: <span data-side={order.side}>{order.side}</span>,
+      quantity: formatDecimal(order.quantity), price: formatDecimal(order.limitPrice), status: order.status,
+      action: <button type="button" disabled aria-label={`${symbolLabel(order.tradingSymbolId, symbols)} 미체결 주문 취소 (미지원)`}>취소</button>,
     },
   }))} />;
 }
 
-export function OrderHistoryTable() {
-  return <TradingTable caption="주문 내역 예시" columns={[
+export function OrderHistoryTable({ orders, symbols }: { orders: readonly TradingOrder[]; symbols: readonly TradingSymbol[] }) {
+  return <TradingTable caption="최근 주문 내역 최대 50건" columns={[
     { key: "symbol", label: "Symbol" }, { key: "action", label: "Action" },
     { key: "type", label: "Type" }, { key: "quantity", label: "Quantity" },
-    { key: "price", label: "Price" }, { key: "status", label: "Status" },
-    { key: "time", label: "Time (KST)" },
-  ]} rows={previewOrderHistory.map((order) => ({
-    id: order.id,
+    { key: "price", label: "Fill Price" }, { key: "status", label: "Status" },
+    { key: "time", label: "Created (KST)" },
+  ]} rows={orders.map((order) => ({
+    id: String(order.orderId),
     cells: {
-      symbol: order.symbol, action: order.action, type: order.type,
-      quantity: order.quantity, price: order.price, status: order.status,
-      time: <time dateTime={`${order.time.replace(" ", "T")}+09:00`}>{order.time}</time>,
+      symbol: symbolLabel(order.tradingSymbolId, symbols), action: `${order.action} · ${order.side}`, type: order.type,
+      quantity: formatDecimal(order.quantity), price: formatDecimal(order.fill?.price), status: order.status,
+      time: <time dateTime={order.createdAt}>{new Date(order.createdAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}</time>,
     },
   }))} />;
 }

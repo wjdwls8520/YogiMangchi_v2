@@ -45,7 +45,7 @@ export function OrderPanel() {
           <button type="button" disabled data-side="LONG">↗ Long <span>매수</span></button>
           <button type="button" disabled data-side="SHORT">↘ Short <span>매도</span></button>
         </div>
-        <p id="order-preview-note" className="order-preview-note">미리보기에서는 주문할 수 없습니다.</p>
+        <p id="order-preview-note" className="order-preview-note">주문 입력은 미리보기입니다. 주문·청산·취소는 아직 지원하지 않습니다.</p>
       </div>
     </section>
   );

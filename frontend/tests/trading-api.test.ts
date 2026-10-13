@@ -94,3 +94,26 @@ test("guest parser rejects unsafe identity, invalid credential and numeric money
   assert.equal(parseGuest(guest()).accountId, 1);
   for (const value of [{ ...guest(), accountId: Number.MAX_SAFE_INTEGER + 1 }, { ...guest(), accessToken: "invalid" }, { ...guest(), initialBalance: 10000 }]) assert.throws(() => parseGuest(value));
 });
+
+test("failed recreation stops automatically and manual retry remains single-flight", async () => {
+  let creates = 0;
+  const storage = memoryStorage();
+  const session = createGuestSession(origin, () => storage, async (_url, options) => {
+    if (options?.method === "POST") { creates++; return creates === 2 ? json({}, 503) : json(guest(creates)); }
+    return json({}, 401);
+  });
+  await session.ensure();
+  await assert.rejects(session.read("account/summary", session.getSnapshot(), new AbortController().signal));
+  assert.equal(session.getSnapshot().phase, "error");
+  await session.ensure(); assert.equal(creates, 2);
+  await Promise.all([session.retry(), session.retry()]); assert.equal(creates, 3);
+});
+
+test("caller cancellation is forwarded and never retries or recreates a guest", async () => {
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(tradingJson(origin, "account/summary", { signal: abort.signal }, async (_url, options) => {
+    assert.equal(options?.signal?.aborted, true);
+    throw new DOMException("aborted", "AbortError");
+  }), { name: "AbortError" });
+});
