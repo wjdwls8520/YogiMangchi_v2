@@ -63,7 +63,7 @@ public class SecurityConfig {
 
     @Bean
     CorsConfigurationSource corsConfigurationSource(
-            @Value("${trading.http.allowed-origins:http://localhost:5173,http://127.0.0.1:5173}") String origins) {
+            @Value("${trading.http.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String origins) {
         List<String> allowed = Arrays.stream(origins.split(",")).map(String::strip).filter(origin -> !origin.isBlank()).toList();
         if (allowed.isEmpty() || allowed.stream().anyMatch(origin -> origin.contains("*"))) {
             throw new IllegalArgumentException("REST CORS requires explicit origins");

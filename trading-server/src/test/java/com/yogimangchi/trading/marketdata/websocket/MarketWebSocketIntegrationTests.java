@@ -155,7 +155,7 @@ class MarketWebSocketIntegrationTests {
         assertThatThrownBy(() -> connect("https://untrusted.example"))
                 .hasCauseInstanceOf(WebSocketHandshakeException.class)
                 .satisfies(ex -> assertThat(((WebSocketHandshakeException) ex.getCause()).getResponse().statusCode()).isEqualTo(403));
-        Client client = connect("http://localhost:5173");
+        Client client = connect("http://localhost:3000");
         assertThat(client.next("CONNECTED").path("type").textValue()).isEqualTo("CONNECTED");
     }
 

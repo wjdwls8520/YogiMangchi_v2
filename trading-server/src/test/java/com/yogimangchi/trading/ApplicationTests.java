@@ -89,6 +89,35 @@ class ApplicationTests {
         assertThat(properties.path("status").path("enum").toString()).contains("FRESH", "STALE", "UNAVAILABLE");
     }
 
+    @Test
+    void generatedOpenApiDescribesGuestReadContract() throws Exception {
+        String actual = mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        var document = mapper.readTree(actual);
+        var paths = document.path("paths");
+        var schemas = document.path("components").path("schemas");
+        var guest = paths.path("/api/v1/trading/accounts/guest").path("post");
+        assertThat(guest.path("security").isMissingNode() || guest.path("security").isEmpty()).isTrue();
+        assertThat(guest.at("/responses/201/content/application~1json/schema/$ref").asText())
+                .isEqualTo("#/components/schemas/GuestAccountResponse");
+        for (String endpoint : new String[]{"summary", "wallet", "positions", "orders", "orders/pending"}) {
+            var operation = paths.path("/api/v1/trading/account/" + endpoint).path("get");
+            assertThat(operation.path("responses").has("200")).as(endpoint).isTrue();
+            assertThat(operation.at("/security/0/guestBearer").isArray()).as(endpoint).isTrue();
+        }
+        assertThat(document.at("/components/securitySchemes/guestBearer/scheme").asText()).isEqualTo("bearer");
+        assertThat(schemas.at("/AccountSummaryResponse/properties/wallet/$ref").asText())
+                .isEqualTo("#/components/schemas/WalletResponse");
+        assertThat(schemas.at("/AccountSummaryResponse/properties/positions/items/$ref").asText())
+                .isEqualTo("#/components/schemas/PositionResponse");
+        for (String field : new String[]{"balance", "usedMargin", "reservedMargin", "realizedPnl", "unrealizedPnl", "equity", "availableBalance"}) {
+            assertThat(schemas.at("/WalletResponse/properties/" + field + "/type").asText()).as(field).isEqualTo("string");
+        }
+        assertThat(paths.path("/api/v1/trading/account/orders").path("get").path("parameters").toString())
+                .contains("beforeId", "limit");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"/api/orders", "/login", "/logout"})
     void applicationRequestsAreDeniedWithoutLoginEndpoints(String path) throws Exception {
