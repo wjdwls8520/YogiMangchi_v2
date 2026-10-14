@@ -77,7 +77,7 @@ class MarketSummaryServiceTests {
     }
 
     @Test void staleMarkAndNonFreshStateCannotBeDisplayedAsCurrent() throws Exception {
-        respond(mark(91, now.minusSeconds(5)), "FRESH", ticker(91, now), mark(42, now), "RECONNECTING", ticker(42, now));
+        respond(mark(91, now.minusSeconds(5), now.minusSeconds(5)), "FRESH", ticker(91, now), mark(42, now), "RECONNECTING", ticker(42, now));
         var response = service.findActiveTickers();
         assertThat(response.get(0).status().name()).isEqualTo("STALE");
         assertThat(response.get(1).status().name()).isEqualTo("UNAVAILABLE");
@@ -113,8 +113,11 @@ class MarketSummaryServiceTests {
 
     private void respond(String... snapshots) { when(values.multiGet(any())).thenReturn(Arrays.asList(snapshots)); }
     private String mark(long id, Instant event) throws Exception {
+        return mark(id, event, now);
+    }
+    private String mark(long id, Instant event, Instant received) throws Exception {
         return mapper.writeValueAsString(MarketDataEvent.price(new LatestMarkPrice(id,
-                new BigDecimal("0.000009800000000000000000123"), event, now)));
+                new BigDecimal("0.000009800000000000000000123"), event, received)));
     }
     private String ticker(long id, Instant event) throws Exception {
         return mapper.writeValueAsString(new MarketTicker(id, new BigDecimal("2.37"), new BigDecimal("0.0000123"),

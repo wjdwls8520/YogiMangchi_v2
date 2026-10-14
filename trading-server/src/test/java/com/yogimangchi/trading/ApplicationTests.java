@@ -87,6 +87,12 @@ class ApplicationTests {
         assertThat(properties.path("tradingSymbolId").path("type").asText()).isEqualTo("integer");
         assertThat(properties.path("updatedAt").path("format").asText()).isEqualTo("date-time");
         assertThat(properties.path("status").path("enum").toString()).contains("FRESH", "STALE", "UNAVAILABLE");
+        var clock = api.path("components").path("schemas").path("StatusResponse").path("properties");
+        assertThat(clock.path("status").path("type").asText()).isEqualTo("string");
+        assertThat(clock.path("marketClockStatus").path("enum").toString()).contains("NORMAL", "WARNING", "DEGRADED", "REJECTED", "UNAVAILABLE");
+        assertThat(clock.path("clockSkewMs").path("format").asText()).isEqualTo("int64");
+        mockMvc.perform(get("/api/v1/trading/status"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.marketClockStatus").isString());
     }
 
     @Test

@@ -377,12 +377,21 @@ BigDecimal의 정확한 나눗셈을 사용하며 임의 rounding이나 Symbol �
 소비자는 `find(id)`에서 가격 객체(eventTime/receivedAt 포함)와 다음 상태를 함께 받는다.
 
 - MISSING: 해당 종목의 가격 없음
-- FRESH: 현재 구독에서 정상 수신했고 eventTime과 receivedAt이 모두 5초 미만
-- STALE: 종목의 timestamp가 유효 기간을 벗어남
-- UNAVAILABLE: 연결이 끊겼거나 재구독 후 해당 종목의 새 가격을 아직 받지 못함
+- FRESH: 현재 구독에서 정상 수신했고 receivedAt 기준 5초 미만이며 허용 가능한 Provider 시각 차이
+- STALE: 수신 후 5초 이상 지남
+- UNAVAILABLE: 연결 중단/재구독 대기 또는 과도한 Clock Skew로 종목의 가격 사용 중단
 
-최대 1초의 미래 clock skew만 허용한다. 서버 시간 동기화가 필요하다.
-오래된/과도하게 미래인 메시지, 중복·역순 eventTime, 잘못된 payload는 저장값을 갱신하지 않는다.
+Mark freshness는 `receivedAt`으로 판단하고 `eventTime`은 원본 Provider 시각과 중복·역순 판단에 유지한다.
+`eventTime - receivedAt`의 절댓값이 1초 이하면 NORMAL, 1초 초과~5초는 WARNING,
+5초 초과~10초는 DEGRADED이며 최근 수신한 가격을 사용할 수 있다. 10초 초과는 REJECTED로 거부하고
+해당 종목에 UNAVAILABLE을 한 번 전달한다. 거부된 미래 timestamp는 watermark를 갱신하지 않는다.
+수신 시각 자체가 서버 now보다 1초 넘게 미래이거나 이미 5초 이상 지난 데이터는 사용할 수 없다.
+`[Market clock]`은 종목별 상태 전환과 같은 이상 상태의 30초 요약만 기록하며 Provider/내부 ID,
+eventTime/receivedAt/serverNow, signed skewMs와 각 임계값을 포함한다.
+`GET /api/v1/trading/status`의 `marketClockStatus/clockSkewMs`는 해당 수신 노드에서 최근 관찰한 가장
+심한 Clock 상태다. 데이터가 없으면 UNAVAILABLE/null이며 기존 READY/RECOVERING과 독립적인 운영 정보다.
+이 보호 장치는 NTP/AWS Amazon Time Sync를 대체하지 않는다. 운영 시 모든 앱·Redis 노드의 OS 시간 동기화가 필요하다.
+오래된/과도한 시각 차이의 메시지, 중복·역순 eventTime, 잘못된 payload는 저장값을 갱신하지 않는다.
 재연결 후에도 종목마다 새 가격을 받아야 FRESH가 되며 구독에서 빠진 종목은 제거한다.
 현재 연결 중 DB Mapping/활성 상태 변경을 즉시 감지하는 기능은 없다.
 재시작 시 Store는 비어 있으며, 이 Store는 Tick 이력이나 가격 crossing 범위를 보존하지 않는다.
@@ -398,7 +407,7 @@ Binance 수신 Thread에서는 Redis나 Browser I/O를 수행하지 않는다.
 
 | Redis Key | 내용/수명 |
 | --- | --- |
-| `trading:market:v1:snapshot:{id}` | version=1 JSON, 내부 ID/Domain Mark Price/eventTime/receivedAt. 두 timestamp 기준 남은 freshness만큼, 최대 5초 TTL |
+| `trading:market:v1:snapshot:{id}` | version=1 JSON, 내부 ID/Domain Mark Price/eventTime/receivedAt. receivedAt 기준 남은 freshness만큼, 최대 5초 TTL |
 | `trading:market:v1:watermark:{id}` | 마지막 eventTime, 24시간 TTL. Snapshot 만료 후에도 중복/역순 갱신 차단 |
 | `trading:market:v1:state:{id}` | FRESH 또는 RECONNECTING/UNAVAILABLE. 가격과 함께 원자적으로 조회하며 연결 중단 시 Snapshot 제거 |
 | `trading:market:v1:events` | 모든 수락 가격과 연결 상태의 Redis Stream, 정확히 최대 100,000건 보관 |
@@ -519,7 +528,7 @@ MGET으로 읽는다. JVM `LatestPriceStore`를 조회하거나 Ticker의 Last P
 ```
 
 금융 값은 정확한 decimal string이다. Mark freshness는 기존 5초, 통계 freshness는 10초이며
-응답 시 두 timestamp를 다시 검증한다. `FRESH`는 둘 다 최신인 경우다.
+응답 시 Mark의 수신 freshness와 Clock Skew, 통계의 timestamp를 다시 검증한다. `FRESH`는 둘 다 최신인 경우다.
 읽힌 데이터가 시각 범위를 벗어나면 `STALE`, 일부 누락/잘못된 payload/연결 상태 불가/Redis 실패는
 `UNAVAILABLE`이다. 만료된 값은 null로 숨기며 남아 있는 유효 값만 제공한다.
 TTL 만료로 snapshot 자체가 사라진 경우에는 누락이므로 `UNAVAILABLE`이다.

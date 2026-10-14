@@ -142,6 +142,29 @@ class TriggerIntegrationTests {
         tick("80"); drain(); assertThat(fillCount()).isEqualTo(2);
     }
 
+    @Test void clockSkewDoesNotBreakLimitExecutionThroughSharedStream() {
+        // Isolate future provider timestamps from the BTC fixtures used by other tests.
+        symbol=jdbc.queryForObject("select id from trading.trading_symbol where symbol='ETH'",Long.class);
+        prices.beginSubscription(Set.of(symbol)); tick("100"); drain();
+        OrderResponse pending=limit(Position.Side.LONG,"10","99",10);
+        skewedTick("98",2); drain();
+        assertThat(orderStatus(pending.orderId())).isEqualTo("FILLED");
+        assertThat(fillPrice(pending.orderId())).isEqualByComparingTo("98");
+        assertThat(fillCount()).isEqualTo(1);
+        amount("reserved_margin","0"); amount("used_margin","98");
+    }
+
+    @Test void degradedClockStillPreservesLiquidationCrossingAndNoDoubleFill() {
+        symbol=jdbc.queryForObject("select id from trading.trading_symbol where symbol='SOL'",Long.class);
+        prices.beginSubscription(Set.of(symbol)); tick("100"); drain();
+        market(Position.Side.LONG,"900",10);
+        LatestMarkPrice risk=skewedTick("88",6); skewedTick("102",6); drain();
+        assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
+        amount("balance","-800"); amount("used_margin","0");
+        processor.process(guest.accountId(),risk,Map.of(symbol,risk));
+        assertThat(fillCount()).isEqualTo(2);
+    }
+
     @Test void shortLiquidationCrossesAndDuplicateEventCannotLiquidateAgain() throws Exception {
         market(Position.Side.SHORT,"1000",10);
         LatestMarkPrice risk=tick("111"); tick("99"); drain();
@@ -571,6 +594,17 @@ class TriggerIntegrationTests {
         LatestMarkPrice price=new LatestMarkPrice(symbol,new BigDecimal(amount),now,now);
         assertThat(prices.update(price)).isTrue();
         await().atMost(Duration.ofSeconds(3)).until(() -> bridge.readSharedSnapshot(symbol).latestPrice().map(p -> p.eventTime().equals(now)).orElse(false));
+        return price;
+    }
+    private LatestMarkPrice skewedTick(String amount, long seconds) {
+        Instant receipt=Instant.now();
+        Instant event=receipt.plusSeconds(seconds);
+        event=prices.find(symbol).latestPrice().map(LatestMarkPrice::eventTime)
+                .filter(previous -> !previous.isBefore(receipt.plusSeconds(seconds)))
+                .map(previous -> previous.plusMillis(1)).orElse(event);
+        LatestMarkPrice price=new LatestMarkPrice(symbol,new BigDecimal(amount),event,receipt);
+        assertThat(prices.update(price)).isTrue();
+        await().atMost(Duration.ofSeconds(3)).until(() -> bridge.readSharedSnapshot(symbol).latestPrice().map(price::equals).orElse(false));
         return price;
     }
     private void drain() {

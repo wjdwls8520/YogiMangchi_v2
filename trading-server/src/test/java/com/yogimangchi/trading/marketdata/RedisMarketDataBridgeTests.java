@@ -110,6 +110,51 @@ class RedisMarketDataBridgeTests {
     }
 
     @Test
+    void clockSkewIsAllowedThroughSnapshotStreamAndPubSubWithReceiptBasedTtl() throws Exception {
+        for (long offset : new long[]{-2000, 2000, 6000}) {
+            long id = 10000 + offset;
+            Instant now = Instant.now();
+            var price = new LatestMarkPrice(id, new BigDecimal("10"), now.plusMillis(offset), now);
+            var event = MarketDataEvent.price(price);
+            bridge.accept(event);
+            long targetId = id;
+            await().atMost(Duration.ofSeconds(3)).until(() -> bridge.readSharedSnapshot(targetId).status() == LatestPriceStore.Status.FRESH);
+            assertThat(redis.getExpire(RedisMarketDataBridge.snapshotKey(id), java.util.concurrent.TimeUnit.MILLISECONDS))
+                    .isGreaterThan(3000L).isLessThanOrEqualTo(5000L);
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertThat(received).contains(event));
+        }
+        assertThat(redis.opsForStream().size(RedisMarketDataBridge.STREAM_KEY)).isEqualTo(3);
+        assertThat(bridge.health().gapSequence()).isZero();
+    }
+
+    @Test
+    void excessiveSkewCannotCreateSharedSnapshotStreamOrWatermark() {
+        Instant now = Instant.now();
+        bridge.accept(MarketDataEvent.price(new LatestMarkPrice(11L, new BigDecimal("999"), now.plusSeconds(11), now)));
+        await().atMost(Duration.ofSeconds(3)).until(() -> bridge.health().gapSequence() > 0);
+        assertThat(redis.hasKey(RedisMarketDataBridge.snapshotKey(11))).isFalse();
+        assertThat(redis.hasKey(RedisMarketDataBridge.watermarkKey(11))).isFalse();
+        assertThat(redis.opsForStream().size(RedisMarketDataBridge.STREAM_KEY)).isZero();
+    }
+
+    @Test
+    void rejectedLocalClockEpisodeInvalidatesRedisAndRecoversWithMonotonicValidEvent() {
+        LatestPriceStore local = new LatestPriceStore(Clock.systemUTC(), event -> bridge.accept((MarketDataEvent) event));
+        local.beginSubscription(Set.of(11L));
+        Instant now = Instant.now();
+        assertThat(local.update(new LatestMarkPrice(11L, new BigDecimal("10"), now, now))).isTrue();
+        await().atMost(Duration.ofSeconds(3)).until(() -> bridge.readSharedSnapshot(11).status() == LatestPriceStore.Status.FRESH);
+        Instant rejectAt = Instant.now();
+        assertThat(local.update(new LatestMarkPrice(11L, new BigDecimal("999"), rejectAt.plusSeconds(11), rejectAt))).isFalse();
+        await().atMost(Duration.ofSeconds(3)).until(() -> bridge.readSharedSnapshot(11).status() == LatestPriceStore.Status.UNAVAILABLE);
+        assertThat(redis.opsForValue().get(RedisMarketDataBridge.watermarkKey(11))).isEqualTo(Long.toString(now.toEpochMilli()));
+        Instant recovered = Instant.now();
+        assertThat(local.update(new LatestMarkPrice(11L, new BigDecimal("11"), recovered, recovered))).isTrue();
+        await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertThat(bridge.readSharedSnapshot(11)
+                .latestPrice().orElseThrow().domainMarkPrice()).isEqualByComparingTo("11"));
+    }
+
+    @Test
     void delayedEventCannotReceiveANewFiveSecondLifetime() {
         var old = price("10", Instant.now().minusSeconds(10));
         bridge.accept(MarketDataEvent.price(old));
