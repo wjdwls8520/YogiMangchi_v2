@@ -48,6 +48,7 @@ class BinanceMarkPriceClientTests {
     private BinanceMarkPriceClient client;
     private final Clock clock = Clock.fixed(Instant.ofEpochMilli(1562305380000L), ZoneOffset.UTC);
     private final LatestPriceStore latestPrices = new LatestPriceStore(clock);
+    private final List<com.yogimangchi.trading.marketdata.ticker.MarketTicker> tickers = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -80,7 +81,7 @@ class BinanceMarkPriceClientTests {
             });
             connections.add(connection);
             return connection.handshake;
-        }, executor, clock, now::get, new ReconnectBackoff(() -> 1.0), true, latestPrices);
+        }, executor, clock, now::get, new ReconnectBackoff(() -> 1.0), true, latestPrices, tickers::add);
     }
 
     @AfterEach
@@ -105,7 +106,7 @@ class BinanceMarkPriceClientTests {
         now.set(Duration.ofSeconds(2).toNanos());
         retries.get(0).action.run();
         Connection second = openLatest();
-        assertThat(second.uri.toString()).endsWith("btcusdt@markPrice@1s/ethusdt@markPrice@1s");
+        assertThat(second.uri.toString()).endsWith("btcusdt@markPrice@1s/btcusdt@ticker/ethusdt@markPrice@1s/ethusdt@ticker");
         first.listener.onError(first.socket, new IllegalStateException("late callback"));
         assertThat(retries).hasSize(1);
         second.listener.onText(second.socket, BinanceMarkPriceProtocolTests.message("BTCUSDT", "123"), true);
@@ -113,6 +114,24 @@ class BinanceMarkPriceClientTests {
         assertThat(retries).hasSize(2);
         assertThat(retries.get(1).delay).isEqualTo(1000);
         assertThat(messages()).anyMatch(text -> text.contains("reconnectAttempt=1 disconnectedDurationMs=2000"));
+    }
+
+    @Test
+    void tickerUsesSeparateSinkAndCannotConcealMissingMarkPrice() {
+        client.start();
+        Connection connection = openLatest();
+        connection.listener.onText(connection.socket, """
+                {"stream":"btcusdt@ticker","data":{"e":"24hrTicker","s":"BTCUSDT",
+                "E":1562305380000,"P":"2.3","h":"120","l":"100","q":"12345"}}
+                """, true);
+        assertThat(tickers).hasSize(1);
+        assertThat(tickers.get(0).tradingSymbolId()).isEqualTo(42L);
+        assertThat(latestPrices.find(42L).latestPrice()).isEmpty();
+        assertThat(messages()).noneMatch(message -> message.contains("[Binance WS] HEALTHY"));
+        now.set(Duration.ofSeconds(15).toNanos());
+        healthCheck.run();
+        assertThat(retries).hasSize(1);
+        verify(connection.socket).abort();
     }
 
     @Test

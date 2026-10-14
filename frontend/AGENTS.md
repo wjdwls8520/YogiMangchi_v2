@@ -1,5 +1,49 @@
 # Frontend Agent Rules
 
+## File Ownership — CRITICAL
+
+Frontend 작업의 기본 수정 가능 범위는 `frontend/**`다.
+Frontend Work는 Backend의 소비자이며 Backend source의 소유자가 아니다.
+
+다음 경로와 파일은 기본적으로 **READ ONLY**로 취급한다.
+
+- `trading-server/**` 및 다른 서비스 디렉터리
+- Backend source/test/config 및 Backend README
+- Database migration 및 Redis/Spring configuration
+- root-level infrastructure/configuration을 포함한 루트 공통 파일
+
+Backend API가 부족하거나 계약 변경이 필요하더라도 Backend 파일을 직접 수정하지 않는다.
+
+1. Frontend에서 가능한 범위까지만 구현한다.
+2. 필요한 변경을 `BLOCKED BY BACKEND`로 보고한다.
+3. Backend Work에서 처리할 파일과 계약을 제안한다.
+4. 사용자의 명시적 승인 없이 Backend 영역을 수정하지 않는다.
+
+테스트 통과, OpenAPI 정합성, CORS 수정, Backend README 한 줄 또는 test 한 줄 수정,
+Frontend 기능 완성에 필요하다는 이유도 예외가 아니다.
+
+### Git Safety
+
+Frontend 작업을 commit하기 전에 반드시 다음을 확인한다.
+
+```bash
+git status
+git diff --name-only
+git diff --cached --name-only
+```
+
+- Frontend 기능 작업에서 이번 작업으로 생성된 변경 중 `frontend/**` 밖의 파일이 있다면 commit하지 않고 중단하여 사용자에게 보고한다.
+- `git add .` 및 `git add -A` 사용을 금지한다. 작업한 Frontend 파일만 명시적으로 stage한다.
+- 다른 Work의 변경을 reset, restore, stash, clean하거나 checkout으로 덮어쓰지 않는다.
+- 필요한 외부 영역 변경이 발견되면 Fail Closed 방식으로 해당 작업을 중단하고 보고한다.
+
+### 명시적 예외
+
+File Ownership은 기본 작업 경계다. 사용자가 특정 작업에서 다른 영역의 파일 수정까지
+명시적으로 승인한 경우에만 승인된 범위에 한해 예외로 한다.
+예: "이번 작업에서는 frontend와 trading-server 둘 다 수정해", "이번 작업에서는 root docker-compose도 수정해".
+AI가 스스로 "관련 있어 보인다", "필요하다", "편하다"는 이유로 범위를 확장하는 것은 금지한다.
+
 ## 1. 기본 기술
 
 - Next.js App Router
