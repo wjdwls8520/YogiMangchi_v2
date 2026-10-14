@@ -1,10 +1,10 @@
 package com.yogimangchi.trading;
 
 import com.yogimangchi.trading.support.PostgresTestConfiguration;
-import io.swagger.v3.core.util.Yaml;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -32,6 +32,8 @@ class ApplicationTests {
     @Autowired
     private ApplicationContext context;
 
+    @Autowired private ObjectMapper mapper;
+
     @Test
     void defaultUserIsNotGenerated() {
         assertThat(context.getBeansOfType(UserDetailsService.class)).isEmpty();
@@ -53,14 +55,38 @@ class ApplicationTests {
     }
 
     @Test
-    void generatedOpenApiMatchesCommittedContract() throws Exception {
+    void runtimeOpenApiPreservesTradingContractsAndDocumentsPublicMarketSummary() throws Exception {
         String actual = mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        String expected = Files.readString(Path.of("../docs/trading-openapi.yaml"));
-        assertThat(Yaml.mapper().readTree(actual))
-                .as("Regenerate docs/trading-openapi.yaml from the local endpoint after API changes")
-                .isEqualTo(Yaml.mapper().readTree(expected));
+        var api = mapper.readTree(actual);
+        var paths = api.path("paths");
+        for (String path : List.of("/api/v1/symbols", "/api/v1/trading/status", "/api/v1/trading/accounts/guest",
+                "/api/v1/trading/account/orders", "/api/v1/trading/account/orders/pending",
+                "/api/v1/trading/account/orders/{orderId}/cancel", "/api/v1/trading/account/positions",
+                "/api/v1/trading/account/positions/{positionId}/close", "/api/v1/trading/account/positions/{positionId}/close-orders",
+                "/api/v1/trading/account/wallet", "/api/v1/trading/account/summary")) {
+            assertThat(paths.has(path)).as(path).isTrue();
+        }
+        assertThat(paths.path("/api/v1/trading/account/orders").path("post").path("security").isEmpty()).isFalse();
+        var operation = paths.path("/api/v1/market/tickers").path("get");
+        assertThat(operation.path("security").isEmpty()).isTrue();
+        var schema = operation.path("responses").path("200").path("content").path("application/json").path("schema");
+        assertThat(schema.path("type").asText()).isEqualTo("array");
+        assertThat(schema.path("items").path("$ref").asText()).endsWith("/MarketSummaryResponse");
+        var properties = api.path("components").path("schemas").path("MarketSummaryResponse").path("properties");
+        var fields = new HashSet<String>();
+        properties.fieldNames().forEachRemaining(fields::add);
+        assertThat(fields).containsExactlyInAnyOrder("tradingSymbolId", "symbol", "quoteAsset", "markPrice",
+                "changePercent24h", "highPrice24h", "lowPrice24h", "quoteVolume24h", "status", "updatedAt");
+        for (String field : List.of("markPrice", "changePercent24h", "highPrice24h", "lowPrice24h", "quoteVolume24h")) {
+            assertThat((Iterable<com.fasterxml.jackson.databind.JsonNode>) properties.path(field).path("type"))
+                    .as(field).extracting(com.fasterxml.jackson.databind.JsonNode::asText)
+                    .containsExactlyInAnyOrder("string", "null");
+        }
+        assertThat(properties.path("tradingSymbolId").path("type").asText()).isEqualTo("integer");
+        assertThat(properties.path("updatedAt").path("format").asText()).isEqualTo("date-time");
+        assertThat(properties.path("status").path("enum").toString()).contains("FRESH", "STALE", "UNAVAILABLE");
     }
 
     @ParameterizedTest

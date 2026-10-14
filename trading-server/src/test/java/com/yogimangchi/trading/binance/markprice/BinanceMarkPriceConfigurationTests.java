@@ -3,6 +3,7 @@ package com.yogimangchi.trading.binance.markprice;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTargetLoader;
 import com.yogimangchi.trading.marketdata.LatestPriceStore;
+import com.yogimangchi.trading.marketdata.ticker.RedisTickerStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -15,6 +16,7 @@ class BinanceMarkPriceConfigurationTests {
             .withBean(ObjectMapper.class, ObjectMapper::new)
             .withBean(BinanceSubscriptionTargetLoader.class, () -> mock(BinanceSubscriptionTargetLoader.class))
             .withBean(LatestPriceStore.class, LatestPriceStore::new)
+            .withBean(RedisTickerStore.class, () -> mock(RedisTickerStore.class))
             .withUserConfiguration(BinanceMarkPriceClient.class);
 
     @Test

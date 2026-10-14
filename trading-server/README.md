@@ -314,7 +314,8 @@ Open Position이 없는 계정의 평가 금액은 DB 현금만으로 계산할 
 ## Binance Mark Price 수신
 
 서버 준비 완료 후 DB의 ACTIVE/BINANCE 종목을 조회해 하나의 USDⓈ-M Futures Combined Stream에 연결한다.
-`wss://fstream.binance.com/market/stream?streams=<providerSymbol 소문자>@markPrice@1s/...`를 사용한다.
+`wss://fstream.binance.com/market/stream?streams=<providerSymbol 소문자>@markPrice@1s/<providerSymbol 소문자>@ticker/...`를 사용한다.
+종목마다 Mark와 Ticker 두 Stream을 구독하므로 연결당 최대 512종목(1024 Stream)이다.
 API Key와 추가 의존성 없이 Java 17 기본 WebSocket을 사용하며, 재연결 시 DB 대상을 다시 조회한다.
 현재 연결 도중 DB 변경을 즉시 반영하는 Admin/동적 구독 기능은 구현하지 않았다.
 
@@ -329,7 +330,8 @@ Binance eventTime, 서버 receivedAt이 기록된다. 가격은 메모리와 Red
 onOpen만으로 재시도 횟수를 초기화하지 않는다. 첫 유효한 정규화 가격을 저장한 뒤
 `HEALTHY` 로그와 함께 초기화하며 복구까지 걸린 시간도 이 시점을 기준으로 기록한다.
 이전 연결의 늦은 callback은 무시한다.
-5초마다 확인해 마지막 정상 데이터 수신 후 15초 이상 침묵하면 재연결한다.
+5초마다 확인해 마지막 정상 Mark Price 수신 후 15초 이상 침묵하면 재연결한다.
+Ticker 수신은 Mark Price의 정상 상태나 재연결 횟수를 갱신하지 않는다.
 이는 연결 전체의 수신 중단 감지이며 아래 종목별 freshness와 별개다.
 24시간 연결 제한에 대비해 23시간 50분에 연결을 교체한다. Java WebSocket의 자동 Pong을 사용한다.
 종료 시 재시도를 취소하고 Close를 전송하며, 응답을 최대 2초 기다린 후 연결을 정리한다.
@@ -337,6 +339,29 @@ onOpen만으로 재시도 횟수를 초기화하지 않는다. 첫 유효한 정
 기준 문서: [Binance 연결 정책](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Connect),
 [Mark Price Stream](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/market),
 [Java 17 자동 Pong](https://docs.oracle.com/en/java/javase/17/docs/api/java.net.http/java/net/http/WebSocket.Listener.html#onPing(java.net.http.WebSocket,java.nio.ByteBuffer)).
+
+### 24h Ticker 수집
+
+동일한 연결에서 공식 USDⓈ-M Futures `<symbol>@ticker`를 구독한다. 갱신 주기는 2초이며
+통계는 UTC 일봉이 아닌 이동하는 24시간 구간이다.
+`P`는 가격 변동률, `h/l`은 High/Low, `q`는 Quote Asset 거래대금이다.
+High/Low만 DB `provider_unit_multiplier`로 정확히 나누고 변동률과 USDT 거래대금은 변환하지 않는다.
+내부 ID 기준의 `marketdata.ticker.MarketTicker`를 사용하고 Provider 이름을 공유 데이터에 넣지 않는다.
+
+`RedisTickerStore`는 256개 제한 큐와 별도 작업 스레드로 최신 통계만 저장한다.
+큐가 가득 차면 오래된 대기 값을 버리고 다음 최신 이벤트를 받는다. Redis 실패 시 대기 데이터를
+버리고 5초 후 재시도하며, Binance callback은 Redis 연결/명령을 기다리지 않는다.
+기존 Mark의 Stream·Pub/Sub·Trigger 상태에 Ticker를 섞지 않는다.
+
+- 최신값: `trading:market:v1:ticker:<tradingSymbolId>`
+- 역순 방지: `trading:market:v1:ticker-watermark:<tradingSymbolId>` (24시간)
+- freshness/TTL: 10초. Redis 서버 시각과 `min(eventTime, receivedAt)` 기준의 남은 시간만 부여한다.
+- 미래 시각 허용 오차: 최대 1초. 중복/역순 이벤트는 Lua에서 원자적으로 거절한다.
+- TTL 만료 이후에도 watermark가 남으므로 오래된 이벤트가 값을 되살리지 못한다.
+
+공식 데이터 정의: [Binance Individual Symbol Ticker Streams](https://developers.binance.info/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/market).
+DB 대상은 기존 Mark와 함께 시작/재연결 시 갱신한다. 운영 중 활성 상태 변경의 즉시 구독 반영은
+향후 Admin 정책에서 다루며, 일반 조회는 요청마다 현재 ACTIVE 목록을 사용한다.
 
 ### 가격 단위와 최신 상태
 
@@ -469,7 +494,41 @@ WebSocket은 REST가 아니므로 OpenAPI path에 중복 선언하지 않고 이
 실제 HTTP Upgrade, Redis 경유 live 전달, Origin 거절, 구독 검증/해제, stale/복구와
 느린 소켓의 비동기 격리를 외부 Binance 없이 자동 테스트한다.
 
-## 테스트와 OpenAPI 갱신
+## Market Summary 조회
+
+인증 없이 `GET /api/v1/market/tickers`를 호출하면 DB의 ACTIVE 종목 전체를 Symbol 순서로 반환한다.
+PostgreSQL 조회 Transaction 종료 후 공유 Redis의 Mark snapshot/state와 Ticker snapshot을 하나의
+MGET으로 읽는다. JVM `LatestPriceStore`를 조회하거나 Ticker의 Last Price로 Mark를 대체하지 않는다.
+이 API는 표시/정렬용이며 주문·청산의 가격 정책을 변경하지 않는다.
+
+```json
+[
+  {
+    "tradingSymbolId": 1,
+    "symbol": "BTC",
+    "quoteAsset": "USDT",
+    "markPrice": "114230.10000000",
+    "changePercent24h": "2.37",
+    "highPrice24h": "115100.00",
+    "lowPrice24h": "109800.00",
+    "quoteVolume24h": "1234567890.12",
+    "status": "FRESH",
+    "updatedAt": "2026-10-13T09:00:00Z"
+  }
+]
+```
+
+금융 값은 정확한 decimal string이다. Mark freshness는 기존 5초, 통계 freshness는 10초이며
+응답 시 두 timestamp를 다시 검증한다. `FRESH`는 둘 다 최신인 경우다.
+읽힌 데이터가 시각 범위를 벗어나면 `STALE`, 일부 누락/잘못된 payload/연결 상태 불가/Redis 실패는
+`UNAVAILABLE`이다. 만료된 값은 null로 숨기며 남아 있는 유효 값만 제공한다.
+TTL 만료로 snapshot 자체가 사라진 경우에는 누락이므로 `UNAVAILABLE`이다.
+Redis 장애에서도 현재 ACTIVE 목록과 null 필드를 HTTP 200으로 반환한다.
+DB 조회 자체가 실패한 경우에는 기존 전역 서버 오류 정책을 따른다.
+`updatedAt`은 반환한 유효 데이터 중 가장 오래된 Provider eventTime(ISO-8601 UTC), 유효 값이 없으면 null이다.
+한 종목의 누락/손상 때문에 다른 종목의 유효 값을 버리지 않는다.
+
+## 테스트와 Runtime OpenAPI
 
 ```powershell
 .\gradlew.bat --no-daemon clean build
@@ -487,15 +546,9 @@ DB 없이 웹/보안/오류 응답 테스트만 실행하려면:
 .\gradlew.bat test --tests '*TradingSymbolWebTests'
 ```
 
-루트 `docs/trading-openapi.yaml`은 실제 로컬 endpoint에서 생성한다.
-API 변경 후 서버를 실행하고 `trading-server`에서 아래 명령으로 갱신해 코드와 함께 리뷰한다.
-별도 생성 플러그인이나 수작업으로 중복 관리하는 DTO 스키마는 사용하지 않는다.
-
-```powershell
-Invoke-WebRequest 'http://localhost:8081/v3/api-docs.yaml' -OutFile '../docs/trading-openapi.yaml'
-```
-
+Runtime Springdoc `/v3/api-docs`가 현재 API 계약의 원본이다. 정적 YAML을 중복 생성/갱신하지 않는다.
 OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들어가지 않게 했다.
-자동 테스트가 실제 생성된 명세와 저장된 YAML을 비교하므로 API 변경 후 갱신을 빠뜨리면 실패한다.
+자동 테스트는 Runtime 명세에서 기존 Trading API, 인증 경계와 Market Summary 필드/타입을 검증한다.
+루트의 기존 `docs/trading-openapi.yaml`은 과거 Snapshot이며 최신 계약 확인에는 Runtime 문서를 사용한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
 JWT/Content 인증, Admin, Funding/수수료, Competition/Ranking과 다중 노드 조정은 구현하지 않았다.
