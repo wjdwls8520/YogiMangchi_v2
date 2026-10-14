@@ -3,14 +3,16 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { marketEndpoints, parseSymbols, type TradingSymbol } from "../market/catalog";
 import { retryDelay } from "../market/stream";
-import { previewSymbols } from "../preview-data";
+import { useMarketTickers } from "../api/queries";
 import { SymbolSelector } from "./symbol-selector";
 import { TradingChart } from "./trading-chart";
 import { MarketHeader } from "./market-header";
 import { TradingAccountTabs, type AccountView } from "./trading-account-tabs";
 import { TradingNavigation } from "./trading-navigation";
+import { SelectedMarketProvider, useMarketFeed } from "./selected-market-provider";
 
 export function MarketChartPanel({ children }: { children: ReactNode }) {
+  const tickerQuery = useMarketTickers();
   const [mainView, setMainView] = useState<"chart" | "order" | "portfolio">("chart");
   const [accountView, setAccountView] = useState<AccountView>("positions");
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -42,7 +44,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         // Exclude it for this mounted screen instead of resubscribing in a loop.
         const allSymbols = parseSymbols(await response.json());
         const symbols = allSymbols.filter((entry) => !unavailableIds.current.has(entry.id)
-          && entry.quoteAsset === "USDT" && previewSymbols.some((item) => item.symbol === entry.symbol));
+          && entry.quoteAsset === "USDT");
         if (!disposed) setCatalog({ symbols, allSymbols, socket: endpoints.socket, state: symbols.length ? "ready" : "empty" });
       } catch {
         if (!disposed) {
@@ -56,7 +58,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   }, [catalogRevision]);
   const selected = catalog.symbols.find((entry) => entry.id === selectedId)
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
-  const selectedPreview = previewSymbols.find((entry) => entry.symbol === selected?.symbol);
+  const market = useMarketFeed(selected?.id ?? null, catalog.socket, refreshAfterSymbolError);
   function openSheet() {
     if (!sheet.current || sheet.current.open) return;
     sheet.current.showModal();
@@ -87,15 +89,16 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
   return (
-    <div className="trading-grid" data-main-view={mainView}>
+    <SelectedMarketProvider symbol={selected} market={market}><div className="trading-grid" data-main-view={mainView}>
       <aside className="market-sidebar" aria-labelledby="sidebar-heading">
         <header className="section-heading"><h2 id="sidebar-heading" className="section-title">Markets</h2></header>
-        <p className="market-list-note">가격 · 24h 등락률은 예시입니다.</p>
-        <SymbolSelector symbols={catalog.symbols} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
+        <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준{tickerQuery.isError ? " · 시세 조회 실패" : ""}</p>
+        {tickerQuery.isError && <button type="button" className="account-refresh" disabled={tickerQuery.isFetching} onClick={() => void tickerQuery.refetch({ cancelRefetch: false })}>통계 다시 조회</button>}
+        <SymbolSelector symbols={catalog.symbols} tickers={tickerQuery.tickers} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
       </aside>
       <header className="mobile-market-header">
         <button ref={sheetTrigger} type="button" onClick={openSheet} aria-haspopup="dialog" aria-controls="market-symbol-sheet" aria-expanded={sheetOpen} className="market-sheet-trigger">
-          <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selectedPreview?.name ?? "거래 가능 종목 확인 중"}</span></span>
+          <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selected?.name ?? "거래 가능 종목 확인 중"}</span></span>
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         <span className="preview-label">무기한 선물</span>
@@ -106,8 +109,8 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         { id: "portfolio", label: "Portfolio", controls: "portfolio-view" },
       ]} />
       <section id="chart-view" role="tabpanel" aria-labelledby="chart-heading" tabIndex={0} className="chart-view">
-        <MarketHeader symbol={selected} />
-        <TradingChart key={selected?.id ?? "catalog"} symbol={selected} socketUrl={catalog.socket} catalogView={catalog.state} onSymbolUnavailable={refreshAfterSymbolError} />
+        <MarketHeader symbol={selected} market={market} ticker={tickerQuery.tickers.find((ticker) => ticker.tradingSymbolId === selected?.id && ticker.symbol === selected.symbol && ticker.quoteAsset === selected.quoteAsset)} />
+        <TradingChart key={selected?.id ?? "catalog"} symbol={selected} market={market} catalogView={catalog.state} />
       </section>
       <div id="order-view" role="tabpanel" aria-labelledby="order-heading" tabIndex={0} className="order-view">{children}</div>
       <TradingAccountTabs activeTab={accountView} onSelect={setAccountView} symbols={catalog.allSymbols} />
@@ -121,10 +124,11 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         <div className="market-sheet-content">
           <header className="section-heading"><h2 id="sheet-heading" className="section-title">Markets</h2><button type="button" onClick={closeSheet} aria-label="종목 선택 닫기" className="market-sheet-close">닫기</button></header>
           <p className="market-list-note">Trading Server에서 제공하는 종목을 선택하세요.</p>
-          <SymbolSelector symbols={catalog.symbols} selectedId={selected?.id ?? null} onSelect={selectFromSheet} />
-          <p className="market-list-note">가격 · 24h 등락률은 예시입니다.</p>
+          <SymbolSelector symbols={catalog.symbols} tickers={tickerQuery.tickers} selectedId={selected?.id ?? null} onSelect={selectFromSheet} />
+          <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준</p>
+          {tickerQuery.isError && <button type="button" className="account-refresh" disabled={tickerQuery.isFetching} onClick={() => void tickerQuery.refetch({ cancelRefetch: false })}>통계 다시 조회</button>}
         </div>
       </dialog>
-    </div>
+    </div></SelectedMarketProvider>
   );
 }

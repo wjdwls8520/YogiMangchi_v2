@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { TradingSymbol } from "../market/catalog";
 import { PriceHistory } from "../market/history";
-import { openMarketStream, type MarketState } from "../market/stream";
+import type { MarketPrice, MarketState } from "../market/stream";
+import type { SelectedMarket } from "../market/selected-market";
 import { ChartState, type MarketChartView } from "./chart-state";
 
 const statusLabels: Record<MarketState, string> = {
@@ -17,19 +18,30 @@ const messages = {
   empty: "표시할 가격 데이터가 없습니다.",
 } as const;
 
-export function TradingChart({ symbol, socketUrl, catalogView, onSymbolUnavailable }: {
-  symbol: TradingSymbol | null; socketUrl: string; catalogView: "loading" | "ready" | "empty" | "unavailable";
-  onSymbolUnavailable: (symbolId: number) => void;
+export function TradingChart({ symbol, market, catalogView }: {
+  symbol: TradingSymbol | null; market: SelectedMarket; catalogView: "loading" | "ready" | "empty" | "unavailable";
 }) {
   const symbolId = symbol?.id;
   const mount = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<MarketState>("CONNECTING");
+  const state = market.state;
+  const latest = useRef<MarketPrice | null>(null);
+  const history = useRef(new PriceHistory());
+  const series = useRef<import("lightweight-charts").ISeriesApi<"Line"> | null>(null);
   const [rendererFailed, setRendererFailed] = useState(false);
+  const append = useCallback((price: MarketPrice | null) => {
+    const current = series.current;
+    if (!price || !current) return;
+    try {
+      const update = history.current.append(price.eventTime, price.value);
+      if (!update) return;
+      if (update.pruned) current.setData(update.points as import("lightweight-charts").LineData<import("lightweight-charts").UTCTimestamp>[]);
+      else current.update(update.point as import("lightweight-charts").LineData<import("lightweight-charts").UTCTimestamp>);
+    } catch { queueMicrotask(() => { if (series.current === current) setRendererFailed(true); }); }
+  }, []);
+  useEffect(() => { latest.current = market.price; append(market.price); }, [market.price, append]);
   useEffect(() => {
     let disposed = false;
     let chart: import("lightweight-charts").IChartApi | undefined;
-    let stop: (() => void) | undefined;
-    const history = new PriceHistory();
     async function start() {
       try {
         const { createChart, LineSeries, ColorType } = await import("lightweight-charts");
@@ -42,25 +54,16 @@ export function TradingChart({ symbol, socketUrl, catalogView, onSymbolUnavailab
           timeScale: { borderColor: "#e2e8f0", timeVisible: true, secondsVisible: true, rightOffset: 3 },
           localization: { locale: "ko-KR", timeFormatter: (time: number | object | string) => typeof time === "number" ? new Date(time * 1000).toLocaleTimeString("ko-KR", { hour12: false }) : String(time) },
         });
-        const series = chart.addSeries(LineSeries, { color: "#4f46e5", lineWidth: 2, priceFormat: {
+        series.current = chart.addSeries(LineSeries, { color: "#4f46e5", lineWidth: 2, priceFormat: {
           type: "custom", minMove: 0.00000001,
           formatter: (value: number) => value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }),
         } });
-        if (symbolId === undefined) return;
-        stop = openMarketStream({ url: socketUrl, symbolId, onState: setState, onSymbolUnavailable, onPrice: (price) => {
-          if (disposed) return;
-          try {
-            const update = history.append(price.eventTime, price.value);
-            if (!update) return;
-            if (update.pruned) series.setData(update.points as import("lightweight-charts").LineData<import("lightweight-charts").UTCTimestamp>[]);
-            else series.update(update.point as import("lightweight-charts").LineData<import("lightweight-charts").UTCTimestamp>);
-          } catch { stop?.(); setRendererFailed(true); }
-        } });
-      } catch { if (!disposed) { stop?.(); setRendererFailed(true); } }
+        append(latest.current);
+      } catch { if (!disposed) setRendererFailed(true); }
     }
     void start();
-    return () => { disposed = true; stop?.(); chart?.remove(); };
-  }, [symbolId, socketUrl, onSymbolUnavailable]);
+    return () => { disposed = true; series.current = null; chart?.remove(); };
+  }, [symbolId, append]);
   const view: MarketChartView = rendererFailed ? "unavailable"
     : !symbol ? catalogView === "ready" ? "empty" : catalogView
     : state === "READY" ? "ready" : state === "UNAVAILABLE" || state === "RECONNECTING" ? "unavailable" : "loading";

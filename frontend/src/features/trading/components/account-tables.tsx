@@ -2,6 +2,7 @@ import type { TradingOrder } from "../api/orders";
 import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
 import { TradingTable } from "./trading-table";
+import { CancelOrderButton, ClosePositionButton } from "./account-actions";
 
 export function PositionTable({ positions, symbols }: { positions: readonly Position[]; symbols: readonly TradingSymbol[] }) {
   return <TradingTable caption="보유 포지션" variant="positions" columns={[
@@ -19,7 +20,7 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
       mark: <span title={position.priceStatus}>{formatDecimal(position.markPrice)}</span>,
       leverage: `${position.leverage}×`, pnl: <span data-trend={pnlTrend(position.unrealizedPnl)}>{formatDecimal(position.unrealizedPnl)} USDT</span>,
       margin: formatDecimal(position.margin),
-      action: <button type="button" disabled aria-label={`${symbolLabel(position.tradingSymbolId, symbols)} ${position.side} 포지션 청산 (미지원)`}>청산</button>,
+      action: <ClosePositionButton position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} />,
     },
   }))} />;
 }
@@ -35,7 +36,7 @@ export function PendingOrderTable({ orders, symbols }: { orders: readonly Tradin
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), type: order.type, intent: order.action, side: <span data-side={order.side}>{order.side}</span>,
       quantity: formatDecimal(order.quantity), price: formatDecimal(order.limitPrice), status: order.status,
-      action: <button type="button" disabled aria-label={`${symbolLabel(order.tradingSymbolId, symbols)} 미체결 주문 취소 (미지원)`}>취소</button>,
+      action: <CancelOrderButton orderId={order.orderId} symbol={symbolLabel(order.tradingSymbolId, symbols)} />,
     },
   }))} />;
 }

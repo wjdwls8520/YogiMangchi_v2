@@ -96,12 +96,13 @@ JavaScript로 읽는 Cookie는 토큰 노출 측면에서 이점이 없어 사�
 sessionStorage도 XSS에는 노출될 수 있으므로 로그·URL·오류·Query 캐시에 토큰을 넣지 않는다.
 저장소가 차단되면 계정을 생성하기 전에 오류를 표시한다.
 
-부트스트랩 및 인증 복구는 동시에 한 요청만 실행한다. 401/로컬 만료는 기존 credential을 제거한 뒤
+부트스트랩 및 조회 인증 복구는 동시에 한 요청만 실행한다. 조회의 401/로컬 만료는 기존 credential을 제거한 뒤
 자동으로 한 번 재생성한다. 재생성 후에도 인증이 실패하면 중단하며 명시적 재시도로만 재개한다.
 403은 새 계정 생성으로 해결하지 않는다. Guest POST는 응답 유실 시 중복 계정이 생길 수 있어
 자동 재시도하지 않는다. 초기 생성 실패 후 재시도는 사용자가 선택한다.
 계정 ID와 세대 번호로 조회 키를 분리하고 계정 변경 시 이전 요청/캐시를 취소·제거한다.
-REST 읽기는 네트워크 오류와 500/502/503/504만 최대 두 번 재시도한다. 4xx/파싱 오류는 자동 재시도하지 않는다.
+REST 읽기는 네트워크 오류, 500/502/503/504, `409 + code=TRADING_BUSY`만 최대 두 번 재시도한다.
+다른 409, 인증/입력 오류, 파싱 오류, 취소는 자동 재시도하지 않는다.
 
 도입 시 npm audit: 새 TanStack 패키지 경고 없음. 기존 ESLint 개발 도구 체인의
 braces → micromatch → fast-glob 경로에 high 5건이 보고되었다. 제안된 해결은 Next ESLint의
@@ -112,23 +113,25 @@ Account/Wallet/Positions는 `GET /api/v1/trading/account/summary`의 동일 시�
 화면과 Doughnut은 같은 positions를 사용하고 기존 BigInt 증거금 배분 계산을 유지한다.
 활성 종목 목록에 없는 과거 종목은 이름을 추측하지 않고 `종목 #ID`로 표시한다.
 금융 값은 문자열로 보관하고 null 평가 값은 `—`로 표시한다. Preview 계정/포지션은 제거했다.
-조회 시각을 표시하며 15초 staleTime 후 포커스/재연결 및 수동 새로고침으로 갱신한다.
+조회 시각을 표시하며 Summary/미체결은 5초, 이력은 10초마다 갱신한다.
+오류가 나면 주기 조회도 멈추고 제한된 재시도 또는 수동 새로고침으로 복구한다.
 Account REST는 실시간 WebSocket이 아니며 Market Chart 오류 상태와 분리된다.
 
 주문 조회는 `/api/v1/trading/account/orders/pending`와 `/api/v1/trading/account/orders?limit=50`을 사용한다.
 후자가 주문/체결 이력 API이며 별도의 `/history` 경로는 없다. 서버는 `beforeId` 커서를 지원하지만
 현재 화면은 최신 첫 페이지 최대 50건으로 명시한다. 체결 가격은 `fill.price`만 표시한다.
 미체결/이력은 독립 Query와 오류·재시도 UI를 가진다. 가짜 계정/포지션/주문 데이터는 유지하지 않는다.
-아직 종목 가격 요약·24h 통계와 주문 입력은 예시이며 주문 실행·청산·취소는 구현하지 않았다.
+`/api/v1/symbols`의 ACTIVE USDT 종목 전체를 선택할 수 있다. 선택 종목 WS 한 개를
+Chart/Header/주문 입력에서 공유하며 최신 Mark Price가 없으면 신규 주문을 막는다.
+`GET /api/v1/market/tickers`를 2초마다 조회하여 목록 가격과 24h 통계를 표시한다.
+오류 또는 오래된 캐시에는 예시 가격을 대신 표시하지 않는다.
 
-### 조회 연동 검증
+MARKET/LIMIT, LONG/SHORT 주문과 포지션 전체 청산, 개별 미체결 취소를 지원한다.
+주문·청산은 Idempotency-Key를 사용하고 Mutation은 자동 재시도하지 않는다.
+결과가 불확실하면 입력을 잠그고 사용자의 재확인에 같은 요청·키를 재사용한다.
+Mutation의 401은 새 Guest로 재전송하지 않는다. 완료 후 Summary/미체결/이력을 갱신한다.
+금융 값은 Decimal 문자열로 유지하고 참고 금액/비율 입력만 BigInt로 계산한다.
+지정가 청산은 API client/Mutation 명령까지 제공하며 화면에는 연결하지 않았다.
 
-- Backend 전체 184개 테스트 통과. Frontend 39개 테스트, lint, typecheck, build 통과.
-- 실제 PostgreSQL/Redis/Trading Server에서 새 Guest 생성, Summary, 미체결/최근 주문의 빈 상태,
-  새로고침 후 동일 Guest 복구 및 Market READY 확인. 새로고침 전후 DB 계정 개수는 동일했다.
-- 320/390/768/1024/1440/1920px에서 실제 빈 계정과 별도 테스트 응답의 보유 데이터 화면을 확인했다.
-- 테스트 응답으로 포지션/주문 Decimal 표시, Doughnut 비중, Summary 503 재시도 한도,
-  주문 400 재시도 차단, 동시 401 한 번 복구, 재인증 실패 중단 및 재시도 더블클릭을 검증했다.
-  화면 크기 변경에도 초기 Summary/미체결/이력 요청은 각각 한 번이었다. 주문 Mutation 요청은 없었다.
-- 보유 데이터의 브라우저 검증은 격리된 DTO 테스트 응답 기준이다. 기존 실계정의 보유 포지션은
-  접근 credential이 없어 직접 검증하지 않았다. 테스트 응답은 제품 코드/실제 DB에 넣지 않았다.
+주문 브라우저 검증에는 실제 서버와 분리한 계약 응답을 사용한다. 실제 주문 통합 검증에는
+Trading Server의 유효한 Mark Price 수신이 필요하다. 테스트 응답은 제품 코드/실제 DB에 넣지 않는다.

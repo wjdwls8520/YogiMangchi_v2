@@ -1,14 +1,15 @@
-import { previewMarket, previewSymbols } from "../preview-data";
 import type { TradingSymbol } from "../market/catalog";
+import { freshMarkPrice, type SelectedMarket } from "../market/selected-market";
+import { formatDecimal, pnlTrend } from "../api/account";
+import type { MarketTicker } from "../market/tickers";
 
-export function MarketHeader({ symbol }: { symbol: TradingSymbol | null }) {
-  const market = previewSymbols.find((entry) => entry.symbol === symbol?.symbol) ?? previewSymbols[0];
-  const isBtc = market.symbol === "BTC";
+export function MarketHeader({ symbol, market: feed, ticker }: { symbol: TradingSymbol | null; market: SelectedMarket; ticker?: MarketTicker }) {
+  const markPrice = freshMarkPrice(feed);
   return (
     <section aria-labelledby="market-heading" aria-describedby="preview-notice" className="market-summary trading-section">
       <header className="market-summary-header">
         <div className="market-symbol">
-          <h2 id="market-heading">{market.symbol}USDT</h2>
+          <h2 id="market-heading">{symbol ? `${symbol.symbol}${symbol.quoteAsset}` : "종목 선택"}</h2>
           <p>무기한 선물 <span>Demo Trading</span></p>
         </div>
         <div className="market-tools" role="group" aria-label="거래 도구 (미지원)">
@@ -18,14 +19,14 @@ export function MarketHeader({ symbol }: { symbol: TradingSymbol | null }) {
       </header>
       <div className="market-summary-body">
         <div className="market-primary-price tabular-nums">
-          <p className="market-price-label">{isBtc ? "Mark Price" : "참고 가격"} <span>예시</span></p>
-          <p className="market-price" data-trend={market.trend}>{isBtc ? previewMarket.markPrice : market.price} <span>USDT</span></p>
-          <p className="market-change" data-trend={market.trend}>24h {market.change} <span>예시</span></p>
+          <p className="market-price-label">Mark Price <span>{markPrice ? "실시간" : feed.state === "UNAVAILABLE" || feed.state === "RECONNECTING" ? "시세 이용 불가" : "현재 시세 확인 중"}</span></p>
+          <p className="market-price">{formatDecimal(markPrice?.decimal)} <span>USDT</span></p>
+          <p className="market-change" data-trend={pnlTrend(ticker?.changePercent24h ?? null)}>24h {ticker?.changePercent24h == null ? "—" : `${formatDecimal(ticker.changePercent24h)}%`}</p>
         </div>
         <dl className="market-statistics tabular-nums">
-          <div><dt>24h 최고 · 예시</dt><dd>{isBtc ? previewMarket.high : "—"}</dd></div>
-          <div><dt>24h 최저 · 예시</dt><dd>{isBtc ? previewMarket.low : "—"}</dd></div>
-          <div><dt>24h 거래대금 · 예시</dt><dd>{isBtc ? previewMarket.volume : "—"}</dd></div>
+          <div><dt>24h 최고</dt><dd>{formatDecimal(ticker?.highPrice24h)}</dd></div>
+          <div><dt>24h 최저</dt><dd>{formatDecimal(ticker?.lowPrice24h)}</dd></div>
+          <div><dt>24h 거래대금 · USDT</dt><dd>{formatDecimal(ticker?.quoteVolume24h)}</dd></div>
         </dl>
       </div>
     </section>

@@ -1,5 +1,7 @@
 import { tradingJson, TradingApiError } from "./client";
 import { parseCredential, parseGuest, type GuestCredential } from "./contracts";
+import { mutationRequest, type TradingCommand } from "./mutation-request";
+import { parseOrder } from "./orders";
 
 export type SessionSnapshot = { phase: "loading" | "ready" | "error"; accountId: number | null; generation: number };
 export const initialSession: SessionSnapshot = { phase: "loading", accountId: null, generation: 0 };
@@ -78,6 +80,16 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         if (error instanceof TradingApiError && error.status === 401) await recover(current);
         throw error;
       }
+    },
+    async write(command: TradingCommand, expected: SessionSnapshot, key: string) {
+      const current = credential;
+      // A mutation must never recover/replay into a newly created guest account.
+      if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId
+        || expected.generation !== snapshot.generation || !usable(current)) throw new TradingApiError(401);
+      const request = mutationRequest(command);
+      const value = await tradingJson(origin, request.path, { token: current.accessToken, method: "POST", body: request.body,
+        idempotencyKey: request.keyed ? key : undefined }, transport);
+      return parseOrder(value);
     },
   };
 }

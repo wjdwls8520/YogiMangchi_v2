@@ -95,7 +95,7 @@ test("only HTTP 409 TRADING_BUSY is a bounded retryable conflict", async () => {
     await assert.rejects(tradingJson(origin, "account/summary", {}, async () => json({ status: 409, code }, 409)), (error: unknown) => {
       assert.ok(error instanceof TradingApiError);
       assert.equal(error.status, 409);
-      assert.equal(error.code, code === "TRADING_BUSY" ? code : undefined);
+      assert.equal(error.code, code === "OTHER_CONFLICT" ? undefined : code);
       assert.equal(retryTradingQuery(0, error), code === "TRADING_BUSY");
       assert.equal(retryTradingQuery(1, error), code === "TRADING_BUSY");
       assert.equal(retryTradingQuery(2, error), false);

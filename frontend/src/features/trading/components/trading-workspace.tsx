@@ -20,13 +20,13 @@ export function TradingWorkspace() {
             요기망치 <span className="trading-brand-latin">YOGIMANGCHI</span>
           </p>
           <p className="hidden text-xs font-medium text-slate-600 md:block">선물 모의투자</p>
-          <span className="preview-label">Guest 조회</span>
+          <span className="preview-label">Guest 모의투자</span>
         </div>
       </header>
       <main id="trading-main" tabIndex={-1} className="trading-workspace">
         <div className="trading-page-intro">
           <h1 className="sr-only">선물 모의투자</h1>
-          <p id="preview-notice">차트는 실시간 시세, 계정·포지션·주문 내역은 실제 Guest 조회 데이터입니다. 종목 가격 요약과 24h 통계는 예시이며 주문·청산·취소는 비활성 상태입니다.</p>
+          <p id="preview-notice">서버의 실시간 Mark Price와 실제 24h 통계를 사용합니다. Guest 주문·전체 청산·취소가 가능합니다. 실제 자금을 사용하지 않는 모의투자입니다.</p>
         </div>
         <TradingDataProvider><MarketChartPanel>
           <OrderPanel />

@@ -6,6 +6,10 @@
 .account-refresh:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
 .account-snapshot-note { padding: .5rem 1rem; color: #64748b; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
 .account-summary dd, .order-wallet dd { overflow-wrap: anywhere; }
+.market-price, .market-list-price, .market-statistics dd, .order-estimates dd { overflow-wrap: anywhere; }
+.order-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.order-choice:has(input:focus-visible) { outline: 2px solid #4f46e5; outline-offset: -2px; }
+.trading-table [role="alert"] { max-width: 20rem; white-space: normal; }
 
 @theme {
   --font-sans: Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
@@ -244,7 +248,10 @@
     @apply text-trade-meta text-slate-500;
   }
   .market-list-price {
-    @apply flex shrink-0 flex-col items-end gap-1 text-trade-meta;
+    @apply flex min-w-0 flex-1 flex-col items-end gap-1 text-right text-trade-meta;
+  }
+  .market-list-price > span {
+    max-width: 100%;
   }
   .market-list-unavailable {
     @apply absolute bottom-1 right-3 text-trade-meta text-slate-500;
@@ -331,13 +338,13 @@
   .order-choice {
     @apply relative flex min-h-11 min-w-0 flex-1 items-center justify-center border-r border-slate-200 px-2 text-trade-body font-medium text-slate-500 last:border-r-0 has-checked:bg-brand-50 has-checked:text-brand-700;
   }
-  .order-choice:has(input[value="long"]:checked) {
+  .order-choice:has(input[value="LONG"]:checked) {
     @apply bg-emerald-50 text-gain;
   }
-  .order-choice:has(input[value="short"]) {
+  .order-choice:has(input[value="SHORT"]) {
     @apply text-loss;
   }
-  .order-choice:has(input[value="short"]:checked) {
+  .order-choice:has(input[value="SHORT"]:checked) {
     @apply bg-rose-50;
   }
   .order-leverage {
