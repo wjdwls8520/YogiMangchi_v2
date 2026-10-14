@@ -135,6 +135,30 @@ class BinanceMarkPriceClientTests {
     }
 
     @Test
+    void smallProviderClockSkewStillMakesTheBinanceConnectionHealthy() {
+        client.start();
+        Connection connection = openLatest();
+        String text = BinanceMarkPriceProtocolTests.message("BTCUSDT", "123")
+                .replace("1562305380000", "1562305382000");
+        connection.listener.onText(connection.socket, text, true);
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.FRESH);
+        assertThat(latestPrices.marketClockSnapshot().status().name()).isEqualTo("WARNING");
+        assertThat(messages()).anyMatch(message -> message.contains("[Binance WS] HEALTHY"));
+    }
+
+    @Test
+    void excessiveProviderClockSkewDoesNotClaimHealthyConnection() {
+        client.start();
+        Connection connection = openLatest();
+        String text = BinanceMarkPriceProtocolTests.message("BTCUSDT", "123")
+                .replace("1562305380000", "1562305391000");
+        connection.listener.onText(connection.socket, text, true);
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.UNAVAILABLE);
+        assertThat(latestPrices.marketClockSnapshot().status().name()).isEqualTo("REJECTED");
+        assertThat(messages()).noneMatch(message -> message.contains("[Binance WS] HEALTHY"));
+    }
+
+    @Test
     void initialHandshakeFailuresBackOffWithoutTerminatingApplication() {
         client.start();
         connections.get(0).handshake.completeExceptionally(new java.io.IOException("unreachable"));
@@ -168,9 +192,10 @@ class BinanceMarkPriceClientTests {
         Connection connection = openLatest();
         connection.listener.onText(connection.socket, "{}", true);
         connection.listener.onText(connection.socket, BinanceMarkPriceProtocolTests.message("ETHUSDT", "1"), true);
-        connection.listener.onText(connection.socket,
-                BinanceMarkPriceProtocolTests.message("BTCUSDT", "1").replace("1562305380000", "1562305370000"), true);
         assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.MISSING);
+        connection.listener.onText(connection.socket,
+                BinanceMarkPriceProtocolTests.message("BTCUSDT", "1").replace("1562305380000", "1562305369000"), true);
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.UNAVAILABLE);
         assertThat(messages()).noneMatch(text -> text.contains("HEALTHY"));
         String valid = BinanceMarkPriceProtocolTests.message("BTCUSDT", "10");
         connection.listener.onText(connection.socket, valid, true);

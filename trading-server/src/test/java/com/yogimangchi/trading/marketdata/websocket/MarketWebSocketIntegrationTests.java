@@ -67,6 +67,32 @@ class MarketWebSocketIntegrationTests {
     }
 
     @Test
+    void providerClockSkewStillDeliversFreshSnapshotAndLiveMarketPricesThroughRedis() throws Exception {
+        Instant receivedAt = Instant.now();
+        var first = new LatestMarkPrice(btc, new BigDecimal("110"), receivedAt.plusSeconds(2), receivedAt);
+        assertThat(prices.update(first)).isTrue();
+        await().atMost(Duration.ofSeconds(3)).until(() -> redis.readSharedSnapshot(btc).latestPrice().map(first::equals).orElse(false));
+        Client client = connect(null);
+        client.next("CONNECTED");
+        client.send("{\"type\":\"SUBSCRIBE\",\"tradingSymbolIds\":[" + btc + "]}");
+        client.next("SUBSCRIBED");
+        assertThat(client.next("SNAPSHOT").at("/prices/0/status").asText()).isEqualTo("FRESH");
+        for (int i = 1; i <= 3; i++) {
+            Instant receipt = Instant.now();
+            var next = new LatestMarkPrice(btc, BigDecimal.valueOf(110 + i), receipt.plusSeconds(6).plusMillis(i), receipt);
+            assertThat(prices.update(next)).isTrue();
+            JsonNode live = client.next("MARKET_PRICE");
+            assertThat(live.path("price").asText()).isEqualTo(Integer.toString(110 + i));
+            assertThat(live.path("status").asText()).isEqualTo("FRESH");
+            assertThat(prices.marketClockSnapshot().status().name()).isEqualTo("DEGRADED");
+        }
+        Instant rejectAt = Instant.now();
+        assertThat(prices.update(new LatestMarkPrice(btc, new BigDecimal("999"), rejectAt.plusSeconds(11), rejectAt))).isFalse();
+        assertStatus(client.next("MARKET_STATUS"), "UNAVAILABLE");
+        client.noMessageOfType("MARKET_PRICE", Duration.ofMillis(200));
+    }
+
+    @Test
     void publicSocketDeliversSnapshotAndRedisLivePricesWithoutDuplicatesAndCleansUp() throws Exception {
         Client client = connect(null);
         assertThat(client.next("CONNECTED").path("maxSubscriptions").intValue()).isEqualTo(32);
