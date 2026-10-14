@@ -1,0 +1,644 @@
+@import "tailwindcss";
+
+.account-query-state { padding: 1.25rem; color: #64748b; font-size: .8125rem; line-height: 1.6; }
+.account-refresh { min-height: 44px; padding: .5rem .75rem; color: #4338ca; font-size: .8125rem; font-weight: 600; cursor: pointer; }
+.account-refresh:disabled { opacity: .5; cursor: wait; }
+.account-refresh:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
+.account-snapshot-note { padding: .5rem 1rem; color: #64748b; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
+.account-summary dd, .order-wallet dd { overflow-wrap: anywhere; }
+.market-price, .market-list-price, .market-statistics dd, .order-estimates dd { overflow-wrap: anywhere; }
+.order-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.order-choice:has(input:focus-visible) { outline: 2px solid #4f46e5; outline-offset: -2px; }
+.trading-table [role="alert"] { max-width: 20rem; white-space: normal; }
+
+@theme {
+  --font-sans: Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-gain: #047857;
+  --color-loss: #be123c;
+  --text-trade-meta: 0.6875rem;
+  --text-trade-meta--line-height: 1rem;
+  --text-trade-body: 0.75rem;
+  --text-trade-body--line-height: 1.125rem;
+  --text-trade-heading: 0.8125rem;
+  --text-trade-heading--line-height: 1.25rem;
+  --text-trade-price: 1.625rem;
+  --text-trade-price--line-height: 2rem;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-100 font-sans text-sm text-slate-900 antialiased;
+  }
+  body:has(.market-symbol-sheet[open]) {
+    overflow: hidden;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-600;
+  }
+  :disabled,
+  fieldset:disabled label {
+    @apply cursor-not-allowed;
+  }
+  input:disabled,
+  select:disabled {
+    opacity: 1;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+@layer components {
+  .trading-brand-header {
+    @apply border-b border-slate-200 bg-white;
+  }
+  .trading-brand-bar {
+    @apply mx-auto flex min-h-10 max-w-screen-2xl items-center justify-between gap-3 px-3 lg:min-h-12 lg:px-5;
+  }
+  .trading-brand-name {
+    @apply flex items-center gap-2 text-trade-body font-bold tracking-tight;
+  }
+  .trading-brand-mark {
+    @apply flex size-6 items-center justify-center rounded-sm bg-brand-600 text-white;
+  }
+  .trading-brand-mark svg {
+    @apply size-4;
+  }
+  .trading-brand-latin {
+    @apply hidden border-l border-slate-200 pl-2 text-trade-meta font-medium tracking-widest text-slate-500 sm:inline;
+  }
+  .trading-workspace {
+    @apply mx-auto max-w-screen-2xl bg-white;
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .trading-grid {
+    @apply min-w-0;
+  }
+  .market-sidebar,
+  .trading-grid .desktop-account-navigation {
+    display: none;
+  }
+  .mobile-market-header {
+    @apply flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 px-3;
+  }
+  .market-sheet-trigger {
+    @apply flex min-h-14 min-w-0 flex-1 items-center gap-3 text-left enabled:cursor-pointer;
+  }
+  .market-sheet-trigger svg {
+    @apply shrink-0 text-slate-500;
+  }
+  .market-selected-label {
+    @apply flex min-w-0 flex-col gap-0.5;
+  }
+  .market-selected-label strong {
+    @apply text-base font-bold tracking-tight;
+  }
+  .market-selected-label > span {
+    @apply text-trade-meta text-slate-500;
+  }
+  .trading-navigation {
+    @apply flex min-w-0 border-b border-slate-200 bg-white;
+  }
+  .trading-tab {
+    @apply flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 border-b-2 border-transparent px-3 text-trade-body font-medium text-slate-500 enabled:cursor-pointer enabled:hover:bg-slate-50 aria-selected:border-brand-600 aria-selected:font-semibold aria-selected:text-brand-700;
+  }
+  .chart-view {
+    @apply flex min-w-0 flex-col;
+  }
+  .order-view,
+  .trading-account,
+  .account-content {
+    display: none;
+  }
+  .trading-grid[data-main-view="order"] .chart-view,
+  .trading-grid[data-main-view="portfolio"] .chart-view {
+    display: none;
+  }
+  .trading-grid[data-main-view="order"] .order-view,
+  .trading-grid[data-main-view="order"] .trading-account,
+  .trading-grid[data-main-view="portfolio"] .trading-account,
+  .trading-grid[data-main-view="portfolio"] .portfolio-view {
+    display: block;
+  }
+  .trading-grid[data-main-view="order"] .trading-account:is([data-account-view="positions"], [data-account-view="portfolio"]) #positions,
+  .trading-grid[data-main-view="order"] .trading-account[data-account-view="orders"] #orders {
+    display: block;
+  }
+  .trading-grid[data-main-view="portfolio"] .mobile-account-navigation {
+    display: none;
+  }
+  .market-symbol-sheet {
+    @apply fixed inset-0 m-0 h-full max-h-none w-full max-w-none border-0 bg-transparent p-0;
+    height: 100dvh;
+  }
+  .market-symbol-sheet[open] {
+    @apply flex items-end;
+  }
+  .market-symbol-sheet::backdrop {
+    background: rgb(15 23 42 / 40%);
+  }
+  .market-sheet-content {
+    @apply mx-auto w-full max-w-3xl overflow-y-auto rounded-t-lg bg-white;
+    max-height: calc(100dvh - 2rem);
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+    overscroll-behavior: contain;
+  }
+  .market-sheet-content > .section-heading {
+    @apply sticky top-0 min-h-14 bg-white;
+  }
+  .market-sheet-close {
+    @apply min-h-11 min-w-11 px-2 text-trade-body font-medium text-slate-600 enabled:cursor-pointer;
+  }
+  .market-list-note {
+    @apply px-3 py-2 text-trade-meta text-slate-500;
+  }
+  .trading-page-intro {
+    @apply border-b border-slate-100 bg-slate-50 px-3 py-2 text-trade-meta leading-relaxed text-slate-500 lg:px-5;
+  }
+  .trading-section {
+    @apply min-w-0 border-b border-slate-200 bg-white;
+  }
+  .section-heading {
+    @apply flex min-h-10 items-center justify-between gap-2 border-b border-slate-100 px-3;
+  }
+  .section-title {
+    @apply text-trade-heading font-semibold tracking-tight;
+  }
+  .preview-label {
+    @apply whitespace-nowrap text-trade-meta font-medium text-slate-500;
+  }
+  [data-trend="up"],
+  [data-side="LONG"] {
+    @apply text-gain;
+  }
+  [data-trend="down"],
+  [data-side="SHORT"] {
+    @apply text-loss;
+  }
+  .market-summary-header {
+    @apply hidden min-h-14 items-center gap-1 px-3;
+  }
+  .market-tools button {
+    @apply flex size-11 shrink-0 items-center justify-center text-slate-500;
+  }
+  .market-symbol {
+    @apply min-w-0 flex-1;
+  }
+  .market-symbol h2 {
+    @apply text-base font-bold tracking-tight;
+  }
+  .market-symbol p {
+    @apply flex flex-wrap gap-x-2 text-trade-meta text-slate-500;
+  }
+  .market-symbol p span {
+    @apply text-brand-700;
+  }
+  .market-tools {
+    @apply flex;
+  }
+  .market-summary-body {
+    @apply grid gap-3 p-3;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  }
+  .market-primary-price {
+    @apply flex min-w-0 flex-col justify-center;
+  }
+  .market-price-label {
+    @apply mb-0.5 text-trade-meta font-medium text-slate-500;
+  }
+  .market-price-label span,
+  .market-change span {
+    @apply ml-1 text-trade-meta font-normal text-slate-500;
+  }
+  .market-price {
+    @apply text-trade-price font-semibold tracking-tight;
+  }
+  .market-price span {
+    @apply text-trade-meta font-normal tracking-normal text-slate-500;
+  }
+  .market-change {
+    @apply mt-1 text-trade-body font-medium;
+  }
+  .market-statistics {
+    @apply grid gap-1.5 text-right text-trade-meta;
+  }
+  .market-statistics dt {
+    @apply whitespace-nowrap text-slate-500;
+  }
+  .market-statistics dd {
+    @apply font-medium text-slate-700;
+  }
+  .market-selector {
+    @apply flex flex-col bg-white;
+  }
+  .market-symbol-button {
+    @apply relative flex min-h-20 min-w-0 items-center justify-between gap-2 border-b border-slate-100 border-l-2 border-l-transparent px-3 py-3 text-left text-trade-body aria-pressed:border-l-brand-600 aria-pressed:bg-brand-50 enabled:cursor-pointer enabled:hover:bg-slate-50 disabled:text-slate-400;
+  }
+  .market-list-symbol {
+    @apply flex min-w-0 flex-col gap-1;
+  }
+  .market-list-symbol strong {
+    @apply text-trade-body font-semibold;
+  }
+  .market-list-symbol > span {
+    @apply text-trade-meta text-slate-500;
+  }
+  .market-list-price {
+    @apply flex min-w-0 flex-1 flex-col items-end gap-1 text-right text-trade-meta;
+  }
+  .market-list-price > span {
+    max-width: 100%;
+  }
+  .market-list-unavailable {
+    @apply absolute bottom-1 right-3 text-trade-meta text-slate-500;
+  }
+  .market-symbol-button:disabled .market-list-price {
+    @apply pb-2 opacity-50;
+  }
+  .market-chart {
+    @apply flex min-w-0 flex-col;
+  }
+  .chart-timeframes {
+    @apply flex min-h-11 flex-wrap items-center border-b border-slate-100 px-2;
+  }
+  .chart-timeframe {
+    @apply min-h-11 min-w-8 px-1 text-trade-meta font-medium text-slate-500;
+  }
+  .chart-timeframe-note {
+    @apply ml-auto px-1 text-trade-meta text-slate-500;
+  }
+  .market-chart-figure {
+    @apply flex flex-1 flex-col;
+  }
+  .market-chart-frame {
+    @apply relative min-h-64;
+    height: clamp(16rem, calc(100svh - 27rem), 34rem);
+  }
+  .market-chart-caption {
+    @apply flex flex-col gap-0.5 border-t border-slate-100 px-3 py-2 text-trade-meta text-slate-500 sm:flex-row sm:flex-wrap sm:justify-between sm:gap-x-3;
+  }
+  .market-chart-caption a {
+    @apply min-w-0 break-words;
+  }
+  .order-panel-body {
+    @apply flex flex-col gap-3 p-3;
+  }
+  .order-wallet div {
+    @apply flex flex-wrap items-center justify-between gap-1 text-trade-body;
+  }
+  .order-wallet dt,
+  .order-wallet dd span {
+    @apply text-trade-meta text-slate-500;
+  }
+  .order-wallet dd {
+    @apply font-semibold tabular-nums;
+  }
+  .order-actions {
+    @apply grid grid-cols-2 gap-2;
+  }
+  .order-actions button {
+    @apply flex min-h-11 items-center justify-center gap-1.5 rounded-sm px-3 text-trade-heading font-semibold text-white;
+  }
+  .order-actions button[data-side="LONG"] {
+    @apply bg-gain text-white;
+  }
+  .order-actions button[data-side="SHORT"] {
+    @apply bg-loss text-white;
+  }
+  .order-actions button span {
+    @apply text-trade-meta font-normal;
+  }
+  .order-settings {
+    @apply border-y border-slate-100;
+  }
+  .order-settings summary {
+    @apply min-h-11 content-center text-trade-body font-semibold marker:text-brand-600;
+  }
+  .order-settings summary span {
+    @apply ml-2 text-trade-meta font-normal text-slate-500;
+  }
+  .order-settings-fields {
+    @apply grid grid-cols-2 gap-3 pb-3;
+  }
+  .order-leverage,
+  .order-ratio,
+  .order-estimates {
+    @apply col-span-2;
+  }
+  .field-label {
+    @apply mb-1 block text-trade-meta font-medium text-slate-500;
+  }
+  .order-choices {
+    @apply flex min-h-11 w-full overflow-hidden rounded-sm border border-slate-200 bg-slate-50;
+  }
+  .order-choice {
+    @apply relative flex min-h-11 min-w-0 flex-1 items-center justify-center border-r border-slate-200 px-2 text-trade-body font-medium text-slate-500 last:border-r-0 has-checked:bg-brand-50 has-checked:text-brand-700;
+  }
+  .order-choice:has(input[value="LONG"]:checked) {
+    @apply bg-emerald-50 text-gain;
+  }
+  .order-choice:has(input[value="SHORT"]) {
+    @apply text-loss;
+  }
+  .order-choice:has(input[value="SHORT"]:checked) {
+    @apply bg-rose-50;
+  }
+  .order-leverage {
+    @apply flex items-center justify-between gap-3;
+  }
+  .order-leverage-input {
+    @apply min-h-11 min-w-24 rounded-sm border border-slate-200 bg-slate-50 px-3 text-trade-body font-semibold tabular-nums;
+  }
+  .order-input {
+    @apply flex min-h-11 items-center gap-2 rounded-sm border border-slate-200 bg-slate-50 px-2;
+  }
+  .order-input input {
+    @apply text-trade-body;
+  }
+  .order-input > span {
+    @apply shrink-0 text-trade-meta;
+  }
+  .order-input-hint {
+    @apply mt-1 text-trade-meta text-slate-500;
+  }
+  .order-estimates {
+    @apply space-y-1 border-t border-slate-100 pt-2 text-trade-meta;
+  }
+  .order-estimates div {
+    @apply flex justify-between gap-2;
+  }
+  .order-estimates dt {
+    @apply text-slate-500;
+  }
+  .order-estimates dd {
+    @apply font-medium tabular-nums;
+  }
+  .order-preview-note {
+    @apply text-center text-trade-meta text-slate-500;
+  }
+  .account-summary {
+    @apply grid grid-cols-2 gap-x-3 gap-y-3 border-b border-slate-200 p-3 tabular-nums sm:grid-cols-4;
+  }
+  .account-summary dt {
+    @apply text-trade-meta text-slate-500;
+  }
+  .account-summary dd {
+    @apply mt-1 text-sm font-semibold tracking-tight;
+  }
+  .account-summary dd > span {
+    @apply text-trade-meta font-normal text-slate-500;
+  }
+  .account-tab-count {
+    @apply shrink-0 px-0.5 text-trade-meta tabular-nums;
+  }
+  .account-records {
+    @apply min-w-0 scroll-mt-3 border-b border-slate-200;
+  }
+  .account-records-heading {
+      @apply flex min-h-9 flex-wrap items-center gap-2 bg-slate-50 px-3 text-trade-body font-semibold text-slate-700;
+  }
+  .account-records-heading span {
+    @apply text-trade-meta font-normal text-slate-500;
+  }
+  /* One accessible table per dataset; the same cells form mobile position rows. */
+  .trading-table {
+    @apply block w-full text-trade-body tabular-nums;
+  }
+  .trading-table thead {
+    @apply sr-only;
+  }
+  .trading-table tbody {
+    @apply block;
+  }
+  .trading-table tbody tr {
+    @apply grid grid-cols-3 gap-x-2 gap-y-3 border-b border-slate-200 p-3 last:border-b-0;
+  }
+  .trading-table td {
+    @apply flex min-w-0 flex-col gap-0.5 break-words;
+  }
+  .trading-table td::before {
+    content: attr(data-label);
+    @apply text-trade-meta font-normal text-slate-500;
+  }
+  .trading-table td:first-child {
+    @apply col-span-3 text-trade-heading font-semibold;
+  }
+  .trading-table td:first-child::before {
+    @apply hidden;
+  }
+  .trading-table[data-variant="positions"] td:first-child {
+    @apply col-span-1 text-trade-body;
+  }
+  .trading-table[data-variant="positions"] td[data-key="side"],
+  .trading-table[data-variant="positions"] td[data-key="leverage"] {
+    @apply justify-center text-trade-meta font-semibold;
+  }
+  .trading-table[data-variant="positions"] td[data-key="side"]::before,
+  .trading-table[data-variant="positions"] td[data-key="leverage"]::before {
+    @apply hidden;
+  }
+  .trading-table[data-variant="positions"] td[data-key="leverage"] {
+    @apply text-right;
+  }
+  .trading-table td[data-key="time"] {
+    @apply col-span-3;
+  }
+  .trading-table button {
+    @apply min-h-11 rounded-sm border border-slate-200 bg-white px-2 text-trade-meta font-medium text-slate-600;
+  }
+  .portfolio-allocation {
+    @apply p-3;
+  }
+  .portfolio-heading {
+    @apply mb-3 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3;
+  }
+  .portfolio-frame {
+    @apply relative grid min-h-72 w-full items-center justify-items-center gap-4;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .portfolio-figure {
+    @apply flex min-w-0 flex-col items-center gap-2;
+  }
+  .portfolio-doughnut {
+    @apply relative size-44 shrink-0;
+  }
+  .portfolio-doughnut-label {
+    @apply pointer-events-none absolute inset-0 flex items-center justify-center text-trade-meta text-slate-500;
+  }
+  .portfolio-legend {
+    @apply w-full min-w-0 max-w-xl text-trade-body tabular-nums;
+  }
+  .portfolio-legend-row {
+    @apply grid gap-x-2 gap-y-1 border-b border-slate-100 py-2 last:border-b-0;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .trading-footer {
+    @apply mx-auto hidden max-w-screen-2xl gap-1 border-t border-slate-200 bg-slate-50 px-5 pt-3 text-trade-meta text-slate-500;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+  @media (width >= 40rem) {
+    .market-summary-body {
+      @apply items-center;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr);
+    }
+    .market-statistics {
+      @apply grid-cols-3 gap-4;
+    }
+    .portfolio-frame {
+      @apply min-h-56 max-w-3xl grid-cols-2 gap-6;
+    }
+    .portfolio-doughnut {
+      @apply size-48;
+    }
+  }
+  @media (width >= 64rem) {
+    .market-summary-header {
+      @apply flex;
+    }
+    .market-tools {
+      @apply hidden;
+    }
+    .market-summary-body {
+      @apply grid items-center gap-3;
+      grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    }
+    .market-statistics {
+      @apply grid-cols-1 gap-1;
+    }
+    .market-statistics > div {
+      @apply flex justify-between gap-2;
+    }
+    .trading-workspace {
+      @apply border-x border-slate-200;
+    }
+    .trading-grid {
+      @apply grid;
+      grid-template-columns: 11rem minmax(0, 1fr) 19rem;
+      grid-template-rows: minmax(36rem, auto) minmax(12rem, auto);
+    }
+    .market-sidebar {
+      @apply block border-r border-slate-200;
+      grid-column: 1;
+      grid-row: 1 / 3;
+    }
+    .market-sidebar .market-symbol-button {
+      @apply flex-wrap;
+    }
+    .market-sidebar .market-list-price {
+      @apply w-full flex-row justify-between;
+    }
+    .market-sidebar .market-list-note {
+      @apply leading-relaxed;
+    }
+    .mobile-market-header,
+    .main-navigation,
+    .mobile-account-navigation {
+      display: none;
+    }
+    .trading-grid .desktop-account-navigation {
+      display: flex;
+    }
+    .desktop-account-navigation .trading-tab {
+      @apply flex-none px-5;
+    }
+    .trading-grid[data-main-view] .chart-view {
+      display: flex;
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .trading-grid[data-main-view] .order-view {
+      display: block;
+      grid-column: 3;
+      grid-row: 1;
+    }
+    .trading-grid[data-main-view] .trading-account {
+      @apply block border-t border-slate-200;
+      grid-column: 2 / 4;
+      grid-row: 2;
+    }
+    .trading-grid[data-main-view] .trading-account .account-content {
+      display: none;
+    }
+    .trading-grid[data-main-view] .trading-account[data-account-view="positions"] #positions,
+    .trading-grid[data-main-view] .trading-account[data-account-view="orders"] #orders,
+    .trading-grid[data-main-view] .trading-account[data-account-view="portfolio"] .portfolio-view {
+      display: block;
+    }
+    .order-panel {
+      @apply h-full border-b-0 border-l border-slate-200;
+    }
+    .chart-view .trading-section {
+      @apply border-b-0;
+    }
+    .market-chart {
+      @apply flex-1;
+    }
+    .market-chart-frame {
+      @apply h-auto min-h-64 flex-1;
+    }
+    .account-summary {
+      @apply gap-6 px-5;
+    }
+    .trading-table {
+      @apply table;
+    }
+    .trading-table thead {
+      @apply not-sr-only table-header-group;
+    }
+    .trading-table tbody {
+      @apply table-row-group;
+    }
+    .trading-table thead tr,
+    .trading-table tbody tr {
+      @apply table-row;
+    }
+    .trading-table th {
+      @apply whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2 py-2 text-left text-trade-meta font-medium text-slate-500;
+    }
+    .trading-table td,
+    .trading-table td:first-child {
+      @apply table-cell whitespace-nowrap border-b border-slate-100 px-2 py-3 align-middle text-trade-body;
+    }
+    .trading-table tbody tr:last-child td {
+      @apply border-b-0;
+    }
+    .trading-table td::before {
+      @apply hidden;
+    }
+    .trading-table[data-variant="positions"] td[data-key="leverage"] {
+      @apply text-left;
+    }
+    .trading-table button {
+      @apply min-h-9;
+    }
+    .trading-footer {
+      @apply flex justify-between;
+    }
+  }
+  @media (width >= 80rem) {
+    .trading-grid {
+      grid-template-columns: 13rem minmax(0, 1fr) 20rem;
+    }
+    .market-summary-body {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr);
+    }
+    .market-statistics {
+      @apply grid-cols-3 gap-4;
+    }
+    .market-statistics > div {
+      @apply block;
+    }
+    .market-sidebar .market-symbol-button {
+      @apply flex-nowrap;
+    }
+    .market-sidebar .market-list-price {
+      @apply w-auto flex-col;
+    }
+  }
+}
