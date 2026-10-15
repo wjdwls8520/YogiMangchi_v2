@@ -121,8 +121,15 @@ class ApplicationTests {
             if (name.equals("tradingSymbolId")) {
                 assertThat(parameter.path("schema").path("format").asText()).isEqualTo("int64");
             }
+            if (name.equals("before")) {
+                assertThat(parameter.path("required").asBoolean()).isFalse();
+                assertThat(parameter.path("schema").path("type").asText()).isEqualTo("string");
+                assertThat(parameter.path("schema").path("format").asText()).isEqualTo("date-time");
+                assertThat(parameter.path("description").asText()).contains("Exclusive", "latest");
+            }
         }
-        assertThat(names).containsExactlyInAnyOrder("tradingSymbolId", "interval", "limit");
+        assertThat(names).containsExactlyInAnyOrder("tradingSymbolId", "interval", "limit", "before");
+        assertThat(operation.path("description").asText()).contains("before", "오름차순", "빈 배열", "진행 중");
         assertThat(operation.at("/responses/200/content/application~1json/schema/items/$ref").asText())
                 .isEqualTo("#/components/schemas/CandleResponse");
         var properties = document.path("components").path("schemas").path("CandleResponse").path("properties");

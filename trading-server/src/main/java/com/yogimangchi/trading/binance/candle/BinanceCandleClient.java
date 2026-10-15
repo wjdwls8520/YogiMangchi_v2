@@ -15,6 +15,7 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ExecutionException;
@@ -48,10 +49,15 @@ public class BinanceCandleClient {
     }
 
     public List<CandleResponse> load(BinanceSubscriptionTarget target, CandleInterval interval) {
+        return load(target, interval, null);
+    }
+
+    public List<CandleResponse> load(BinanceSubscriptionTarget target, CandleInterval interval, Instant before) {
         if (System.nanoTime() < retryAfter || !capacity.tryAcquire()) throw new BusinessException(ErrorCode.CANDLE_UNAVAILABLE);
         try {
             URI uri = URI.create(endpoint + "?symbol=" + target.providerSymbol() + "&interval=" + interval.providerValue()
-                    + "&limit=" + BinanceCandleParser.MAX_CANDLES);
+                    + "&limit=" + BinanceCandleParser.MAX_CANDLES
+                    + (before == null ? "" : "&endTime=" + Math.subtractExact(before.toEpochMilli(), 1)));
             var request = HttpRequest.newBuilder(uri).timeout(timeout).header("Accept", "application/json").GET().build();
             var response = send(request);
             if (response.statusCode() == 429 || response.statusCode() == 418) {

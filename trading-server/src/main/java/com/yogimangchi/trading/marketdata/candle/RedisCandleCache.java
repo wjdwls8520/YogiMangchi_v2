@@ -41,11 +41,20 @@ public class RedisCandleCache {
 
     // Mapping is part of the internal cache identity so a mapping change cannot reuse incorrectly normalized data.
     public static String key(BinanceSubscriptionTarget target, CandleInterval interval) {
+        return key(target, interval, null);
+    }
+
+    public static String key(BinanceSubscriptionTarget target, CandleInterval interval, Instant before) {
         return "trading:market:v1:candles:" + target.tradingSymbolId() + ":" + interval.value()
-                + ":" + target.providerSymbol() + ":" + target.providerUnitMultiplier();
+                + ":" + target.providerSymbol() + ":" + target.providerUnitMultiplier()
+                + (before == null ? ":latest" : ":before:" + before.toEpochMilli());
     }
 
     public Optional<List<CandleResponse>> read(String key, CandleInterval interval) {
+        return read(key, interval, null);
+    }
+
+    public Optional<List<CandleResponse>> read(String key, CandleInterval interval, Instant before) {
         try {
             String json = redis.opsForValue().get(key);
             if (json == null) return Optional.empty();
@@ -57,6 +66,7 @@ public class RedisCandleCache {
                 long open = candle.openTime().toEpochMilli();
                 if (!candle.openTime().isAfter(previous) || open <= 0 || open % interval.millis() != 0
                         || candle.closeTime().toEpochMilli() != Math.addExact(open, interval.millis() - 1)) return Optional.empty();
+                if (before != null && (!candle.openTime().isBefore(before) || !candle.closeTime().isBefore(cached.fetchedAt()))) return Optional.empty();
                 previous = candle.openTime();
             }
             if (!cached.candles().isEmpty()) {

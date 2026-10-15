@@ -6,6 +6,7 @@ import com.yogimangchi.trading.marketdata.candle.*;
 import com.yogimangchi.trading.support.PostgresTestConfiguration;
 import com.yogimangchi.trading.tradingsymbol.entity.TradingSymbol;
 import jakarta.persistence.EntityManager;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 import org.junit.jupiter.api.*;
@@ -68,6 +69,38 @@ class CandleIntegrationTests {
         mvc.perform(get("/api/v1/market/candles").param("tradingSymbolId", Long.toString(Long.MAX_VALUE)).param("interval", "1m"))
                 .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("TRADING_SYMBOL_NOT_FOUND"));
         verify(provider, times(1)).load(any(), any());
+    }
+    @Test void historicalPagesKeepDbMappingUnitsAndShareRedisAcrossLimitsAndNodes() throws Exception {
+        var symbol = find("PEPE");
+        var target = loader.load(symbol.getId());
+        Instant before = Instant.parse("2020-01-03T00:00:00Z");
+        Instant oldest = Instant.parse("2020-01-01T00:00:00Z");
+        when(provider.load(eq(target), eq(CandleInterval.ONE_DAY), any())).thenAnswer(call -> {
+            Instant cursor = call.getArgument(2);
+            keys.add(RedisCandleCache.key(target, CandleInterval.ONE_DAY, cursor));
+            if (cursor.equals(oldest)) return java.util.List.of();
+            // Includes the cursor bucket deliberately: the service must preserve the exclusive boundary.
+            String body = "[" + BinanceCandleParserTests.row(before.toEpochMilli(), 86400000) + ","
+                    + BinanceCandleParserTests.row(oldest.toEpochMilli() + 86400000, 86400000) + ","
+                    + BinanceCandleParserTests.row(oldest.toEpochMilli(), 86400000) + "]";
+            return new BinanceCandleParser(mapper).parse(body, target, CandleInterval.ONE_DAY);
+        });
+        mvc.perform(get("/api/v1/market/candles").param("tradingSymbolId", symbol.getId().toString()).param("interval", "24h")
+                        .param("limit", "1").param("before", before.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].openTime").value("2020-01-02T00:00:00Z"))
+                .andExpect(jsonPath("$[0].open").value("0.0000123"));
+        var anotherNode = new CandleService(loader, provider, new RedisCandleCache(redis, mapper));
+        assertThat(anotherNode.find(symbol.getId(), "24h", 300, before.toString()))
+                .extracting(CandleResponse::openTime).containsExactly(oldest, oldest.plusSeconds(86400));
+        assertThat(anotherNode.find(symbol.getId(), "24h", 300, oldest.toString())).isEmpty();
+        assertThat(anotherNode.find(symbol.getId(), "24h", 1, oldest.toString())).isEmpty();
+        verify(provider, times(1)).load(target, CandleInterval.ONE_DAY, before);
+        verify(provider, times(1)).load(target, CandleInterval.ONE_DAY, oldest);
+        verify(provider, never()).load(any(), any());
+        symbol.deactivate(); em.flush();
+        mvc.perform(get("/api/v1/market/candles").param("tradingSymbolId", symbol.getId().toString()).param("interval", "24h")
+                        .param("before", before.toString())).andExpect(status().isConflict());
     }
     private TradingSymbol find(String symbol) {
         return em.createQuery("from TradingSymbol where symbol = :symbol", TradingSymbol.class).setParameter("symbol", symbol).getSingleResult();
