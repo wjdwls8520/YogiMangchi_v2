@@ -26,6 +26,7 @@ public class SecurityConfig {
         http.authorizeHttpRequests(authorize -> {
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/symbols").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/tickers").permitAll();
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/candles").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/status").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/guest").permitAll();

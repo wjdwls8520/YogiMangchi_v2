@@ -537,6 +537,31 @@ DB 조회 자체가 실패한 경우에는 기존 전역 서버 오류 정책을
 `updatedAt`은 반환한 유효 데이터 중 가장 오래된 Provider eventTime(ISO-8601 UTC), 유효 값이 없으면 null이다.
 한 종목의 누락/손상 때문에 다른 종목의 유효 값을 버리지 않는다.
 
+## Historical Mark Price Candle
+
+Public `GET /api/v1/market/candles?tradingSymbolId=1&interval=1m&limit=300`은 최근 Mark Price 봉을
+openTime 오름차순으로 반환한다. 지원 interval은 `1m/3m/5m/15m/30m/1h/4h/12h/24h`,
+limit은 1~500(기본 300)이다. `24h`는 Provider `1d`로 매핑하며 `10m`과 API 입력 `1d`는 지원하지 않는다.
+Source는 [공식 Binance USD-M Mark Price Kline](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data)의
+`GET https://fapi.binance.com/fapi/v1/markPriceKlines`이다. Browser는 Trading Server만 호출한다.
+DB의 ACTIVE/BINANCE Mapping과 계약 배수를 사용해 모든 OHLC를 Domain 단위로 정확히 나눈다.
+응답은 `openTime/closeTime`(ISO-8601 UTC), `open/high/low/close`(decimal string)이다.
+시간은 Provider bucket 경계를 보존하며 `closeTime`은 종료 경계의 마지막 millisecond다.
+마지막 봉은 진행 중일 수 있고 `close`는 그때까지의 값이다. Frontend는 `openTime`을 고유 키로 사용해
+`/ws/market` 가격을 같은 UTC bucket에 반영한다. 24h 봉은 UTC 자정 시작이며 빈 구간을 가짜 봉으로 채우지 않는다.
+
+Redis `trading:market:v1:candles:<id>:<interval>:<providerSymbol>:<multiplier>`에 최대 500봉을 15초 캐시하고
+limit에 맞는 최신 구간만 반환한다. Provider 대기 시간은 남은 TTL에서 제외하며 오류 응답은 캐시하지 않는다.
+진행 중인 마지막 봉의 cache TTL은 bucket 종료까지만 부여하고, 다음 bucket에서 해당 중간 결과를 재사용하지 않는다.
+Mapping 변경은 다른 키를 사용하고 캐시 hit에서도 현재 DB의 ACTIVE 상태를 확인한다.
+동일 노드의 동시 cache miss는 한 요청으로 합친다. 다중 노드는 Redis 캐시를 공유하며 분산 Lock은 사용하지 않는다.
+Provider 연결 2초/전체 응답 4초 timeout, 동시 Provider 호출 4개/전체 Candle 요청 32개 제한을 사용한다.
+429/418은 Retry-After 기반으로 최소 60초, 일반 Provider 실패/timeout은 2초 동안 후속 호출을 쉬며 자동 재시도하지 않는다.
+잘못된 query는 400, 없는 ID는 404, INACTIVE는 409, Provider 오류는 502, timeout은 504다.
+Mapping·Redis 불가 또는 용량/rate limit은 Candle 조회에만 503을 반환한다. 유효한 조회 결과의 캐시 쓰기만
+실패하면 해당 응답은 제공한다. 이 조회 경로는 Trading 가격·Gate·Stream·Trigger·Browser WS 상태를 변경하지 않는다.
+DB 조회 Transaction은 Redis/외부 HTTP 호출 전에 종료한다. 별도 DB 저장·새 Dependency는 없다.
+
 ## 테스트와 Runtime OpenAPI
 
 ```powershell

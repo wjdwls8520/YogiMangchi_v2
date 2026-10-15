@@ -96,6 +96,44 @@ class ApplicationTests {
     }
 
     @Test
+    void generatedOpenApiDescribesPublicHistoricalMarkCandles() throws Exception {
+        String actual = mockMvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        var document = mapper.readTree(actual);
+        var operation = document.path("paths").path("/api/v1/market/candles").path("get");
+        assertThat(operation.path("security").isMissingNode() || operation.path("security").isEmpty()).isTrue();
+        var names = new HashSet<String>();
+        for (var parameter : operation.path("parameters")) {
+            String name = parameter.path("name").asText(); names.add(name);
+            assertThat(parameter.path("in").asText()).isEqualTo("query");
+            if (name.equals("interval")) {
+                assertThat(parameter.path("required").asBoolean()).isTrue();
+                assertThat((Iterable<com.fasterxml.jackson.databind.JsonNode>) parameter.path("schema").path("enum"))
+                        .extracting(com.fasterxml.jackson.databind.JsonNode::asText)
+                        .containsExactlyInAnyOrder("1m", "3m", "5m", "15m", "30m", "1h", "4h", "12h", "24h");
+            }
+            if (name.equals("limit")) {
+                assertThat(parameter.path("schema").path("type").asText()).isEqualTo("integer");
+                assertThat(parameter.path("schema").path("default").asInt()).isEqualTo(300);
+                assertThat(parameter.path("schema").path("minimum").asInt()).isEqualTo(1);
+                assertThat(parameter.path("schema").path("maximum").asInt()).isEqualTo(500);
+            }
+            if (name.equals("tradingSymbolId")) {
+                assertThat(parameter.path("schema").path("format").asText()).isEqualTo("int64");
+            }
+        }
+        assertThat(names).containsExactlyInAnyOrder("tradingSymbolId", "interval", "limit");
+        assertThat(operation.at("/responses/200/content/application~1json/schema/items/$ref").asText())
+                .isEqualTo("#/components/schemas/CandleResponse");
+        var properties = document.path("components").path("schemas").path("CandleResponse").path("properties");
+        for (String price : List.of("open", "high", "low", "close")) assertThat(properties.path(price).path("type").asText()).isEqualTo("string");
+        for (String time : List.of("openTime", "closeTime")) assertThat(properties.path(time).path("format").asText()).isEqualTo("date-time");
+        for (String status : List.of("400", "404", "409", "502", "503", "504")) {
+            assertThat(operation.path("responses").path(status).path("content").has("application/problem+json")).as(status).isTrue();
+        }
+    }
+
+    @Test
     void generatedOpenApiDescribesGuestReadContract() throws Exception {
         String actual = mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())

@@ -3,6 +3,12 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    INVALID_CANDLE_REQUEST(HttpStatus.BAD_REQUEST, "Candle request requires a positive tradingSymbolId, a supported interval and limit 1-500"),
+    TRADING_SYMBOL_NOT_FOUND(HttpStatus.NOT_FOUND, "Trading symbol was not found"),
+    CANDLE_MAPPING_INVALID(HttpStatus.SERVICE_UNAVAILABLE, "Historical candles are unavailable for this symbol mapping"),
+    CANDLE_PROVIDER_FAILURE(HttpStatus.BAD_GATEWAY, "Historical candle provider returned an invalid response or failed"),
+    CANDLE_PROVIDER_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT, "Historical candle provider timed out"),
+    CANDLE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Historical candles are temporarily unavailable; retry later"),
     CLOSE_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Close quantity exceeds the unreserved remaining position quantity"),
     ENGINE_RECOVERING(HttpStatus.SERVICE_UNAVAILABLE, "Price trigger processing is recovering; retry shortly"),
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Order was not found"),
