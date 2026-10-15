@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { IChartApi, ISeriesApi, UTCTimestamp, Time } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, UTCTimestamp, Time, LogicalRange } from "lightweight-charts";
 import type { TradingSymbol } from "../market/catalog";
 import { CandleBook, type Candle, type CandleInterval } from "../market/candles";
 import { freshMarkPrice, type SelectedMarket } from "../market/selected-market";
 import { formatMarketPrice, marketChartPriceFormat } from "../market/price-format";
-import { useCandleHistory } from "../api/candles";
+import { useCandleHistory, useOlderCandleHistory } from "../api/candles";
+import { preserveCandleRange } from "../market/candle-history";
 import { ChartState } from "./chart-state";
 
 // Numeric OHLC exists only at the chart library boundary, never in orders/account data.
@@ -19,12 +20,16 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
   const { refetch } = query;
   const client = useQueryClient();
   const [book] = useState(() => new CandleBook(interval));
+  const older = useOlderCandleHistory(book, symbol.id, interval);
+  const { pager } = older;
   const candles = useSyncExternalStore(book.subscribe, book.getSnapshot, book.getSnapshot);
   const mount = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const rendered = useRef<readonly Candle[]>([]);
   const historyVersion = useRef(-1);
+  const drawing = useRef(false);
+  const lastNavigation = useRef(-Infinity);
   const fetching = useRef(false);
   const recovery = useRef(0);
   const [rendererFailed, setRendererFailed] = useState(false);
@@ -32,13 +37,14 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
   const reference = candles.at(-1)?.close ?? freshMarkPrice(market)?.decimal;
   const initialFormat = useRef(marketChartPriceFormat(reference, symbol.priceTickSize));
 
-  // Buffer marks during HTTP work; the successful response replaces history, then replays that buffer.
+  // Buffer marks only during latest reconciliation. Older pages leave live updates running.
   useEffect(() => {
     if (query.isFetching && !fetching.current) book.begin(freshMarkPrice(market));
     fetching.current = query.isFetching;
   }, [query.isFetching, market, book]);
   useEffect(() => {
     if (query.data && !query.isFetching && !query.isError) book.reconcile(query.data);
+    else if (query.isError && !query.isFetching) book.resume();
   }, [query.data, query.dataUpdatedAt, query.isFetching, query.isError, book]);
   useEffect(() => {
     const price = freshMarkPrice(market);
@@ -60,15 +66,20 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
   const renderData = useCallback(() => {
     const current = series.current, data = book.data;
     if (!current) return;
+    drawing.current = true;
     try {
       if (book.historyVersion !== historyVersion.current || !rendered.current.length || data[0]?.openTime !== rendered.current[0]?.openTime) {
+        const scale = chart.current?.timeScale();
+        const range = preserveCandleRange(rendered.current, data, scale?.getVisibleLogicalRange() ?? null);
         current.setData(data.map(plot));
-        if (!rendered.current.length && data.length) chart.current?.timeScale().fitContent();
+        if (range) scale?.setVisibleLogicalRange(range as LogicalRange);
+        else if (!rendered.current.length && data.length) scale?.fitContent();
       } else if (data.length) current.update(plot(data[data.length - 1]));
       rendered.current = data;
       historyVersion.current = book.historyVersion;
     } catch { queueMicrotask(() => { if (series.current === current) setRendererFailed(true); }); }
-  }, [book]);
+    finally { pager.resetRange(chart.current?.timeScale().getVisibleLogicalRange()?.from ?? null); drawing.current = false; }
+  }, [book, pager]);
   useEffect(() => { renderData(); }, [candles, renderData]);
   useEffect(() => {
     initialFormat.current = marketChartPriceFormat(reference, symbol.priceTickSize);
@@ -101,12 +112,15 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
         series.current = instance.addSeries(CandlestickSeries, { upColor: "#047857", downColor: "#be123c", wickUpColor: "#047857",
           wickDownColor: "#be123c", borderVisible: false, priceFormat: initialFormat.current });
         instance.subscribeCrosshairMove((event) => setHoverTime(typeof event.time === "number" ? event.time * 1000 : null));
+        instance.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+          if (!drawing.current) pager.rangeChanged(range?.from ?? null, performance.now() - lastNavigation.current < 1000);
+        });
         renderData();
       } catch { if (!disposed) setRendererFailed(true); }
     }
     void start();
     return () => { disposed = true; series.current = null; chart.current = null; rendered.current = []; historyVersion.current = -1; instance?.remove(); };
-  }, [renderData]);
+  }, [renderData, pager]);
 
   const selected = candles.find((candle) => candle.openTime === hoverTime) ?? candles.at(-1);
   const historyState = query.isError ? "unavailable" : query.isPending ? "loading" : candles.length ? "ready" : "empty";
@@ -114,6 +128,11 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
     <div className="candle-information">
       <span className="preview-label" data-candle-status>{rendererFailed ? "차트 표시 오류" : `과거 봉 · ${query.isError ? "조회 실패" : query.isPending ? "불러오는 중" : query.isFetching ? "동기화 중" : `${candles.length}개`}`}</span>
       {query.isError && <button type="button" className="account-refresh" disabled={query.isFetching} onClick={() => void refetch({ cancelRefetch: false })}>봉 다시 조회</button>}
+      <div className="candle-history-status" aria-live="polite" aria-atomic="true" data-older-history={older.phase}>
+        {older.phase === "loading" ? "이전 봉 불러오는 중…" : older.phase === "end" ? "가장 오래된 봉입니다." : older.phase === "limit" ? "최근 10,000개까지 탐색할 수 있습니다." : older.phase === "error" ? <>
+          <span>이전 봉 조회 실패</span><button type="button" className="account-refresh" onClick={() => void pager.load()}>이전 봉 다시 조회</button>
+        </> : null}
+      </div>
       <dl className="candle-ohlc" aria-label="선택 봉 OHLC" data-open-time={selected?.openTime}>
         {(["open", "high", "low", "close"] as const).map((field) => <div key={field}><dt>{field.charAt(0).toUpperCase()}</dt><dd>{formatMarketPrice(selected?.[field], symbol.priceTickSize)}</dd></div>)}
       </dl>
@@ -122,7 +141,10 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
     <figure aria-labelledby="chart-caption" className="market-chart-figure">
       <div data-market-chart-frame data-interval={interval} data-candle-count={candles.length} data-history={historyState} data-connection={market.state}
         data-view={rendererFailed ? "unavailable" : historyState} aria-busy={query.isPending} className="market-chart-frame">
-        <div ref={mount} data-chart-mount aria-label={`${symbol.displaySymbol} ${interval} Mark Price 캔들 차트`} role="img" className="absolute inset-0 overflow-hidden" />
+        <div ref={mount} data-chart-mount aria-label={`${symbol.displaySymbol} ${interval} Mark Price 캔들 차트`} role="img" className="absolute inset-0 overflow-hidden"
+          onPointerDownCapture={() => { lastNavigation.current = performance.now(); }}
+          onPointerMoveCapture={(event) => { if (event.buttons) lastNavigation.current = performance.now(); }}
+          onWheelCapture={() => { lastNavigation.current = performance.now(); }} />
         {rendererFailed ? <ChartState title="차트를 표시할 수 없습니다." /> : !candles.length && <ChartState title={query.isError ? "과거 봉을 불러올 수 없습니다." : query.isPending ? "과거 봉을 불러오는 중입니다." : "표시할 과거 봉이 없습니다."} />}
       </div>
       <figcaption id="chart-caption" className="market-chart-caption">

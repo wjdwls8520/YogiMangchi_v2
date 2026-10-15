@@ -8,7 +8,8 @@ const minutes: Record<CandleInterval, number> = { "1m": 1, "3m": 3, "5m": 5, "15
 export const candleMillis = (interval: CandleInterval) => minutes[interval] * 60_000;
 export const candleBucket = (time: number, interval: CandleInterval) => Math.floor(time / candleMillis(interval)) * candleMillis(interval);
 export type Candle = { openTime: number; closeTime: number; open: string; high: string; low: string; close: string };
-export const MAX_CANDLES = 500;
+export const MAX_CANDLES = 10_000;
+const MAX_PAGE_CANDLES = 500;
 function price(value: unknown) {
   if (typeof value !== "string" || value.length > 120 || !/^\d+(\.\d+)?$/.test(value)
     || !Number.isFinite(Number(value)) || Number(value) <= 0) return invalidContract();
@@ -26,10 +27,10 @@ export function parseCandles(value: unknown, interval: CandleInterval): Candle[]
     previous = openTime;
     return { openTime, closeTime, open, high, low, close };
   });
-  return candles.length <= MAX_CANDLES ? candles : invalidContract();
+  return candles.length <= MAX_PAGE_CANDLES ? candles : invalidContract();
 }
 
-// Each instance belongs to exactly one symbol/interval. Reconciliation replaces all authoritative history.
+// Each instance belongs to exactly one symbol/interval. Latest reconciliation retains explored history.
 export class CandleBook {
   private candles: Candle[] = [];
   private lastEvent = -Infinity;
@@ -45,13 +46,33 @@ export class CandleBook {
   private publish() { this.listeners.forEach((listener) => listener()); }
   begin(seed: MarketPrice | null = null) { this.syncing = true; this.pending = seed ? [seed] : []; }
   reconcile(history: readonly Candle[]) {
-    this.candles = history.map((candle) => ({ ...candle }));
+    if (history.length) this.candles = [
+      ...this.candles.filter((candle) => candle.openTime < history[0].openTime),
+      ...history.map((candle) => ({ ...candle })),
+      ...this.candles.filter((candle) => candle.openTime > history[history.length - 1].openTime),
+    ].slice(-MAX_CANDLES);
+    this.resume();
+    return this.data;
+  }
+  resume() {
     this.loaded = true; this.syncing = false; this.lastEvent = -Infinity;
     const pending = this.pending; this.pending = [];
     pending.forEach((mark) => this.apply(mark));
     this.historyVersion++;
     this.publish();
-    return this.data;
+  }
+  prepend(history: readonly Candle[]) {
+    const oldest = this.candles[0]?.openTime;
+    if (oldest === undefined) return 0;
+    // Existing bars win at a page boundary; an older response never touches the live candle.
+    const unique = new Map(history.filter((candle) => candle.openTime < oldest).map((candle) => [candle.openTime, candle]));
+    const older = [...unique.values()].sort((a, b) => a.openTime - b.openTime)
+      .slice(-Math.max(0, MAX_CANDLES - this.candles.length));
+    if (this.candles.length >= MAX_CANDLES || !older.length) return 0;
+    this.candles = [...older, ...this.candles];
+    this.historyVersion++;
+    this.publish();
+    return older.length;
   }
   update(mark: MarketPrice) {
     if (!this.loaded || this.syncing) {
