@@ -3,6 +3,7 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    INVALID_CANDLE_CURSOR(HttpStatus.BAD_REQUEST, "before must be an ISO-8601 timestamp after the Unix epoch, not in the future, with at most millisecond precision"),
     INVALID_CANDLE_REQUEST(HttpStatus.BAD_REQUEST, "Candle request requires a positive tradingSymbolId, a supported interval and limit 1-500"),
     TRADING_SYMBOL_NOT_FOUND(HttpStatus.NOT_FOUND, "Trading symbol was not found"),
     CANDLE_MAPPING_INVALID(HttpStatus.SERVICE_UNAVAILABLE, "Historical candles are unavailable for this symbol mapping"),

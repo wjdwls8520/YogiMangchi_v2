@@ -542,6 +542,11 @@ DB 조회 자체가 실패한 경우에는 기존 전역 서버 오류 정책을
 Public `GET /api/v1/market/candles?tradingSymbolId=1&interval=1m&limit=300`은 최근 Mark Price 봉을
 openTime 오름차순으로 반환한다. 지원 interval은 `1m/3m/5m/15m/30m/1h/4h/12h/24h`,
 limit은 1~500(기본 300)이다. `24h`는 Provider `1d`로 매핑하며 `10m`과 API 입력 `1d`는 지원하지 않는다.
+선택 query `before`가 없으면 기존 latest page다. `&before=2026-10-15T10:00:00Z`를 추가하면
+해당 시각보다 `openTime`이 작은 과거 봉을 반환한다. 응답의 첫 번째(가장 오래된) `openTime`을 다음
+`before`로 전달해 과거 방향으로 반복 조회하며 빈 배열이면 더 이전 데이터가 없다. 응답 배열/필드는 동일하다.
+`before`는 Epoch 이후 현재 이하의 ISO-8601 시각이며 최대 millisecond 정밀도다. 빈 값·잘못된 형식·미래는 400이다.
+Provider 내부에서는 `endTime=before-1ms`를 사용하고 응답 경계도 다시 확인한다. 과거 page는 진행 중인 봉을 제외한다.
 Source는 [공식 Binance USD-M Mark Price Kline](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data)의
 `GET https://fapi.binance.com/fapi/v1/markPriceKlines`이다. Browser는 Trading Server만 호출한다.
 DB의 ACTIVE/BINANCE Mapping과 계약 배수를 사용해 모든 OHLC를 Domain 단위로 정확히 나눈다.
@@ -550,8 +555,11 @@ DB의 ACTIVE/BINANCE Mapping과 계약 배수를 사용해 모든 OHLC를 Domain
 마지막 봉은 진행 중일 수 있고 `close`는 그때까지의 값이다. Frontend는 `openTime`을 고유 키로 사용해
 `/ws/market` 가격을 같은 UTC bucket에 반영한다. 24h 봉은 UTC 자정 시작이며 빈 구간을 가짜 봉으로 채우지 않는다.
 
-Redis `trading:market:v1:candles:<id>:<interval>:<providerSymbol>:<multiplier>`에 최대 500봉을 15초 캐시하고
+Redis `trading:market:v1:candles:<id>:<interval>:<providerSymbol>:<multiplier>:latest` 또는
+동일 prefix의 `:before:<epochMillis>`에 최대 500봉을 15초 캐시하고
 limit에 맞는 최신 구간만 반환한다. Provider 대기 시간은 남은 TTL에서 제외하며 오류 응답은 캐시하지 않는다.
+서로 다른 cursor는 캐시/동시 조회를 공유하지 않고 동일 cursor의 limit만 다른 요청은 공유한다.
+종료된 과거 page도 동일한 짧은 TTL을 사용하며 빈 page도 캐시한다. 영구 Historical DB/Redis 누적 저장은 하지 않는다.
 진행 중인 마지막 봉의 cache TTL은 bucket 종료까지만 부여하고, 다음 bucket에서 해당 중간 결과를 재사용하지 않는다.
 Mapping 변경은 다른 키를 사용하고 캐시 hit에서도 현재 DB의 ACTIVE 상태를 확인한다.
 동일 노드의 동시 cache miss는 한 요청으로 합친다. 다중 노드는 Redis 캐시를 공유하며 분산 Lock은 사용하지 않는다.

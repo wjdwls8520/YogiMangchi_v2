@@ -11,6 +11,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -54,6 +55,18 @@ class BinanceCandleClientTests {
         var result = client.load(target, CandleInterval.ONE_DAY);
         assertThat(query).isEqualTo("symbol=1000PEPEUSDT&interval=1d&limit=500");
         assertThat(result.get(0).close()).isEqualTo("0.0000145");
+        assertThat(requests).hasValue(1);
+    }
+    @Test void historicalQueryUsesExclusiveMillisecondEndTimeAndKeepsNormalization() {
+        Instant before = Instant.parse("2026-10-16T00:00:00.123Z");
+        var result = client.load(target, CandleInterval.ONE_DAY, before);
+        assertThat(query).isEqualTo("symbol=1000PEPEUSDT&interval=1d&limit=500&endTime=" + (before.toEpochMilli() - 1));
+        assertThat(result.get(0).close()).isEqualTo("0.0000145");
+        assertThat(requests).hasValue(1);
+    }
+    @Test void emptyHistoricalResponseIsAValidPage() {
+        body = "[]";
+        assertThat(client.load(target, CandleInterval.ONE_DAY, Instant.parse("2000-01-01T00:00:00Z"))).isEmpty();
         assertThat(requests).hasValue(1);
     }
     @Test void providerFailureDoesNotRetry() {

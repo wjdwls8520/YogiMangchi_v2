@@ -52,6 +52,40 @@ class RedisCandleCacheTests {
         cache.write(key, List.of(CandleServiceTests.candle(0)), Instant.now().minusSeconds(3));
         assertThat(redis.getExpire(key, TimeUnit.MILLISECONDS)).isPositive().isLessThanOrEqualTo(12000);
     }
+    @Test void latestAndEachHistoricalCursorAreSeparateShortLivedEntriesSharedAcrossReaders() {
+        var target = new BinanceSubscriptionTarget(1L, "BTC", "BTCUSDT", 1);
+        Instant now = Instant.parse("2026-10-15T00:10:00Z");
+        Instant before = CandleServiceTests.candle(3).openTime();
+        Instant olderBefore = CandleServiceTests.candle(2).openTime();
+        String historical = RedisCandleCache.key(target, CandleInterval.ONE_MINUTE, before);
+        String older = RedisCandleCache.key(target, CandleInterval.ONE_MINUTE, olderBefore);
+        String empty = RedisCandleCache.key(target, CandleInterval.ONE_MINUTE, CandleServiceTests.candle(0).openTime());
+        assertThat(List.of(key, historical, older, empty)).doesNotHaveDuplicates();
+        var clock = java.time.Clock.fixed(now, java.time.ZoneOffset.UTC);
+        var writer = new RedisCandleCache(redis, mapper, clock);
+        var reader = new RedisCandleCache(redis, mapper, clock);
+        var historicalRows = List.of(CandleServiceTests.candle(1), CandleServiceTests.candle(2));
+        writer.write(key, List.of(CandleServiceTests.candle(3)), now);
+        writer.write(historical, historicalRows, now);
+        writer.write(older, List.of(CandleServiceTests.candle(1)), now);
+        writer.write(empty, List.of(), now);
+        assertThat(reader.read(key, CandleInterval.ONE_MINUTE)).contains(List.of(CandleServiceTests.candle(3)));
+        assertThat(reader.read(historical, CandleInterval.ONE_MINUTE, before)).contains(historicalRows);
+        assertThat(reader.read(older, CandleInterval.ONE_MINUTE, olderBefore)).contains(List.of(CandleServiceTests.candle(1)));
+        assertThat(reader.read(empty, CandleInterval.ONE_MINUTE, CandleServiceTests.candle(0).openTime())).contains(List.of());
+        assertThat(redis.getExpire(historical, TimeUnit.MILLISECONDS)).isPositive().isLessThanOrEqualTo(15000);
+        redis.expire(historical, Duration.ofMillis(1));
+        await().atMost(Duration.ofSeconds(2)).until(() -> reader.read(historical, CandleInterval.ONE_MINUTE, before).isEmpty());
+        assertThat(reader.read(older, CandleInterval.ONE_MINUTE, olderBefore)).isPresent();
+    }
+    @Test void aCachedHistoricalPageCannotContainTheCursorOrAStillOpenCandle() {
+        Instant now = Instant.parse("2026-10-15T00:02:30Z");
+        var fixed = new RedisCandleCache(redis, mapper, java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+        var candle = CandleServiceTests.candle(2);
+        fixed.write(key, List.of(candle), now);
+        assertThat(fixed.read(key, CandleInterval.ONE_MINUTE, candle.openTime())).isEmpty();
+        assertThat(fixed.read(key, CandleInterval.ONE_MINUTE, now)).isEmpty();
+    }
     @Test void inProgressCandleCannotRemainCachedIntoTheNextBucket() {
         var candle = CandleServiceTests.candle(0);
         Instant before = candle.closeTime().plusMillis(1).minusSeconds(2);

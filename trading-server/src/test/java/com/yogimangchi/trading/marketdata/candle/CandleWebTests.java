@@ -8,6 +8,7 @@ import com.yogimangchi.trading.security.SecurityConfig;
 import com.yogimangchi.trading.tradingaccount.security.GuestCredentialService;
 import java.util.List;
 import java.util.Optional;
+import java.time.Instant;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -62,6 +63,36 @@ class CandleWebTests {
         mvc.perform(post("/api/v1/market/candles").with(csrf())).andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/market/candles/admin")).andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/trading/account/wallet")).andExpect(status().isUnauthorized());
+    }
+    @ParameterizedTest @ValueSource(strings = {"", "bad", "2020-01-01", "9999-01-01T00:00:00Z", "2020-01-01T00:00:00.000001Z"})
+    void invalidBeforeIs400ProblemDetail(String before) throws Exception {
+        mvc.perform(get("/api/v1/market/candles").param("tradingSymbolId", "1").param("interval", "1m").param("before", before))
+                .andExpect(status().isBadRequest()).andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.code").value("INVALID_CANDLE_CURSOR"));
+        verifyNoInteractions(targets, provider, cache);
+    }
+    @Test void historicalQueryIsPublicAndRetainsTheOriginalArrayContract() throws Exception {
+        Instant open = Instant.parse("2020-01-01T00:00:00Z"), before = open.plusSeconds(60);
+        var candle = new com.yogimangchi.trading.marketdata.candle.CandleResponse(open, open.plusMillis(59999), "10", "12", "9", "11");
+        when(cache.read(anyString(), any(), eq(before))).thenReturn(Optional.of(List.of(candle)));
+        mvc.perform(get("/api/v1/market/candles").param("tradingSymbolId", "1").param("interval", "1m").param("before", before.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].openTime").value(open.toString()))
+                .andExpect(jsonPath("$[0].close").value("11")).andExpect(jsonPath("$[0].providerSymbol").doesNotExist());
+        verifyNoInteractions(provider);
+    }
+    @Test void emptyHistoricalPageIs200AndProviderFailuresRemainProblemDetails() throws Exception {
+        Instant before = Instant.parse("2000-01-01T00:00:00Z");
+        when(cache.read(anyString(), any(), eq(before))).thenReturn(Optional.empty());
+        when(provider.load(any(), any(), eq(before))).thenReturn(List.of());
+        mvc.perform(get("/api/v1/market/candles").param("tradingSymbolId", "1").param("interval", "1m").param("before", before.toString()))
+                .andExpect(status().isOk()).andExpect(content().json("[]"));
+        for (var code : List.of(ErrorCode.CANDLE_PROVIDER_FAILURE, ErrorCode.CANDLE_PROVIDER_TIMEOUT, ErrorCode.CANDLE_UNAVAILABLE)) {
+            doThrow(new BusinessException(code)).when(provider).load(any(), any(), eq(before));
+            mvc.perform(get("/api/v1/market/candles").param("tradingSymbolId", "1").param("interval", "1m").param("before", before.toString()))
+                    .andExpect(status().is(code.status().value())).andExpect(jsonPath("$.code").value(code.name()))
+                    .andExpect(jsonPath("$.trace").doesNotExist());
+        }
     }
     @Test void businessAndProviderErrorsFollowExistingProblemDetailPolicy() throws Exception {
         for (var code : List.of(ErrorCode.TRADING_SYMBOL_NOT_FOUND, ErrorCode.SYMBOL_NOT_AVAILABLE, ErrorCode.CANDLE_MAPPING_INVALID)) {
