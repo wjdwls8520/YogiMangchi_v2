@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { QueryClient } from "@tanstack/react-query";
-import { CandleBook, CANDLE_INTERVALS, candleBucket, candleMillis, parseCandles, type CandleInterval } from "../src/features/trading/market/candles";
+import { CandleBook, CANDLE_INTERVALS, MAX_CANDLES, candleBucket, candleMillis, parseCandles, type CandleInterval } from "../src/features/trading/market/candles";
 import { candleQueryKey } from "../src/features/trading/api/candles";
 import { marketCandlesJson } from "../src/features/trading/api/client";
 import { marketTransition, waitingMarket } from "../src/features/trading/market/selected-market";
@@ -42,8 +42,8 @@ test("duplicate, reverse and old bucket marks cannot rewrite history; skipped bu
 });
 test("long running candles and immutable snapshots remain bounded", () => {
   const book=new CandleBook("1m");book.reconcile([]);const original=book.getSnapshot();
-  for(let i=0;i<700;i++)book.update(mark(i*60000,"100"));
-  assert.equal(book.data.length,500);assert.deepEqual(original,[]);
+  for(let i=0;i<MAX_CANDLES+5;i++)book.update(mark(i*60000,"100"));
+  assert.equal(book.data.length,MAX_CANDLES);assert.equal(book.data[0].openTime,at+5*60000);assert.deepEqual(original,[]);
 });
 test("public Candle transport uses the server contract and forwards cancellation without credentials", async () => {
   const controller=new AbortController();

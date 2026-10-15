@@ -26,8 +26,9 @@ export async function tradingJson(origin: string, path: string, options: {
 export async function marketTickersJson(origin: string, signal: AbortSignal) {
   return apiJson(origin, "/api/v1/market/tickers", { signal });
 }
-export async function marketCandlesJson(origin: string, symbolId: number, interval: string, signal: AbortSignal, transport: typeof fetch = fetch) {
+export async function marketCandlesJson(origin: string, symbolId: number, interval: string, signal: AbortSignal, transport: typeof fetch = fetch, before?: string) {
   const query = new URLSearchParams({ tradingSymbolId: String(symbolId), interval, limit: "300" });
+  if (before) query.set("before", before);
   return apiJson(origin, `/api/v1/market/candles?${query}`, { signal }, transport);
 }
 async function apiJson(origin: string, path: string, options: {
