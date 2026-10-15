@@ -10,6 +10,7 @@ import { MarketHeader } from "./market-header";
 import { TradingAccountTabs, type AccountView } from "./trading-account-tabs";
 import { TradingNavigation } from "./trading-navigation";
 import { SelectedMarketProvider, useMarketFeed } from "./selected-market-provider";
+import type { CandleInterval } from "../market/candles";
 
 export function MarketChartPanel({ children }: { children: ReactNode }) {
   const tickerQuery = useMarketTickers();
@@ -20,6 +21,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   const sheetTrigger = useRef<HTMLButtonElement>(null);
   const [catalog, setCatalog] = useState<{ symbols: TradingSymbol[]; allSymbols: TradingSymbol[]; state: "loading" | "unavailable" | "empty" | "ready"; socket: string }>({ symbols: [], allSymbols: [], state: "loading", socket: "" });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [interval, setInterval] = useState<CandleInterval>("1m");
   const unavailableIds = useRef(new Set<number>());
   const [catalogRevision, setCatalogRevision] = useState(0);
   const refreshAfterSymbolError = useCallback((id: number) => {
@@ -110,7 +112,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
       ]} />
       <section id="chart-view" role="tabpanel" aria-labelledby="chart-heading" tabIndex={0} className="chart-view">
         <MarketHeader symbol={selected} market={market} ticker={tickerQuery.tickers.find((ticker) => ticker.tradingSymbolId === selected?.id && ticker.symbol === selected.symbol && ticker.quoteAsset === selected.quoteAsset)} />
-        <TradingChart key={selected?.id ?? "catalog"} symbol={selected} market={market} catalogView={catalog.state} />
+        <TradingChart symbol={selected} market={market} interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
       </section>
       <div id="order-view" role="tabpanel" aria-labelledby="order-heading" tabIndex={0} className="order-view">{children}</div>
       <TradingAccountTabs activeTab={accountView} onSelect={setAccountView} symbols={catalog.allSymbols} />

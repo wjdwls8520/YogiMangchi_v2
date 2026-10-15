@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { TradingSymbol } from "../market/catalog";
 import { openMarketStream } from "../market/stream";
-import { selectedMarket, waitingMarket, type SelectedMarket } from "../market/selected-market";
+import { marketTransition, selectedMarket, waitingMarket, type SelectedMarket } from "../market/selected-market";
 
 const MarketContext = createContext<{ symbol: TradingSymbol | null; market: SelectedMarket } | null>(null);
 
@@ -12,7 +12,7 @@ export function useMarketFeed(symbolId: number | null, socketUrl: string, onSymb
   useEffect(() => {
     if (symbolId === null) return;
     return openMarketStream({ url: socketUrl, symbolId, onSymbolUnavailable,
-      onState: (state) => setSnapshot((current) => ({ ...selectedMarket(current, symbolId), symbolId, state })),
+      onState: (state) => setSnapshot((snapshot) => marketTransition(snapshot, symbolId, state)),
       onPrice: (price) => setSnapshot((current) => ({ ...selectedMarket(current, symbolId), symbolId, price })),
     });
   }, [symbolId, socketUrl, onSymbolUnavailable]);

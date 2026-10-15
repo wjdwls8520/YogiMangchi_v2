@@ -266,8 +266,17 @@
     @apply flex min-h-11 flex-wrap items-center border-b border-slate-100 px-2;
   }
   .chart-timeframe {
-    @apply min-h-11 min-w-8 px-1 text-trade-meta font-medium text-slate-500;
+    @apply min-h-11 min-w-8 px-1 text-trade-meta font-medium text-slate-500 enabled:cursor-pointer aria-pressed:bg-brand-50 aria-pressed:text-brand-700 aria-pressed:font-semibold;
   }
+  .candle-information {
+    @apply flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-slate-100 px-3 py-2;
+  }
+  .candle-ohlc {
+    @apply flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-trade-meta tabular-nums;
+  }
+  .candle-ohlc > div { @apply flex min-w-0 gap-1; }
+  .candle-ohlc dt { @apply text-slate-500; }
+  .candle-ohlc dd { overflow-wrap: anywhere; }
   .chart-timeframe-note {
     @apply ml-auto px-1 text-trade-meta text-slate-500;
   }
@@ -531,7 +540,7 @@
       @apply flex-wrap;
     }
     .market-sidebar .market-list-price {
-      @apply w-full flex-row justify-between;
+      @apply w-full basis-full flex-row justify-between;
     }
     .market-sidebar .market-list-note {
       @apply leading-relaxed;
@@ -638,7 +647,7 @@
       @apply flex-nowrap;
     }
     .market-sidebar .market-list-price {
-      @apply w-auto flex-col;
+      @apply w-auto basis-0 flex-col;
     }
   }
 }

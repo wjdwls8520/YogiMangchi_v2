@@ -1,6 +1,7 @@
 import type { MarketTicker } from "../market/tickers";
 import { formatDecimal, pnlTrend } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
+import { formatMarketPrice } from "../market/price-format";
 
 export function SymbolSelector({ symbols, tickers, selectedId, onSelect }: {
   tickers: readonly MarketTicker[];
@@ -13,7 +14,7 @@ export function SymbolSelector({ symbols, tickers, selectedId, onSelect }: {
           return (
           <button key={market.id} type="button" onClick={() => onSelect(market.id)} aria-label={`${market.symbol} 차트 선택`} aria-pressed={market.id === selectedId} className="market-symbol-button">
             <span className="market-list-symbol"><strong>{market.symbol}USDT</strong><span>{market.name}</span></span>
-            <span className="market-list-price tabular-nums"><span>{formatDecimal(ticker?.markPrice)}</span><span data-trend={pnlTrend(ticker?.changePercent24h ?? null)}>{ticker?.changePercent24h == null ? "—" : `${formatDecimal(ticker.changePercent24h)}%`}</span></span>
+            <span className="market-list-price tabular-nums"><span>{formatMarketPrice(ticker?.markPrice, market.priceTickSize)}</span><span data-trend={pnlTrend(ticker?.changePercent24h ?? null)}>{ticker?.changePercent24h == null ? "—" : `${formatDecimal(ticker.changePercent24h)}%`}</span></span>
           </button>
         ); })}
     </div>

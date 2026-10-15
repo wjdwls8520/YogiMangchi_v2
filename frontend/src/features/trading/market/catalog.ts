@@ -4,6 +4,7 @@ export type TradingSymbol = {
   name: string;
   quoteAsset: string;
   displaySymbol: string;
+  priceTickSize?: string;
 };
 
 export function parseSymbols(input: unknown): TradingSymbol[] {
@@ -17,7 +18,7 @@ export function parseSymbols(input: unknown): TradingSymbol[] {
       throw new Error("Invalid symbol fields");
     }
     ids.add(entry.id as number);
-    return entry as TradingSymbol;
+    return { ...entry, priceTickSize: typeof entry.priceTickSize === "string" ? entry.priceTickSize : undefined } as TradingSymbol;
   });
 }
 
