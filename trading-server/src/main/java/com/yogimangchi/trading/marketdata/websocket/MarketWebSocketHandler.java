@@ -8,6 +8,8 @@ import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import com.yogimangchi.trading.marketdata.MarketDataEvent;
 import com.yogimangchi.trading.marketdata.MarketDataFanout;
 import com.yogimangchi.trading.marketdata.RedisMarketDataBridge;
+import com.yogimangchi.trading.marketdata.orderbook.OrderBookSnapshot;
+import com.yogimangchi.trading.marketdata.orderbook.RedisOrderBookStore;
 import com.yogimangchi.trading.tradingsymbol.service.TradingSymbolService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -34,6 +36,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -56,25 +59,37 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
     private final LatestPriceStore prices;
     private final MarketDataFanout fanout;
     private final ObjectProvider<RedisMarketDataBridge> redis;
+    private final ObjectProvider<RedisOrderBookStore> orderBooks;
     private final Map<String, Client> clients = new ConcurrentHashMap<>();
     private final Semaphore capacity = new Semaphore(MAX_CLIENTS);
     private final ThreadPoolExecutor writers = pool(8, 256, "market-ws-writer");
     private final ThreadPoolExecutor closers = pool(2, MAX_CLIENTS, "market-ws-close");
     private final ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor(threads("market-ws-watchdog"));
     private AutoCloseable fanoutSubscription;
+    private AutoCloseable orderBookSubscription;
 
     public MarketWebSocketHandler(ObjectMapper mapper, TradingSymbolService symbols, LatestPriceStore prices,
                                   MarketDataFanout fanout, ObjectProvider<RedisMarketDataBridge> redis) {
+        this(mapper, symbols, prices, fanout, redis, null);
+    }
+
+    @Autowired
+    public MarketWebSocketHandler(ObjectMapper mapper, TradingSymbolService symbols, LatestPriceStore prices,
+                                  MarketDataFanout fanout, ObjectProvider<RedisMarketDataBridge> redis,
+                                  ObjectProvider<RedisOrderBookStore> orderBooks) {
         this.mapper = mapper;
         this.symbols = symbols;
         this.prices = prices;
         this.fanout = fanout;
         this.redis = redis;
+        this.orderBooks = orderBooks;
     }
 
     @PostConstruct
     public void start() {
         fanoutSubscription = fanout.subscribe(this::onMarketEvent);
+        var books = orderBooks == null ? null : orderBooks.getIfAvailable();
+        if (books != null) orderBookSubscription = books.subscribe(this::onOrderBook);
         watchdog.scheduleWithFixedDelay(this::sweep, 1, 1, TimeUnit.SECONDS);
     }
 
@@ -157,6 +172,13 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
             error(client, "SYMBOL_NOT_AVAILABLE", "Every requested tradingSymbolId must be ACTIVE");
             return;
         }
+        // Optional Redis I/O stays outside the per-client monitor, which is shared with Mark Price fanout.
+        Map<Long, OrderBookSnapshot> currentBooks = Map.of();
+        var store = orderBooks == null ? null : orderBooks.getIfAvailable();
+        if (store != null) {
+            try { currentBooks = store.read(requested); }
+            catch (RuntimeException failure) { log.debug("[Order book] subscription snapshot unavailable"); }
+        }
         synchronized (client) {
             Set<Long> combined = new LinkedHashSet<>(client.symbols.keySet());
             combined.addAll(requested);
@@ -180,6 +202,18 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
             }
             send(client, "SUBSCRIBED", Map.of("tradingSymbolIds", sortedIds(client)));
             send(client, "SNAPSHOT", Map.of("prices", snapshots));
+            if (store != null) {
+                for (Long id : requested) {
+                    var book = currentBooks.get(id);
+                    var previous = client.books.get(id);
+                    if (book != null && book.isFreshAt(Instant.now()) && book.newerThan(previous == null ? null : previous.snapshot)) {
+                        client.books.put(id, new BookState(book, "FRESH"));
+                    }
+                    var selected = client.books.get(id);
+                    if (selected != null && selected.snapshot.isFreshAt(Instant.now())) orderBook(client, id, selected.snapshot, "FRESH");
+                    else orderBook(client, id, null, "UNAVAILABLE");
+                }
+            }
         }
         log.info("[Market WS] subscribe sessionId={} tradingSymbolIds={}", client.session.getId(), requested);
     }
@@ -187,6 +221,7 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
     private void unsubscribe(Client client, Set<Long> requested) {
         synchronized (client) {
             requested.forEach(client.symbols::remove);
+            requested.forEach(client.books::remove);
             send(client, "UNSUBSCRIBED", Map.of("tradingSymbolIds", sortedIds(client)));
         }
         log.info("[Market WS] unsubscribe sessionId={} tradingSymbolIds={}", client.session.getId(), requested);
@@ -226,6 +261,29 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    private void onOrderBook(OrderBookSnapshot book) {
+        if (!book.isFreshAt(Instant.now())) return;
+        for (Client client : clients.values()) {
+            synchronized (client) {
+                if (!client.symbols.containsKey(book.tradingSymbolId())) continue;
+                var previous = client.books.get(book.tradingSymbolId());
+                if (!book.newerThan(previous == null ? null : previous.snapshot)) continue;
+                client.books.put(book.tradingSymbolId(), new BookState(book, "FRESH"));
+                orderBook(client, book.tradingSymbolId(), book, "FRESH");
+            }
+        }
+    }
+
+    private void orderBook(Client client, long id, OrderBookSnapshot book, String status) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("tradingSymbolId", id); fields.put("status", status);
+        fields.put("bids", book == null ? List.of() : book.bids());
+        fields.put("asks", book == null ? List.of() : book.asks());
+        fields.put("eventTime", book == null ? null : book.eventTime());
+        fields.put("receivedAt", book == null ? null : book.receivedAt());
+        send(client, "ORDER_BOOK", fields);
+    }
+
     private void sweep() {
         long now = System.nanoTime();
         for (Client client : clients.values()) {
@@ -235,6 +293,13 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
                 disconnect(client, new CloseStatus(1013, "Slow client send timeout"));
             } else {
                 synchronized (client) {
+                    for (var entry : client.books.entrySet()) {
+                        var state = entry.getValue();
+                        if ("FRESH".equals(state.status) && !state.snapshot.isFreshAt(Instant.now())) {
+                            entry.setValue(new BookState(state.snapshot, "STALE"));
+                            orderBook(client, entry.getKey(), null, "STALE");
+                        }
+                    }
                     for (Map.Entry<Long, SymbolState> entry : client.symbols.entrySet()) {
                         SymbolState state = entry.getValue();
                         if ("FRESH".equals(state.status) && !LatestPriceStore.isFreshAt(state.price, Instant.now())) {
@@ -346,6 +411,9 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
                 log.debug("[Market WS] fanout unsubscribe failed");
             }
         }
+        if (orderBookSubscription != null) {
+            try { orderBookSubscription.close(); } catch (Exception ex) { log.debug("[Order book] unsubscribe failed"); }
+        }
         clients.values().forEach(client -> disconnect(client, new CloseStatus(1001, "Server shutdown")));
         writers.shutdownNow();
         closers.shutdown();
@@ -365,12 +433,14 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
     }
 
     private record SymbolState(LatestMarkPrice price, String status, Instant changedAt) { }
+    private record BookState(OrderBookSnapshot snapshot, String status) { }
     private record PriceSnapshot(Long tradingSymbolId, String price, String status, Instant eventTime, Instant receivedAt) { }
 
     private final class Client {
         private final WebSocketSession session;
         private final BoundedWebSocketSender sender;
         private final Map<Long, SymbolState> symbols = new HashMap<>();
+        private final Map<Long, BookState> books = new HashMap<>();
         private volatile long lastInbound = System.nanoTime();
         private long commandWindow = lastInbound;
         private int commandCount;

@@ -21,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(properties = "binance.mark-price.enabled=false")
+@SpringBootTest(properties = {"binance.mark-price.enabled=false", "binance.order-book.enabled=false"})
 @AutoConfigureMockMvc
 @Import(PostgresTestConfiguration.class)
 class ApplicationTests {
@@ -43,6 +43,8 @@ class ApplicationTests {
     void externalBinanceConnectionIsDisabledInAutomatedTests() {
         assertThat(context.getBeansOfType(
                 com.yogimangchi.trading.binance.markprice.BinanceMarkPriceClient.class)).isEmpty();
+        assertThat(context.getBeansOfType(
+                com.yogimangchi.trading.binance.orderbook.BinanceOrderBookClient.class)).isEmpty();
     }
 
     @Test
@@ -147,6 +149,10 @@ class ApplicationTests {
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         var document = mapper.readTree(actual);
         var paths = document.path("paths");
+        assertThat(paths.path("/api/v1/trading/account/orders").path("post").path("description").asText())
+                .contains("MARKETABLE_LIMIT_NOT_ALLOWED", "strictly below", "strictly above", "limitPrice * quantity / leverage");
+        assertThat(paths.path("/api/v1/trading/account/positions/{positionId}/close-orders").path("post").path("description").asText())
+                .contains("MARKETABLE_LIMIT_NOT_ALLOWED", "LONG CLOSE (SELL)", "SHORT CLOSE (BUY)");
         var schemas = document.path("components").path("schemas");
         var guest = paths.path("/api/v1/trading/accounts/guest").path("post");
         assertThat(guest.path("security").isMissingNode() || guest.path("security").isEmpty()).isTrue();

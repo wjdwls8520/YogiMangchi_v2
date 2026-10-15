@@ -48,6 +48,10 @@ marketdata:
   websocket:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
 
+binance:
+  order-book:
+    enabled: ${BINANCE_ORDER_BOOK_ENABLED:true}
+
 trading:
   trigger:
     enabled: ${TRADING_TRIGGER_ENABLED:true}

@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import static org.assertj.core.api.Assertions.*;
 
-@SpringBootTest(properties="binance.mark-price.enabled=false")
+@SpringBootTest(properties = {"binance.mark-price.enabled=false", "binance.order-book.enabled=false"})
 @Import(PostgresTestConfiguration.class)
 @AutoConfigureMockMvc
 class CloseMigrationTests {

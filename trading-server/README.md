@@ -236,7 +236,13 @@ OPEN/CLOSE 합계 계정당 최대 100개다. OPEN LONG은 새 Mark가 지정가
 지정가 **CLOSE**는 기존 Position ID를 대상으로 수량만 예약한다. CLOSE LONG은 Mark가 지정가 이상,
 CLOSE SHORT는 지정가 이하일 때 체결한다. Side/종목/Leverage는 대상 Lot에서 가져오며 신규 노출이나 증거금을 만들지 않는다.
 정확히 같은 가격을 찍을 필요가 없으며, 체결은 주문 수량 전체에 대해 수행한다(호가 유동성에 따른 분할 체결은 없다).
-현재 가격에 이미 충족되는 지정가도 PENDING으로 생성한 후 다음 유효한 이벤트에서 판정한다.
+새 지정가는 주문 Transaction에서 계정 잠금 후 fresh Mark를 기준으로 passive 여부를 검증한다.
+OPEN LONG(BUY)은 `limitPrice < Mark`, OPEN SHORT(SELL)은 `limitPrice > Mark`만 허용한다.
+CLOSE LONG(SELL)은 `limitPrice > Mark`, CLOSE SHORT(BUY)은 `limitPrice < Mark`만 허용한다.
+같은 가격도 거절하며 HTTP 409 `MARKETABLE_LIMIT_NOT_ALLOWED`를 반환한다. 오래된 Mark는 기존대로
+503 `PRICE_NOT_FRESH`다. 이미 수락한 동일 Idempotency-Key 재전송은 Mark 변화와 무관하게 기존 결과를 반환한다.
+LIMIT 필요 증거금은 계속 `limitPrice * quantity / leverage`이며 Mark 변화만으로 달라지지 않는다.
+다른 주문·Position·예약으로 사용 가능 잔액이 바뀌면 `INSUFFICIENT_MARGIN`으로 거절할 수 있다.
 체결가는 이벤트의 정규화된 Mark다. Provider 계약 수량/이름은 주문 엔진에 들어오지 않는다.
 실제 체결 시 가격·Margin·Notional·최대 Lot 수를 재검증한다. 부족하면 REJECTED와 원인을 남기고 예약을 반환한다.
 취소와 체결은 같은 계정 Row Lock으로 직렬화한다. 취소가 먼저면 CANCELED, 체결이 먼저면 취소는 409다.
@@ -502,6 +508,54 @@ const heartbeat = setInterval(() => {
 WebSocket은 REST가 아니므로 OpenAPI path에 중복 선언하지 않고 이 Protocol을 계약으로 관리한다.
 실제 HTTP Upgrade, Redis 경유 live 전달, Origin 거절, 구독 검증/해제, stale/복구와
 느린 소켓의 비동기 격리를 외부 Binance 없이 자동 테스트한다.
+
+### 참고용 Order Book
+
+Order Book은 Binance 실제 시장의 호가를 보여주는 참고 정보다. Yogimangchi 사용자의 주문장이 아니며
+체결 가격·가능 수량·부분체결·강제청산 판단에는 사용하지 않는다. 기존 Mark Price Trigger를 유지한다.
+
+`BinanceOrderBookClient`는 DB의 ACTIVE Binance mapping을 재사용하고, 별도의 단일 Combined WebSocket에서
+`<providerSymbol 소문자>@depth20@500ms`를 구독한다. 경로는
+`wss://fstream.binance.com/public/stream?streams=...`다.
+[공식 USD-M Partial Book Depth 계약](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/public#partial-book-depth-streams)에
+따라 Bid/Ask 각각 최대 20 level의 전체 Snapshot을 교체하므로 diff 복원이나 HTTP 초기 조회가 필요 없다.
+DB mapping의 `provider_unit_multiplier`로 가격은 나누고 수량은 곱한다.
+예를 들어 multiplier=1000인 PEPE의 Provider 가격 `0.004001`, 수량 `1.25`는 Domain 가격 `0.000004001`, 수량 `1250`이다.
+Provider Symbol 문자열에서 단위를 추측하지 않는다.
+
+| Redis Key | 내용/수명 |
+| --- | --- |
+| `trading:market:v1:orderbook:<id>` | 종목별 최신 Snapshot 하나. receivedAt 기준 남은 TTL 최대 3초 |
+| `trading:market:v1:orderbook-watermark:<id>` | 마지막 Provider update ID/eventTime만 24시간 보관하여 Snapshot 만료 후에도 역순·중복 차단 |
+| `trading:market:v1:orderbook:fanout` | 갱신한 Snapshot의 Pub/Sub channel. 메시지 이력 저장 없음 |
+
+Snapshot은 `tradingSymbolId`, `bids`, `asks`, 내부 `providerUpdateId`, `eventTime`, `receivedAt`을 가진다.
+Lua로 update ID 증가와 eventTime 비퇴행을 확인하고 Snapshot 교체·TTL·Pub/Sub을 원자적으로 수행한다.
+Order Book을 Redis Stream 또는 PostgreSQL에 누적하지 않는다. watermark는 과거 호가가 아닌 최신 순서 정보다.
+수신 후 3초가 지나면 stale이며, 수신 시 이미 3초 이상 늦은 이벤트도 버린다.
+Provider eventTime이 수신 시각보다 최대 10초 빠른 경우만 허용하되 TTL은 늘리지 않는다. 앱·Redis의 시각 동기화가 필요하다.
+
+기본 수집은 활성화되어 있다. 여러 Backend node 배포 시 수집자 한 곳만 활성화하고 나머지는
+`BINANCE_ORDER_BOOK_ENABLED=false`로 실행한다. 각 노드는 Redis Pub/Sub으로 동일한 Snapshot을 전달한다.
+Leader Election은 추가하지 않는다. 재연결 시 DB mapping을 다시 읽으며 지수 backoff/jitter,
+429/418 대기, 15초 무수신 재연결, 23시간 50분 연결 교체와 종료 처리를 갖는다.
+Redis 쓰기 큐와 Pub/Sub 전달 큐는 각각 128건으로 제한하며 지연된 참고 데이터를 버린다.
+Redis 실패는 5초 후 재시도한다. Order Book 연결·큐·작업 스레드는 Mark Price 경로와 독립적이므로
+호가 장애가 Trading gate나 Mark Price/Trigger/Candle/Summary를 중단시키지 않는다.
+
+기존 `/ws/market`의 SUBSCRIBE 대상에 다음 `ORDER_BOOK` 메시지를 추가한다. fresh Redis Snapshot이 있으면
+구독 직후 즉시 전달하고 이후 선택한 종목만 갱신한다. 금융 값은 Domain 단위 decimal string이다.
+
+```json
+{"version":1,"type":"ORDER_BOOK","tradingSymbolId":11,"status":"FRESH","bids":[{"price":"0.000004001","quantity":"1250"}],"asks":[{"price":"0.000004002","quantity":"2500"}],"eventTime":"2026-10-16T00:00:00Z","receivedAt":"2026-10-16T00:00:00.100Z"}
+{"version":1,"type":"ORDER_BOOK","tradingSymbolId":11,"status":"STALE","bids":[],"asks":[],"eventTime":null,"receivedAt":null}
+```
+
+최초 Snapshot이 없으면 `UNAVAILABLE`이며 빈 배열/null 시각을 반환한다. 1초 간격 watchdog은 만료 후
+`STALE`을 보내 표시할 호가를 비운다. 새 fresh Snapshot이 오면 `FRESH`로 복구한다.
+Provider Symbol, multiplier, update ID는 Browser 계약에 노출하지 않는다. Mark의 `MARKET_STATUS`와 독립된 상태다.
+Frontend는 `ORDER_BOOK`을 처리하고 FRESH 외 상태에서 기존 호가를 비워야 한다. 호가 선택은 지정가 입력 편의이며
+최종 passive/증거금 검증은 Backend가 수행한다.
 
 ## Market Summary 조회
 
