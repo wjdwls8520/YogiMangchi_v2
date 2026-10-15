@@ -77,6 +77,7 @@ public class TradingOrderService {
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
         LatestMarkPrice price = value.prices().get(request.tradingSymbolId()).latestPrice().orElseThrow();
+        if (request.type() == TradingOrder.Type.LIMIT) requirePassiveLimit(request.side(), request.limitPrice(), price.domainMarkPrice(), false);
         BigDecimal margin;
         BigDecimal requestedPrice = request.type() == TradingOrder.Type.LIMIT ? request.limitPrice() : price.domainMarkPrice();
         try { margin = TradingMath.margin(requestedPrice, request.quantity(), request.leverage()); }
@@ -175,6 +176,8 @@ public class TradingOrderService {
         gate.requireCaughtUp(value.prices());
         if (value.equity().compareTo(value.maintenanceMargin()) <= 0) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         Instant now = now();
+        requirePassiveLimit(position.getSide(), request.limitPrice(),
+                value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice(), true);
         position.reserveClose(quantity);
         TradingOrder order = orders.save(TradingOrder.limitClose(position, quantity, request.limitPrice(), key, hash, now));
         account.recordFinancialChange(now);
@@ -250,6 +253,11 @@ public class TradingOrderService {
     }
     private void requireFresh(AccountValuation.Value value) {
         if (!value.fresh()) throw new BusinessException(ErrorCode.PRICE_NOT_FRESH);
+    }
+    private static void requirePassiveLimit(Position.Side side, BigDecimal limit, BigDecimal mark, boolean close) {
+        boolean buy = (side == Position.Side.LONG) != close;
+        int comparison = limit.compareTo(mark);
+        if (buy ? comparison >= 0 : comparison <= 0) throw new BusinessException(ErrorCode.MARKETABLE_LIMIT_NOT_ALLOWED);
     }
     private static Instant now() { return Instant.now().truncatedTo(ChronoUnit.MICROS); }
     private static void validateKey(String key) {
