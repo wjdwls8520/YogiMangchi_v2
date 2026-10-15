@@ -3,6 +3,11 @@ import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/acco
 import type { TradingSymbol } from "../market/catalog";
 import { TradingTable } from "./trading-table";
 import { CancelOrderButton, ClosePositionButton } from "./account-actions";
+import { formatMarketPrice } from "../market/price-format";
+
+function price(value: string | null | undefined, symbolId: number, symbols: readonly TradingSymbol[]) {
+  return formatMarketPrice(value, symbols.find((symbol) => symbol.id === symbolId)?.priceTickSize);
+}
 
 export function PositionTable({ positions, symbols }: { positions: readonly Position[]; symbols: readonly TradingSymbol[] }) {
   return <TradingTable caption="보유 포지션" variant="positions" columns={[
@@ -16,8 +21,8 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
     id: String(position.id),
     cells: {
       symbol: symbolLabel(position.tradingSymbolId, symbols), side: <span data-side={position.side}>{position.side}</span>,
-      size: formatDecimal(position.quantity), entry: formatDecimal(position.entryPrice),
-      mark: <span title={position.priceStatus}>{formatDecimal(position.markPrice)}</span>,
+      size: formatDecimal(position.quantity), entry: price(position.entryPrice, position.tradingSymbolId, symbols),
+      mark: <span title={position.priceStatus}>{price(position.markPrice, position.tradingSymbolId, symbols)}</span>,
       leverage: `${position.leverage}×`, pnl: <span data-trend={pnlTrend(position.unrealizedPnl)}>{formatDecimal(position.unrealizedPnl)} USDT</span>,
       margin: formatDecimal(position.margin),
       action: <ClosePositionButton position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} />,
@@ -35,7 +40,7 @@ export function PendingOrderTable({ orders, symbols }: { orders: readonly Tradin
     id: String(order.orderId),
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), type: order.type, intent: order.action, side: <span data-side={order.side}>{order.side}</span>,
-      quantity: formatDecimal(order.quantity), price: formatDecimal(order.limitPrice), status: order.status,
+      quantity: formatDecimal(order.quantity), price: price(order.limitPrice, order.tradingSymbolId, symbols), status: order.status,
       action: <CancelOrderButton orderId={order.orderId} symbol={symbolLabel(order.tradingSymbolId, symbols)} />,
     },
   }))} />;
@@ -51,7 +56,7 @@ export function OrderHistoryTable({ orders, symbols }: { orders: readonly Tradin
     id: String(order.orderId),
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), action: `${order.action} · ${order.side}`, type: order.type,
-      quantity: formatDecimal(order.quantity), price: formatDecimal(order.fill?.price), status: order.status,
+      quantity: formatDecimal(order.quantity), price: price(order.fill?.price, order.tradingSymbolId, symbols), status: order.status,
       time: <time dateTime={order.createdAt}>{new Date(order.createdAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}</time>,
     },
   }))} />;

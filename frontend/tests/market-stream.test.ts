@@ -163,3 +163,20 @@ test("heartbeat network delay is not subtracted from the age of delayed prices",
   socket.message(h.tick({ eventTime: "2026-10-11T00:00:00.000Z", receivedAt: "2026-10-11T00:00:00.000Z" }));
   assert.equal(h.prices.length, 0); assert.equal(h.states.at(-1), "UNAVAILABLE"); stop();
 });
+
+test("server-accepted provider clock skew keeps fresh receipts usable without changing event timestamps", () => {
+  for (const skew of [-10_000, -2000, 2000, 10_000]) {
+    const h=harness();const stop=h.start();h.handshake();
+    const eventTime=new Date(Date.UTC(2026,9,11)+skew).toISOString();
+    h.sockets[0].message(h.tick({eventTime}));
+    assert.equal(h.states.at(-1),"READY");assert.equal(h.prices[0].eventTime,Date.parse(eventTime));
+    h.advance(5000);assert.equal(h.states.at(-1),"UNAVAILABLE");stop();
+  }
+});
+test("old/future receipts and provider skew beyond the server rejection limit remain unavailable", () => {
+  for (const overrides of [{receivedAt:"2026-10-10T23:59:55.000Z"},{receivedAt:"2026-10-11T00:00:01.001Z"},
+    {eventTime:"2026-10-11T00:00:10.001Z"},{eventTime:"2026-10-10T23:59:49.999Z"}]) {
+    const h=harness();const stop=h.start();h.handshake();h.sockets[0].message(h.tick(overrides));
+    assert.equal(h.prices.length,0);assert.equal(h.states.at(-1),"UNAVAILABLE");stop();
+  }
+});

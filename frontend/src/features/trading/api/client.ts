@@ -26,6 +26,10 @@ export async function tradingJson(origin: string, path: string, options: {
 export async function marketTickersJson(origin: string, signal: AbortSignal) {
   return apiJson(origin, "/api/v1/market/tickers", { signal });
 }
+export async function marketCandlesJson(origin: string, symbolId: number, interval: string, signal: AbortSignal, transport: typeof fetch = fetch) {
+  const query = new URLSearchParams({ tradingSymbolId: String(symbolId), interval, limit: "300" });
+  return apiJson(origin, `/api/v1/market/candles?${query}`, { signal }, transport);
+}
 async function apiJson(origin: string, path: string, options: {
   token?: string; signal?: AbortSignal; method?: "GET" | "POST"; body?: object; idempotencyKey?: string;
 }, transport: typeof fetch = fetch): Promise<unknown> {

@@ -11,6 +11,7 @@ import { useTradingMutation } from "../api/mutations";
 import { estimatedOrder, ratioQuantity, validLimitPrice, validQuantity } from "../api/order-input";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
+import { formatMarketPrice } from "../market/price-format";
 
 type Form = { symbolId: number | null; type: "MARKET" | "LIMIT"; side: "LONG" | "SHORT"; leverage: number; quantity: string; limitPrice: string; ratio: number };
 export function OrderPanel() {
@@ -76,7 +77,7 @@ export function OrderPanel() {
       </div>
       {action.error && <p role="alert" className="order-input-hint">{action.error}</p>}
       {action.unconfirmed && <button type="button" className="account-refresh" disabled={action.pending} onClick={() => void action.retry().then(complete)}>같은 주문 결과 확인</button>}
-      {result && result.accountId === snapshot.accountId && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {result.order.status}{result.order.fill ? ` · 체결가 ${formatDecimal(result.order.fill.price)} USDT` : ""}</p>}
+      {result && result.accountId === snapshot.accountId && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {result.order.status}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, result.order.tradingSymbolId === symbol?.id ? symbol.priceTickSize : undefined)} USDT` : ""}</p>}
       <p id="order-preview-note" className="order-preview-note">실제 자금을 사용하지 않습니다. 참고 금액은 체결 결과와 다를 수 있으며 서버가 체결가·증거금·손익을 결정합니다.</p>
     </form>
   </section>;

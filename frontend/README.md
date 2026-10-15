@@ -133,5 +133,16 @@ Mutation의 401은 새 Guest로 재전송하지 않는다. 완료 후 Summary/�
 금융 값은 Decimal 문자열로 유지하고 참고 금액/비율 입력만 BigInt로 계산한다.
 지정가 청산은 API client/Mutation 명령까지 제공하며 화면에는 연결하지 않았다.
 
+차트는 `/api/v1/market/candles?tradingSymbolId=...&interval=...&limit=300`의 Mark Price OHLC를 사용한다.
+1m/3m/5m/15m/30m/1h/4h/12h/24h를 지원하며, 종목·주기 전환 시 요청과 렌더러를 분리한다.
+동일 UTC bucket의 실시간 Mark는 진행 봉을 갱신하고, 재연결·봉 전환 시 서버 이력을 다시 조회한다.
+과거 봉 조회 상태와 실시간 WS 상태를 별도로 표시한다. 원본 OHLC는 Decimal 문자열이며
+차트 라이브러리에 전달할 때만 숫자로 변환한다.
+
+가격 표시는 공통 `formatMarketPrice`를 사용한다. 유효한 `priceTickSize`를 우선하고,
+현재 Symbol 계약처럼 metadata가 없으면 가격 크기에 따라 최대 2/4/6/8자리를 표시한다.
+아주 작은 양수는 `<0.00000001`처럼 표시하며 주문 입력·원본 값은 변경하지 않는다.
+WS 수신 검증은 서버의 수신 시각 신선도와 provider 시각 편차 정책을 따른다.
+
 주문 브라우저 검증에는 실제 서버와 분리한 계약 응답을 사용한다. 실제 주문 통합 검증에는
 Trading Server의 유효한 Mark Price 수신이 필요하다. 테스트 응답은 제품 코드/실제 DB에 넣지 않는다.

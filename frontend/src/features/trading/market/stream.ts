@@ -81,7 +81,8 @@ export function openMarketStream(options: {
     if (typeof price.price !== "string" || !/^\d{1,40}(\.\d{1,30})?$/.test(price.price)
       || !Number.isFinite(Number(price.price)) || Number(price.price) <= 0
       || !Number.isFinite(eventTime) || !Number.isFinite(receivedAt)
-      || Math.min(eventTime, receivedAt) <= now - 5000 || Math.max(eventTime, receivedAt) > now + 1000) {
+      // Match the server time policy: receipt freshness is separate from provider clock skew.
+      || receivedAt <= now - 5000 || receivedAt > now + 1000 || Math.abs(eventTime - receivedAt) > 10_000) {
       emit("UNAVAILABLE");
       return;
     }
@@ -92,7 +93,7 @@ export function openMarketStream(options: {
     if (stopped) return;
     emit("READY");
     cancel(freshTimer);
-    freshTimer = later(() => emit("UNAVAILABLE"), Math.max(1, Math.min(eventTime, receivedAt) + 5000 - now));
+    freshTimer = later(() => emit("UNAVAILABLE"), Math.max(1, receivedAt + 5000 - now));
   };
   function connect() {
     if (stopped) return;

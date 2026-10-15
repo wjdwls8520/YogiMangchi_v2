@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { freshMarkPrice, selectedMarket, type SelectedMarket } from "../src/features/trading/market/selected-market";
 
-const feed: SelectedMarket = { symbolId: 927, state: "READY", price: { eventTime: 1000, decimal: "64000.000000000000000001", value: 64000 } };
+const feed: SelectedMarket = { symbolId: 927, state: "READY", recovery: 0, price: { eventTime: 1000, decimal: "64000.000000000000000001", value: 64000 } };
 test("chart/header/form share decimal mark price only for the selected fresh stream", () => {
   assert.equal(freshMarkPrice(selectedMarket(feed, 927))?.decimal, feed.price?.decimal);
   assert.equal(freshMarkPrice(selectedMarket(feed, 42)), null);
