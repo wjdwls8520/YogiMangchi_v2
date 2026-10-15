@@ -35,7 +35,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = "binance.mark-price.enabled=false")
+@SpringBootTest(properties = {"binance.mark-price.enabled=false", "binance.order-book.enabled=false"})
 @Import(PostgresTestConfiguration.class)
 @AutoConfigureMockMvc
 class MarketOrderIntegrationTests {
@@ -163,6 +163,63 @@ class MarketOrderIntegrationTests {
 
     private OrderResponse create(String quantity, Position.Side side, int leverage, String key) {
         return service.create(guest.accountId(), key, new CreateOrderRequest(TradingOrder.Type.MARKET, symbol, side, new BigDecimal(quantity), leverage, null));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"LONG,999", "SHORT,1001"})
+    void passiveLimitUsesLimitMarginAndIdempotentReplaySurvivesAMarkMove(Position.Side side, String limit) {
+        String idempotency = key();
+        var request = new CreateOrderRequest(TradingOrder.Type.LIMIT, symbol, side, BigDecimal.ONE, 10, new BigDecimal(limit));
+        var pending = service.create(guest.accountId(), idempotency, request);
+        assertThat(pending.status()).isEqualTo("PENDING");
+        assertThat(accounts.summary(guest.accountId()).wallet().reservedMargin())
+                .isEqualTo(new BigDecimal(limit).divide(BigDecimal.TEN).setScale(18).toPlainString());
+        assertThat(count("position")).isZero(); assertThat(fillCount()).isZero();
+        price(side == Position.Side.LONG ? "900" : "1100");
+        assertThat(service.create(guest.accountId(), idempotency, request).orderId()).isEqualTo(pending.orderId());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"LONG,1000", "LONG,1001", "SHORT,1000", "SHORT,999"})
+    void marketableLimitsRejectBeforeAnyFinancialWrite(Position.Side side, String limit) {
+        var request = new CreateOrderRequest(TradingOrder.Type.LIMIT, symbol, side, BigDecimal.ONE, 10, new BigDecimal(limit));
+        rejects(() -> service.create(guest.accountId(), key(), request), ErrorCode.MARKETABLE_LIMIT_NOT_ALLOWED);
+        assertThat(count("trading_order")).isZero(); assertThat(fillCount()).isZero(); assertThat(count("position")).isZero();
+        assertThat(new BigDecimal(accounts.summary(guest.accountId()).wallet().reservedMargin())).isZero();
+    }
+
+    @Test void fixedLimitMarginSurvivesMarkMovesButOtherReservationsCanExhaustBalance() {
+        var request = new CreateOrderRequest(TradingOrder.Type.LIMIT, symbol, Position.Side.LONG,
+                new BigDecimal("5"), 1, new BigDecimal("900"));
+        service.create(guest.accountId(), key(), request);
+        price("1100"); // Both orders are still passive; margin is 4500 for each, despite the new Mark.
+        service.create(guest.accountId(), key(), request);
+        assertThat(new BigDecimal(accounts.summary(guest.accountId()).wallet().reservedMargin())).isEqualByComparingTo("9000");
+        rejects(() -> service.create(guest.accountId(), key(), request), ErrorCode.INSUFFICIENT_MARGIN);
+        assertThat(count("trading_order")).isEqualTo(2); assertThat(fillCount()).isZero();
+    }
+
+    @Test void staleMarkRejectsLimitsAndMarketableApiHasAnExplicit409Code() throws Exception {
+        prices.markUnavailable();
+        rejects(() -> service.create(guest.accountId(), key(), new CreateOrderRequest(TradingOrder.Type.LIMIT,
+                symbol, Position.Side.LONG, BigDecimal.ONE, 10, new BigDecimal("999"))), ErrorCode.PRICE_NOT_FRESH);
+        prices.beginSubscription(Set.of(symbol));
+        price("1000");
+        String body = "{\"type\":\"LIMIT\",\"tradingSymbolId\":" + symbol + ",\"side\":\"LONG\",\"quantity\":\"1\",\"leverage\":10,\"limitPrice\":\"1000\"}";
+        mvc.perform(post("/api/v1/trading/account/orders").header("Authorization", "Bearer " + guest.accessToken())
+                        .header("Idempotency-Key", key()).contentType("application/json").content(body))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MARKETABLE_LIMIT_NOT_ALLOWED"));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"LONG,1000", "LONG,999", "SHORT,1000", "SHORT,1001"})
+    void marketableLimitCloseRejectsWithoutReservingQuantity(Position.Side side, String limit) {
+        var opened = create("1", side, 10, key());
+        rejects(() -> service.createLimitClose(guest.accountId(), opened.positionId(), key(),
+                new com.yogimangchi.trading.order.dto.LimitCloseRequest(new BigDecimal("0.5"), new BigDecimal(limit))),
+                ErrorCode.MARKETABLE_LIMIT_NOT_ALLOWED);
+        assertThat(new BigDecimal(accounts.summary(guest.accountId()).positions().get(0).reservedCloseQuantity())).isZero();
+        assertThat(count("trading_order")).isEqualTo(1); assertThat(fillCount()).isEqualTo(1);
     }
 
     @Test void partialLongClosePreservesEntryAndReleasesOnlyProportionalMargin() {

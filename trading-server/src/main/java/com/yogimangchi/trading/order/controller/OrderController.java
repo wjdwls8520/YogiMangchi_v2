@@ -16,7 +16,7 @@ public class OrderController {
     public OrderController(TradingOrderService engine) { this.engine = engine; }
     @PostMapping("/orders")
     @Operation(summary="OPEN a new lot with MARKET or reserve a PENDING LIMIT OPEN order",
-            description="Idempotency-Key: 8-100 letters, digits, underscore or hyphen. Replay returns the same order with its current state. 400 invalid request; 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price or recovering engine. No client execution price.")
+            description="Idempotency-Key: 8-100 letters, digits, underscore or hyphen. Replay returns the same order with its current state. LIMIT OPEN LONG must be strictly below fresh Mark; SHORT strictly above. Equality or crossing returns 409 MARKETABLE_LIMIT_NOT_ALLOWED. LIMIT margin uses limitPrice * quantity / leverage. 400 invalid request; 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price or recovering engine. Order book is reference data only; no client execution price.")
     public OrderResponse create(@AuthenticationPrincipal GuestPrincipal principal, @RequestHeader("Idempotency-Key") String key,
             @RequestBody CreateOrderRequest request) { return engine.create(principal.accountId(), key, request); }
     @PostMapping("/positions/{positionId}/close")
@@ -28,7 +28,7 @@ public class OrderController {
     }
     @PostMapping("/positions/{positionId}/close-orders")
     @Operation(summary="Reserve a LIMIT CLOSE for part or all of an owned position",
-            description="Returns PENDING; creates no new position and reserves quantity, not wallet margin. Side/leverage/symbol are inherited from the target lot. LONG CLOSE triggers at Mark >= limit; SHORT CLOSE at Mark <= limit. The triggering Mark is the execution price. Omit quantity for the entire remaining lot. Existing reservations cannot be exceeded (409). Fresh portfolio prices and READY engine required (503 otherwise). Same account/key/payload replays the current order; different payload returns 409. Other account's target returns 404.")
+            description="Returns PENDING; creates no new position and reserves quantity, not wallet margin. Side/leverage/symbol are inherited from the target lot. LONG CLOSE (SELL) limit must be strictly above fresh Mark; SHORT CLOSE (BUY) strictly below. Equality or crossing returns 409 MARKETABLE_LIMIT_NOT_ALLOWED. LONG CLOSE triggers at Mark >= limit; SHORT CLOSE at Mark <= limit. The triggering Mark is the execution price. Omit quantity for the entire remaining lot. Existing reservations cannot be exceeded (409). Fresh portfolio prices and READY engine required (503 otherwise). Same account/key/payload replays the current order; different payload returns 409. Other account's target returns 404.")
     public OrderResponse limitClose(@AuthenticationPrincipal GuestPrincipal principal, @PathVariable Long positionId,
             @RequestHeader("Idempotency-Key") String key, @RequestBody LimitCloseRequest request) {
         return engine.createLimitClose(principal.accountId(), positionId, key, request);

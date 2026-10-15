@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.marketdata.LatestMarkPrice;
 import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import com.yogimangchi.trading.marketdata.RedisMarketDataBridge;
+import com.yogimangchi.trading.marketdata.orderbook.OrderBookSnapshot;
+import com.yogimangchi.trading.marketdata.orderbook.RedisOrderBookStore;
 import com.yogimangchi.trading.support.PostgresTestConfiguration;
 import java.math.BigDecimal;
 import java.net.URI;
@@ -35,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "binance.mark-price.enabled=false")
+        properties = {"binance.mark-price.enabled=false", "binance.order-book.enabled=false"})
 @Import(PostgresTestConfiguration.class)
 class MarketWebSocketIntegrationTests {
     @LocalServerPort private int port;
@@ -44,6 +46,9 @@ class MarketWebSocketIntegrationTests {
     @Autowired private RedisMarketDataBridge redis;
     @Autowired private MarketWebSocketHandler handler;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private RedisOrderBookStore orderBooks;
+    @Autowired private org.springframework.data.redis.core.StringRedisTemplate sharedRedis;
+    private static final java.util.concurrent.atomic.AtomicLong bookSequence = new java.util.concurrent.atomic.AtomicLong(1000);
     private final List<Client> connections = new ArrayList<>();
     private long btc;
     private long eth;
@@ -52,6 +57,8 @@ class MarketWebSocketIntegrationTests {
     void setUp() {
         btc = jdbc.queryForObject("select id from trading.trading_symbol where symbol = 'BTC'", Long.class);
         eth = jdbc.queryForObject("select id from trading.trading_symbol where symbol = 'ETH'", Long.class);
+        sharedRedis.delete(List.of(RedisOrderBookStore.snapshotKey(btc), RedisOrderBookStore.watermarkKey(btc),
+                RedisOrderBookStore.snapshotKey(eth), RedisOrderBookStore.watermarkKey(eth)));
         await().atMost(Duration.ofSeconds(10)).until(() -> redis.health().state() == RedisMarketDataBridge.State.HEALTHY);
         prices.beginSubscription(Set.of(btc, eth));
         update(btc, "100.123456789012345678");
@@ -188,6 +195,51 @@ class MarketWebSocketIntegrationTests {
     private void assertStatus(JsonNode message, String status) {
         assertThat(message.path("status").textValue()).isEqualTo(status);
         assertThat(message.path("affectedTradingSymbolIds").get(0).longValue()).isEqualTo(btc);
+    }
+
+    @Test void orderBookSubscribeImmediatelyReturnsFreshRedisSnapshotAndThenOnlySelectedUpdates() throws Exception {
+        var first = book(btc, "100", "101");
+        orderBooks.accept(first);
+        await().atMost(Duration.ofSeconds(5)).until(() -> orderBooks.read(Set.of(btc)).containsKey(btc));
+        Client client = connect(null); client.next("CONNECTED");
+        client.send("{\"type\":\"SUBSCRIBE\",\"tradingSymbolIds\":[" + btc + "]}");
+        client.next("SUBSCRIBED"); client.next("SNAPSHOT");
+        var snapshot = client.next("ORDER_BOOK");
+        assertThat(snapshot.path("status").asText()).isEqualTo("FRESH");
+        assertThat(snapshot.path("version").asInt()).isEqualTo(1);
+        assertThat(snapshot.path("tradingSymbolId").asLong()).isEqualTo(btc);
+        assertThat(snapshot.at("/bids/0/price").asText()).isEqualTo("100");
+        assertThat(snapshot.at("/bids/0/quantity").isTextual()).isTrue();
+        assertThat(snapshot.has("providerSymbol") || snapshot.has("providerUpdateId") || snapshot.has("multiplier")).isFalse();
+        orderBooks.accept(book(eth, "200", "201"));
+        client.noMessageOfType("ORDER_BOOK", Duration.ofMillis(200));
+        orderBooks.accept(book(btc, "101", "102"));
+        assertThat(client.next("ORDER_BOOK").at("/bids/0/price").asText()).isEqualTo("101");
+        update(btc, "102");
+        assertThat(client.next("MARKET_PRICE").path("price").asText()).isEqualTo("102");
+        client.send("{\"type\":\"UNSUBSCRIBE\",\"tradingSymbolIds\":[" + btc + "]}");
+        client.next("UNSUBSCRIBED");
+        orderBooks.accept(book(btc, "102", "103"));
+        client.noMessageOfType("ORDER_BOOK", Duration.ofMillis(200));
+    }
+
+    @Test void staleOrderBookClearsLevelsWhileMarkPricesContinueNormally() throws Exception {
+        orderBooks.accept(book(btc, "100", "101"));
+        await().atMost(Duration.ofSeconds(5)).until(() -> orderBooks.read(Set.of(btc)).containsKey(btc));
+        Client client = connect(null); client.next("CONNECTED");
+        client.send("{\"type\":\"SUBSCRIBE\",\"tradingSymbolIds\":[" + btc + "]}");
+        client.next("SUBSCRIBED"); client.next("SNAPSHOT"); client.next("ORDER_BOOK");
+        var stale = client.next("ORDER_BOOK", Duration.ofSeconds(5));
+        assertThat(stale.path("status").asText()).isEqualTo("STALE");
+        assertThat(stale.path("bids")).isEmpty(); assertThat(stale.path("asks")).isEmpty();
+        update(btc, "105");
+        assertThat(client.next("MARKET_PRICE").path("status").asText()).isEqualTo("FRESH");
+    }
+
+    private OrderBookSnapshot book(long id, String bid, String ask) {
+        Instant now = Instant.now();
+        return new OrderBookSnapshot(id, List.of(new OrderBookSnapshot.Level(bid, "1.25")),
+                List.of(new OrderBookSnapshot.Level(ask, "2.5")), bookSequence.incrementAndGet(), now, now);
     }
 
     private void update(long id, String price) {

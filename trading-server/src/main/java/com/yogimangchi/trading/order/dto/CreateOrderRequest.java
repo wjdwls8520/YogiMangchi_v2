@@ -7,4 +7,4 @@ import io.swagger.v3.oas.annotations.media.Schema;
 public record CreateOrderRequest(TradingOrder.Type type, Long tradingSymbolId, Position.Side side,
         @Schema(type = "string", example = "0.001", description = "Domain asset quantity, maximum 8 decimal places") BigDecimal quantity,
         @Schema(minimum = "1", maximum = "20", description = "Lot leverage; fixed after opening") Integer leverage,
-        @Schema(type = "string", example = "60000", description = "Required only for LIMIT. LONG fills at or below; SHORT at or above this price") BigDecimal limitPrice) { }
+        @Schema(type = "string", example = "60000", description = "Required only for LIMIT. At submission, LONG must be strictly below the fresh Mark Price and SHORT strictly above it; otherwise 409 MARKETABLE_LIMIT_NOT_ALLOWED. Margin uses limitPrice, not Mark Price. Accepted LONG fills at or below; SHORT at or above this price") BigDecimal limitPrice) { }

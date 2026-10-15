@@ -31,7 +31,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties="binance.mark-price.enabled=false")
+@SpringBootTest(properties = {"binance.mark-price.enabled=false", "binance.order-book.enabled=false"})
 @Import(PostgresTestConfiguration.class)
 @AutoConfigureMockMvc
 class TriggerIntegrationTests {
@@ -235,7 +235,8 @@ class TriggerIntegrationTests {
     }
 
     @Test void limitRejectsInsufficientExecutionMarginAndReleasesReservation() throws Exception {
-        OrderResponse pending=limit(Position.Side.SHORT,"100","99",1);
+        // Passive on entry (9999 margin), then the trigger Mark requires 10098, above the 10000 balance.
+        OrderResponse pending=limit(Position.Side.SHORT,"99","101",1);
         tick("102"); drain();
         assertThat(orderStatus(pending.orderId())).isEqualTo("REJECTED");
         assertThat(jdbc.queryForObject("select reason from trading.trading_order where id=?",String.class,pending.orderId()))
@@ -560,6 +561,8 @@ class TriggerIntegrationTests {
     @Test void rejectedLimitCloseReleasesReservationWithoutRealizingUnfundedLoss() throws Exception {
         var losing=market(Position.Side.LONG,"200",10);
         var winning=market(Position.Side.SHORT,"200",10);
+        // The hedged account remains solvent, but the losing lot cannot settle alone.
+        tick("0.4"); drain();
         var closing=closeLimit(losing.positionId(),"200","0.5");
         tick("1"); drain();
         assertThat(orderStatus(closing.orderId())).isEqualTo("REJECTED");
