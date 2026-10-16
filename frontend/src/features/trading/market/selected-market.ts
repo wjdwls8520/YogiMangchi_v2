@@ -6,8 +6,8 @@ export const waitingMarket: SelectedMarket = { symbolId: null, state: "CONNECTIN
 export function selectedMarket(snapshot: SelectedMarket, symbolId: number | null): SelectedMarket {
   return snapshot.symbolId === symbolId ? snapshot : { ...waitingMarket, symbolId };
 }
-export function freshMarkPrice(market: SelectedMarket) {
-  return market.state === "READY" ? market.price : null;
+export function freshMarkPrice(market: SelectedMarket, now = Date.now()) {
+  return market.state === "READY" && (market.price?.expiresAt === undefined || market.price.expiresAt > now) ? market.price : null;
 }
 export function marketTransition(snapshot: SelectedMarket, symbolId: number, state: MarketState): SelectedMarket {
   const current = selectedMarket(snapshot, symbolId);

@@ -50,6 +50,7 @@ export function createTradingIntent(send: (request: TradingIntent) => Promise<Tr
 }
 
 const businessMessages: Record<string, string> = {
+  MARKETABLE_LIMIT_NOT_ALLOWED: "현재 가격을 즉시 교차하는 지정가는 사용할 수 없습니다. 주문 방향과 지정가를 확인해 주세요.",
   TRADING_BUSY: "계정이 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요.",
   INSUFFICIENT_MARGIN: "사용 가능한 증거금이 부족합니다.", ACCOUNT_AT_RISK: "계정 위험 처리 중입니다. 계정 상태를 확인해 주세요.",
   PRICE_NOT_FRESH: "보유 종목의 최신 시세가 필요합니다. 시세 복구 후 다시 시도해 주세요.", ENGINE_RECOVERING: "거래 서버가 복구 중입니다. 잠시 후 다시 시도해 주세요.",

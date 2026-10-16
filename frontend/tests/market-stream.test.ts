@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openMarketStream, retryDelay, type MarketPrice, type MarketState } from "../src/features/trading/market/stream";
+import type { OrderBook } from "../src/features/trading/market/order-book";
 
 class FakeSocket {
   readyState = 0;
@@ -23,6 +24,7 @@ function harness() {
   const sockets: FakeSocket[] = [];
   const states: MarketState[] = [];
   const prices: MarketPrice[] = [];
+  const books: OrderBook[] = [];
   const unavailableSymbols: number[] = [];
   const runtime = {
     socket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
@@ -30,7 +32,7 @@ function harness() {
     later: (fn: () => void, ms: number) => { const id = ++nextId; timers.set(id, { fn, at: now + ms }); return id as unknown as ReturnType<typeof setTimeout>; },
     cancel: (id: ReturnType<typeof setTimeout>) => { timers.delete(id as unknown as number); },
   };
-  const start = (id = 927) => openMarketStream({ url: "ws://localhost:8081/ws/market", symbolId: id, onState: (state) => states.push(state), onPrice: (price) => prices.push(price), onSymbolUnavailable: (symbolId) => unavailableSymbols.push(symbolId) }, runtime);
+  const start = (id = 927) => openMarketStream({ url: "ws://localhost:8081/ws/market", symbolId: id, onState: (state) => states.push(state), onPrice: (price) => prices.push(price), onOrderBook: (book) => books.push(book), onSymbolUnavailable: (symbolId) => unavailableSymbols.push(symbolId) }, runtime);
   const handshake = (socket = sockets.at(-1)!, clockOffset = 0) => { socket.open(); socket.message({ type: "CONNECTED", maxSubscriptions: 32, heartbeatSeconds: 20, idleTimeoutSeconds: 60 }); socket.message({ type: "PONG", serverTime: new Date(now + clockOffset).toISOString() }); };
   const tick = (overrides = {}) => ({ type: "MARKET_PRICE", tradingSymbolId: 927, price: "64579.80000000", status: "FRESH", eventTime: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), ...overrides });
   const advance = (ms: number) => {
@@ -42,8 +44,40 @@ function harness() {
     }
     now = until;
   };
-  return { start, handshake, tick, advance, sockets, states, prices, timers, unavailableSymbols };
+  return { start, handshake, tick, advance, sockets, states, prices, books, timers, unavailableSymbols };
 }
+const bookMessage = (tick: ReturnType<ReturnType<typeof harness>["tick"]>, overrides = {}) => ({ ...tick, type: "ORDER_BOOK",
+  bids: [{ price: "99.000000000000000001", quantity: "2" }], asks: [{ price: "101", quantity: "3" }], ...overrides });
+test("ORDER_BOOK replaces snapshots on the existing socket and expires independently of Mark Price", () => {
+  const h=harness(), stop=h.start();h.handshake();h.sockets[0].message(h.tick());
+  h.sockets[0].message(bookMessage(h.tick()));assert.equal(h.books.at(-1)?.bids[0].price,"99.000000000000000001");
+  h.advance(500);h.sockets[0].message(bookMessage(h.tick(),{bids:[{price:"98",quantity:"4"}]}));
+  assert.equal(h.books.at(-1)?.bids.length,1);assert.equal(h.books.at(-1)?.bids[0].price,"98");assert.equal(h.sockets.length,1);
+  h.advance(2999);assert.equal(h.books.at(-1)?.status,"FRESH");h.advance(1);
+  assert.equal(h.books.at(-1)?.status,"STALE");assert.deepEqual(h.books.at(-1)?.bids,[]);assert.equal(h.states.at(-1),"READY");
+  h.sockets[0].message(bookMessage(h.tick()));assert.equal(h.books.at(-1)?.status,"FRESH");stop();assert.equal(h.timers.size,0);
+});
+test("wrong symbol, malformed, duplicate and reverse book events never contaminate current data", () => {
+  const h=harness(),stop=h.start();h.handshake();h.sockets[0].message(bookMessage(h.tick()));const count=h.books.length;
+  h.sockets[0].message(bookMessage(h.tick(),{tradingSymbolId:5}));h.sockets[0].message(bookMessage(h.tick()));assert.equal(h.books.length,count);
+  h.advance(500);h.sockets[0].message(bookMessage(h.tick()));const latest=h.books.at(-1);
+  h.sockets[0].message(bookMessage(h.tick(),{eventTime:"2026-10-10T23:59:59.999Z"}));assert.equal(h.books.at(-1),latest);
+  h.sockets[0].message(bookMessage(h.tick(),{bids:[{price:99,quantity:"2"}]}));assert.equal(h.books.at(-1)?.status,"UNAVAILABLE");
+  assert.deepEqual(h.books.at(-1)?.bids,[]);stop();
+});
+test("book stale/unavailable and connection outages clear levels; Mark status alone does not clear a fresh book", () => {
+  const h=harness(),stop=h.start();h.handshake();h.sockets[0].message(bookMessage(h.tick()));
+  h.sockets[0].message({type:"MARKET_STATUS",status:"STALE",affectedTradingSymbolIds:[927]});assert.equal(h.books.at(-1)?.status,"FRESH");
+  for(const status of ["STALE","UNAVAILABLE"]) {h.sockets[0].message(bookMessage(h.tick(),{status}));assert.deepEqual(h.books.at(-1)?.asks,[]);}
+  h.advance(500);h.sockets[0].message(bookMessage(h.tick()));h.sockets[0].disconnect();assert.equal(h.books.at(-1)?.status,"UNAVAILABLE");
+  stop();h.advance(60_000);assert.equal(h.timers.size,0);
+});
+test("book receipt TTL follows server clock offset without prolonging it for provider clock skew", () => {
+  const h=harness(),stop=h.start();h.handshake(h.sockets[0],60_000);
+  const receivedAt="2026-10-11T00:01:00.000Z",eventTime="2026-10-11T00:01:10.000Z";
+  h.sockets[0].message(bookMessage(h.tick(),{receivedAt,eventTime}));assert.equal(h.books.at(-1)?.status,"FRESH");
+  h.advance(3000);assert.equal(h.books.at(-1)?.status,"STALE");stop();
+});
 test("handshake, heartbeat, valid price, expiry and recovery follow v1", () => {
   const h = harness(); const stop = h.start(); h.handshake();
   assert.deepEqual(h.states, ["CONNECTING", "WAITING_FOR_FIRST_PRICE"]);

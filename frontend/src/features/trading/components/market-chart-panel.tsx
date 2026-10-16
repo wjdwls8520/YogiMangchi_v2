@@ -60,7 +60,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   }, [catalogRevision]);
   const selected = catalog.symbols.find((entry) => entry.id === selectedId)
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
-  const market = useMarketFeed(selected?.id ?? null, catalog.socket, refreshAfterSymbolError);
+  const { market, orderBook } = useMarketFeed(selected?.id ?? null, catalog.socket, refreshAfterSymbolError);
   function openSheet() {
     if (!sheet.current || sheet.current.open) return;
     sheet.current.showModal();
@@ -91,7 +91,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
   return (
-    <SelectedMarketProvider symbol={selected} market={market}><div className="trading-grid" data-main-view={mainView}>
+    <SelectedMarketProvider symbol={selected} market={market} orderBook={orderBook}><div className="trading-grid" data-main-view={mainView}>
       <aside className="market-sidebar" aria-labelledby="sidebar-heading">
         <header className="section-heading"><h2 id="sidebar-heading" className="section-title">Markets</h2></header>
         <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준{tickerQuery.isError ? " · 시세 조회 실패" : ""}</p>
