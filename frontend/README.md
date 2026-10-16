@@ -88,19 +88,18 @@ Frontend는 사용자에게 Trading 정보를 표현하고 사용자 입력을 B
 기존 native fetch는 HTTP 전송에 사용한다. React 18/19를 지원하며 Redux/BFF는 추가하지 않는다.
 
 Guest는 서버에서 발급하는 7일 만료 opaque Bearer credential이다. JWT가 아니다.
-토큰은 API 모듈 내부와 해당 서버 origin 전용 `sessionStorage`에만 보관한다.
-새로고침에는 유지되고 탭 세션 종료 시 사라진다. localStorage의 장기 보존을 피하고,
-HttpOnly cookie/BFF는 현재 브라우저 직접 Bearer API 구조와 맞지 않아 도입하지 않는다.
-일반 Cookie도 현재 서버의 Authorization Header 인증을 대체하지 못하고,
-JavaScript로 읽는 Cookie는 토큰 노출 측면에서 이점이 없어 사용하지 않는다.
-sessionStorage도 XSS에는 노출될 수 있으므로 로그·URL·오류·Query 캐시에 토큰을 넣지 않는다.
+토큰은 API 모듈 내부와 `localStorage`의 `yogimangchi.guest.v1:{origin}`에 보관한다.
+같은 브라우저 프로필에서는 탭·브라우저를 닫아도 서버의 `expiresAt`까지 복구하며 기간을 연장하지 않는다.
+localStorage가 없을 때만 유효한 기존 sessionStorage credential을 옮기고, 저장 성공 후 이전 키를 제거한다.
+localStorage가 있으면 우선하며 잘못되거나 만료된 credential을 이전 세션으로 대체하지 않는다.
+localStorage도 XSS에는 노출될 수 있으므로 로그·URL·오류·React 화면·Query 캐시에 토큰을 넣지 않는다.
 저장소가 차단되면 계정을 생성하기 전에 오류를 표시한다.
 
-부트스트랩 및 조회 인증 복구는 동시에 한 요청만 실행한다. 조회의 401/로컬 만료는 기존 credential을 제거한 뒤
-자동으로 한 번 재생성한다. 재생성 후에도 인증이 실패하면 중단하며 명시적 재시도로만 재개한다.
-403은 새 계정 생성으로 해결하지 않는다. Guest POST는 응답 유실 시 중복 계정이 생길 수 있어
-자동 재시도하지 않는다. 초기 생성 실패 후 재시도는 사용자가 선택한다.
-계정 ID와 세대 번호로 조회 키를 분리하고 계정 변경 시 이전 요청/캐시를 취소·제거한다.
+mount의 `restore()`는 저장된 Guest만 복구하며 없으면 정상 anonymous 상태로 시세·차트·호가를 제공한다.
+Header/주문 영역의 공통 안내 모달에서 시작을 선택해야 `createGuest()`가 POST를 한 번 실행한다.
+조회·mutation의 401 또는 로컬 만료는 credential을 제거하고 anonymous로 전환한다. 자동 재생성은 없다.
+Guest POST는 자동 재시도하지 않으며 실패 후에도 anonymous를 유지하고 사용자가 다시 선택한다.
+계정 ID와 세대 번호로 조회 키를 분리하고 계정 변경 시 이전 조회를 취소하고 조회·mutation 캐시를 제거한다.
 REST 읽기는 네트워크 오류, 500/502/503/504, `409 + code=TRADING_BUSY`만 최대 두 번 재시도한다.
 다른 409, 인증/입력 오류, 파싱 오류, 취소는 자동 재시도하지 않는다.
 

@@ -64,8 +64,10 @@ test("authenticated writes keep Bearer private, send decimal strings and never r
     assert.equal(JSON.parse(String(options?.body)).quantity, "0.00100000");
     return new Response(JSON.stringify({ detail: token }), { status: 401 });
   });
-  await session.ensure();
+  await session.createGuest();
   await assert.rejects(session.write(command, session.getSnapshot(), "order-key-0001"), (error: unknown) => error instanceof TradingApiError && !String(error).includes(token));
   assert.equal(creates, 1); assert.equal(writes, 1);
+  assert.equal(session.getSnapshot().phase, "anonymous");
+  assert.equal(store.get(session.storageKey), undefined);
   await assert.rejects(session.write(command, { ...session.getSnapshot(), generation: 999 }, "order-key-0002")); assert.equal(writes, 1);
 });
