@@ -5,6 +5,8 @@ import { AccountQueryState } from "./account-query-state";
 import { OrderHistoryTable, PendingOrderTable, PositionTable } from "./account-tables";
 import { PortfolioAllocationChart } from "./portfolio-allocation-chart";
 import { TradingNavigation, type TradingTab } from "./trading-navigation";
+import { useGuestSession } from "./trading-data-provider";
+import { GuestStartPrompt } from "./guest-access";
 
 export type AccountView = "positions" | "orders" | "portfolio";
 
@@ -16,6 +18,8 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
   const query = useTradingSummary();
   const pending = useTradingOrders("pending");
   const history = useTradingOrders("history");
+  const { snapshot } = useGuestSession();
+  if (snapshot.phase !== "ready") return <section id="trading-account" aria-label="내 모의투자 계정" className="trading-account trading-section"><div id="portfolio-view"><GuestStartPrompt /></div></section>;
   const wallet = query.data?.wallet;
   const positions = query.data?.positions ?? [];
   const accountTabs: readonly TradingTab[] = [

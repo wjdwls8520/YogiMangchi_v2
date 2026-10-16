@@ -45,14 +45,14 @@ test("book renders ten asks above Mark, ten bids below, and no levels for anothe
   assert.match(html,/Binance 참고 호가/);assert.match(html,/체결 가능 수량이 아닙니다/);
   for(const other of [emptyOrderBook(1,"STALE"),{...book,symbolId:2}]) assert.doesNotMatch(renderToStaticMarkup(createElement(OrderBookPanel,{...props,book:other})),/data-book-side=/);
 });
-test("MARKET order panel omits the limit input from its actual DOM", () => {
+test("public order panel replaces authenticated inputs with a Guest CTA and keeps the book", () => {
   const market={symbolId:1,state:"READY" as const,recovery:0,price:{eventTime:now,decimal:"100",value:100}};
   let client:QueryClient|undefined;
   function Subject() { client=useQueryClient();return <SelectedMarketProvider symbol={symbol} market={market} orderBook={emptyOrderBook(1)}><OrderPanel /></SelectedMarketProvider>; }
   try {
     const html=renderToStaticMarkup(<TradingDataProvider><Subject /></TradingDataProvider>);
-    assert.match(html,/id="order-quantity"/);assert.doesNotMatch(html,/id="limit-price"/);
-    assert.match(html.match(/<input[^>]*value="MARKET"[^>]*>/)?.[0]??"",/checked/);
+    assert.doesNotMatch(html,/id="order-quantity"/);assert.doesNotMatch(html,/id="limit-price"/);
+    assert.match(html,/게스트로 모의투자 시작/);assert.match(html,/Order Book/);
   } finally { client?.clear(); }
 });
 test("book price selection switches to LIMIT and copies only raw price, preserving quantity/leverage/side", () => {

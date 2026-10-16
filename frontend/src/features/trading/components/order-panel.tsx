@@ -14,6 +14,7 @@ import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
 import { formatMarketPrice } from "../market/price-format";
 import { OrderBookPanel } from "./order-book-panel";
+import { GuestStartPrompt } from "./guest-access";
 
 type Form = OpenForm & { identity: string };
 export function OrderPanel() {
@@ -63,7 +64,7 @@ export function OrderPanel() {
       leverage: form.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
   }
   function selectPrice(price: string) {
-    if (locked) return;
+    if (action.pending || action.unconfirmed) return;
     update(selectBookPrice(form, price));
     setEntryView("order");
     requestAnimationFrame(() => document.getElementById("limit-price")?.focus());
@@ -75,14 +76,14 @@ export function OrderPanel() {
     const check = valid ? preflightOrder(form, side, ready, mark?.decimal, account.data?.wallet.availableBalance) : null;
     return check?.kind === "balance" ? check : null;
   }
-  return <section aria-labelledby="order-heading" aria-describedby="order-preview-note" className="order-panel trading-section">
-    <header className="section-heading"><h2 id="order-heading" className="section-title">주문</h2><span className="preview-label">Guest 모의투자</span></header>
+  return <section aria-labelledby="order-heading" aria-describedby={snapshot.phase === "ready" ? "order-preview-note" : undefined} className="order-panel trading-section">
+    <header className="section-heading"><h2 id="order-heading" className="section-title">주문</h2><span className="preview-label">{snapshot.phase === "ready" ? "Guest 모의투자" : "모의투자"}</span></header>
     <div className="order-entry-navigation" role="group" aria-label="주문 패널 보기">
       <button type="button" aria-pressed={entryView === "order"} onClick={() => setEntryView("order")}>주문 입력</button>
       <button type="button" aria-pressed={entryView === "book"} onClick={() => setEntryView("book")}>호가</button>
     </div>
     <div className="order-entry" data-entry-view={entryView}>
-    <form className="order-panel-body" onSubmit={(event) => { event.preventDefault(); void submit(form.side); }}>
+    {snapshot.phase !== "ready" ? <div className="order-panel-body"><GuestStartPrompt /></div> : <form className="order-panel-body" onSubmit={(event) => { event.preventDefault(); void submit(form.side); }}>
       <AccountWallet />
       <details className="order-settings" open>
         <summary>주문 설정 <span>{form.type} · {form.leverage}× · {symbol?.displaySymbol ?? "종목 선택"}</span></summary>
@@ -118,8 +119,8 @@ export function OrderPanel() {
       {action.unconfirmed && <button type="button" className="account-refresh" disabled={action.pending} onClick={() => void action.retry().then(complete)}>같은 주문 결과 확인</button>}
       {result && result.identity === identity && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {result.order.status}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
       <p id="order-preview-note" className="order-preview-note">실제 자금을 사용하지 않습니다. 참고 금액은 체결 결과와 다를 수 있으며 서버가 체결가·증거금·손익을 결정합니다.</p>
-    </form>
-    <OrderBookPanel symbol={symbol} book={orderBook} mark={mark?.decimal} disabled={locked} onSelectPrice={selectPrice} />
+    </form>}
+    <OrderBookPanel symbol={symbol} book={orderBook} mark={mark?.decimal} disabled={action.pending || action.unconfirmed} onSelectPrice={selectPrice} />
     </div>
   </section>;
 }
