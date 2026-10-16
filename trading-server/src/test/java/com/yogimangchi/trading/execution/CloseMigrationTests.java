@@ -40,7 +40,10 @@ class CloseMigrationTests {
             var fillsBefore=jdbc.queryForList("select * from "+schema+".fill order by id");
             var walletBefore=jdbc.queryForList("select * from "+schema+".wallet");
             var flyway=Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load();
-            assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
+            assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
+            assertThat(jdbc.queryForObject("select guest_account from "+schema+".trading_account where id=1",Boolean.class)).isTrue();
+            jdbc.update("insert into "+schema+".trading_account(id,status,credential_hash,credential_expires_at,created_at,last_financial_change_at) values (2,'ACTIVE',repeat('e',64),now()+interval '7 days',now(),now())");
+            assertThat(jdbc.queryForObject("select guest_account from "+schema+".trading_account where id=2",Boolean.class)).isFalse();
             assertThat(jdbc.queryForList("select * from "+schema+".trading_order order by id")).isEqualTo(ordersBefore);
             assertThat(jdbc.queryForList("select * from "+schema+".fill order by id")).isEqualTo(fillsBefore);
             assertThat(jdbc.queryForList("select * from "+schema+".wallet")).isEqualTo(walletBefore);

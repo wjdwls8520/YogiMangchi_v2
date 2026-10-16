@@ -13,6 +13,8 @@ public class TradingAccount {
     private Long id;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 16)
     private Status status;
+    @Column(nullable = false, updatable = false)
+    private boolean guestAccount;
     @Column(nullable = false, length = 64, updatable = false)
     private String credentialHash;
     @Column(nullable = false, updatable = false)
@@ -29,6 +31,7 @@ public class TradingAccount {
         if (!Objects.requireNonNull(expiresAt).isAfter(Objects.requireNonNull(now))) throw new IllegalArgumentException("Credential expiry must be in the future");
         TradingAccount result = new TradingAccount();
         result.status = Status.ACTIVE;
+        result.guestAccount = true;
         result.credentialHash = credentialHash;
         result.credentialExpiresAt = expiresAt;
         result.createdAt = now;
@@ -45,6 +48,7 @@ public class TradingAccount {
     public void declareBankrupt() { status = Status.BANKRUPT; }
     public Long getId() { return id; }
     public Status getStatus() { return status; }
+    public boolean isGuestAccount() { return guestAccount; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getCredentialExpiresAt() { return credentialExpiresAt; }
     public Instant getLastFinancialChangeAt() { return lastFinancialChangeAt; }
