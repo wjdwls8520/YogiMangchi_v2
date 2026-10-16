@@ -51,6 +51,7 @@ class TradingAccountIntegrationTests {
         assertThat(jdbc.queryForObject("select credential_hash from trading.trading_account where id = ?", String.class, id))
                 .isEqualTo(GuestCredentials.hash(token)).doesNotContain(token);
         assertThat(Instant.parse(guest.path("expiresAt").asText())).isAfter(Instant.now().plusSeconds(6 * 86400));
+        assertThat(jdbc.queryForObject("select credential_expires_at - created_at = interval '7 days' and guest_account from trading.trading_account where id = ?", Boolean.class, id)).isTrue();
         mvc.perform(get("/api/v1/trading/account/summary").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.accountId").value(id))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
@@ -60,6 +61,40 @@ class TradingAccountIntegrationTests {
                 .andExpect(jsonPath("$.positions").isEmpty())
                 .andExpect(jsonPath("$.credentialHash").doesNotExist())
                 .andExpect(jsonPath("$.accessToken").doesNotExist());
+    }
+
+    @Test
+    void separateExplicitCreateRequestsMakeSeparateGuestsAndPublicReadsNeverCreateOne() throws Exception {
+        long before = jdbc.queryForObject("select count(*) from trading.trading_account", Long.class);
+        for (int i = 0; i < 2; i++) {
+            for (String path : java.util.List.of("/api/v1/symbols", "/api/v1/market/tickers", "/api/v1/trading/status"))
+                mvc.perform(get(path)).andExpect(status().isOk());
+        }
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_account", Long.class)).isEqualTo(before);
+        JsonNode first = guest(), second = guest();
+        assertThat(first.path("accountId")).isNotEqualTo(second.path("accountId"));
+        assertThat(first.path("accessToken")).isNotEqualTo(second.path("accessToken"));
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_account", Long.class)).isEqualTo(before + 2);
+    }
+
+    @Test
+    void expiredCredentialNeverRenewsOrCreatesAnotherGuestAcrossProtectedTradingRoutes() throws Exception {
+        JsonNode guest = guest();
+        long id = guest.path("accountId").asLong();
+        jdbc.update("update trading.trading_account set credential_expires_at = now() - interval '1 second' where id = ?", id);
+        entities.clear();
+        var expiry = jdbc.queryForObject("select credential_expires_at from trading.trading_account where id = ?", java.sql.Timestamp.class, id);
+        long before = jdbc.queryForObject("select count(*) from trading.trading_account", Long.class);
+        for (String path : java.util.List.of("wallet", "summary", "positions", "orders", "orders/pending")) {
+            mvc.perform(get("/api/v1/trading/account/" + path).header("Authorization", "Bearer " + guest.path("accessToken").asText()))
+                    .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("INVALID_GUEST_CREDENTIAL"));
+            mvc.perform(get("/api/v1/trading/account/" + path)).andExpect(status().isUnauthorized());
+        }
+        for (String path : java.util.List.of("orders", "orders/1/cancel", "positions/1/close", "positions/1/close-orders"))
+            mvc.perform(post("/api/v1/trading/account/" + path).header("Authorization", "Bearer " + guest.path("accessToken").asText()))
+                    .andExpect(status().isUnauthorized());
+        assertThat(jdbc.queryForObject("select credential_expires_at from trading.trading_account where id = ?", java.sql.Timestamp.class, id)).isEqualTo(expiry);
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_account", Long.class)).isEqualTo(before);
     }
 
     @Test

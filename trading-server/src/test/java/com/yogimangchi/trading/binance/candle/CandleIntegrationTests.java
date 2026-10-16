@@ -49,6 +49,7 @@ class CandleIntegrationTests {
     @AfterEach void cleanupOwnKeys() { if (!keys.isEmpty()) redis.delete(keys); }
 
     @Test void dbMappingIsNormalizedAndSharedCacheAvoidsAnotherProviderCall() throws Exception {
+        long guestsBefore = ((Number) em.createNativeQuery("select count(*) from trading.trading_account").getSingleResult()).longValue();
         var symbol = find("PEPE");
         mvc.perform(get("/api/v1/market/candles").param("tradingSymbolId", symbol.getId().toString()).param("interval", "24h"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$[0].open").value("0.0000123"))
@@ -59,6 +60,7 @@ class CandleIntegrationTests {
         var anotherNode = new CandleService(loader, provider, new RedisCandleCache(redis, mapper));
         assertThat(anotherNode.find(symbol.getId(), "24h", 1).get(0).close()).isEqualTo("0.0000145");
         verify(provider, times(1)).load(target, CandleInterval.ONE_DAY);
+        assertThat(((Number) em.createNativeQuery("select count(*) from trading.trading_account").getSingleResult()).longValue()).isEqualTo(guestsBefore);
     }
     @Test void cachedPricesNeverBypassInactiveOrMissingSymbolChecks() throws Exception {
         var symbol = find("BTC");

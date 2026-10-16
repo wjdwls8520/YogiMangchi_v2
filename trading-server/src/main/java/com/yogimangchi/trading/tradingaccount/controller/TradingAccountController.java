@@ -25,7 +25,7 @@ public class TradingAccountController {
     @PostMapping("/accounts/guest")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Create a guest simulation account with 10000 USDT",
-            description = "Returns a 7-day opaque bearer credential once. Losing it means losing access; never share or log it.")
+            description = "Explicit opt-in: each POST creates one new Guest account and wallet with initial 10000 USDT. Public market data, candles and WebSocket access do not create an account and require no Guest credential. Returns an opaque bearer credential once, valid for exactly 7 days until expiresAt. Lost credentials cannot be recovered. Expired credentials return 401 and are never automatically renewed or replaced. Never share or log the token.")
     public ResponseEntity<GuestAccountResponse> createGuest() {
         return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(accounts.createGuest());
     }

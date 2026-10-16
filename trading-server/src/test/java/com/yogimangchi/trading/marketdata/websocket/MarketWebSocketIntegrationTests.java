@@ -198,6 +198,7 @@ class MarketWebSocketIntegrationTests {
     }
 
     @Test void orderBookSubscribeImmediatelyReturnsFreshRedisSnapshotAndThenOnlySelectedUpdates() throws Exception {
+        long guestsBefore = jdbc.queryForObject("select count(*) from trading.trading_account", Long.class);
         var first = book(btc, "100", "101");
         orderBooks.accept(first);
         await().atMost(Duration.ofSeconds(5)).until(() -> orderBooks.read(Set.of(btc)).containsKey(btc));
@@ -221,6 +222,7 @@ class MarketWebSocketIntegrationTests {
         client.next("UNSUBSCRIBED");
         orderBooks.accept(book(btc, "102", "103"));
         client.noMessageOfType("ORDER_BOOK", Duration.ofMillis(200));
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_account", Long.class)).isEqualTo(guestsBefore);
     }
 
     @Test void staleOrderBookClearsLevelsWhileMarkPricesContinueNormally() throws Exception {

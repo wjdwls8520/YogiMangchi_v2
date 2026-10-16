@@ -156,6 +156,8 @@ class ApplicationTests {
         var schemas = document.path("components").path("schemas");
         var guest = paths.path("/api/v1/trading/accounts/guest").path("post");
         assertThat(guest.path("security").isMissingNode() || guest.path("security").isEmpty()).isTrue();
+        assertThat(guest.path("description").asText()).contains("Explicit opt-in", "10000 USDT", "7 days", "expiresAt",
+                "cannot be recovered", "401", "never automatically", "Public market data");
         assertThat(guest.at("/responses/201/content/application~1json/schema/$ref").asText())
                 .isEqualTo("#/components/schemas/GuestAccountResponse");
         for (String endpoint : new String[]{"summary", "wallet", "positions", "orders", "orders/pending"}) {

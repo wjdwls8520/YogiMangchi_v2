@@ -53,6 +53,8 @@ binance:
     enabled: ${BINANCE_ORDER_BOOK_ENABLED:true}
 
 trading:
+  guest-cleanup:
+    enabled: ${TRADING_GUEST_CLEANUP_ENABLED:true}
   trigger:
     enabled: ${TRADING_TRIGGER_ENABLED:true}
   http:

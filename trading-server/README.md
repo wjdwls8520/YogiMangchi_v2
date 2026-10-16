@@ -175,10 +175,36 @@ Guest 생성 응답은 `accountId`, `status`, `quoteAsset`, `initialBalance`, `a
 `accessToken`은 암호학적으로 무작위인 256-bit 불투명 문자열이고 `Authorization: Bearer <accessToken>`으로 보낸다.
 서버는 PostgreSQL에 SHA-256 Hash만 저장하며 원문은 생성 응답에서 한 번만 제공한다. URL·로그에 토큰을 넣지 않는다.
 이 Credential은 현재 Trading MVP의 계정 접근권이며 Content 로그인/JWT를 대신하는 영구 인증 설계는 아니다.
-토큰을 잃거나 7일이 지나면 해당 계정에 다시 접근할 수 없다. 계정/이력은 삭제되지 않으며 새 Guest를 생성한다.
+사용자가 **게스트로 모의투자 시작**을 선택했을 때만 Frontend에서 위 POST를 호출한다. 같은 POST를 별도로
+호출하면 각각 다른 Guest를 만든다. 페이지 진입·Symbol/Summary/Candle 조회·Mark/Order Book WebSocket 연결은
+Guest를 만들지 않으며 credential 없이 사용할 수 있다. Wallet·Position·주문/취소/종료·거래 이력은 계속 Bearer 인증이 필요하다.
+토큰을 잃거나 `expiresAt`(생성 후 정확히 7일)이 지나면 해당 계정에 다시 접근할 수 없다. 만료 credential은 401이며
+자동 연장·Guest 자동 재생성을 하지 않는다. Frontend는 만료 시 명시적인 시작 동작을 다시 받아야 한다.
 Frontend는 우선 메모리에 보관하고 새로고침 복구를 위한 브라우저 저장 선택에는 XSS 위험을 고려한다.
 인터넷 공개 전에는 TLS, Gateway의 Guest 생성/인증 요청 제한과 최종 Content JWT 전환을 검증해야 한다.
 계정 ID를 경로·요청에 넣어 다른 계정에 접근하는 API는 제공하지 않는다. 만료/변조/없는 Credential은 401이다.
+
+#### 만료 Guest 정리와 이력 보존
+
+`UnusedGuestCleanupService`는 **credential 만료 후 7일 유예**가 지난 미사용 Guest만 물리 정리한다.
+거래한 적 없는 임시 계정의 DB 증가를 제한하기 위한 예외이며, 주문·체결·Position·재무 이력은 삭제하지 않는다.
+정리 조건은 `guest_account=true`, 생성 후 재무 변경 없음, Order/Position Row 없음,
+Wallet 초기 잔액 10,000 USDT·손익/사용/예약 Margin 모두 0이다. 유효 credential, 유예 기간,
+일반 계정, 변경된 Wallet 또는 어떤 상태든 거래 이력이 있는 계정은 제외한다.
+Open Position/Pending Order가 있는 만료 Guest는 기존 Trigger/청산 감시를 유지한다.
+만료 자체를 이유로 강제 체결·취소·잔액 초기화를 하지 않으며 별도의 EXPIRED 상태도 추가하지 않는다.
+
+별도 scheduler가 시작 1분 후, 이후 1시간 간격으로 최대 100개를 처리한다.
+`TRADING_GUEST_CLEANUP_ENABLED=false`로 중지할 수 있다. V9의 미사용 Guest 만료 partial index와
+Order/Position 계정 인덱스로 대상을 제한하며 `FOR UPDATE SKIP LOCKED`로 사용 중인 계정을 건너뛴다.
+Trading과 같은 Account Row를 먼저 잠그고 Wallet → Account 순으로 한 Transaction에서 삭제한다.
+FK/DB 오류는 배치 전체를 Rollback하고 다음 실행에 재시도한다. 가격 수신/Trigger 스레드 및 Redis를 사용하지 않는다.
+
+V9는 기존 V1~V8의 Guest만 표시하며 향후 일반 계정의 DB 기본값은 `guest_account=false`다.
+금융 원장은 계속 PostgreSQL이 원본이고 Redis/Browser Storage로 이전하지 않는다. Browser에 복구용 credential을
+보관하더라도 잔액·Position·Order의 원본으로 신뢰하지 않는다.
+**거래 이력이 있는 만료 Guest의 영구 보존량까지 줄이는 정책은 이번 정리에 포함하지 않는다.**
+해당 이력을 삭제/아카이브하려면 별도의 보존 기간과 운영 정책을 먼저 결정해야 한다.
 
 V4는 `trading_account`, `wallet`, `position`을 생성한다. 계정은 내부 ID, 상태, Credential Hash/만료,
 생성 시간과 마지막 재무 변경 시각을 가진다. Wallet은 계정당 하나이며 실제 잔액, 사용/예약 Margin,
