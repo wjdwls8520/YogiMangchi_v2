@@ -1,13 +1,34 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { useGuestSession } from "../components/trading-data-provider";
 import { createTradingIntent, mutationMessage, uncertainMutation, type TradingCommand } from "./mutation-request";
 import { tradingKeys } from "./query-keys";
-import type { SessionSnapshot } from "./guest-session";
+import type { GuestSession, SessionSnapshot } from "./guest-session";
+import { TradingApiError } from "./client";
+import { orderRejection, type OrderIssue } from "./order-preflight";
+import type { TradingOrder } from "./orders";
 
-export function useTradingMutation() {
+type Rejected = (issue: OrderIssue, command: TradingCommand, identity: SessionSnapshot) => void;
+type MutationRequest = { command: TradingCommand; session: SessionSnapshot };
+export function tradingMutationEffects(client: Pick<QueryClient, "invalidateQueries">, session: Pick<GuestSession, "getSnapshot">, onRejected?: Rejected) {
+  const current = (identity: SessionSnapshot) => session.getSnapshot().accountId === identity.accountId && session.getSnapshot().generation === identity.generation;
+  return {
+    onError: (error: Error, request: MutationRequest) => {
+      if (!current(request.session)) return;
+      const issue = orderRejection(error instanceof TradingApiError ? error.code : undefined, request.command);
+      if (!issue) return;
+      if (issue.kind === "marketable") void client.invalidateQueries({ queryKey: ["market", process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081", "tickers"] });
+      onRejected?.(issue, request.command, request.session);
+    },
+    onSettled: async (_data: TradingOrder | undefined, _error: Error | null, request: MutationRequest) => {
+      if (current(request.session)) await client.invalidateQueries({ queryKey: tradingKeys.account(request.session) });
+    },
+  };
+}
+
+export function useTradingMutation(onRejected?: Rejected) {
   const { session, snapshot } = useGuestSession();
   const client = useQueryClient();
   const [intent] = useState(() => createTradingIntent((request) => session.write(request.command, request.session, request.key)));
@@ -15,11 +36,7 @@ export function useTradingMutation() {
   const [unconfirmed, setUnconfirmed] = useState<{ command: TradingCommand; session: SessionSnapshot } | null>(null);
   const mutation = useMutation({ retry: false,
     mutationFn: (request: { command: TradingCommand; session: SessionSnapshot }) => intent.execute(request.command, request.session),
-    onSettled: async (_data, _error, request) => {
-      if (session.getSnapshot().accountId === request.session.accountId && session.getSnapshot().generation === request.session.generation) {
-        await client.invalidateQueries({ queryKey: tradingKeys.account(request.session) });
-      }
-    },
+    ...tradingMutationEffects(client, session, onRejected),
   });
   const sameIdentity = (value: SessionSnapshot) => value.accountId === snapshot.accountId && value.generation === snapshot.generation;
   const pendingConfirmation = unconfirmed && sameIdentity(unconfirmed.session) ? unconfirmed : null;
@@ -35,6 +52,8 @@ export function useTradingMutation() {
   }
   const currentResult = mutation.variables && sameIdentity(mutation.variables.session);
   return { submit, retry: () => pendingConfirmation ? submit(pendingConfirmation.command) : Promise.resolve(null),
+    clearError: () => { if (!active.current && !pendingConfirmation) mutation.reset(); },
+    command: currentResult ? mutation.variables?.command : null,
     pending: !!currentResult && mutation.isPending, unconfirmed: !!pendingConfirmation,
     error: currentResult && mutation.error ? mutationMessage(mutation.error) : null,
   };

@@ -299,6 +299,27 @@
   .order-panel-body {
     @apply flex flex-col gap-3 p-3;
   }
+  .order-entry { @apply grid min-w-0; }
+  .order-entry-navigation { @apply grid grid-cols-2 border-b border-slate-200; }
+  .order-entry-navigation button { @apply min-h-11 text-trade-body font-medium text-slate-500 enabled:cursor-pointer aria-pressed:border-b-2 aria-pressed:border-brand-600 aria-pressed:text-brand-700; }
+  .order-entry[data-entry-view="order"] > .order-book,
+  .order-entry[data-entry-view="book"] > form { @apply hidden; }
+  .order-settings-fields[data-order-type="MARKET"] > div:has(#order-quantity) { @apply col-span-2; }
+  .order-book { @apply min-w-0 border-t border-slate-200; }
+  .order-book .section-heading { @apply flex-wrap gap-1; }
+  .order-book-note { @apply px-3 py-2 text-trade-meta leading-relaxed text-slate-500; }
+  .order-book-columns, .order-book-level {
+    @apply grid min-w-0 grid-cols-2 gap-2 px-3 text-trade-meta tabular-nums;
+  }
+  .order-book-columns { @apply py-2 text-slate-500; }
+  .order-book-columns > :last-child, .order-book-level > :last-child { @apply text-right; }
+  .order-book-level { @apply min-h-7 w-full items-center text-left enabled:cursor-pointer enabled:hover:bg-slate-50; }
+  .order-book-level > span { overflow-wrap: anywhere; }
+  .order-book-level[data-book-side="ask"] > :first-child { @apply text-loss; }
+  .order-book-level[data-book-side="bid"] > :first-child { @apply text-gain; }
+  .order-book-mark { @apply flex flex-wrap items-center justify-between gap-2 border-y border-slate-100 px-3 py-3 text-trade-meta text-slate-500; }
+  .order-book-mark strong { @apply text-trade-heading text-slate-900 tabular-nums; }
+  .order-warning { @apply mt-1 text-trade-meta leading-relaxed text-loss; }
   .order-wallet div {
     @apply flex flex-wrap items-center justify-between gap-1 text-trade-body;
   }
@@ -313,7 +334,7 @@
     @apply grid grid-cols-2 gap-2;
   }
   .order-actions button {
-    @apply flex min-h-11 items-center justify-center gap-1.5 rounded-sm px-3 text-trade-heading font-semibold text-white;
+    @apply flex min-h-11 w-full items-center justify-center gap-1.5 rounded-sm px-3 text-trade-heading font-semibold text-white;
   }
   .order-actions button[data-side="LONG"] {
     @apply bg-gain text-white;
@@ -652,5 +673,14 @@
     .market-sidebar .market-list-price {
       @apply w-auto basis-0 flex-col;
     }
+  }
+  @media (width >= 90rem) {
+    .trading-grid { grid-template-columns: 13rem minmax(0, 1fr) 35rem; }
+    .order-entry { grid-template-columns: 14rem minmax(0, 1fr); }
+    .order-entry > form { grid-column: 2; grid-row: 1; }
+    .order-entry > .order-book { @apply border-t-0 border-r border-slate-200; grid-column: 1; grid-row: 1; }
+    .order-entry-navigation { @apply hidden; }
+    .order-entry[data-entry-view] > form { @apply flex; }
+    .order-entry[data-entry-view] > .order-book { @apply block; }
   }
 }

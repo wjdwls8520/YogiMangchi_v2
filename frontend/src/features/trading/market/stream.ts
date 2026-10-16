@@ -1,5 +1,7 @@
+import { emptyOrderBook, parseOrderBook, type OrderBook } from "./order-book";
+
 export type MarketState = "CONNECTING" | "WAITING_FOR_FIRST_PRICE" | "READY" | "UNAVAILABLE" | "RECONNECTING";
-export type MarketPrice = { eventTime: number; decimal: string; value: number };
+export type MarketPrice = { eventTime: number; decimal: string; value: number; expiresAt?: number };
 type Socket = Pick<WebSocket, "readyState" | "send" | "close" | "onopen" | "onclose" | "onerror" | "onmessage">;
 type Timer = ReturnType<typeof setTimeout>;
 type Runtime = {
@@ -29,6 +31,7 @@ export function openMarketStream(options: {
   url: string; symbolId: number;
   onState: (state: MarketState) => void;
   onPrice: (price: MarketPrice) => void;
+  onOrderBook?: (book: OrderBook) => void;
   onSymbolUnavailable?: (symbolId: number) => void;
 }, runtime: Runtime = browserRuntime) {
   let stopped = false;
@@ -39,6 +42,8 @@ export function openMarketStream(options: {
   let serverOffset = 0;
   let state: MarketState | undefined;
   let freshTimer: Timer | undefined;
+  let bookTimer: Timer | undefined;
+  let lastBookEvent = -Infinity, lastBookReceipt = -Infinity;
   const timers = new Set<Timer>();
   const emit = (next: MarketState) => {
     if (!stopped && state !== next) { state = next; options.onState(next); }
@@ -56,6 +61,8 @@ export function openMarketStream(options: {
     for (const timer of timers) runtime.cancel(timer);
     timers.clear();
     freshTimer = undefined;
+    bookTimer = undefined;
+    if (!stopped) options.onOrderBook?.(emptyOrderBook(options.symbolId));
     if (socket) {
       socket.onopen = socket.onclose = socket.onerror = socket.onmessage = null;
       if (socket.readyState < 2) socket.close(1000, "Chart connection closed");
@@ -89,11 +96,24 @@ export function openMarketStream(options: {
     if (eventTime <= lastEventTime) return;
     lastEventTime = eventTime;
     attempt = 0;
-    options.onPrice({ eventTime, decimal: price.price, value: Number(price.price) });
+    options.onPrice({ eventTime, decimal: price.price, value: Number(price.price), expiresAt: runtime.now() + receivedAt + 5000 - now });
     if (stopped) return;
     emit("READY");
     cancel(freshTimer);
     freshTimer = later(() => emit("UNAVAILABLE"), Math.max(1, receivedAt + 5000 - now));
+  };
+  const receiveBook = (input: Record<string, unknown>) => {
+    if (input.tradingSymbolId !== options.symbolId) return;
+    const now = runtime.now() + serverOffset;
+    const book = parseOrderBook(input, options.symbolId, now);
+    if (book.status === "FRESH" && book.eventTime !== null && book.receivedAt !== null) {
+      if (book.eventTime < lastBookEvent || book.receivedAt < lastBookReceipt
+        || (book.eventTime === lastBookEvent && book.receivedAt === lastBookReceipt)) return;
+      lastBookEvent = book.eventTime; lastBookReceipt = book.receivedAt;
+    }
+    cancel(bookTimer);
+    options.onOrderBook?.(book.status === "FRESH" ? { ...book, expiresAt: runtime.now() + book.receivedAt! + 3000 - now } : book);
+    if (book.status === "FRESH") bookTimer = later(() => options.onOrderBook?.(emptyOrderBook(options.symbolId, "STALE")), Math.max(1, book.receivedAt! + 3000 - now));
   };
   function connect() {
     if (stopped) return;
@@ -148,6 +168,7 @@ export function openMarketStream(options: {
       } else if (connected && message.type === "SNAPSHOT" && Array.isArray(message.prices)) {
         message.prices.forEach(receivePrice);
       } else if (connected && message.type === "MARKET_PRICE") receivePrice(message);
+      else if (connected && message.type === "ORDER_BOOK") receiveBook(message);
       else if (connected && message.type === "MARKET_STATUS" && Array.isArray(message.affectedTradingSymbolIds)
         && message.affectedTradingSymbolIds.includes(options.symbolId)) {
         if (message.status === "RECONNECTING") emit("RECONNECTING");
