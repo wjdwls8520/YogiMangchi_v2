@@ -8,7 +8,7 @@ import { emptyOrderBook, selectedOrderBook, type OrderBook } from "../market/ord
 import { marketSubscriptionBatches } from "../api/position-display";
 
 export type BookSelection = { symbolId: number; price: string; identity: string };
-const MarketContext = createContext<{ symbol: TradingSymbol | null; market: SelectedMarket; orderBook: OrderBook; positionPrices: Readonly<Record<number,MarketPrice | null>>; bookSelection?: BookSelection } | null>(null);
+const MarketContext = createContext<{ symbol: TradingSymbol | null; symbols: readonly TradingSymbol[]; market: SelectedMarket; orderBook: OrderBook; positionPrices: Readonly<Record<number,MarketPrice | null>>; bookSelection?: BookSelection } | null>(null);
 
 export function useMarketFeed(symbolId: number | null, socketUrl: string, onSymbolUnavailable: (id: number) => void, positionIds: string = "[]", identity = "public", onSubscriptionUnavailable?: () => void) {
   const [snapshot, setSnapshot] = useState(waitingMarket);
@@ -29,8 +29,8 @@ export function useMarketFeed(symbolId: number | null, socketUrl: string, onSymb
   return { market: selectedMarket(snapshot, symbolId), orderBook: selectedOrderBook(book, symbolId), positionPrices:marks.key===key ? marks.prices : {} };
 }
 
-export function SelectedMarketProvider({ symbol, market, orderBook, positionPrices = {}, bookSelection, children }: { symbol: TradingSymbol | null; market: SelectedMarket; orderBook: OrderBook; positionPrices?: Readonly<Record<number,MarketPrice|null>>; bookSelection?: BookSelection; children: ReactNode }) {
-  return <MarketContext.Provider value={{ symbol, market, orderBook, positionPrices, bookSelection }}>{children}</MarketContext.Provider>;
+export function SelectedMarketProvider({ symbol, symbols, market, orderBook, positionPrices = {}, bookSelection, children }: { symbol: TradingSymbol | null; symbols?: readonly TradingSymbol[]; market: SelectedMarket; orderBook: OrderBook; positionPrices?: Readonly<Record<number,MarketPrice|null>>; bookSelection?: BookSelection; children: ReactNode }) {
+  return <MarketContext.Provider value={{ symbol, symbols:symbols??(symbol ? [symbol] : []), market, orderBook, positionPrices, bookSelection }}>{children}</MarketContext.Provider>;
 }
 export function useSelectedMarket() {
   const context = useContext(MarketContext);

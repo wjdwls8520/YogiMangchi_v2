@@ -15,9 +15,22 @@ import type { TradingOrder } from "../api/orders";
 import { formatMarketPrice } from "../market/price-format";
 import { GuestStartPrompt } from "./guest-access";
 import { WalletOverview } from "./wallet-overview";
+import { CloseOrderPanel } from "./close-order-panel";
+import { TradingNavigation } from "./trading-navigation";
 
 type Form = OpenForm & { identity: string };
 export function OrderPanel() {
+  const [intent,setIntent]=useState<"open"|"close">("open");
+  const {snapshot}=useGuestSession(),account=useTradingSummary();
+  return <section className="order-panel trading-section" aria-labelledby="order-heading">
+    <header className="section-heading"><h2 id="order-heading" className="section-title">주문</h2><span className="preview-label">모의투자</span></header>
+    <TradingNavigation label="주문 목적" prefix="order" activeId={intent} onSelect={value=>{if(value==="open"||value==="close"){setIntent(value);document.getElementById("order-view")?.scrollTo({top:0});}}} className="order-intent-tabs" tabs={[{id:"open",label:"진입 · Open",controls:"order-open-panel"},{id:"close",label:"청산 · Close",controls:"order-close-panel"}]}/>
+    <div id="order-open-panel" role="tabpanel" aria-labelledby="order-open-tab" hidden={intent!=="open"}><OpenOrderPanel active={intent==="open"}/></div>
+    <div id="order-close-panel" role="tabpanel" aria-labelledby="order-close-tab" hidden={intent!=="close"}><CloseOrderPanel active={intent==="close"}/></div>
+    {snapshot.phase === "ready" && account.data && <WalletOverview wallet={account.data.wallet} />}
+  </section>;
+}
+function OpenOrderPanel({active}:{active:boolean}) {
   const { symbol, market, bookSelection } = useSelectedMarket();
   const { snapshot } = useGuestSession();
   const account = useTradingSummary();
@@ -43,7 +56,7 @@ export function OrderPanel() {
   const locked = action.pending || action.unconfirmed || snapshot.phase !== "ready";
   if (bookSelection !== seenBookSelection) {
     setSeenBookSelection(bookSelection);
-    const next = bookSelection && bookSelection.identity === identity && !locked ? formForBookPrice(form,bookSelection.symbolId,bookSelection.price) : null;
+    const next = bookSelection && bookSelection.identity === identity && active && !locked ? formForBookPrice(form,bookSelection.symbolId,bookSelection.price) : null;
     if (next) { setForm({...next,identity}); setResult(null); setServerWarning(null); }
   }
   const price = form.type === "LIMIT" ? form.limitPrice.trim() : mark?.decimal ?? "";
@@ -78,8 +91,7 @@ export function OrderPanel() {
     const check = valid ? preflightOrder(formForSide(form,side,leverages), side, ready, mark?.decimal, account.data?.wallet.availableBalance) : null;
     return check?.kind === "balance" ? check : null;
   }
-  return <section aria-labelledby="order-heading" aria-describedby={snapshot.phase === "ready" ? "order-preview-note" : undefined} className="order-panel trading-section">
-    <header className="section-heading"><h2 id="order-heading" className="section-title">주문</h2><span className="preview-label">{snapshot.phase === "ready" ? "Guest 모의투자" : "모의투자"}</span></header>
+  return <div aria-describedby={snapshot.phase === "ready" ? "order-preview-note" : undefined}>
     {snapshot.phase !== "ready" ? <div className="order-panel-body"><GuestStartPrompt /></div> : <form className="order-panel-body" onSubmit={(event) => { event.preventDefault(); void submit(form.side); }}>
       <AccountWallet />
       <details className="order-settings" open>
@@ -114,6 +126,5 @@ export function OrderPanel() {
       {result && result.identity === identity && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {result.order.status}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
       <p id="order-preview-note" className="order-preview-note">실제 자금을 사용하지 않습니다. 참고 금액은 체결 결과와 다를 수 있으며 서버가 체결가·증거금·손익을 결정합니다.</p>
     </form>}
-    {snapshot.phase === "ready" && account.data && <WalletOverview wallet={account.data.wallet} />}
-  </section>;
+  </div>;
 }

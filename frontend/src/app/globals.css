@@ -119,7 +119,7 @@
   .trading-grid .desktop-account-navigation {
     display: none;
   }
-  .mobile-market-header {
+  .market-contract-header {
     @apply flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 px-3;
   }
   .market-sheet-trigger {
@@ -137,6 +137,29 @@
   .market-selected-label > span {
     @apply text-trade-meta text-slate-500;
   }
+  .market-overview { @apply min-w-0 border-b border-slate-200; }
+  .market-overview .market-summary-header { @apply hidden; }
+  .order-intent-tabs { @apply grid grid-cols-2 border-b border-slate-200; }
+  .order-intent-tabs button { @apply min-h-11 border-b-2 border-transparent text-trade-body font-semibold text-slate-500 cursor-pointer aria-selected:border-brand-600 aria-selected:text-brand-700; }
+  .order-panel [role="tabpanel"][hidden], .position-close-entry form[hidden], .close-panel-position[hidden] { display: none; }
+  .position-close-entry { @apply min-w-0 text-trade-body; white-space: normal; }
+  .position-close-actions { @apply flex gap-2; }
+  .position-close-actions > button { @apply flex-1; }
+  .position-close-actions > button:disabled { @apply cursor-not-allowed opacity-50; }
+  .position-close-entry form { @apply flex min-w-0 flex-col gap-3; }
+  .position-close-entry[data-layout="row"] form { @apply mt-3 rounded-sm border border-slate-200 bg-slate-50 p-3; }
+  .close-position-label { @apply flex flex-wrap justify-between gap-2 text-trade-meta; }
+  .close-availability { @apply grid grid-cols-3 gap-2 text-trade-meta; }
+  .close-availability dt { @apply text-slate-500; }
+  .close-availability dd { @apply mt-1 break-all font-medium; }
+  .close-order-fields { @apply flex min-w-0 flex-col gap-3; }
+  .close-order-fields input[type="range"] { @apply h-8 w-full accent-brand-600; }
+  .close-order-fields .field-label > span { @apply float-right tabular-nums text-brand-700; }
+  .position-close-entry .close-submit { @apply min-h-11 rounded-sm border border-brand-600 bg-brand-600 px-3 py-2 font-semibold text-white enabled:cursor-pointer disabled:opacity-50; }
+  .close-position-select { @apply flex flex-col gap-2 border-b border-slate-200 p-3; }
+  .close-position-select select { @apply min-h-11 w-full min-w-0 rounded-sm border border-slate-200 bg-slate-50 px-2 text-trade-body; }
+  .trading-table[data-variant="positions"] td[data-key="action"] { @apply col-span-3; }
+  .trading-table[data-variant="positions"] td[data-key="action"]::before { @apply hidden; }
   .trading-navigation {
     @apply flex min-w-0 border-b border-slate-200 bg-white;
   }
@@ -194,6 +217,7 @@
   .market-list-note {
     @apply px-3 py-2 text-trade-meta text-slate-500;
   }
+  .market-search { @apply min-h-11 w-full rounded-sm border border-slate-200 bg-slate-50 px-3 text-trade-body text-slate-900; }
   .trading-page-intro {
     @apply border-b border-slate-100 bg-slate-50 px-3 py-2 text-trade-meta leading-relaxed text-slate-500 lg:px-5;
   }
@@ -584,14 +608,16 @@
     }
     .trading-grid {
       @apply grid;
-      grid-template-columns: 11rem minmax(0, 1fr) 19rem;
-      grid-template-rows: minmax(36rem, auto) minmax(12rem, auto);
+      grid-template-columns: minmax(0, 1fr) 20rem;
+      grid-template-rows: auto clamp(36rem, 65dvh, 42rem) minmax(12rem, auto);
     }
-    .market-sidebar {
-      @apply block border-r border-slate-200;
-      grid-column: 1;
-      grid-row: 1 / 3;
-    }
+    .market-overview { @apply grid items-center; grid-column: 1 / -1; grid-template-columns: 14rem minmax(0,1fr); }
+    .market-contract-header { @apply border-r border-b-0; }
+    .market-overview .market-summary-body { @apply py-2; grid-template-columns: minmax(0,1fr) minmax(0,1.7fr); }
+    .market-overview .market-statistics { @apply grid-cols-3; }
+    .market-overview .market-statistics > div { @apply block; }
+    .market-symbol-sheet[open] { @apply items-center; }
+    .market-sheet-content { @apply max-w-xl rounded-sm border border-slate-200; }
     .market-sidebar .market-symbol-button {
       @apply flex-wrap;
     }
@@ -601,7 +627,6 @@
     .market-sidebar .market-list-note {
       @apply leading-relaxed;
     }
-    .mobile-market-header,
     .main-navigation,
     .mobile-account-navigation {
       display: none;
@@ -614,18 +639,20 @@
     }
     .trading-grid[data-main-view] .chart-view {
       display: flex;
-      grid-column: 2;
-      grid-row: 1;
+      min-height: 0;
+      grid-column: 1;
+      grid-row: 2;
     }
     .trading-grid[data-main-view] .order-view {
       display: block;
-      grid-column: 3;
-      grid-row: 1;
+      overflow-y: auto;
+      grid-column: 2;
+      grid-row: 2;
     }
     .trading-grid[data-main-view] .trading-account {
       @apply block border-t border-slate-200;
-      grid-column: 2 / 4;
-      grid-row: 2;
+      grid-column: 1 / -1;
+      grid-row: 3;
     }
     .trading-grid[data-main-view] .trading-account .account-content {
       display: none;
@@ -636,14 +663,20 @@
       display: block;
     }
     .order-panel {
-      @apply h-full border-b-0 border-l border-slate-200;
+      @apply min-h-full border-b-0 border-l border-slate-200;
     }
+    .order-panel > .section-heading { @apply sticky top-0 z-10 bg-white; }
+    .order-panel > .order-intent-tabs { @apply sticky top-10 z-10 bg-white; }
+    .market-analysis { min-height: 0; grid-template-rows: minmax(0,1fr); }
+    .market-analysis > .order-book { @apply overflow-y-auto; }
+    .order-book-level { @apply min-h-5; }
     .chart-view .trading-section {
       @apply border-b-0;
     }
     .market-chart {
-      @apply flex-1;
+      @apply min-h-0 flex-1 overflow-hidden;
     }
+    .market-chart-figure { @apply min-h-0; }
     .market-chart-frame {
       @apply h-auto min-h-64 flex-1;
     }
@@ -679,6 +712,8 @@
     .trading-table[data-variant="positions"] td[data-key="leverage"] {
       @apply text-left;
     }
+    .trading-table[data-variant="positions"] td { @apply align-top; }
+    .trading-table[data-variant="positions"] [data-key="action"] { @apply sticky right-0 border-l border-slate-200 bg-white; min-width: 20rem; width: 20rem; }
     .trading-table button {
       @apply min-h-9;
     }
@@ -688,7 +723,7 @@
   }
   @media (width >= 80rem) {
     .trading-grid {
-      grid-template-columns: 13rem minmax(0, 1fr) 20rem;
+      grid-template-columns: minmax(0, 1fr) 21rem;
     }
     .market-summary-body {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr);
@@ -706,7 +741,7 @@
       @apply w-auto basis-0 flex-col;
     }
   }
-  @media (width >= 90rem) {
+  @media (width >= 64rem) {
     .market-analysis { grid-template-columns: minmax(0, 1fr) 13rem; }
     .market-analysis[data-analysis-view] > .market-chart { @apply flex; }
     .market-analysis[data-analysis-view] > .order-book { @apply block border-l border-slate-200; }
