@@ -11,7 +11,7 @@ test("adaptive market prices round display strings without losing source precisi
     const original = raw;
     assert.equal(formatMarketPrice(raw), display); assert.equal(raw, original);
   }
-  assert.equal(formatDecimal("114230.12345678"), "114,230.12345678");
+  assert.equal(formatDecimal("114230.12345678"), "114,230.12");
 });
 test("tiny nonzero prices remain visible instead of becoming zero", () => {
   for (const raw of ["0.000000001", "0.000000009", "0.000000000000000000001"]) assert.equal(formatMarketPrice(raw), "<0.00000001");

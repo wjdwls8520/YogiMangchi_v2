@@ -89,8 +89,8 @@ test("close backend rejections have controlled feedback and refresh all account 
     assert.doesNotMatch(messages.at(-1)!,/secret/);
   }}finally{client.clear();}
 });
-test("invalid LIMIT price explains disabled ratio and valid price enables all existing presets",()=>{
-  assert.match(sizingUnavailable("LIMIT","",true,"10000")!,/지정가를 입력/);
+test("invalid LIMIT price explains zero quantity and valid price supports existing presets",()=>{
+  assert.match(sizingUnavailable("LIMIT","",true,"10000")!,/수량은 0/);
   assert.equal(sizingUnavailable("LIMIT","99",true,"10000"),null);
   assert.ok(sizingUnavailable("MARKET","100",false,"10000"));
 });

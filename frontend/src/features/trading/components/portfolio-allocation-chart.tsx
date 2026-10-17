@@ -25,7 +25,7 @@ export function PortfolioAllocationChart({ positions, view: requestedView }: { p
         } else {
           instance.current = new Chart(canvas.current, { type: "doughnut", data, options: {
             responsive: true, maintainAspectRatio: false, cutout: "72%", animation: false,
-            plugins: { tooltip: { displayColors: false, callbacks: { label: (context) => `${Number(context.raw).toFixed(1)}%` } } },
+            plugins: { tooltip: { displayColors: false, callbacks: { label: (context) => `${Number(context.raw).toFixed(2)}%` } } },
           } });
         }
       } catch { if (!disposed) setFailed(true); }
@@ -53,7 +53,7 @@ export function PortfolioAllocationChart({ positions, view: requestedView }: { p
             {allocation.entries.map((entry) => (
               <div key={entry.symbol} className="portfolio-legend-row">
                 <dt className="flex items-center gap-2 font-medium"><span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: entry.color }} />{entry.symbol}</dt>
-                <dd className="text-right font-semibold">{entry.percent.toFixed(1)}%</dd>
+                <dd className="text-right font-semibold">{entry.percent.toFixed(2)}%</dd>
                 <dd className="col-span-2 break-all pl-4.5 text-slate-500">{formatMargin(entry.margin)}</dd>
               </div>
             ))}

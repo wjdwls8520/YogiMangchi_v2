@@ -2,7 +2,8 @@
 
 import type { RefObject } from "react";
 import type { Position } from "../api/account";
-import { formatDecimal } from "../api/account";
+import { formatQuantity } from "../api/account";
+import { formatMarketPrice } from "../market/price-format";
 import { OrderChoices, OrderInput } from "./order-controls";
 
 export function ClosePositionDialog({ dialogRef, position, symbol, mark, pnl, type, quantity, limitPrice, ratio, locked, unconfirmed, warning, onType, onQuantity, onPrice, onRatio, onSubmit, onCancel, onClose }: {
@@ -16,10 +17,10 @@ export function ClosePositionDialog({ dialogRef, position, symbol, mark, pnl, ty
     onCancel={(event) => { if (locked) event.preventDefault(); }} onClose={onClose}>
     <h2 id={`${prefix}-heading`}>{symbol} · {position.side} 청산</h2>
     <dl className="close-position-summary">
-      <div><dt>보유 수량</dt><dd>{formatDecimal(position.quantity)}</dd></div>
-      <div><dt>청산 예약</dt><dd>{formatDecimal(position.reservedCloseQuantity)}</dd></div>
-      <div><dt>청산 가능 수량</dt><dd>{formatDecimal(position.freeCloseQuantity)}</dd></div>
-      <div><dt>진입가</dt><dd>{formatDecimal(position.entryPrice)}</dd></div>
+      <div><dt>보유 수량</dt><dd>{formatQuantity(position.quantity)}</dd></div>
+      <div><dt>청산 예약</dt><dd>{formatQuantity(position.reservedCloseQuantity)}</dd></div>
+      <div><dt>청산 가능 수량</dt><dd>{formatQuantity(position.freeCloseQuantity)}</dd></div>
+      <div><dt>진입가</dt><dd>{formatMarketPrice(position.entryPrice)}</dd></div>
       <div><dt>Mark Price</dt><dd>{mark}</dd></div>
       <div><dt>미실현 손익 · 참고</dt><dd>{pnl} USDT</dd></div>
     </dl>

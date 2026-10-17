@@ -1,5 +1,5 @@
 import type { TradingOrder } from "../api/orders";
-import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/account";
+import { formatDecimal, formatQuantity, pnlTrend, symbolLabel, type Position } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
 import { TradingTable } from "./trading-table";
 import { CancelOrderButton, ClosePositionButton } from "./account-actions";
@@ -25,11 +25,11 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
     id: String(position.id),
     cells: {
       symbol: symbolLabel(position.tradingSymbolId, symbols), side: <span data-side={position.side}>{position.side}</span>,
-      size: formatDecimal(position.quantity), entry: price(position.entryPrice, position.tradingSymbolId, symbols),
+      size: formatQuantity(position.quantity), entry: price(position.entryPrice, position.tradingSymbolId, symbols),
       mark: <span title={valuation.mark ? "최신 WS Mark · 참고" : "시세 만료 또는 수신 대기"}>{price(valuation.mark, position.tradingSymbolId, symbols)}{!valuation.mark && <small> · 시세 대기</small>}</span>,
-      leverage: `${position.leverage}×`, pnl: <span data-trend={pnlTrend(valuation.pnl)}>{formatDecimal(valuation.pnl)} USDT</span>,
+      leverage: <span data-side={position.side}>{position.leverage}×</span>, pnl: <span data-trend={pnlTrend(valuation.pnl)}>{formatDecimal(valuation.pnl)} USDT</span>,
       roe:<span data-trend={pnlTrend(valuation.roe)}>{formatDecimal(valuation.roe)}%</span>,
-      reserved:formatDecimal(position.reservedCloseQuantity), free:formatDecimal(position.freeCloseQuantity),
+      reserved:formatQuantity(position.reservedCloseQuantity), free:formatQuantity(position.freeCloseQuantity),
       margin: formatDecimal(position.margin),
       action: <ClosePositionButton position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} />,
     },
@@ -47,7 +47,7 @@ export function PendingOrderTable({ orders, symbols }: { orders: readonly Tradin
     id: String(order.orderId),
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), type: order.type, intent: order.action, side: <span data-side={order.side}>{order.side}</span>,
-      quantity: formatDecimal(order.quantity), price: price(order.limitPrice, order.tradingSymbolId, symbols), status: order.status,
+      quantity: formatQuantity(order.quantity), price: price(order.limitPrice, order.tradingSymbolId, symbols), status: order.status,
       time:<time dateTime={order.createdAt}>{new Date(order.createdAt).toLocaleString("ko-KR",{timeZone:"Asia/Seoul"})}</time>,
       action: <CancelOrderButton orderId={order.orderId} symbol={symbolLabel(order.tradingSymbolId, symbols)} />,
     },
@@ -66,7 +66,7 @@ export function OrderHistoryTable({ orders, symbols }: { orders: readonly Tradin
     id: String(order.orderId),
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), action: `${order.action}${order.action==="LIQUIDATE" ? " · 강제청산" : ""} · ${order.side}`, type: order.type,
-      quantity: formatDecimal(order.quantity), price: price(order.fill?.price, order.tradingSymbolId, symbols), status: order.status,
+      quantity: formatQuantity(order.quantity), price: price(order.fill?.price, order.tradingSymbolId, symbols), status: order.status,
       requested:order.type==="MARKET" ? "시장가" : price(order.limitPrice,order.tradingSymbolId,symbols),
       realized:<span data-trend={pnlTrend(order.fill?.realizedPnl??null)}>{formatDecimal(order.fill?.realizedPnl)} USDT</span>,
       filled:order.fill ? <time dateTime={order.fill.executedAt}>{new Date(order.fill.executedAt).toLocaleString("ko-KR",{timeZone:"Asia/Seoul"})}</time> : "—",

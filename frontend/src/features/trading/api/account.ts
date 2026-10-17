@@ -40,11 +40,20 @@ export function portfolioPositions(positions: readonly Position[], symbols: read
   return positions.map((position) => ({ symbol: symbolLabel(position.tradingSymbolId, symbols), margin: position.margin }));
 }
 // String formatting only: no floating-point rounding of financial values.
-export function formatDecimal(value: string | null | undefined) {
+export function formatQuantity(value: string | null | undefined) {
   if (value == null) return "—";
   const [whole, fraction] = value.split(".");
   const significant = fraction?.replace(/0+$/, "");
   return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${(significant ?? "").padEnd(2, "0")}`;
+}
+// Display only. Round decimal strings to cents without changing server values or inputs.
+export function formatDecimal(value: string | null | undefined) {
+  if (value == null || !/^-?\d+(\.\d+)?$/.test(value)) return "—";
+  const negative=value.startsWith("-"), [whole,fraction=""]=value.replace(/^-/,'').split('.');
+  let cents=BigInt(whole)*BigInt(100)+BigInt(fraction.padEnd(2,'0').slice(0,2));
+  if (fraction.charAt(2)>='5') cents+=BigInt(1);
+  const digits=cents.toString().padStart(3,'0');
+  return `${negative && cents>BigInt(0) ? '-' : ''}${digits.slice(0,-2).replace(/\B(?=(\d{3})+(?!\d))/g,",")}.${digits.slice(-2)}`;
 }
 export function pnlTrend(value: string | null) {
   if (value === null || !/[1-9]/.test(value)) return undefined;

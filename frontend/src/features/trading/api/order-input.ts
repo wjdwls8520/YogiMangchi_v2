@@ -1,4 +1,7 @@
 const SCALE = BigInt("1000000000000000000");
+export const MAX_INPUT_LEVERAGE = 100;
+// Runtime OpenAPI, TradingMath and DB constraints currently cap actual orders at 20.
+export const SERVER_MAX_LEVERAGE = 20;
 export function decimalUnits(value: string) {
   if (!/^\d{1,30}(\.\d{1,18})?$/.test(value)) throw new Error("Invalid decimal");
   const [whole, fraction = ""] = value.split(".");
@@ -24,15 +27,15 @@ function priceFraction(value: string) {
   return { units: BigInt(whole + fraction), scale: BigInt(10) ** BigInt(fraction.length) };
 }
 export function estimatedOrder(quantity: string, price: string, leverage: number) {
-  if (!validQuantity(quantity) || !validSizingPrice(price) || !Number.isInteger(leverage) || leverage < 1 || leverage > 20) return null;
+  if (!validQuantity(quantity) || !validSizingPrice(price) || !Number.isInteger(leverage) || leverage < 1 || leverage > MAX_INPUT_LEVERAGE) return null;
   const parsed = priceFraction(price), product = decimalUnits(quantity) * parsed.units;
   const denominator = parsed.scale * BigInt(leverage);
   // Match TradingMath.margin's positive CEILING at scale 18; never understate required margin.
   return { notional: unitsDecimal(product / parsed.scale), margin: unitsDecimal((product + denominator - BigInt(1)) / denominator) };
 }
 export function ratioQuantity(balance: string | null | undefined, price: string | null | undefined, leverage: number, percent: number) {
-  if (!balance || !price || !validSizingPrice(price) || !Number.isInteger(leverage) || leverage < 1 || leverage > 20
-    || ![25, 50, 75, 100].includes(percent)) return "";
+  if (!balance || !price || !validSizingPrice(price) || !Number.isInteger(leverage) || leverage < 1 || leverage > MAX_INPUT_LEVERAGE
+    || !Number.isInteger(percent) || percent < 1 || percent > 100) return "";
   try {
     const parsed = priceFraction(price);
     const quantity = unitsDecimal(decimalUnits(balance) * BigInt(leverage) * BigInt(percent) * parsed.scale * BigInt(100_000_000) / (SCALE * parsed.units * BigInt(100)), 8);

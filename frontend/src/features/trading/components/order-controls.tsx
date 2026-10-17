@@ -1,6 +1,17 @@
 import type { ReactNode } from "react";
+import { MAX_INPUT_LEVERAGE, SERVER_MAX_LEVERAGE } from "../api/order-input";
 
 type Choice = { value: string; label: string };
+
+export function OrderLeverage({ side, value, disabled, onChange }: { side: "LONG" | "SHORT"; value: number; disabled: boolean; onChange: (value: number) => void }) {
+  const id = `leverage-${side.toLowerCase()}`;
+  return <div className="order-leverage"><label htmlFor={id} className="field-label" data-side={side}>{side === "LONG" ? "Long" : "Short"} 레버리지</label>
+    <select id={id} value={value} disabled={disabled} onChange={event => onChange(Number(event.target.value))} data-side={side} aria-describedby={value>SERVER_MAX_LEVERAGE ? `${id}-support` : undefined} className="order-leverage-input">
+      {Array.from({length:MAX_INPUT_LEVERAGE},(_,i)=>i+1).map(value=><option key={value} value={value}>{value}×{value>SERVER_MAX_LEVERAGE ? " · 대기" : ""}</option>)}
+    </select>
+    {value>SERVER_MAX_LEVERAGE && <p id={`${id}-support`} role="status" className="order-input-hint">현재 서버는 {SERVER_MAX_LEVERAGE}배까지 주문을 지원합니다.</p>}
+  </div>;
+}
 
 export function OrderChoices({
   legend,

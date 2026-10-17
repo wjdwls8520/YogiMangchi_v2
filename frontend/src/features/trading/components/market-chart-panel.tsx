@@ -9,7 +9,7 @@ import { TradingChart } from "./trading-chart";
 import { MarketHeader } from "./market-header";
 import { TradingAccountTabs, type AccountView } from "./trading-account-tabs";
 import { TradingNavigation } from "./trading-navigation";
-import { SelectedMarketProvider, useMarketFeed } from "./selected-market-provider";
+import { SelectedMarketProvider, useMarketFeed, type BookSelection } from "./selected-market-provider";
 import type { CandleInterval } from "../market/candles";
 import { OrderBookPanel } from "./order-book-panel";
 import { freshMarkPrice } from "../market/selected-market";
@@ -21,6 +21,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   const tickerQuery = useMarketTickers();
   const [mainView, setMainView] = useState<"chart" | "order" | "portfolio">("chart");
   const [analysisView, setAnalysisView] = useState<"chart" | "book">("chart");
+  const [bookSelection, setBookSelection] = useState<BookSelection>();
   const [accountView, setAccountView] = useState<AccountView>("positions");
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheet = useRef<HTMLDialogElement>(null);
@@ -99,7 +100,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
   return (
-    <SelectedMarketProvider symbol={selected} market={market} orderBook={orderBook} positionPrices={positionPrices}><div className="trading-grid" data-main-view={mainView}>
+    <SelectedMarketProvider symbol={selected} market={market} orderBook={orderBook} positionPrices={positionPrices} bookSelection={bookSelection}><div className="trading-grid" data-main-view={mainView}>
       <aside className="market-sidebar" aria-labelledby="sidebar-heading">
         <header className="section-heading"><h2 id="sidebar-heading" className="section-title">Markets</h2></header>
         <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준{tickerQuery.isError ? " · 시세 조회 실패" : ""}</p>
@@ -123,7 +124,10 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         <div className="analysis-navigation" role="group" aria-label="시장 정보 보기"><button type="button" aria-pressed={analysisView === "chart"} onClick={()=>setAnalysisView("chart")}>차트</button><button type="button" aria-pressed={analysisView === "book"} onClick={()=>setAnalysisView("book")}>호가</button></div>
         <div className="market-analysis" data-analysis-view={analysisView}>
           <TradingChart symbol={selected} market={market} interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
-          <OrderBookPanel symbol={selected} book={orderBook} mark={freshMarkPrice(market)?.decimal} />
+          <OrderBookPanel symbol={selected} book={orderBook} mark={freshMarkPrice(market)?.decimal} onSelectPrice={guest.phase === "ready" && selected ? price => {
+            setBookSelection({symbolId:selected.id,price,identity:`${guest.accountId}:${guest.generation}`});
+            setMainView("order");
+          } : undefined} />
         </div>
       </section>
       <div id="order-view" role="tabpanel" aria-labelledby="order-heading" tabIndex={0} className="order-view">{children}</div>
