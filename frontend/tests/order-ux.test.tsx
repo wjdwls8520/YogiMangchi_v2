@@ -10,7 +10,7 @@ import { OrderPanel } from "../src/features/trading/components/order-panel";
 import { SelectedMarketProvider } from "../src/features/trading/components/selected-market-provider";
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
 import { estimatedOrder, ratioQuantity } from "../src/features/trading/api/order-input";
-import { balanceIssue, formForSymbol, marketableLimitIssue, orderRejection, preflightOrder, selectBookPrice, type OpenForm } from "../src/features/trading/api/order-preflight";
+import { balanceIssue, formForSymbol, marketableLimitIssue, orderRejection, preflightOrder, type OpenForm } from "../src/features/trading/api/order-preflight";
 import { tradingMutationEffects } from "../src/features/trading/api/mutations";
 import { tradingKeys } from "../src/features/trading/api/query-keys";
 import { retryTradingQuery, tradingJson, TradingApiError } from "../src/features/trading/api/client";
@@ -36,29 +36,28 @@ test("order book parser preserves decimal strings and validates complete ordered
   assert.equal(freshOrderBook({...book,expiresAt:now+1},now).status,"FRESH");assert.deepEqual(freshOrderBook({...book,expiresAt:now},now).asks,[]);
 });
 test("book renders ten asks above Mark, ten bids below, and no levels for another/stale symbol", () => {
-  const book=parseOrderBook(input,1,now), props={symbol,book,mark:"100",disabled:false,onSelectPrice:()=>{}};
+  const book=parseOrderBook(input,1,now), props={symbol,book,mark:"100"};
   const html=renderToStaticMarkup(createElement(OrderBookPanel,props));
   assert.equal((html.match(/data-book-side="ask"/g)??[]).length,10);assert.equal((html.match(/data-book-side="bid"/g)??[]).length,10);
-  assert.ok(html.indexOf('data-price="110"')<html.indexOf('data-price="101"'));
-  assert.ok(html.indexOf('data-price="101"')<html.indexOf('class="order-book-mark"'));
-  assert.ok(html.indexOf('class="order-book-mark"')<html.indexOf('data-price="99"'));
-  assert.match(html,/Binance 참고 호가/);assert.match(html,/체결 가능 수량이 아닙니다/);
+  assert.ok(html.indexOf('>110<')<html.indexOf('>101<'));
+  assert.ok(html.indexOf('>101<')<html.indexOf('class="order-book-mark"'));
+  assert.ok(html.indexOf('class="order-book-mark"')<html.indexOf('>99<'));
+  assert.doesNotMatch(html,/<button|role="button"|tabindex|data-price=/);
+  assert.match(html,/Binance 참고 호가/);assert.match(html,/체결 가능 수량이 아니며 주문과 연결되지 않습니다/);
   for(const other of [emptyOrderBook(1,"STALE"),{...book,symbolId:2}]) assert.doesNotMatch(renderToStaticMarkup(createElement(OrderBookPanel,{...props,book:other})),/data-book-side=/);
 });
-test("public order panel replaces authenticated inputs with a Guest CTA and keeps the book", () => {
+test("public order panel replaces authenticated inputs with a Guest CTA", () => {
   const market={symbolId:1,state:"READY" as const,recovery:0,price:{eventTime:now,decimal:"100",value:100}};
   let client:QueryClient|undefined;
   function Subject() { client=useQueryClient();return <SelectedMarketProvider symbol={symbol} market={market} orderBook={emptyOrderBook(1)}><OrderPanel /></SelectedMarketProvider>; }
   try {
     const html=renderToStaticMarkup(<TradingDataProvider><Subject /></TradingDataProvider>);
     assert.doesNotMatch(html,/id="order-quantity"/);assert.doesNotMatch(html,/id="limit-price"/);
-    assert.match(html,/게스트로 모의투자 시작/);assert.match(html,/Order Book/);
+    assert.match(html,/게스트로 모의투자 시작/);assert.doesNotMatch(html,/Order Book/);
   } finally { client?.clear(); }
 });
-test("book price selection switches to LIMIT and copies only raw price, preserving quantity/leverage/side", () => {
-  const next=selectBookPrice({...initial,quantity:"0.125",ratio:100},"99.000000000000000001");
-  assert.equal(next.type,"LIMIT");assert.equal(next.limitPrice,"99.000000000000000001");assert.equal(next.quantity,"0.125");
-  assert.equal(next.side,"LONG");assert.equal(next.leverage,10);assert.equal(next.ratio,0);
+test("symbol changes reset quantity, limit price and quick preset", () => {
+  const next={...initial,type:"LIMIT" as const,limitPrice:"99.000000000000000001",quantity:"0.125",ratio:100};
   const reset=formForSymbol(next,2);assert.equal(reset.quantity,"");assert.equal(reset.limitPrice,"");assert.equal(reset.ratio,0);
   assert.equal(formForSymbol(reset,1).quantity,"");
 });

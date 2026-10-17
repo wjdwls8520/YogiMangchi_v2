@@ -26,13 +26,14 @@ function harness() {
   const prices: MarketPrice[] = [];
   const books: OrderBook[] = [];
   const unavailableSymbols: number[] = [];
+  const allPrices: {id:number;price:MarketPrice|null}[]=[];
   const runtime = {
     socket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
     now: () => now, random: () => 0.5,
     later: (fn: () => void, ms: number) => { const id = ++nextId; timers.set(id, { fn, at: now + ms }); return id as unknown as ReturnType<typeof setTimeout>; },
     cancel: (id: ReturnType<typeof setTimeout>) => { timers.delete(id as unknown as number); },
   };
-  const start = (id = 927) => openMarketStream({ url: "ws://localhost:8081/ws/market", symbolId: id, onState: (state) => states.push(state), onPrice: (price) => prices.push(price), onOrderBook: (book) => books.push(book), onSymbolUnavailable: (symbolId) => unavailableSymbols.push(symbolId) }, runtime);
+  const start = (id = 927, subscriptionIds?: number[]) => openMarketStream({ url: "ws://localhost:8081/ws/market", symbolId: id, subscriptionIds,onMarketPrice:(id,price)=>allPrices.push({id,price}), onState: (state) => states.push(state), onPrice: (price) => prices.push(price), onOrderBook: (book) => books.push(book), onSymbolUnavailable: (symbolId) => unavailableSymbols.push(symbolId) }, runtime);
   const handshake = (socket = sockets.at(-1)!, clockOffset = 0) => { socket.open(); socket.message({ type: "CONNECTED", maxSubscriptions: 32, heartbeatSeconds: 20, idleTimeoutSeconds: 60 }); socket.message({ type: "PONG", serverTime: new Date(now + clockOffset).toISOString() }); };
   const tick = (overrides = {}) => ({ type: "MARKET_PRICE", tradingSymbolId: 927, price: "64579.80000000", status: "FRESH", eventTime: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), ...overrides });
   const advance = (ms: number) => {
@@ -44,8 +45,28 @@ function harness() {
     }
     now = until;
   };
-  return { start, handshake, tick, advance, sockets, states, prices, books, timers, unavailableSymbols };
+  return { start, handshake, tick, advance, sockets, states, prices, books, timers, unavailableSymbols,allPrices };
 }
+test("one socket subscribes selected and position symbols with independent Mark expiry and no chart contamination",()=>{
+  const h=harness(),stop=h.start(927,[927,928]);h.handshake();
+  assert.deepEqual(h.sockets[0].sent[1],{type:"SUBSCRIBE",tradingSymbolIds:[927,928]});
+  h.sockets[0].message({type:"SNAPSHOT",prices:[h.tick(),h.tick({tradingSymbolId:928,price:"3000"})]});
+  assert.equal(h.prices.length,1);assert.equal(h.allPrices.filter(row=>row.price).length,2);
+  h.advance(1000);h.sockets[0].message(h.tick({tradingSymbolId:928,price:"3001"}));
+  h.sockets[0].message(h.tick({tradingSymbolId:999,price:"500"}));
+  h.advance(4000);assert.equal(h.states.at(-1),"UNAVAILABLE");
+  assert.equal(h.allPrices.filter(row=>row.id===928).at(-1)?.price?.decimal,"3001");
+  h.advance(1000);assert.equal(h.allPrices.filter(row=>row.id===928).at(-1)?.price,null);
+  stop();assert.equal(h.timers.size,0);assert.equal(h.sockets.length,1);
+});
+test("position Mark status, malformed/reverse ticks and reconnect clear only the affected data",()=>{
+  const h=harness(),stop=h.start(927,[927,928]);h.handshake();h.sockets[0].message(h.tick());h.sockets[0].message(h.tick({tradingSymbolId:928}));
+  const count=h.allPrices.length;h.sockets[0].message(h.tick({tradingSymbolId:928}));assert.equal(h.allPrices.length,count);
+  h.sockets[0].message(h.tick({tradingSymbolId:928,price:4}));assert.equal(h.allPrices.at(-1)?.price,null);assert.equal(h.states.at(-1),"READY");
+  h.advance(100);h.sockets[0].message(h.tick({tradingSymbolId:928}));
+  h.sockets[0].message({type:"MARKET_STATUS",status:"STALE",affectedTradingSymbolIds:[928]});assert.equal(h.allPrices.at(-1)?.price,null);assert.equal(h.states.at(-1),"READY");
+  h.sockets[0].disconnect();assert.equal(h.allPrices.slice(-2).every(row=>row.price===null),true);stop();assert.equal(h.timers.size,0);
+});
 const bookMessage = (tick: ReturnType<ReturnType<typeof harness>["tick"]>, overrides = {}) => ({ ...tick, type: "ORDER_BOOK",
   bids: [{ price: "99.000000000000000001", quantity: "2" }], asks: [{ price: "101", quantity: "3" }], ...overrides });
 test("ORDER_BOOK replaces snapshots on the existing socket and expires independently of Mark Price", () => {

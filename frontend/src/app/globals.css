@@ -36,7 +36,7 @@
   body:has(.market-symbol-sheet[open]) {
     overflow: hidden;
   }
-  body:has(.guest-start-dialog[open]) { overflow: hidden; }
+  body:has(.guest-start-dialog[open]), body:has(.position-close-dialog[open]) { overflow: hidden; }
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-brand-600;
   }
@@ -71,6 +71,33 @@
   .guest-start-dialog p + p { @apply mt-3; }
   .guest-dialog-actions { @apply mt-5 flex flex-wrap justify-end gap-2; }
   .guest-cancel { @apply min-h-11 rounded-sm border border-slate-200 px-3 py-2 font-medium enabled:cursor-pointer disabled:opacity-50; }
+  .position-close-dialog { @apply fixed inset-0 m-auto max-w-md rounded-sm border border-slate-200 bg-white p-5 text-trade-body text-slate-700; width: calc(100% - 2rem); max-height: calc(100dvh - 2rem); white-space: normal; }
+  .position-close-dialog::backdrop { background: rgb(15 23 42 / 45%); }
+  .position-close-dialog h2 { @apply mb-4 text-base font-semibold; }
+  .position-close-dialog form { @apply mt-4 flex flex-col gap-3; }
+  .position-close-dialog .guest-start-button { @apply bg-brand-600 text-white; }
+  .close-position-summary { @apply grid grid-cols-2 gap-3 text-trade-meta; }
+  .close-position-summary dt { @apply text-slate-500; }
+  .close-position-summary dd { @apply mt-1 font-medium; overflow-wrap: anywhere; }
+  .wallet-overview { @apply border-t border-slate-200 p-3 text-trade-meta; }
+  .wallet-overview h3 { @apply mb-2 text-trade-heading font-semibold; }
+  .wallet-overview dl { @apply grid gap-2; }
+  .wallet-overview dl > div { @apply flex justify-between gap-2; }
+  .wallet-overview dt, .wallet-overview p { @apply text-slate-500; }
+  .wallet-overview dd { @apply text-right font-medium tabular-nums; overflow-wrap: anywhere; }
+  .wallet-overview p { @apply mt-3; }
+  [data-trend="up"] { @apply text-gain; }
+  [data-trend="down"] { @apply text-loss; }
+  .analysis-navigation { @apply grid grid-cols-2 border-b border-slate-200; }
+  .analysis-navigation button { @apply min-h-11 text-trade-body font-medium text-slate-500 cursor-pointer aria-pressed:border-b-2 aria-pressed:border-brand-600 aria-pressed:text-brand-700; }
+  .market-analysis { @apply grid min-w-0 flex-1; }
+  .market-analysis > .order-book, .market-analysis[data-analysis-view="book"] > .market-chart { @apply hidden; }
+  .market-analysis[data-analysis-view="book"] > .order-book { @apply block; }
+  .trading-account > .trading-navigation { @apply overflow-x-auto; }
+  .trading-account .trading-tab { @apply flex-none whitespace-nowrap; }
+  .activity-panel { @apply min-w-0; }
+  .trading-grid[data-main-view] .trading-account .activity-panel[hidden] { display: none; }
+  .liquidation-feedback { @apply border-b border-slate-200 bg-slate-50 px-3 py-2 text-trade-body text-loss; }
   .trading-brand-mark {
     @apply flex size-6 items-center justify-center rounded-sm bg-brand-600 text-white;
   }
@@ -310,11 +337,6 @@
   .order-panel-body {
     @apply flex flex-col gap-3 p-3;
   }
-  .order-entry { @apply grid min-w-0; }
-  .order-entry-navigation { @apply grid grid-cols-2 border-b border-slate-200; }
-  .order-entry-navigation button { @apply min-h-11 text-trade-body font-medium text-slate-500 enabled:cursor-pointer aria-pressed:border-b-2 aria-pressed:border-brand-600 aria-pressed:text-brand-700; }
-  .order-entry[data-entry-view="order"] > .order-book,
-  .order-entry[data-entry-view="book"] > .order-panel-body { @apply hidden; }
   .order-settings-fields[data-order-type="MARKET"] > div:has(#order-quantity) { @apply col-span-2; }
   .order-book { @apply min-w-0 border-t border-slate-200; }
   .order-book .section-heading { @apply flex-wrap gap-1; }
@@ -324,7 +346,7 @@
   }
   .order-book-columns { @apply py-2 text-slate-500; }
   .order-book-columns > :last-child, .order-book-level > :last-child { @apply text-right; }
-  .order-book-level { @apply min-h-7 w-full items-center text-left enabled:cursor-pointer enabled:hover:bg-slate-50; }
+  .order-book-level { @apply min-h-7 w-full items-center text-left; }
   .order-book-level > span { overflow-wrap: anywhere; }
   .order-book-level[data-book-side="ask"] > :first-child { @apply text-loss; }
   .order-book-level[data-book-side="bid"] > :first-child { @apply text-gain; }
@@ -686,12 +708,9 @@
     }
   }
   @media (width >= 90rem) {
-    .trading-grid { grid-template-columns: 13rem minmax(0, 1fr) 35rem; }
-    .order-entry { grid-template-columns: 14rem minmax(0, 1fr); }
-    .order-entry > .order-panel-body { grid-column: 2; grid-row: 1; }
-    .order-entry > .order-book { @apply border-t-0 border-r border-slate-200; grid-column: 1; grid-row: 1; }
-    .order-entry-navigation { @apply hidden; }
-    .order-entry[data-entry-view] > .order-panel-body { @apply flex; }
-    .order-entry[data-entry-view] > .order-book { @apply block; }
+    .market-analysis { grid-template-columns: minmax(0, 1fr) 13rem; }
+    .market-analysis[data-analysis-view] > .market-chart { @apply flex; }
+    .market-analysis[data-analysis-view] > .order-book { @apply block border-l border-slate-200; }
+    .analysis-navigation { @apply hidden; }
   }
 }

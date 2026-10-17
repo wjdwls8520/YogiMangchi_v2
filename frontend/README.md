@@ -125,12 +125,17 @@ Chart/Header/주문 입력에서 공유하며 최신 Mark Price가 없으면 신
 `GET /api/v1/market/tickers`를 2초마다 조회하여 목록 가격과 24h 통계를 표시한다.
 오류 또는 오래된 캐시에는 예시 가격을 대신 표시하지 않는다.
 
-MARKET/LIMIT, LONG/SHORT 주문과 포지션 전체 청산, 개별 미체결 취소를 지원한다.
+MARKET/LIMIT, LONG/SHORT 주문과 시장가·지정가 부분/전체 청산, 개별 미체결 취소를 지원한다.
 주문·청산은 Idempotency-Key를 사용하고 Mutation은 자동 재시도하지 않는다.
 결과가 불확실하면 입력을 잠그고 사용자의 재확인에 같은 요청·키를 재사용한다.
 Mutation의 401은 새 Guest로 재전송하지 않는다. 완료 후 Summary/미체결/이력을 갱신한다.
 금융 값은 Decimal 문자열로 유지하고 참고 금액/비율 입력만 BigInt로 계산한다.
-지정가 청산은 API client/Mutation 명령까지 제공하며 화면에는 연결하지 않았다.
+청산 창의 비율은 Wallet이 아닌 서버 `freeCloseQuantity` 기준이며 예약 수량을 초과할 수 없다.
+포지션 전체 종목의 Mark를 WS당 최대 32개씩 구독하여 표시용 PnL/ROE를 BigInt로 갱신한다.
+수량·증거금·Wallet·실현손익은 REST 서버 응답을 유지한다. 호가는 클릭할 수 없는 참고 정보다.
+거래 활동은 포지션/미체결/주문 내역/포지션 내역/자산으로 구분한다.
+Closed Position History API가 없어 포지션 내역은 준비 상태로 표시한다.
+강제청산 안내는 새로 조회된 LIQUIDATE 체결 이력만 사용하며 별도 Push를 가정하지 않는다.
 
 차트는 `/api/v1/market/candles?tradingSymbolId=...&interval=...&limit=300`의 Mark Price OHLC를 사용한다.
 1m/3m/5m/15m/30m/1h/4h/12h/24h를 지원하며, 종목·주기 전환 시 요청과 렌더러를 분리한다.
