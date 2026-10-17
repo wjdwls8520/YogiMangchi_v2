@@ -27,7 +27,7 @@ export function TradingWorkspace() {
       <main id="trading-main" tabIndex={-1} className="trading-workspace">
         <div className="trading-page-intro">
           <h1 className="sr-only">선물 모의투자</h1>
-          <p id="preview-notice">서버의 실시간 Mark Price와 실제 24h 통계를 사용합니다. Guest 주문·전체 청산·취소가 가능합니다. 실제 자금을 사용하지 않는 모의투자입니다.</p>
+          <p id="preview-notice">서버의 실시간 Mark Price와 실제 24h 통계를 사용합니다. Guest 주문·부분/전체 청산·취소가 가능합니다. 실제 자금을 사용하지 않는 모의투자입니다.</p>
         </div>
         <MarketChartPanel>
           <OrderPanel />

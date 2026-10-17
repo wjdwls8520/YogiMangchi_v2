@@ -35,8 +35,11 @@ export function orderRejection(code: string | undefined, command: TradingCommand
     ? "롱 지정가는 현재 가격보다 낮아야 합니다." : "숏 지정가는 현재 가격보다 높아야 합니다." };
   return null;
 }
-export function selectBookPrice(form: OpenForm, price: string): OpenForm {
-  return { ...form, type: "LIMIT", limitPrice: price, ratio: 0 };
+export function sizingUnavailable(type: OpenForm["type"], price: string, ready: boolean, availableBalance: string | null | undefined) {
+  if (type==="LIMIT"&&!validLimitPrice(price)) return "지정가를 입력하면 자산 비율을 사용할 수 있습니다.";
+  if (!ready) return "계정과 최신 Mark Price를 확인한 뒤 자산 비율을 사용할 수 있습니다.";
+  if (availableBalance==null) return "사용 가능한 잔액을 조회한 뒤 자산 비율을 사용할 수 있습니다.";
+  return null;
 }
 export function formForSymbol(form: OpenForm, symbolId: number | null): OpenForm {
   return form.symbolId === symbolId ? form : { ...form, symbolId, quantity: "", limitPrice: "", ratio: 0 };

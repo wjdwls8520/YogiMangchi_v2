@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { marketEndpoints, parseSymbols, type TradingSymbol } from "../market/catalog";
 import { retryDelay } from "../market/stream";
-import { useMarketTickers } from "../api/queries";
+import { useMarketTickers, useTradingSummary } from "../api/queries";
 import { SymbolSelector } from "./symbol-selector";
 import { TradingChart } from "./trading-chart";
 import { MarketHeader } from "./market-header";
@@ -11,10 +11,16 @@ import { TradingAccountTabs, type AccountView } from "./trading-account-tabs";
 import { TradingNavigation } from "./trading-navigation";
 import { SelectedMarketProvider, useMarketFeed } from "./selected-market-provider";
 import type { CandleInterval } from "../market/candles";
+import { OrderBookPanel } from "./order-book-panel";
+import { freshMarkPrice } from "../market/selected-market";
+import { useGuestSession } from "./trading-data-provider";
 
 export function MarketChartPanel({ children }: { children: ReactNode }) {
+  const account = useTradingSummary();
+  const {snapshot:guest} = useGuestSession();
   const tickerQuery = useMarketTickers();
   const [mainView, setMainView] = useState<"chart" | "order" | "portfolio">("chart");
+  const [analysisView, setAnalysisView] = useState<"chart" | "book">("chart");
   const [accountView, setAccountView] = useState<AccountView>("positions");
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheet = useRef<HTMLDialogElement>(null);
@@ -24,6 +30,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   const [interval, setInterval] = useState<CandleInterval>("1m");
   const unavailableIds = useRef(new Set<number>());
   const [catalogRevision, setCatalogRevision] = useState(0);
+  const refreshSubscriptionCatalog=useCallback(()=>setCatalogRevision(revision=>revision+1),[]);
   const refreshAfterSymbolError = useCallback((id: number) => {
     if (unavailableIds.current.has(id)) return;
     unavailableIds.current.add(id);
@@ -60,7 +67,8 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   }, [catalogRevision]);
   const selected = catalog.symbols.find((entry) => entry.id === selectedId)
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
-  const { market, orderBook } = useMarketFeed(selected?.id ?? null, catalog.socket, refreshAfterSymbolError);
+  const positionIds = JSON.stringify([...new Set((account.data?.positions??[]).map(position=>position.tradingSymbolId).filter(id=>catalog.symbols.some(symbol=>symbol.id===id)))].sort((a,b)=>a-b));
+  const { market, orderBook, positionPrices } = useMarketFeed(selected?.id ?? null, catalog.socket, refreshAfterSymbolError,positionIds,`${guest.accountId}:${guest.generation}`,refreshSubscriptionCatalog);
   function openSheet() {
     if (!sheet.current || sheet.current.open) return;
     sheet.current.showModal();
@@ -91,7 +99,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
   return (
-    <SelectedMarketProvider symbol={selected} market={market} orderBook={orderBook}><div className="trading-grid" data-main-view={mainView}>
+    <SelectedMarketProvider symbol={selected} market={market} orderBook={orderBook} positionPrices={positionPrices}><div className="trading-grid" data-main-view={mainView}>
       <aside className="market-sidebar" aria-labelledby="sidebar-heading">
         <header className="section-heading"><h2 id="sidebar-heading" className="section-title">Markets</h2></header>
         <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준{tickerQuery.isError ? " · 시세 조회 실패" : ""}</p>
@@ -106,13 +114,17 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         <span className="preview-label">무기한 선물</span>
       </header>
       <TradingNavigation label="모바일 거래 화면" prefix="main" activeId={mainView} onSelect={selectMainView} className="main-navigation" tabs={[
-        { id: "chart", label: "Chart", controls: "chart-view" },
-        { id: "order", label: "Order", controls: "order-view trading-account" },
-        { id: "portfolio", label: "Portfolio", controls: "portfolio-view" },
+        { id: "chart", label: "차트·호가", controls: "chart-view" },
+        { id: "order", label: "주문", controls: "order-view trading-account" },
+        { id: "portfolio", label: "거래 내역", controls: "trading-account" },
       ]} />
       <section id="chart-view" role="tabpanel" aria-labelledby="chart-heading" tabIndex={0} className="chart-view">
         <MarketHeader symbol={selected} market={market} ticker={tickerQuery.tickers.find((ticker) => ticker.tradingSymbolId === selected?.id && ticker.symbol === selected.symbol && ticker.quoteAsset === selected.quoteAsset)} />
-        <TradingChart symbol={selected} market={market} interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
+        <div className="analysis-navigation" role="group" aria-label="시장 정보 보기"><button type="button" aria-pressed={analysisView === "chart"} onClick={()=>setAnalysisView("chart")}>차트</button><button type="button" aria-pressed={analysisView === "book"} onClick={()=>setAnalysisView("book")}>호가</button></div>
+        <div className="market-analysis" data-analysis-view={analysisView}>
+          <TradingChart symbol={selected} market={market} interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
+          <OrderBookPanel symbol={selected} book={orderBook} mark={freshMarkPrice(market)?.decimal} />
+        </div>
       </section>
       <div id="order-view" role="tabpanel" aria-labelledby="order-heading" tabIndex={0} className="order-view">{children}</div>
       <TradingAccountTabs activeTab={accountView} onSelect={setAccountView} symbols={catalog.allSymbols} />

@@ -11,16 +11,17 @@ import { orderRejection, type OrderIssue } from "./order-preflight";
 import type { TradingOrder } from "./orders";
 
 type Rejected = (issue: OrderIssue, command: TradingCommand, identity: SessionSnapshot) => void;
+type Failed = (error: Error, command: TradingCommand) => void;
 type MutationRequest = { command: TradingCommand; session: SessionSnapshot };
-export function tradingMutationEffects(client: Pick<QueryClient, "invalidateQueries">, session: Pick<GuestSession, "getSnapshot">, onRejected?: Rejected) {
+export function tradingMutationEffects(client: Pick<QueryClient, "invalidateQueries">, session: Pick<GuestSession, "getSnapshot">, onRejected?: Rejected, onFailed?: Failed) {
   const current = (identity: SessionSnapshot) => session.getSnapshot().accountId === identity.accountId && session.getSnapshot().generation === identity.generation;
   return {
     onError: (error: Error, request: MutationRequest) => {
       if (!current(request.session)) return;
       const issue = orderRejection(error instanceof TradingApiError ? error.code : undefined, request.command);
-      if (!issue) return;
-      if (issue.kind === "marketable") void client.invalidateQueries({ queryKey: ["market", process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081", "tickers"] });
-      onRejected?.(issue, request.command, request.session);
+      if (error instanceof TradingApiError && error.code === "MARKETABLE_LIMIT_NOT_ALLOWED") void client.invalidateQueries({ queryKey: ["market", process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081", "tickers"] });
+      if (issue) onRejected?.(issue, request.command, request.session);
+      onFailed?.(error,request.command);
     },
     onSettled: async (_data: TradingOrder | undefined, _error: Error | null, request: MutationRequest) => {
       if (current(request.session)) await client.invalidateQueries({ queryKey: tradingKeys.account(request.session) });
@@ -28,7 +29,7 @@ export function tradingMutationEffects(client: Pick<QueryClient, "invalidateQuer
   };
 }
 
-export function useTradingMutation(onRejected?: Rejected) {
+export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
   const { session, snapshot } = useGuestSession();
   const client = useQueryClient();
   const [intent] = useState(() => createTradingIntent((request) => session.write(request.command, request.session, request.key)));
@@ -36,7 +37,7 @@ export function useTradingMutation(onRejected?: Rejected) {
   const [unconfirmed, setUnconfirmed] = useState<{ command: TradingCommand; session: SessionSnapshot } | null>(null);
   const mutation = useMutation({ retry: false,
     mutationFn: (request: { command: TradingCommand; session: SessionSnapshot }) => intent.execute(request.command, request.session),
-    ...tradingMutationEffects(client, session, onRejected),
+    ...tradingMutationEffects(client, session, onRejected,onFailed),
   });
   const sameIdentity = (value: SessionSnapshot) => value.accountId === snapshot.accountId && value.generation === snapshot.generation;
   const pendingConfirmation = unconfirmed && sameIdentity(unconfirmed.session) ? unconfirmed : null;
