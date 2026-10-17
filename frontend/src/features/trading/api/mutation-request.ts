@@ -1,7 +1,7 @@
 import { TradingApiError } from "./client";
 import type { SessionSnapshot } from "./guest-session";
 import type { TradingOrder } from "./orders";
-import { validLimitPrice, validQuantity } from "./order-input";
+import { SERVER_MAX_LEVERAGE, validLimitPrice, validQuantity } from "./order-input";
 
 export type TradingCommand =
   | { kind: "open"; tradingSymbolId: number; type: "MARKET" | "LIMIT"; side: "LONG" | "SHORT"; quantity: string; leverage: number; limitPrice?: string }
@@ -15,7 +15,7 @@ export function mutationRequest(command: TradingCommand) {
   if (command.kind === "cancel") return { path: `account/orders/${command.orderId}/cancel`, body: undefined, keyed: false };
   if (command.quantity !== undefined && !validQuantity(command.quantity)) throw new TradingApiError(400, "수량은 양수이며 소수점 8자리 이내여야 합니다.");
   if (command.kind === "open") {
-    if (!validQuantity(command.quantity) || !Number.isInteger(command.leverage) || command.leverage < 1 || command.leverage > 20
+    if (!validQuantity(command.quantity) || !Number.isInteger(command.leverage) || command.leverage < 1 || command.leverage > SERVER_MAX_LEVERAGE
       || !["MARKET", "LIMIT"].includes(command.type) || !["LONG", "SHORT"].includes(command.side)) throw new TradingApiError(400, "주문 수량·유형·방향·레버리지를 확인해 주세요.");
     if (command.type === "LIMIT" && !validLimitPrice(command.limitPrice ?? "")) throw new TradingApiError(400, "양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.");
     return { path: "account/orders", body: { type: command.type, tradingSymbolId: command.tradingSymbolId, side: command.side,

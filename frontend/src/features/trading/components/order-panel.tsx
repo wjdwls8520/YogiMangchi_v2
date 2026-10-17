@@ -2,14 +2,14 @@
 
 import { useState } from "react";
 import { AccountWallet } from "./account-wallet";
-import { OrderChoices, OrderInput } from "./order-controls";
+import { OrderChoices, OrderInput, OrderLeverage } from "./order-controls";
 import { useSelectedMarket } from "./selected-market-provider";
 import { useGuestSession } from "./trading-data-provider";
 import { freshMarkPrice } from "../market/selected-market";
 import { useTradingSummary } from "../api/queries";
 import { useTradingMutation } from "../api/mutations";
-import { estimatedOrder, ratioQuantity, validLimitPrice, validQuantity, validSizingPrice } from "../api/order-input";
-import { formForSymbol, marketableLimitIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
+import { estimatedOrder, SERVER_MAX_LEVERAGE, validLimitPrice, validQuantity, validSizingPrice } from "../api/order-input";
+import { formForSymbol, formForSide, formForBookPrice, ratioInputQuantity, marketableLimitIssue, preflightOrder, sizingUnavailable, type SideLeverage, type OpenForm, type OrderIssue } from "../api/order-preflight";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
 import { formatMarketPrice } from "../market/price-format";
@@ -18,20 +18,22 @@ import { WalletOverview } from "./wallet-overview";
 
 type Form = OpenForm & { identity: string };
 export function OrderPanel() {
-  const { symbol, market } = useSelectedMarket();
+  const { symbol, market, bookSelection } = useSelectedMarket();
   const { snapshot } = useGuestSession();
   const account = useTradingSummary();
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
   const [stored, setForm] = useState<Form>({ identity, symbolId: null, type: "MARKET", side: "LONG", leverage: 10, quantity: "", limitPrice: "", ratio: 0 });
+  const [leverages, setLeverages] = useState<SideLeverage>({LONG:10,SHORT:10});
+  const [seenBookSelection, setSeenBookSelection] = useState(bookSelection);
   const [result, setResult] = useState<{ order: TradingOrder; identity: string } | null>(null);
   const [serverWarning, setServerWarning] = useState<{ side: OpenForm["side"]; issue: OrderIssue } | null>(null);
   const switched = stored.symbolId !== (symbol?.id ?? null) || stored.identity !== identity;
-  const form: Form = switched ? { ...formForSymbol(stored, symbol?.id ?? null), identity, quantity: "", limitPrice: "", ratio: 0 } : stored;
+  const form: Form = { ...formForSide(switched ? { ...formForSymbol(stored, symbol?.id ?? null), quantity: "", limitPrice: "", ratio: 0 } : stored, stored.side, leverages), identity };
   // Commit the reset, so switching A -> B -> A cannot resurrect A's old inputs.
   if (switched) { setForm(form); setResult(null); setServerWarning(null); }
   const action = useTradingMutation((issue, command, requestSession) => {
     if (command.kind !== "open" || command.tradingSymbolId !== symbol?.id || `${requestSession.accountId}:${requestSession.generation}` !== identity
-      || command.quantity !== form.quantity.trim() || command.type !== form.type || command.leverage !== form.leverage
+      || command.quantity !== form.quantity.trim() || command.type !== form.type || command.leverage !== leverages[command.side]
       || (command.type === "LIMIT" && command.limitPrice !== form.limitPrice.trim())) return;
     setServerWarning({ side: command.side, issue });
     window.alert(issue.message);
@@ -39,14 +41,20 @@ export function OrderPanel() {
   const mark = freshMarkPrice(market);
   const ready = snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
   const locked = action.pending || action.unconfirmed || snapshot.phase !== "ready";
+  if (bookSelection !== seenBookSelection) {
+    setSeenBookSelection(bookSelection);
+    const next = bookSelection && bookSelection.identity === identity && !locked ? formForBookPrice(form,bookSelection.symbolId,bookSelection.price) : null;
+    if (next) { setForm({...next,identity}); setResult(null); setServerWarning(null); }
+  }
   const price = form.type === "LIMIT" ? form.limitPrice.trim() : mark?.decimal ?? "";
   const quantity = form.quantity.trim();
   const valid = validQuantity(quantity) && (form.type === "MARKET" || validLimitPrice(price));
   const canSize = ready && account.data?.wallet.availableBalance != null && (form.type === "LIMIT" ? validLimitPrice(price) : validSizingPrice(price));
+  const ratioDisabled = locked || (form.type === "MARKET" && !canSize);
   const estimate = estimatedOrder(quantity, price, form.leverage);
-  function update(values: Partial<OpenForm>) { setForm({ ...form, ...values }); setResult(null); setServerWarning(null); action.clearError(); }
+  function update(values: Partial<OpenForm>) { setForm({ ...formForSide({...form,...values},values.side??form.side,leverages), identity }); setResult(null); setServerWarning(null); action.clearError(); }
   function selectRatio(percent: number) {
-    update({ ratio: percent, quantity: percent === 0 ? "" : ratioQuantity(account.data?.wallet.availableBalance, price, form.leverage, percent) });
+    update({ ratio: percent, quantity: ratioInputQuantity(form.type,account.data?.wallet.availableBalance,price,form.leverage,percent) });
   }
   function complete(order: TradingOrder | null) {
     if (!order) return;
@@ -56,17 +64,18 @@ export function OrderPanel() {
   async function submit(side: "LONG" | "SHORT") {
     if (locked) return;
     update({ side });
-    const issue = preflightOrder(form, side, ready, freshMarkPrice(market)?.decimal, account.data?.wallet.availableBalance);
+    const commandForm = formForSide(form,side,leverages);
+    const issue = preflightOrder(commandForm, side, ready, freshMarkPrice(market)?.decimal, account.data?.wallet.availableBalance);
     if (issue) { setServerWarning({ side, issue }); window.alert(issue.message); return; }
     if (!symbol) return;
     complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity,
-      leverage: form.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
+      leverage: commandForm.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
   }
   function warning(side: OpenForm["side"]) {
     if (serverWarning?.side === side) return serverWarning.issue;
     const relation = form.type === "LIMIT" ? marketableLimitIssue(side, price, mark?.decimal) : null;
     if (relation) return relation;
-    const check = valid ? preflightOrder(form, side, ready, mark?.decimal, account.data?.wallet.availableBalance) : null;
+    const check = valid ? preflightOrder(formForSide(form,side,leverages), side, ready, mark?.decimal, account.data?.wallet.availableBalance) : null;
     return check?.kind === "balance" ? check : null;
   }
   return <section aria-labelledby="order-heading" aria-describedby={snapshot.phase === "ready" ? "order-preview-note" : undefined} className="order-panel trading-section">
@@ -74,33 +83,29 @@ export function OrderPanel() {
     {snapshot.phase !== "ready" ? <div className="order-panel-body"><GuestStartPrompt /></div> : <form className="order-panel-body" onSubmit={(event) => { event.preventDefault(); void submit(form.side); }}>
       <AccountWallet />
       <details className="order-settings" open>
-        <summary>주문 설정 <span>{form.type} · {form.leverage}× · {symbol?.displaySymbol ?? "종목 선택"}</span></summary>
+        <summary>주문 설정 <span>{form.type} · <span data-side="LONG">Long {leverages.LONG}×</span> / <span data-side="SHORT">Short {leverages.SHORT}×</span> · {symbol?.displaySymbol ?? "종목 선택"}</span></summary>
         <div className="order-settings-fields" data-order-type={form.type}>
           <OrderChoices legend="주문 유형" name="order-type" selected={form.type} disabled={locked} onChange={(value) => { if (value === "MARKET" || value === "LIMIT") update({ type: value, ratio: 0 }); }} choices={[{ value: "MARKET", label: "시장가" }, { value: "LIMIT", label: "지정가" }]} />
           <OrderChoices legend="포지션 방향" name="position-side" selected={form.side} disabled={locked} onChange={(value) => { if (value === "LONG" || value === "SHORT") update({ side: value }); }} choices={[{ value: "LONG", label: "↗ Long" }, { value: "SHORT", label: "↘ Short" }]} />
-          <div className="order-leverage"><label htmlFor="leverage" className="text-trade-meta font-medium text-slate-500">레버리지</label>
-            <select id="leverage" value={form.leverage} disabled={locked} onChange={(event) => update({ leverage: Number(event.target.value), ratio: 0 })} className="order-leverage-input">
-              {Array.from({ length: 20 }, (_, i) => i + 1).map((value) => <option key={value} value={value}>{value}×</option>)}
-            </select>
-          </div>
+          {(["LONG", "SHORT"] as const).map(side => <OrderLeverage key={side} side={side} value={leverages[side]} disabled={locked} onChange={leverage => {setLeverages({...leverages,[side]:leverage});update({ratio:0});}} />)}
           {form.type === "LIMIT" && <OrderInput id="limit-price" label="지정가" unit="USDT" placeholder="가격 입력" value={form.limitPrice} disabled={locked} onChange={(value) => update({ limitPrice: value, ratio: 0 })} hint="양수 · 소수점 최대 18자리" />}
           <OrderInput id="order-quantity" label="주문 수량" unit={symbol?.symbol ?? "—"} placeholder="0.000" value={form.quantity} disabled={locked || !symbol} onChange={(value) => update({ quantity: value, ratio: 0 })} hint="양수 · 소수점 최대 8자리" />
           <div className="order-ratio">
             <label htmlFor="order-ratio" className="field-label">참고 자산 비율 <span className="float-right font-semibold tabular-nums text-brand-700">{form.ratio}%</span></label>
-            <input id="order-ratio" type="range" min="0" max="100" step="25" value={form.ratio} disabled={locked || !canSize} onChange={(event) => selectRatio(Number(event.target.value))} className="h-8 w-full accent-brand-600" />
-            <OrderChoices legend="비율 선택" name="ratio-preset" selected={String(form.ratio)} disabled={locked || !canSize} onChange={(value) => selectRatio(Number(value))} choices={[25, 50, 75, 100].map((value) => ({ value: String(value), label: `${value}%` }))} />
-            <p className="order-input-hint">비율은 선택 순간의 잔액·주문가격으로 수량을 채웁니다. 이후 시세가 움직여도 수량은 유지됩니다.</p>
+            <input id="order-ratio" type="range" min="0" max="100" step="1" value={form.ratio} disabled={ratioDisabled} onChange={(event) => selectRatio(Number(event.target.value))} className="h-8 w-full accent-brand-600" />
+            <OrderChoices legend="비율 선택" name="ratio-preset" selected={String(form.ratio)} disabled={ratioDisabled} onChange={(value) => selectRatio(Number(value))} choices={[25, 50, 75, 100].map((value) => ({ value: String(value), label: `${value}%` }))} />
+            <p className="order-input-hint"><span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {form.leverage}×</span> 기준으로 수량을 채웁니다. 이후 가격·방향·레버리지가 바뀌어도 수량은 유지됩니다.</p>
             {!canSize && <p role="status" className="order-input-hint">{sizingUnavailable(form.type,price,ready,account.data?.wallet.availableBalance)}</p>}
           </div>
-          <dl className="order-estimates"><div><dt>예상 주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>예상 필요 증거금</dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>사용 가능 잔액</dt><dd>{formatDecimal(account.data?.wallet.availableBalance)} USDT</dd></div></dl>
+          <dl className="order-estimates"><div><dt>예상 주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>예상 필요 증거금 · <span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {form.leverage}×</span></dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>사용 가능 잔액</dt><dd>{formatDecimal(account.data?.wallet.availableBalance)} USDT</dd></div></dl>
         </div>
       </details>
-      {form.quantity && !validQuantity(quantity) && <p role="alert" className="order-input-hint">수량은 0보다 커야 하며 소수점은 8자리까지 지원합니다.</p>}
+      {form.quantity && !validQuantity(quantity) && !(form.type === "LIMIT" && quantity === "0" && !validLimitPrice(price)) && <p role="alert" className="order-input-hint">수량은 0보다 커야 하며 소수점은 8자리까지 지원합니다.</p>}
       {form.type === "LIMIT" && form.limitPrice && !validLimitPrice(price) && <p role="alert" className="order-input-hint">양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.</p>}
       {!ready && <p role="status" className="order-input-hint">거래할 계정과 선택 종목의 최신 시세를 확인하는 중입니다.</p>}
       <div className="order-actions" role="group" aria-label="포지션 진입">
         {(["LONG", "SHORT"] as const).map((side) => <div key={side}>
-          <button type="button" disabled={!ready || !valid || locked} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{action.pending ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
+          <button type="button" disabled={!ready || !valid || locked || leverages[side]>SERVER_MAX_LEVERAGE} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{leverages[side]}× · {action.pending ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
           {warning(side) && <p role="alert" className="order-warning" data-warning-side={side}>{warning(side)?.message}</p>}
         </div>)}
       </div>

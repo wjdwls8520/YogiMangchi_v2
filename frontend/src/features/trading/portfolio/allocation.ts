@@ -1,3 +1,4 @@
+import { formatDecimal } from "../api/account";
 export type PortfolioPosition = { symbol: string; margin: string };
 const SCALE = BigInt("1000000000000000000");
 export const ALLOCATION_COLORS = ["#4f46e5", "#475569", "#0f766e", "#a16207", "#7c3aed"];
@@ -13,8 +14,7 @@ function decimal(value: bigint) {
   return `${whole}${fraction ? `.${fraction}` : ""}`;
 }
 export function formatMargin(value: string) {
-  const [whole, fraction = ""] = value.split(".");
-  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")} USDT`;
+  return `${formatDecimal(value)} USDT`;
 }
 export function portfolioAllocation(positions: readonly PortfolioPosition[]) {
   const sums = new Map<string, bigint>();

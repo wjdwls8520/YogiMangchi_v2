@@ -1,23 +1,24 @@
 import type { TradingSymbol } from "../market/catalog";
 import { freshOrderBook, type OrderBook } from "../market/order-book";
 import { formatMarketPrice } from "../market/price-format";
-import { formatDecimal } from "../api/account";
+import { formatQuantity } from "../api/account";
 
-export function OrderBookPanel({ symbol, book, mark }: {
-  symbol: TradingSymbol | null; book: OrderBook; mark?: string;
+export function OrderBookPanel({ symbol, book, mark, onSelectPrice }: {
+  symbol: TradingSymbol | null; book: OrderBook; mark?: string; onSelectPrice?: (price: string) => void;
 }) {
   const fresh = book.symbolId === symbol?.id && book.status === "FRESH" && freshOrderBook(book).status === "FRESH";
   const levels = (side: "ask" | "bid") => {
     const rows = fresh ? (side === "ask" ? [...book.asks.slice(0,10)].reverse() : book.bids.slice(0,10)) : [];
     return <div role="group" aria-label={side === "ask" ? "매도 호가" : "매수 호가"}>
-      {rows.map((level) => <div key={level.price} className="order-book-level" data-book-side={side}>
-        <span>{formatMarketPrice(level.price, symbol?.priceTickSize)}</span><span>{formatDecimal(level.quantity)}</span>
-      </div>)}
+      {rows.map((level) => <button type="button" key={level.price} className="order-book-level" data-book-side={side} disabled={!onSelectPrice}
+        aria-label={`${level.price} USDT 지정가 입력`} onClick={() => { if (freshOrderBook(book).status === "FRESH") onSelectPrice?.(level.price); }}>
+        <span>{formatMarketPrice(level.price, symbol?.priceTickSize)}</span><span>{formatQuantity(level.quantity)}</span>
+      </button>)}
     </div>;
   };
   return <aside className="order-book" aria-labelledby="order-book-heading">
     <header className="section-heading"><h3 id="order-book-heading" className="section-title">Order Book</h3><span className="preview-label">Binance 참고 호가</span></header>
-    <p className="order-book-note">Binance 시장 참고 정보입니다. 모의투자의 체결 가능 수량이 아니며 주문과 연결되지 않습니다.</p>
+    <p className="order-book-note">가격을 누르면 지정가에 입력됩니다. 호가는 시장 참고 정보이며, 모의투자 체결은 서버 Mark Price 기준입니다.</p>
     <div className="order-book-columns"><span>가격 · USDT</span><span>수량 · {symbol?.symbol ?? "—"}</span></div>
     {levels("ask")}
     <div className="order-book-mark"><span>Mark Price</span><strong>{formatMarketPrice(mark, symbol?.priceTickSize)}</strong></div>

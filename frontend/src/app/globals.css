@@ -346,7 +346,7 @@
   }
   .order-book-columns { @apply py-2 text-slate-500; }
   .order-book-columns > :last-child, .order-book-level > :last-child { @apply text-right; }
-  .order-book-level { @apply min-h-7 w-full items-center text-left; }
+  .order-book-level { @apply min-h-7 w-full items-center text-left enabled:cursor-pointer enabled:hover:bg-slate-50 disabled:cursor-default; }
   .order-book-level > span { overflow-wrap: anywhere; }
   .order-book-level[data-book-side="ask"] > :first-child { @apply text-loss; }
   .order-book-level[data-book-side="bid"] > :first-child { @apply text-gain; }
@@ -384,13 +384,12 @@
   .order-settings summary {
     @apply min-h-11 content-center text-trade-body font-semibold marker:text-brand-600;
   }
-  .order-settings summary span {
+  .order-settings summary > span {
     @apply ml-2 text-trade-meta font-normal text-slate-500;
   }
   .order-settings-fields {
     @apply grid grid-cols-2 gap-3 pb-3;
   }
-  .order-leverage,
   .order-ratio,
   .order-estimates {
     @apply col-span-2;
@@ -414,10 +413,10 @@
     @apply bg-rose-50;
   }
   .order-leverage {
-    @apply flex items-center justify-between gap-3;
+    @apply flex min-w-0 flex-col gap-1;
   }
   .order-leverage-input {
-    @apply min-h-11 min-w-24 rounded-sm border border-slate-200 bg-slate-50 px-3 text-trade-body font-semibold tabular-nums;
+    @apply min-h-11 min-w-0 w-full rounded-sm border border-slate-200 bg-slate-50 px-3 text-trade-body font-semibold tabular-nums;
   }
   .order-input {
     @apply flex min-h-11 items-center gap-2 rounded-sm border border-slate-200 bg-slate-50 px-2;

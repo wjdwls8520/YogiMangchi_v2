@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatDecimal, parsePosition, parseSummary, portfolioPositions } from "../src/features/trading/api/account";
+import { formatDecimal, formatQuantity, parsePosition, parseSummary, portfolioPositions } from "../src/features/trading/api/account";
 import { portfolioAllocation } from "../src/features/trading/portfolio/allocation";
 
 export const positionFixture = {
@@ -32,6 +32,12 @@ test("real positions map by server symbol ID with precision and honest missing-c
   assert.equal(allocation.entries[0].symbol, "BTC / USDT");
   assert.equal(allocation.entries[0].margin, "999999999999999999.000000000000000002");
   assert.equal(portfolioPositions(positions, [])[0].symbol, "종목 #927");
-  assert.equal(formatDecimal(positionFixture.entryPrice), "64,000.000000000000000001");
+  assert.equal(formatQuantity(positionFixture.entryPrice), "64,000.000000000000000001");
   assert.equal(formatDecimal("-144.950000000000000000"), "-144.95");
+});
+test("money and percentages round to two decimals while quantities keep exact precision",()=>{
+  for(const [value,expected] of [["1234.5678","1,234.57"],["999.995","1,000.00"],["-1.005","-1.01"],["-0.0049","0.00"],["0","0.00"],["999999999999999999.995","1,000,000,000,000,000,000.00"]])
+    assert.equal(formatDecimal(value),expected);
+  assert.equal(formatDecimal(null),"—");assert.equal(formatDecimal("bad"),"—");
+  assert.equal(formatQuantity("0.00000001"),"0.00000001");
 });
