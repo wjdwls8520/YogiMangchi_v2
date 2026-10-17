@@ -103,6 +103,7 @@ test("public order panel replaces authenticated inputs with a Guest CTA", () => 
   function Subject() { client=useQueryClient();return <SelectedMarketProvider symbol={symbol} market={market} orderBook={emptyOrderBook(1)}><OrderPanel /></SelectedMarketProvider>; }
   try {
     const html=renderToStaticMarkup(<TradingDataProvider><Subject /></TradingDataProvider>);
+    assert.match(html,/진입 · Open/);assert.match(html,/청산 · Close/);
     assert.doesNotMatch(html,/id="order-quantity"/);assert.doesNotMatch(html,/id="limit-price"/);
     assert.match(html,/게스트로 모의투자 시작/);assert.doesNotMatch(html,/Order Book/);
   } finally { client?.clear(); }

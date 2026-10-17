@@ -2,7 +2,8 @@ import type { TradingOrder } from "../api/orders";
 import { formatDecimal, formatQuantity, pnlTrend, symbolLabel, type Position } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
 import { TradingTable } from "./trading-table";
-import { CancelOrderButton, ClosePositionButton } from "./account-actions";
+import { CancelOrderButton } from "./account-actions";
+import { PositionCloseEntry } from "./position-close-entry";
 import { formatMarketPrice } from "../market/price-format";
 import { useSelectedMarket } from "./selected-market-provider";
 import { positionValuation } from "../api/position-display";
@@ -31,7 +32,7 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
       roe:<span data-trend={pnlTrend(valuation.roe)}>{formatDecimal(valuation.roe)}%</span>,
       reserved:formatQuantity(position.reservedCloseQuantity), free:formatQuantity(position.freeCloseQuantity),
       margin: formatDecimal(position.margin),
-      action: <ClosePositionButton position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} />,
+      action: <PositionCloseEntry position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} layout="row" />,
     },
   });})} />;
 }

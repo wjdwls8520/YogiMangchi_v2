@@ -1,17 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { parsePosition } from "../src/features/trading/api/account";
-import { closePreflight, closePreset, liquidationUpdates, marketSubscriptionBatches, positionValuation } from "../src/features/trading/api/position-display";
+import { closePreflight, closePreset, liquidationUpdates, marketSubscriptionBatches, positionValuation, positionCloseCommand } from "../src/features/trading/api/position-display";
 import { sizingUnavailable } from "../src/features/trading/api/order-preflight";
 import { mutationRequest, createTradingIntent, mutationMessage } from "../src/features/trading/api/mutation-request";
 import { parseOrder } from "../src/features/trading/api/orders";
 import { tradingMutationEffects } from "../src/features/trading/api/mutations";
 import { tradingKeys } from "../src/features/trading/api/query-keys";
 import { TradingApiError } from "../src/features/trading/api/client";
-import { ClosePositionDialog } from "../src/features/trading/components/close-position-dialog";
+import { CloseOrderFields } from "../src/features/trading/components/close-order-fields";
 import { OrderHistoryTable, PendingOrderTable, PositionTable } from "../src/features/trading/components/account-tables";
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
 import { SelectedMarketProvider } from "../src/features/trading/components/selected-market-provider";
@@ -100,21 +99,23 @@ test("liquidation feedback ignores history at mount, detects new confirmed event
   assert.deepEqual(update.notices.map(row=>row.orderId),[3]);assert.equal(update.newest,3);
   assert.deepEqual(liquidationUpdates(3,[order(3,"LIQUIDATE")]).notices,[]);
 });
-test("close dialog renders MARKET without price, LIMIT with price, and all four reservation presets",()=>{
-  const props={dialogRef:createRef<HTMLDialogElement>(),position,symbol:"BTC / USDT",mark:"110",pnl:"10",type:"MARKET" as const,quantity:"0.4",limitPrice:"",ratio:50,locked:false,unconfirmed:false,warning:null,onType:()=>{},onQuantity:()=>{},onPrice:()=>{},onRatio:()=>{},onSubmit:()=>{},onCancel:()=>{},onClose:()=>{}};
-  const market=renderToStaticMarkup(<ClosePositionDialog {...props}/>),limit=renderToStaticMarkup(<ClosePositionDialog {...props} type="LIMIT" limitPrice="120"/>);
+test("shared close fields render MARKET without price, LIMIT with price, and reservation presets",()=>{
+  const props={prefix:"close-1",type:"MARKET" as const,quantity:"0.4",limitPrice:"",ratio:50,disabled:false,partialOnly:false,unit:"BTC",onType:()=>{},onQuantity:()=>{},onPrice:()=>{},onRatio:()=>{}};
+  const market=renderToStaticMarkup(<CloseOrderFields {...props}/>),limit=renderToStaticMarkup(<CloseOrderFields {...props} type="LIMIT" limitPrice="120"/>);
   assert.doesNotMatch(market,/id="close-1-price"/);assert.match(limit,/id="close-1-price"/);
   for(const percent of [25,50,75,100])assert.match(limit,new RegExp(`>${percent}%<`));
-  assert.match(limit,/청산 예약/);assert.match(limit,/청산 가능 수량/);
+  assert.match(limit,/청산 가능 수량/);assert.match(limit,/step="1"/);
+  const partial=renderToStaticMarkup(<CloseOrderFields {...props} partialOnly/>);
+  assert.doesNotMatch(partial,/>100%</);assert.match(partial,/max="99"/);
 });
 function renderTrading(children:ReactNode) {
   let client:QueryClient|undefined;
   function Subject(){client=useQueryClient();return <SelectedMarketProvider symbol={symbols[0]} market={{symbolId:1,state:"READY",recovery:0,price:mark}} orderBook={emptyOrderBook(1)} positionPrices={{1:mark}}>{children}</SelectedMarketProvider>;}
   try{return renderToStaticMarkup(<TradingDataProvider><Subject/></TradingDataProvider>);}finally{client?.clear();}
 }
-test("positions expose live ROE, server reservation/free size and close modal in responsive semantic rows",()=>{
+test("positions expose live ROE, reservation/free size and separate partial/full actions",()=>{
   const html=renderTrading(<PositionTable positions={[position]} symbols={symbols}/>);
-  for(const text of ["ROE %","청산 예약 수량","청산 가능 수량","포지션 청산"])assert.ok(html.includes(text));
+  for(const text of ["ROE %","청산 예약 수량","청산 가능 수량","부분 청산","전체 청산"])assert.ok(html.includes(text));
   assert.match(html,/role="table"/);assert.match(html,/data-key="roe"/);
 });
 test("pending and order history distinguish CLOSE, requested/fill prices, realized PnL and liquidation",()=>{
@@ -122,4 +123,20 @@ test("pending and order history distinguish CLOSE, requested/fill prices, realiz
   assert.match(pending,/>CLOSE</);assert.match(pending,/Created \(KST\)/);
   const history=renderToStaticMarkup(<OrderHistoryTable orders={[order(2,"LIQUIDATE")]} symbols={symbols}/>);
   for(const value of ["Requested Price","Fill Price","Realized PnL","Filled (KST)","강제청산","4.2"])assert.ok(history.includes(value));
+});
+test("partial and full close commands have distinct quantity and reservation guards",()=>{
+  const unreserved={...position,reservedCloseQuantity:"0",freeCloseQuantity:"1"};
+  assert.equal(positionCloseCommand(unreserved,"MARKET","1","",mark,true,"partial",now).command,null);
+  assert.equal(positionCloseCommand(position,"MARKET","1","",mark,true,"full",now).command,null);
+  assert.deepEqual(positionCloseCommand(unreserved,"MARKET","1","",mark,true,"full",now).command,{kind:"close",positionId:1,quantity:"1"});
+  assert.deepEqual(positionCloseCommand(position,"LIMIT","0.4","120",mark,true,"partial",now).command,{kind:"limitClose",positionId:1,quantity:"0.4",limitPrice:"120"});
+  assert.deepEqual(positionCloseCommand(position,"MARKET","0.8","",mark,true,"available",now).command,{kind:"close",positionId:1,quantity:"0.8"});
+  for(const scope of ["partial","available","full"] as const) {
+    assert.equal(positionCloseCommand(unreserved,"MARKET","bad","",mark,true,scope,now).command,null);
+    assert.equal(positionCloseCommand(unreserved,"MARKET","0.4","",null,true,scope,now).command,null);
+  }
+});
+test("close sizing supports 1% steps and never rounds above free quantity",()=>{
+  assert.equal(closePreset("0.8",1),"0.008");assert.equal(closePreset("0.8",37),"0.296");assert.equal(closePreset("0.8",99),"0.792");
+  for(const percent of [-1,0,100.1,101,NaN])assert.equal(closePreset("1",percent),"");
 });

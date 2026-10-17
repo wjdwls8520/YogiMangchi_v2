@@ -22,6 +22,8 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   const [mainView, setMainView] = useState<"chart" | "order" | "portfolio">("chart");
   const [analysisView, setAnalysisView] = useState<"chart" | "book">("chart");
   const [bookSelection, setBookSelection] = useState<BookSelection>();
+  const [symbolSearch,setSymbolSearch]=useState("");
+  const searchInput=useRef<HTMLInputElement>(null);
   const [accountView, setAccountView] = useState<AccountView>("positions");
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheet = useRef<HTMLDialogElement>(null);
@@ -73,6 +75,8 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   function openSheet() {
     if (!sheet.current || sheet.current.open) return;
     sheet.current.showModal();
+    setSymbolSearch("");
+    searchInput.current?.focus();
     setSheetOpen(true);
   }
   function closeSheet() {
@@ -87,40 +91,23 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   function selectMainView(id: string) {
     if (id === "chart" || id === "order" || id === "portfolio") setMainView(id);
   }
-  useEffect(() => {
-    // CSS chooses the layout; only close the mobile modal when entering desktop.
-    const desktop = window.matchMedia("(min-width: 64rem)");
-    function closeOnDesktop() {
-      if (!desktop.matches || !sheet.current?.open) return;
-      sheet.current.close();
-      setSheetOpen(false);
-      document.querySelector<HTMLButtonElement>('.market-sidebar [aria-pressed="true"]')?.focus({ preventScroll: true });
-    }
-    desktop.addEventListener("change", closeOnDesktop);
-    return () => desktop.removeEventListener("change", closeOnDesktop);
-  }, []);
   return (
-    <SelectedMarketProvider symbol={selected} market={market} orderBook={orderBook} positionPrices={positionPrices} bookSelection={bookSelection}><div className="trading-grid" data-main-view={mainView}>
-      <aside className="market-sidebar" aria-labelledby="sidebar-heading">
-        <header className="section-heading"><h2 id="sidebar-heading" className="section-title">Markets</h2></header>
-        <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준{tickerQuery.isError ? " · 시세 조회 실패" : ""}</p>
-        {tickerQuery.isError && <button type="button" className="account-refresh" disabled={tickerQuery.isFetching} onClick={() => void tickerQuery.refetch({ cancelRefetch: false })}>통계 다시 조회</button>}
-        <SymbolSelector symbols={catalog.symbols} tickers={tickerQuery.tickers} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
-      </aside>
-      <header className="mobile-market-header">
+    <SelectedMarketProvider symbol={selected} symbols={catalog.allSymbols} market={market} orderBook={orderBook} positionPrices={positionPrices} bookSelection={bookSelection}><div className="trading-grid" data-main-view={mainView}>
+      <div className="market-overview"><header className="market-contract-header">
         <button ref={sheetTrigger} type="button" onClick={openSheet} aria-haspopup="dialog" aria-controls="market-symbol-sheet" aria-expanded={sheetOpen} className="market-sheet-trigger">
           <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selected?.name ?? "거래 가능 종목 확인 중"}</span></span>
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         <span className="preview-label">무기한 선물</span>
       </header>
+        <MarketHeader symbol={selected} market={market} ticker={tickerQuery.tickers.find((ticker) => ticker.tradingSymbolId === selected?.id && ticker.symbol === selected.symbol && ticker.quoteAsset === selected.quoteAsset)} />
+      </div>
       <TradingNavigation label="모바일 거래 화면" prefix="main" activeId={mainView} onSelect={selectMainView} className="main-navigation" tabs={[
         { id: "chart", label: "차트·호가", controls: "chart-view" },
         { id: "order", label: "주문", controls: "order-view trading-account" },
         { id: "portfolio", label: "거래 내역", controls: "trading-account" },
       ]} />
       <section id="chart-view" role="tabpanel" aria-labelledby="chart-heading" tabIndex={0} className="chart-view">
-        <MarketHeader symbol={selected} market={market} ticker={tickerQuery.tickers.find((ticker) => ticker.tradingSymbolId === selected?.id && ticker.symbol === selected.symbol && ticker.quoteAsset === selected.quoteAsset)} />
         <div className="analysis-navigation" role="group" aria-label="시장 정보 보기"><button type="button" aria-pressed={analysisView === "chart"} onClick={()=>setAnalysisView("chart")}>차트</button><button type="button" aria-pressed={analysisView === "book"} onClick={()=>setAnalysisView("book")}>호가</button></div>
         <div className="market-analysis" data-analysis-view={analysisView}>
           <TradingChart symbol={selected} market={market} interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
@@ -141,8 +128,8 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         onClose={() => { setSheetOpen(false); sheetTrigger.current?.focus({ preventScroll: true }); }}>
         <div className="market-sheet-content">
           <header className="section-heading"><h2 id="sheet-heading" className="section-title">Markets</h2><button type="button" onClick={closeSheet} aria-label="종목 선택 닫기" className="market-sheet-close">닫기</button></header>
-          <p className="market-list-note">Trading Server에서 제공하는 종목을 선택하세요.</p>
-          <SymbolSelector symbols={catalog.symbols} tickers={tickerQuery.tickers} selectedId={selected?.id ?? null} onSelect={selectFromSheet} />
+          <div className="market-list-note"><label className="field-label" htmlFor="market-search">종목 검색</label><input ref={searchInput} id="market-search" className="market-search" type="search" placeholder="BTC, ETH 또는 종목명" value={symbolSearch} onChange={event=>setSymbolSearch(event.target.value)}/></div>
+          <SymbolSelector symbols={catalog.symbols.filter(symbol=>`${symbol.symbol} ${symbol.name} ${symbol.quoteAsset}`.toLowerCase().includes(symbolSearch.trim().toLowerCase()))} tickers={tickerQuery.tickers} selectedId={selected?.id ?? null} onSelect={selectFromSheet} />
           <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준</p>
           {tickerQuery.isError && <button type="button" className="account-refresh" disabled={tickerQuery.isFetching} onClick={() => void tickerQuery.refetch({ cancelRefetch: false })}>통계 다시 조회</button>}
         </div>
