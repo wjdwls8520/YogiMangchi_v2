@@ -96,10 +96,11 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
         if (disposed || !mount.current) return;
         instance = createChart(mount.current, {
           autoSize: true,
-          layout: { background: { type: ColorType.Solid, color: "#ffffff" }, textColor: "#64748b", fontFamily: "Arial, sans-serif", fontSize: 11, attributionLogo: true },
-          grid: { vertLines: { color: "#f1f5f9" }, horzLines: { color: "#f1f5f9" } },
-          rightPriceScale: { borderColor: "#e2e8f0" },
-          timeScale: { borderColor: "#e2e8f0", timeVisible: true, secondsVisible: false, rightOffset: 3,
+          layout: { background: { type: ColorType.Solid, color: "#101014" }, textColor: "#898e98", fontFamily: "Arial, sans-serif", fontSize: 11, attributionLogo: true },
+          grid: { vertLines: { color: "#222329" }, horzLines: { color: "#222329" } },
+          crosshair: { vertLine: { color: "#666b75", labelBackgroundColor: "#34363d" }, horzLine: { color: "#666b75", labelBackgroundColor: "#34363d" } },
+          rightPriceScale: { borderColor: "#27282e" },
+          timeScale: { borderColor: "#27282e", timeVisible: true, secondsVisible: false, rightOffset: 3,
             tickMarkFormatter: (time: Time, kind: import("lightweight-charts").TickMarkType) => typeof time !== "number" ? null : new Date(time * 1000).toLocaleString("ko-KR", {
               timeZone: "Asia/Seoul", hour12: false, ...(kind === TickMarkType.Time || kind === TickMarkType.TimeWithSeconds
                 ? { hour: "2-digit", minute: "2-digit" } : kind === TickMarkType.Year ? { year: "numeric" } : { month: "numeric", day: "numeric" }),
@@ -109,8 +110,8 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
             ? new Date(time * 1000).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false }) : String(time) },
         });
         chart.current = instance;
-        series.current = instance.addSeries(CandlestickSeries, { upColor: "#047857", downColor: "#be123c", wickUpColor: "#047857",
-          wickDownColor: "#be123c", borderVisible: false, priceFormat: initialFormat.current });
+        series.current = instance.addSeries(CandlestickSeries, { upColor: "#00c785", downColor: "#f6465d", wickUpColor: "#00c785",
+          wickDownColor: "#f6465d", borderVisible: false, priceFormat: initialFormat.current });
         instance.subscribeCrosshairMove((event) => setHoverTime(typeof event.time === "number" ? event.time * 1000 : null));
         instance.timeScale().subscribeVisibleLogicalRangeChange((range) => {
           if (!drawing.current) pager.rangeChanged(range?.from ?? null, performance.now() - lastNavigation.current < 1000);
@@ -149,7 +150,7 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
       </div>
       <figcaption id="chart-caption" className="market-chart-caption">
         <span>Historical Mark Price OHLC · UTC bucket · 진행 봉은 실시간 Mark로 갱신</span>
-        <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc.</a>
+        <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer" title="Copyright (с) 2025 TradingView, Inc.">TradingView Lightweight Charts™</a>
       </figcaption>
     </figure>
   </>;

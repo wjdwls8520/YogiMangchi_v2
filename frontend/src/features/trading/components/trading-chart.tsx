@@ -18,7 +18,7 @@ export function TradingChart({ symbol, market, catalogView, interval, onInterval
 }) {
   return <section aria-labelledby="chart-heading" className="market-chart trading-section">
     <header className="section-heading">
-      <h2 id="chart-heading" className="section-title">차트 <span className="ml-2 text-trade-meta font-normal text-slate-500">{symbol?.displaySymbol ?? "종목 선택"}</span></h2>
+      <h2 id="chart-heading" className="section-title">차트 <span className="ml-2 text-trade-meta font-normal text-terminal-muted">{symbol?.displaySymbol ?? "종목 선택"}</span></h2>
       <span className="preview-label">실시간 · {statusLabels[market.state]}</span>
     </header>
     <div role="group" aria-label="차트 주기" className="chart-timeframes">

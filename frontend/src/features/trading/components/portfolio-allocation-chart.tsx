@@ -18,7 +18,7 @@ export function PortfolioAllocationChart({ positions, view: requestedView }: { p
         if (disposed || !canvas.current) return;
         Chart.register(DoughnutController, ArcElement, Tooltip);
         const entries = view === "data" ? allocation.entries : [];
-        const data = { labels: entries.map((entry) => entry.symbol), datasets: [{ data: entries.map((entry) => entry.percent), backgroundColor: entries.map((entry) => entry.color), hoverBackgroundColor: entries.map((entry) => entry.color), borderColor: "#ffffff", hoverBorderColor: "#ffffff", borderWidth: 2, hoverOffset: 0 }] };
+        const data = { labels: entries.map((entry) => entry.symbol), datasets: [{ data: entries.map((entry) => entry.percent), backgroundColor: entries.map((entry) => entry.color), hoverBackgroundColor: entries.map((entry) => entry.color), borderColor: "#101014", hoverBorderColor: "#101014", borderWidth: 2, hoverOffset: 0 }] };
         if (instance.current) {
           instance.current.data = data;
           instance.current.update("none");
@@ -38,7 +38,7 @@ export function PortfolioAllocationChart({ positions, view: requestedView }: { p
     <section aria-labelledby="portfolio-heading" aria-describedby="portfolio-description" className="portfolio-allocation">
       <header className="portfolio-heading">
         <h3 id="portfolio-heading" className="section-title">Portfolio Allocation</h3>
-        <p id="portfolio-description" className="text-trade-meta text-slate-500">종목별 사용 증거금 비중 · 조회한 보유 포지션 기준</p>
+        <p id="portfolio-description" className="text-trade-meta text-terminal-muted">종목별 사용 증거금 비중 · 조회한 보유 포지션 기준</p>
       </header>
       <div data-portfolio-frame data-view={view} aria-busy={view === "loading"} className="portfolio-frame">
         <figure aria-labelledby="portfolio-caption" aria-hidden={view !== "data"} className={`portfolio-figure ${view !== "data" ? "invisible" : ""}`}>
@@ -46,7 +46,7 @@ export function PortfolioAllocationChart({ positions, view: requestedView }: { p
             <canvas ref={canvas} aria-hidden="true" />
             <span className="portfolio-doughnut-label">증거금 구성</span>
           </div>
-          <figcaption id="portfolio-caption" className="text-trade-meta text-slate-500">사용 증거금 구성</figcaption>
+          <figcaption id="portfolio-caption" className="text-trade-meta text-terminal-muted">사용 증거금 구성</figcaption>
         </figure>
         {view === "data" && (
           <dl aria-label="종목별 증거금과 비중" className="portfolio-legend">
@@ -54,7 +54,7 @@ export function PortfolioAllocationChart({ positions, view: requestedView }: { p
               <div key={entry.symbol} className="portfolio-legend-row">
                 <dt className="flex items-center gap-2 font-medium"><span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: entry.color }} />{entry.symbol}</dt>
                 <dd className="text-right font-semibold">{entry.percent.toFixed(2)}%</dd>
-                <dd className="col-span-2 break-all pl-4.5 text-slate-500">{formatMargin(entry.margin)}</dd>
+                <dd className="col-span-2 break-all pl-4.5 text-terminal-muted">{formatMargin(entry.margin)}</dd>
               </div>
             ))}
           </dl>

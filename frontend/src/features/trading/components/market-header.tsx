@@ -22,8 +22,8 @@ export function MarketHeader({ symbol, market: feed, ticker }: { symbol: Trading
         <div className="market-primary-price tabular-nums">
           <p className="market-price-label">Mark Price <span>{markPrice ? "실시간" : feed.state === "UNAVAILABLE" || feed.state === "RECONNECTING" ? "시세 이용 불가" : "현재 시세 확인 중"}</span></p>
           <p className="market-price">{formatMarketPrice(markPrice?.decimal, symbol?.priceTickSize)} <span>USDT</span></p>
-          <p className="market-change" data-trend={pnlTrend(ticker?.changePercent24h ?? null)}>24h {ticker?.changePercent24h == null ? "—" : `${formatDecimal(ticker.changePercent24h)}%`}</p>
         </div>
+        <div className="market-change-block"><p className="market-price-label">24h 변동률</p><p className="market-change" data-trend={pnlTrend(ticker?.changePercent24h ?? null)}>{ticker?.changePercent24h == null ? "—" : `${formatDecimal(ticker.changePercent24h)}%`}</p></div>
         <dl className="market-statistics tabular-nums">
           <div><dt>24h 최고</dt><dd>{formatMarketPrice(ticker?.highPrice24h, symbol?.priceTickSize)}</dd></div>
           <div><dt>24h 최저</dt><dd>{formatMarketPrice(ticker?.lowPrice24h, symbol?.priceTickSize)}</dd></div>

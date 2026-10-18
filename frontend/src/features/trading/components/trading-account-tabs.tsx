@@ -8,7 +8,6 @@ import { OrderHistoryTable, PendingOrderTable, PositionTable } from "./account-t
 import { PortfolioAllocationChart } from "./portfolio-allocation-chart";
 import { TradingNavigation, type TradingTab } from "./trading-navigation";
 import { useGuestSession } from "./trading-data-provider";
-import { GuestStartPrompt } from "./guest-access";
 import { WalletOverview } from "./wallet-overview";
 import { LiquidationFeedback } from "./liquidation-feedback";
 
@@ -27,9 +26,11 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
     {id:"portfolio",label:"자산",controls:"portfolio-view"},
   ];
   const select = (value: string) => { if (tabs.some(tab=>tab.id===value)) onSelect?.(value as AccountView); };
-  return <section id="trading-account" aria-label="Trading Activity" className="trading-account trading-section" data-account-view={activeTab}>
-    <TradingNavigation label="거래 활동" prefix="activity" tabs={tabs} activeId={activeTab} onSelect={onSelect ? select : undefined} />
-    {snapshot.phase !== "ready" ? <GuestStartPrompt /> : <>
+  return <section id="trading-account" aria-label="Trading Activity" className="trading-account trading-section" data-account-view={activeTab} data-guest={snapshot.phase !== "ready"}>
+    <TradingNavigation label="거래 활동" prefix="activity" tabs={snapshot.phase === "ready" ? tabs : tabs.map(tab => ({ ...tab, controls: "guest-activity-panel" }))} activeId={activeTab} onSelect={onSelect ? select : undefined} />
+    {snapshot.phase !== "ready" ? <div className="guest-account-message" id="guest-activity-panel" role="tabpanel" aria-labelledby={`activity-${activeTab}-tab`}>
+      <p>로그인 또는 게스트로 참여하면 이용할 수 있습니다.</p>
+    </div> : <>
       <LiquidationFeedback orders={history.data} identity={`${snapshot.accountId}:${snapshot.generation}`} symbols={symbols} />
       <section hidden={activeTab !== "positions"} id="positions" className="activity-panel" role="tabpanel" aria-labelledby="activity-positions-tab">
         <h3 className="account-records-heading">보유 포지션 <span>Mark · PnL은 참고 표시, 수량·증거금은 서버 기준</span><button className="account-refresh" disabled={query.busy} onClick={query.retry}>새로고침</button></h3>

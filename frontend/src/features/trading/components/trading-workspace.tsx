@@ -6,7 +6,7 @@ import { GuestHeaderAction } from "./guest-access";
 export function TradingWorkspace() {
   return (
     <TradingDataProvider>
-      <a href="#trading-main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-10 focus:bg-white focus:px-4 focus:py-3">
+      <a href="#trading-main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-10 focus:bg-terminal-panel focus:px-4 focus:py-3">
         Trading 본문으로 바로가기
       </a>
       <header className="trading-brand-header">
@@ -20,7 +20,7 @@ export function TradingWorkspace() {
             </span>
             요기망치 <span className="trading-brand-latin">YOGIMANGCHI</span>
           </p>
-          <p className="hidden text-xs font-medium text-slate-600 md:block">선물 모의투자</p>
+          <p className="trading-header-product">선물 모의투자</p>
           <GuestHeaderAction />
         </div>
       </header>
@@ -33,10 +33,6 @@ export function TradingWorkspace() {
           <OrderPanel />
         </MarketChartPanel>
       </main>
-      <footer className="trading-footer">
-        <p className="font-medium tracking-wide">YOGIMANGCHI · 선물 모의투자</p>
-        <p>실제 자금을 사용하지 않는 모의투자 화면입니다.</p>
-      </footer>
     </TradingDataProvider>
   );
 }

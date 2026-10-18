@@ -45,12 +45,10 @@ function useGuestAccess() {
 }
 
 export function GuestHeaderAction() {
-  const { snapshot, open } = useGuestAccess();
-  const busy = snapshot.phase === "loading" || snapshot.phase === "creating";
-  return <div className="guest-header-action">{snapshot.phase === "ready"
-    ? <span id="guest-header-status" tabIndex={-1} className="preview-label" role="status">Guest 모의투자 · #{snapshot.accountId}</span>
-    : <button type="button" className="guest-start-button" disabled={busy} onClick={open}>{snapshot.phase === "creating" ? "계정 생성 중…" : snapshot.phase === "loading" ? "게스트 확인 중…" : "게스트로 모의투자 이용해보기"}</button>}
-  </div>;
+  const { snapshot } = useGuestAccess();
+  return snapshot.phase === "ready" ? <div className="guest-header-action">
+    <span id="guest-header-status" tabIndex={-1} className="preview-label" role="status">Guest 모의투자 · #{snapshot.accountId}</span>
+  </div> : null;
 }
 
 export function GuestStartPrompt() {
@@ -80,7 +78,8 @@ export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCance
 
 export function GuestEntryPrompt({ onStart, busy, storageError }: { onStart: () => void; busy: boolean; storageError: boolean }) {
   return <div className="guest-entry-prompt">
-    <p>{storageError ? "브라우저 저장소를 확인할 수 없습니다. 저장소 설정을 확인해 주세요." : busy ? "게스트 계정을 확인하는 중입니다." : "모의투자를 시작하면 10,000 USDT로 주문 기능을 이용할 수 있습니다."}</p>
+    <div className="guest-entry-balance"><span>시작 가상 자산</span><strong>10,000 <small>USDT</small></strong></div>
+    <p>{storageError ? "브라우저 저장소를 확인할 수 없습니다. 저장소 설정을 확인해 주세요." : busy ? "게스트 계정을 확인하는 중입니다." : "실시간 시세로 주문하고 포지션을 관리해 보세요."}</p>
     <button type="button" className="guest-start-button" disabled={busy} onClick={onStart}>게스트로 모의투자 시작</button>
   </div>;
 }
