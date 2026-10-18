@@ -19,14 +19,18 @@
   --color-brand-700: #4338ca;
   --color-gain: #047857;
   --color-loss: #be123c;
-  --text-trade-meta: 0.6875rem;
-  --text-trade-meta--line-height: 1rem;
-  --text-trade-body: 0.75rem;
-  --text-trade-body--line-height: 1.125rem;
-  --text-trade-heading: 0.8125rem;
-  --text-trade-heading--line-height: 1.25rem;
-  --text-trade-price: 1.625rem;
-  --text-trade-price--line-height: 2rem;
+  --text-trade-meta: 0.75rem;
+  --text-trade-meta--line-height: 1.125rem;
+  --text-trade-body: 0.8125rem;
+  --text-trade-body--line-height: 1.25rem;
+  --text-trade-subheading: 0.875rem;
+  --text-trade-subheading--line-height: 1.25rem;
+  --text-trade-heading: 1rem;
+  --text-trade-heading--line-height: 1.5rem;
+  --text-trade-title: 1.25rem;
+  --text-trade-title--line-height: 1.75rem;
+  --text-trade-price: 1.75rem;
+  --text-trade-price--line-height: 2.25rem;
 }
 
 @layer base {
@@ -80,11 +84,11 @@
   .close-position-summary dt { @apply text-slate-500; }
   .close-position-summary dd { @apply mt-1 font-medium; overflow-wrap: anywhere; }
   .wallet-overview { @apply border-t border-slate-200 p-3 text-trade-meta; }
-  .wallet-overview h3 { @apply mb-2 text-trade-heading font-semibold; }
+  .wallet-overview h3 { @apply mb-2 text-trade-subheading font-semibold; }
   .wallet-overview dl { @apply grid gap-2; }
   .wallet-overview dl > div { @apply flex justify-between gap-2; }
   .wallet-overview dt, .wallet-overview p { @apply text-slate-500; }
-  .wallet-overview dd { @apply text-right font-medium tabular-nums; overflow-wrap: anywhere; }
+  .wallet-overview dd { @apply text-right text-trade-body font-semibold tabular-nums; overflow-wrap: anywhere; }
   .wallet-overview p { @apply mt-3; }
   [data-trend="up"] { @apply text-gain; }
   [data-trend="down"] { @apply text-loss; }
@@ -132,7 +136,7 @@
     @apply flex min-w-0 flex-col gap-0.5;
   }
   .market-selected-label strong {
-    @apply text-base font-bold tracking-tight;
+    @apply text-trade-title font-bold tracking-tight;
   }
   .market-selected-label > span {
     @apply text-trade-meta text-slate-500;
@@ -229,8 +233,9 @@
     @apply flex min-h-10 items-center justify-between gap-2 border-b border-slate-100 px-3;
   }
   .section-title {
-    @apply text-trade-heading font-semibold tracking-tight;
+    @apply text-trade-heading font-bold tracking-tight;
   }
+  h3.section-title { @apply text-trade-subheading font-semibold; }
   .preview-label {
     @apply whitespace-nowrap text-trade-meta font-medium text-slate-500;
   }
@@ -278,7 +283,7 @@
     @apply ml-1 text-trade-meta font-normal text-slate-500;
   }
   .market-price {
-    @apply text-trade-price font-semibold tracking-tight;
+    @apply text-trade-price font-bold tracking-tight;
   }
   .market-price span {
     @apply text-trade-meta font-normal tracking-normal text-slate-500;
@@ -407,7 +412,7 @@
     @apply border-y border-slate-100;
   }
   .order-settings summary {
-    @apply min-h-11 content-center text-trade-body font-semibold marker:text-brand-600;
+    @apply min-h-11 content-center text-trade-subheading font-semibold marker:text-brand-600;
   }
   .order-settings summary > span {
     @apply ml-2 text-trade-meta font-normal text-slate-500;
@@ -489,7 +494,7 @@
     @apply min-w-0 scroll-mt-3 border-b border-slate-200;
   }
   .account-records-heading {
-      @apply flex min-h-9 flex-wrap items-center gap-2 bg-slate-50 px-3 text-trade-body font-semibold text-slate-700;
+      @apply flex min-h-9 flex-wrap items-center gap-2 bg-slate-50 px-3 text-trade-subheading font-semibold text-slate-700;
   }
   .account-records-heading span {
     @apply text-trade-meta font-normal text-slate-500;
