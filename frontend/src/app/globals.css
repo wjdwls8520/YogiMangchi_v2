@@ -609,7 +609,7 @@
     .trading-grid {
       @apply grid;
       grid-template-columns: minmax(0, 1fr) 20rem;
-      grid-template-rows: auto clamp(36rem, 65dvh, 42rem) minmax(12rem, auto);
+      grid-template-rows: auto 600px minmax(12rem, auto);
     }
     .market-overview { @apply grid items-center; grid-column: 1 / -1; grid-template-columns: 14rem minmax(0,1fr); }
     .market-contract-header { @apply border-r border-b-0; }
@@ -645,7 +645,10 @@
     }
     .trading-grid[data-main-view] .order-view {
       display: block;
+      min-height: 0;
       overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-slate-300) transparent;
       grid-column: 2;
       grid-row: 2;
     }
@@ -662,13 +665,16 @@
     .trading-grid[data-main-view] .trading-account[data-account-view="portfolio"] .portfolio-view {
       display: block;
     }
+    .order-view::-webkit-scrollbar { width: 4px; height: 4px; }
+    .order-view::-webkit-scrollbar-thumb { background: var(--color-slate-300); border-radius: 2px; }
     .order-panel {
       @apply min-h-full border-b-0 border-l border-slate-200;
     }
     .order-panel > .section-heading { @apply sticky top-0 z-10 bg-white; }
     .order-panel > .order-intent-tabs { @apply sticky top-10 z-10 bg-white; }
     .market-analysis { min-height: 0; grid-template-rows: minmax(0,1fr); }
-    .market-analysis > .order-book { @apply overflow-y-auto; }
+    .market-analysis > .order-book { @apply overflow-y-auto; scrollbar-width: none; }
+    .market-analysis > .order-book::-webkit-scrollbar { width: 0; height: 0; }
     .order-book-level { @apply min-h-5; }
     .chart-view .trading-section {
       @apply border-b-0;
