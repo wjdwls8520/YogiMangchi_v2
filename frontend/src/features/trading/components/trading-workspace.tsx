@@ -33,10 +33,6 @@ export function TradingWorkspace() {
           <OrderPanel />
         </MarketChartPanel>
       </main>
-      <footer className="trading-footer">
-        <p className="font-medium tracking-wide">YOGIMANGCHI · 선물 모의투자</p>
-        <p>실제 자금을 사용하지 않는 모의투자 화면입니다.</p>
-      </footer>
     </TradingDataProvider>
   );
 }

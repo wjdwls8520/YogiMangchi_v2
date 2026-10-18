@@ -112,7 +112,7 @@
     @apply hidden border-l border-slate-200 pl-2 text-trade-meta font-medium tracking-widest text-slate-500 sm:inline;
   }
   .trading-workspace {
-    @apply mx-auto max-w-screen-2xl bg-white;
+    @apply mx-auto mb-8 max-w-screen-2xl bg-white sm:mb-12;
     padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
     padding-bottom: env(safe-area-inset-bottom);
   }
@@ -571,12 +571,20 @@
     @apply grid gap-x-2 gap-y-1 border-b border-slate-100 py-2 last:border-b-0;
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .trading-footer {
-    @apply mx-auto hidden max-w-screen-2xl gap-1 bg-slate-50 px-5 pt-3 text-trade-meta text-slate-500;
-    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  .site-footer { @apply border-t border-slate-200 bg-white; }
+  .site-footer-content {
+    @apply mx-auto grid max-w-screen-2xl grid-cols-2 gap-x-6 gap-y-6 px-3 py-8 text-trade-body text-slate-500 lg:grid-cols-[minmax(0,2fr)_1fr_1fr] lg:px-5;
+    padding-bottom: calc(2rem + env(safe-area-inset-bottom));
     padding-left: max(0.75rem, env(safe-area-inset-left));
     padding-right: max(0.75rem, env(safe-area-inset-right));
   }
+  .site-footer-brand { @apply col-span-2 space-y-2 lg:col-span-1; }
+  .site-footer-title { @apply flex flex-wrap items-baseline gap-x-2 text-trade-heading font-bold text-slate-800; }
+  .site-footer-title span { @apply text-trade-meta font-medium tracking-widest text-slate-400; }
+  .site-footer-heading { @apply mb-3 text-trade-subheading font-semibold text-slate-700; }
+  .site-footer-heading span { @apply ml-1 whitespace-nowrap text-trade-meta font-normal text-slate-400; }
+  .site-footer-info ul { @apply space-y-2; }
+  .site-footer-copyright { @apply col-span-full border-t border-slate-100 pt-5 text-trade-meta; }
   @media (width >= 40rem) {
     .market-summary-body {
       @apply items-center;
@@ -726,12 +734,11 @@
       @apply text-left;
     }
     .trading-table[data-variant="positions"] td { @apply align-top; }
-    .trading-table[data-variant="positions"] [data-key="action"] { @apply sticky right-0 border-l border-slate-200 bg-white; min-width: 20rem; width: 20rem; }
+    .trading-table[data-variant="positions"] [data-key="action"] { @apply sticky right-0 border-l border-slate-200; min-width: 20rem; width: 20rem; }
+    .trading-table[data-variant="positions"] th[data-key="action"] { @apply bg-slate-50; }
+    .trading-table[data-variant="positions"] td[data-key="action"] { @apply bg-white; }
     .trading-table button {
       @apply min-h-9;
-    }
-    .trading-footer {
-      @apply flex justify-between;
     }
   }
   @media (width >= 80rem) {
