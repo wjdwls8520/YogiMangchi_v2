@@ -45,12 +45,10 @@ function useGuestAccess() {
 }
 
 export function GuestHeaderAction() {
-  const { snapshot, open } = useGuestAccess();
-  const busy = snapshot.phase === "loading" || snapshot.phase === "creating";
-  return <div className="guest-header-action">{snapshot.phase === "ready"
-    ? <span id="guest-header-status" tabIndex={-1} className="preview-label" role="status">Guest 모의투자 · #{snapshot.accountId}</span>
-    : <button type="button" className="guest-start-button" disabled={busy} onClick={open}>{snapshot.phase === "creating" ? "계정 생성 중…" : snapshot.phase === "loading" ? "게스트 확인 중…" : "게스트로 모의투자 이용해보기"}</button>}
-  </div>;
+  const { snapshot } = useGuestAccess();
+  return snapshot.phase === "ready" ? <div className="guest-header-action">
+    <span id="guest-header-status" tabIndex={-1} className="preview-label" role="status">Guest 모의투자 · #{snapshot.accountId}</span>
+  </div> : null;
 }
 
 export function GuestStartPrompt() {
