@@ -11,6 +11,7 @@ import { tradingMutationEffects } from "../src/features/trading/api/mutations";
 import { tradingKeys } from "../src/features/trading/api/query-keys";
 import { TradingApiError } from "../src/features/trading/api/client";
 import { CloseOrderFields } from "../src/features/trading/components/close-order-fields";
+import { PositionCloseEntry } from "../src/features/trading/components/position-close-entry";
 import { OrderHistoryTable, PendingOrderTable, PositionTable } from "../src/features/trading/components/account-tables";
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
 import { SelectedMarketProvider } from "../src/features/trading/components/selected-market-provider";
@@ -117,6 +118,18 @@ test("positions expose live ROE, reservation/free size and separate partial/full
   const html=renderTrading(<PositionTable positions={[position]} symbols={symbols}/>);
   for(const text of ["ROE %","청산 예약 수량","청산 가능 수량","부분 청산","전체 청산"])assert.ok(html.includes(text));
   assert.match(html,/role="table"/);assert.match(html,/data-key="roe"/);
+});
+test("row partial close stays in a closed modal while the Close tab keeps its inline editor",()=>{
+  const row=renderTrading(<PositionCloseEntry position={position} symbol="BTC / USDT" layout="row"/>);
+  const partial=row.match(/<dialog\b[^>]*class="position-close-dialog position-partial-dialog"[^>]*>[\s\S]*?<\/dialog>/)?.[0];
+  assert.ok(partial);
+  assert.doesNotMatch(partial.split(">")[0],/\sopen(?:=|\s|$)/);
+  assert.match(partial,/aria-modal="true"/);assert.match(partial,/<form/);assert.match(partial,/max="99"/);
+  const outside=row.replace(/<dialog\b[\s\S]*?<\/dialog>/g,"");
+  assert.doesNotMatch(outside,/<form/);assert.match(outside,/aria-haspopup="dialog"/);
+  assert.match(outside,/>부분 청산</);assert.match(outside,/>전체 청산</);
+  const panel=renderTrading(<PositionCloseEntry position={position} symbol="BTC / USDT"/>).replace(/<dialog\b[\s\S]*?<\/dialog>/g,"");
+  assert.match(panel,/<form/);assert.match(panel,/max="100"/);
 });
 test("pending and order history distinguish CLOSE, requested/fill prices, realized PnL and liquidation",()=>{
   const pending=renderTrading(<PendingOrderTable orders={[order(1,"CLOSE","PENDING")]} symbols={symbols}/>);

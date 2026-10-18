@@ -118,6 +118,7 @@
   .trading-account > .trading-navigation { @apply overflow-x-auto; }
   .trading-account .trading-tab { @apply flex-none whitespace-nowrap; }
   .activity-panel { @apply min-w-0; }
+  .trading-account-body { @apply min-w-0; }
   .trading-grid[data-main-view] .trading-account .activity-panel[hidden] { display: none; }
   .liquidation-feedback { @apply border-b border-terminal-line bg-terminal-raised px-3 py-2 text-trade-body text-loss; }
   .trading-brand-mark {
@@ -171,7 +172,6 @@
   .position-close-actions > button { @apply flex-1; }
   .position-close-actions > button:disabled { @apply cursor-not-allowed opacity-50; }
   .position-close-entry form { @apply flex min-w-0 flex-col gap-3; }
-  .position-close-entry[data-layout="row"] form { @apply mt-3 rounded-sm border border-terminal-line bg-terminal-raised p-3; }
   .close-position-label { @apply flex flex-wrap justify-between gap-2 text-trade-meta; }
   .close-availability { @apply grid grid-cols-3 gap-2 text-trade-meta; }
   .close-availability dt { @apply text-terminal-muted; }
@@ -235,9 +235,9 @@
   .market-sheet-content > .section-heading {
     @apply sticky top-0 z-10 min-h-14 bg-terminal-panel;
   }
-  .market-sheet-content, .order-view { scrollbar-width: thin; scrollbar-color: #45474f transparent; }
-  .market-sheet-content::-webkit-scrollbar, .order-view::-webkit-scrollbar { width: 4px; height: 4px; }
-  .market-sheet-content::-webkit-scrollbar-thumb, .order-view::-webkit-scrollbar-thumb { background: #45474f; border-radius: 2px; }
+  .market-sheet-content, .trading-account-body, .trading-table-scroll, .position-close-dialog { scrollbar-width: thin; scrollbar-color: #45474f transparent; }
+  .market-sheet-content::-webkit-scrollbar, .trading-account-body::-webkit-scrollbar, .trading-table-scroll::-webkit-scrollbar, .position-close-dialog::-webkit-scrollbar { width: 4px; height: 4px; }
+  .market-sheet-content::-webkit-scrollbar-thumb, .trading-account-body::-webkit-scrollbar-thumb, .trading-table-scroll::-webkit-scrollbar-thumb, .position-close-dialog::-webkit-scrollbar-thumb { background: #45474f; border-radius: 2px; }
   .market-search:focus-visible, .order-leverage-input:focus-visible, textarea:focus-visible { background-color: #2d2f36; }
   .market-sheet-close {
     @apply min-h-11 min-w-11 px-2 text-trade-body font-medium text-terminal-secondary enabled:cursor-pointer;
@@ -558,6 +558,7 @@
     @apply text-trade-meta font-normal text-terminal-muted;
   }
   /* One accessible table per dataset; the same cells form mobile position rows. */
+  .trading-table-scroll { overflow-x: auto; }
   .trading-table {
     @apply block w-full text-trade-body tabular-nums;
   }
@@ -679,10 +680,11 @@
       @apply grid;
       grid-template-columns: minmax(0, 1fr) 18rem;
       grid-template-rows: 60px 576px minmax(12rem, auto);
+      grid-template-areas: "overview order" "market order" "activity order";
       gap: 4px;
       background: var(--color-terminal-gutter);
     }
-    .market-overview { @apply grid items-center border-0 bg-terminal-panel; grid-column: 1; grid-row: 1; grid-template-columns: 11rem minmax(0,1fr); }
+    .market-overview { @apply grid items-center border-0 bg-terminal-panel; grid-area: overview; grid-template-columns: 11rem minmax(0,1fr); }
     .market-contract-header { @apply min-h-0 border-r border-b-0; }
     .market-contract-header > .preview-label { @apply hidden; }
     .market-sheet-trigger { @apply min-h-12; }
@@ -722,24 +724,22 @@
     .trading-grid[data-main-view] .chart-view {
       display: flex;
       min-height: 0;
-      grid-column: 1;
-      grid-row: 2;
+      grid-area: market;
     }
     .trading-grid[data-main-view] .order-view {
       display: block;
       min-height: 0;
-      contain: size;
-      overflow-y: auto;
-      grid-column: 2;
-      grid-row: 1 / 4;
+      overflow: visible;
+      grid-area: order;
       background: var(--color-terminal-panel);
     }
     .trading-grid[data-main-view] .trading-account {
-      @apply block border-t-0;
-      grid-column: 1;
-      grid-row: 3;
+      @apply flex min-h-0 flex-col overflow-hidden border-t-0;
+      contain: size;
+      grid-area: activity;
     }
-    .trading-grid[data-main-view] .trading-account[data-guest="true"] { @apply flex flex-col; }
+    .trading-account > .trading-navigation { @apply shrink-0; }
+    .trading-account-body { @apply flex min-h-0 flex-1 flex-col overflow-y-auto; overscroll-behavior: contain; }
     .trading-grid[data-main-view] .trading-account .account-content {
       display: none;
     }
@@ -751,8 +751,6 @@
     .order-panel {
       @apply min-h-full border-0;
     }
-    .order-panel > .section-heading { @apply sticky top-0 z-10 bg-terminal-panel; }
-    .order-panel > .order-intent-tabs { @apply sticky top-10 z-10 bg-terminal-panel; }
     .market-analysis { min-height: 0; grid-template-rows: minmax(0,1fr); }
     .market-analysis > .order-book { @apply overflow-y-auto border-t-0; scrollbar-width: none; }
     .market-analysis > .order-book::-webkit-scrollbar { width: 0; height: 0; }
@@ -775,6 +773,7 @@
     .trading-table {
       @apply table;
     }
+    .trading-table-scroll { overflow: visible; }
     .trading-table thead {
       @apply not-sr-only table-header-group;
     }
@@ -786,7 +785,7 @@
       @apply table-row;
     }
     .trading-table th {
-      @apply whitespace-nowrap border-b border-terminal-line bg-terminal-raised px-2 py-2 text-left text-trade-meta font-medium text-terminal-muted;
+      @apply sticky top-0 z-10 whitespace-nowrap border-b border-terminal-line bg-terminal-raised px-2 py-2 text-left text-trade-meta font-medium text-terminal-muted;
     }
     .trading-table td,
     .trading-table td:first-child {
@@ -803,8 +802,8 @@
     }
     .trading-table[data-variant="positions"] td { @apply align-top; }
     .trading-table[data-variant="positions"] [data-key="action"] { @apply sticky right-0 border-l border-terminal-line; min-width: 20rem; width: 20rem; }
-    .trading-table[data-variant="positions"] th[data-key="action"] { @apply bg-terminal-raised; }
-    .trading-table[data-variant="positions"] td[data-key="action"] { @apply bg-terminal-panel; }
+    .trading-table[data-variant="positions"] th[data-key="action"] { @apply z-20 bg-terminal-raised; }
+    .trading-table[data-variant="positions"] td[data-key="action"] { @apply z-1 bg-terminal-panel; }
     .trading-table button {
       @apply min-h-9;
     }

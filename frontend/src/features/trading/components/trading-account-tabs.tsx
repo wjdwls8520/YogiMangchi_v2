@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { useTradingOrders, useTradingSummary } from "../api/queries";
 import { portfolioPositions } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
@@ -17,6 +18,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
 }) {
   const query = useTradingSummary(), pending = useTradingOrders("pending"), history = useTradingOrders("history");
   const { snapshot } = useGuestSession();
+  const body = useRef<HTMLDivElement>(null);
   const positions = query.data?.positions ?? [];
   const tabs: readonly TradingTab[] = [
     {id:"positions",label:"포지션",controls:"positions",count:query.data ? positions.length : undefined},
@@ -25,9 +27,14 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
     {id:"closed",label:"포지션 내역",controls:"closed-positions"},
     {id:"portfolio",label:"자산",controls:"portfolio-view"},
   ];
-  const select = (value: string) => { if (tabs.some(tab=>tab.id===value)) onSelect?.(value as AccountView); };
+  const select = (value: string) => {
+    if (!tabs.some(tab=>tab.id===value)) return;
+    if (value !== activeTab) body.current?.scrollTo({ top: 0 });
+    onSelect?.(value as AccountView);
+  };
   return <section id="trading-account" aria-label="Trading Activity" className="trading-account trading-section" data-account-view={activeTab} data-guest={snapshot.phase !== "ready"}>
     <TradingNavigation label="거래 활동" prefix="activity" tabs={snapshot.phase === "ready" ? tabs : tabs.map(tab => ({ ...tab, controls: "guest-activity-panel" }))} activeId={activeTab} onSelect={onSelect ? select : undefined} />
+    <div ref={body} className="trading-account-body" role="region" aria-label="거래 활동 내용" tabIndex={0}>
     {snapshot.phase !== "ready" ? <div className="guest-account-message" id="guest-activity-panel" role="tabpanel" aria-labelledby={`activity-${activeTab}-tab`}>
       <p>로그인 또는 게스트로 참여하면 이용할 수 있습니다.</p>
     </div> : <>
@@ -48,7 +55,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
         {history.data && history.data.length>0 && <OrderHistoryTable orders={history.data} symbols={symbols} />}
       </section>
       <section hidden={activeTab !== "closed"} id="closed-positions" className="activity-panel account-query-state" role="tabpanel" aria-labelledby="activity-closed-tab">
-        <p>포지션 내역을 준비 중입니다. 현재 체결 기록은 주문 내역에서 확인할 수 있습니다.</p><button className="account-refresh" onClick={()=>onSelect?.("history")}>주문 내역 보기</button>
+        <p>포지션 내역을 준비 중입니다. 현재 체결 기록은 주문 내역에서 확인할 수 있습니다.</p><button className="account-refresh" onClick={()=>select("history")}>주문 내역 보기</button>
       </section>
       <section hidden={activeTab !== "portfolio"} id="portfolio-view" className="activity-panel" role="tabpanel" aria-labelledby="activity-portfolio-tab">
         <AccountQueryState loading={query.loading} error={query.error} onRetry={query.retry} busy={query.busy} />
@@ -56,5 +63,6 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
         <PortfolioAllocationChart positions={portfolioPositions(positions,symbols)} view={query.error ? "unavailable" : query.loading ? "loading" : "data"} />
       </section>
     </>}
+    </div>
   </section>;
 }
