@@ -108,6 +108,11 @@
   .wallet-overview dt, .wallet-overview p { @apply text-terminal-muted; }
   .wallet-overview dd { @apply text-right text-trade-body font-semibold tabular-nums; overflow-wrap: anywhere; }
   .wallet-overview p { @apply mt-3; }
+  .wallet-overview[data-layout="grid"] dl { @apply grid-cols-1 gap-0; }
+  .wallet-overview[data-layout="grid"] dl > div { @apply min-w-0 items-baseline gap-3 border-b border-terminal-line py-3; }
+  .wallet-overview[data-layout="grid"] dt { @apply min-w-0 text-terminal-secondary; }
+  .wallet-overview[data-layout="grid"] dd { @apply min-w-0 text-sm; }
+  .wallet-label-meaning { @apply text-terminal-muted; }
   [data-trend="up"] { @apply text-gain; }
   [data-trend="down"] { @apply text-loss; }
   .analysis-navigation { @apply grid grid-cols-2 border-b border-terminal-line; }
@@ -645,6 +650,9 @@
   .site-footer-info ul { @apply space-y-2; }
   .site-footer-copyright { @apply col-span-full border-t border-terminal-line pt-5 text-trade-meta; }
   @media (width >= 40rem) {
+    .wallet-overview[data-layout="grid"] dl { @apply grid-cols-2; }
+    .wallet-overview[data-layout="grid"] dl > div:nth-child(odd) { @apply border-r pr-5; }
+    .wallet-overview[data-layout="grid"] dl > div:nth-child(even) { @apply pl-5; }
     .market-summary-body {
       @apply items-center;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr);

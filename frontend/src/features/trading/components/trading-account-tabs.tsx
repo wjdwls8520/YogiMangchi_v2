@@ -59,7 +59,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
       </section>
       <section hidden={activeTab !== "portfolio"} id="portfolio-view" className="activity-panel" role="tabpanel" aria-labelledby="activity-portfolio-tab">
         <AccountQueryState loading={query.loading} error={query.error} onRetry={query.retry} busy={query.busy} />
-        {query.data && <WalletOverview wallet={query.data.wallet} />}
+        {query.data && <WalletOverview wallet={query.data.wallet} layout="grid" />}
         <PortfolioAllocationChart positions={portfolioPositions(positions,symbols)} view={query.error ? "unavailable" : query.loading ? "loading" : "data"} />
       </section>
     </>}
