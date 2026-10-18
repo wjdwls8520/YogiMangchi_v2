@@ -8,7 +8,7 @@
 .account-summary dd, .order-wallet dd { overflow-wrap: anywhere; }
 .market-price, .market-list-price, .market-statistics dd, .order-estimates dd { overflow-wrap: anywhere; }
 .order-actions button:disabled { opacity: .5; cursor: not-allowed; }
-.order-choice:has(input:focus-visible) { outline: 2px solid var(--color-brand-600); outline-offset: -2px; }
+.order-choice:has(input:focus-visible) { background-color: #34353c; }
 .trading-table [role="alert"] { max-width: 20rem; white-space: normal; }
 
 @theme {
@@ -56,6 +56,7 @@
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-brand-600;
   }
+  input:focus, select:focus, textarea:focus { outline: none; box-shadow: none; }
   :disabled,
   fieldset:disabled label {
     @apply cursor-not-allowed;
@@ -234,6 +235,10 @@
   .market-sheet-content > .section-heading {
     @apply sticky top-0 z-10 min-h-14 bg-terminal-panel;
   }
+  .market-sheet-content, .order-view { scrollbar-width: thin; scrollbar-color: #45474f transparent; }
+  .market-sheet-content::-webkit-scrollbar, .order-view::-webkit-scrollbar { width: 4px; height: 4px; }
+  .market-sheet-content::-webkit-scrollbar-thumb, .order-view::-webkit-scrollbar-thumb { background: #45474f; border-radius: 2px; }
+  .market-search:focus-visible, .order-leverage-input:focus-visible, textarea:focus-visible { background-color: #2d2f36; }
   .market-sheet-close {
     @apply min-h-11 min-w-11 px-2 text-trade-body font-medium text-terminal-secondary enabled:cursor-pointer;
   }
@@ -484,8 +489,9 @@
     @apply min-h-11 min-w-0 w-full rounded-sm border border-terminal-line bg-terminal-raised px-3 text-trade-body font-semibold tabular-nums;
   }
   .order-input {
-    @apply grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-sm border border-transparent bg-terminal-raised px-3 pt-2 focus-within:border-brand-600;
+    @apply grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-sm border border-transparent bg-terminal-raised px-3 pt-2;
   }
+  .order-input:focus-within { background-color: #2d2f36; }
   .order-input .field-label { @apply col-span-2 mb-0 text-[11px]; }
   .order-input input {
     @apply py-1 text-sm font-medium outline-none;
@@ -724,8 +730,6 @@
       min-height: 0;
       contain: size;
       overflow-y: auto;
-      scrollbar-width: thin;
-      scrollbar-color: #45474f transparent;
       grid-column: 2;
       grid-row: 1 / 4;
       background: var(--color-terminal-panel);
@@ -744,8 +748,6 @@
     .trading-grid[data-main-view] .trading-account[data-account-view="portfolio"] .portfolio-view {
       display: block;
     }
-    .order-view::-webkit-scrollbar { width: 4px; height: 4px; }
-    .order-view::-webkit-scrollbar-thumb { background: #45474f; border-radius: 2px; }
     .order-panel {
       @apply min-h-full border-0;
     }
