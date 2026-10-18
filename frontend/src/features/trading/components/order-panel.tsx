@@ -95,7 +95,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
     {snapshot.phase !== "ready" ? <div className="order-panel-body"><GuestStartPrompt /></div> : <form className="order-panel-body" onSubmit={(event) => { event.preventDefault(); void submit(form.side); }}>
       <AccountWallet />
       <details className="order-settings" open>
-        <summary>주문 설정 <span>{form.type} · <span data-side="LONG">Long {leverages.LONG}×</span> / <span data-side="SHORT">Short {leverages.SHORT}×</span> · {symbol?.displaySymbol ?? "종목 선택"}</span></summary>
+        <summary>주문 설정</summary>
         <div className="order-settings-fields" data-order-type={form.type}>
           <OrderChoices legend="주문 유형" name="order-type" selected={form.type} disabled={locked} onChange={(value) => { if (value === "MARKET" || value === "LIMIT") update({ type: value, ratio: 0 }); }} choices={[{ value: "MARKET", label: "시장가" }, { value: "LIMIT", label: "지정가" }]} />
           <OrderChoices legend="포지션 방향" name="position-side" selected={form.side} disabled={locked} onChange={(value) => { if (value === "LONG" || value === "SHORT") update({ side: value }); }} choices={[{ value: "LONG", label: "↗ Long" }, { value: "SHORT", label: "↘ Short" }]} />
@@ -106,10 +106,10 @@ function OpenOrderPanel({active}:{active:boolean}) {
             <label htmlFor="order-ratio" className="field-label">참고 자산 비율 <span className="float-right font-semibold tabular-nums text-brand-700">{form.ratio}%</span></label>
             <input id="order-ratio" type="range" min="0" max="100" step="1" value={form.ratio} disabled={ratioDisabled} onChange={(event) => selectRatio(Number(event.target.value))} className="h-8 w-full accent-brand-600" />
             <OrderChoices legend="비율 선택" name="ratio-preset" selected={String(form.ratio)} disabled={ratioDisabled} onChange={(value) => selectRatio(Number(value))} choices={[25, 50, 75, 100].map((value) => ({ value: String(value), label: `${value}%` }))} />
-            <p className="order-input-hint"><span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {form.leverage}×</span> 기준으로 수량을 채웁니다. 이후 가격·방향·레버리지가 바뀌어도 수량은 유지됩니다.</p>
+            <p className="order-input-hint">선택 비율로 수량을 채웁니다. 가격 변경 시 수량은 유지됩니다.</p>
             {!canSize && <p role="status" className="order-input-hint">{sizingUnavailable(form.type,price,ready,account.data?.wallet.availableBalance)}</p>}
           </div>
-          <dl className="order-estimates"><div><dt>예상 주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>예상 필요 증거금 · <span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {form.leverage}×</span></dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>사용 가능 잔액</dt><dd>{formatDecimal(account.data?.wallet.availableBalance)} USDT</dd></div></dl>
+          <dl className="order-estimates"><div><dt>예상 주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>예상 필요 증거금 · <span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {form.leverage}×</span></dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div></dl>
         </div>
       </details>
       {form.quantity && !validQuantity(quantity) && !(form.type === "LIMIT" && quantity === "0" && !validLimitPrice(price)) && <p role="alert" className="order-input-hint">수량은 0보다 커야 하며 소수점은 8자리까지 지원합니다.</p>}
@@ -124,7 +124,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
       {action.error && !serverWarning && (action.command?.kind !== "open" || action.command.tradingSymbolId === symbol?.id) && <p role="alert" className="order-warning">{action.error}</p>}
       {action.unconfirmed && <button type="button" className="account-refresh" disabled={action.pending} onClick={() => void action.retry().then(complete)}>같은 주문 결과 확인</button>}
       {result && result.identity === identity && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {result.order.status}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
-      <p id="order-preview-note" className="order-preview-note">실제 자금을 사용하지 않습니다. 참고 금액은 체결 결과와 다를 수 있으며 서버가 체결가·증거금·손익을 결정합니다.</p>
+      <p id="order-preview-note" className="order-preview-note">가상 자산을 사용하는 모의투자입니다. 금액은 체결 시 확정됩니다.</p>
     </form>}
   </div>;
 }

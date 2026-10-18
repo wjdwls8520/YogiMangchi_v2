@@ -1,7 +1,7 @@
 import { formatDecimal } from "../api/account";
 export type PortfolioPosition = { symbol: string; margin: string };
 const SCALE = BigInt("1000000000000000000");
-export const ALLOCATION_COLORS = ["#4f46e5", "#475569", "#0f766e", "#a16207", "#7c3aed"];
+export const ALLOCATION_COLORS = ["#ff9f24", "#5b8def", "#2dc9a8", "#a78bfa", "#f27fac"];
 
 function units(decimal: string) {
   if (!/^\d{1,30}(\.\d{1,18})?$/.test(decimal)) throw new Error("Invalid margin");

@@ -95,6 +95,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     <SelectedMarketProvider symbol={selected} symbols={catalog.allSymbols} market={market} orderBook={orderBook} positionPrices={positionPrices} bookSelection={bookSelection}><div className="trading-grid" data-main-view={mainView}>
       <div className="market-overview"><header className="market-contract-header">
         <button ref={sheetTrigger} type="button" onClick={openSheet} aria-haspopup="dialog" aria-controls="market-symbol-sheet" aria-expanded={sheetOpen} className="market-sheet-trigger">
+          <span className="market-coin-mark" aria-hidden="true">{selected?.symbol.charAt(0) ?? "·"}</span>
           <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selected?.name ?? "거래 가능 종목 확인 중"}</span></span>
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>

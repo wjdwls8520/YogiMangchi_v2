@@ -63,11 +63,11 @@ export function OrderInput({
   disabled?: boolean;
 }) {
   return (
-    <div>
-      <label htmlFor={id} className="field-label">{label}</label>
+    <div className="order-field">
       <div className="order-input">
-        <input id={id} name={id} type="text" inputMode="decimal" placeholder={placeholder} value={value} onChange={(event) => onChange?.(event.target.value)} disabled={disabled} aria-describedby={hint ? `${id}-hint` : undefined} className="w-full min-w-0 bg-transparent py-2.5 text-trade-body tabular-nums placeholder:text-slate-400 lg:py-2" />
-        <span className="text-trade-meta font-medium text-slate-500">{unit}</span>
+        <label htmlFor={id} className="field-label">{label}</label>
+        <input id={id} name={id} type="text" inputMode="decimal" placeholder={placeholder} value={value} onChange={(event) => onChange?.(event.target.value)} disabled={disabled} aria-describedby={hint ? `${id}-hint` : undefined} className="w-full min-w-0 bg-transparent tabular-nums placeholder:text-terminal-muted" />
+        <span className="text-trade-meta font-medium text-terminal-muted">{unit}</span>
       </div>
       {hint && <p id={`${id}-hint`} className="order-input-hint">{hint}</p>}
     </div>
