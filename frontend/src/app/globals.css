@@ -232,7 +232,7 @@
     overscroll-behavior: contain;
   }
   .market-sheet-content > .section-heading {
-    @apply sticky top-0 min-h-14 bg-terminal-panel;
+    @apply sticky top-0 z-10 min-h-14 bg-terminal-panel;
   }
   .market-sheet-close {
     @apply min-h-11 min-w-11 px-2 text-trade-body font-medium text-terminal-secondary enabled:cursor-pointer;
