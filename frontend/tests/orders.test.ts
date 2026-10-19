@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseOrders } from "../src/features/trading/api/orders";
 
 const pending = { orderId: 3, positionId: null, tradingSymbolId: 927, type: "LIMIT", action: "OPEN", side: "LONG", status: "PENDING",
-  quantity: "0.25000000", leverage: 10, limitPrice: "63500.000000000000000001", reservedMargin: "1587.500000000000000000", reservedCloseQuantity: "0.00000000",
+  quantity: "0.25000000", leverage: 10, requestedLeverage: 10, limitPrice: "63500.000000000000000001", reservedMargin: "1587.500000000000000000", reservedCloseQuantity: "0.00000000",
   createdAt: "2026-10-13T00:00:00Z", completedAt: null, reason: null, fill: null };
 
 test("orders preserve decimal and nullable pending fields, accepting empty results", () => {

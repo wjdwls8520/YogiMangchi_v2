@@ -459,7 +459,8 @@
     @apply grid grid-cols-2 gap-3 pb-3;
   }
   .order-settings-fields > fieldset { @apply col-span-2; }
-  .order-settings-fields > .order-leverage { order: -1; }
+  .order-settings-fields > .order-leverage { @apply col-span-2; order: -1; }
+  .order-settings-fields > p, .order-settings-fields > div:has(> .order-warning) { @apply col-span-2; }
   .order-settings-fields > .order-field { @apply col-span-2; }
   .order-settings-fields > fieldset:first-of-type .order-choices,
   .close-order-fields > fieldset:first-of-type .order-choices { @apply gap-5 rounded-none border-0 bg-transparent; }

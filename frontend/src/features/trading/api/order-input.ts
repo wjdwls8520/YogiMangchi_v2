@@ -1,7 +1,7 @@
 const SCALE = BigInt("1000000000000000000");
 export const MAX_INPUT_LEVERAGE = 100;
-// Runtime OpenAPI, TradingMath and DB constraints currently cap actual orders at 20.
-export const SERVER_MAX_LEVERAGE = 20;
+// Runtime OpenAPI: shared symbol leverage, integer 1–100.
+export const SERVER_MAX_LEVERAGE = 100;
 export function decimalUnits(value: string) {
   if (!/^\d{1,30}(\.\d{1,18})?$/.test(value)) throw new Error("Invalid decimal");
   const [whole, fraction = ""] = value.split(".");

@@ -11,7 +11,7 @@ export function parseOrder(value: unknown) {
     || !["LONG", "SHORT"].includes(text(row.side)) || !["PENDING", "FILLED", "CANCELED", "REJECTED"].includes(text(row.status))) return invalidContract();
   return { orderId: id(row.orderId), positionId: nullable(row.positionId, id), tradingSymbolId: id(row.tradingSymbolId),
     type: text(row.type), action: text(row.action), side: text(row.side), status: text(row.status), quantity: decimal(row.quantity),
-    leverage: id(row.leverage), limitPrice: nullable(row.limitPrice, decimal), reservedMargin: decimal(row.reservedMargin),
+    leverage: id(row.leverage), requestedLeverage: id(row.requestedLeverage), limitPrice: nullable(row.limitPrice, decimal), reservedMargin: decimal(row.reservedMargin),
     reservedCloseQuantity: decimal(row.reservedCloseQuantity), createdAt: instant(row.createdAt),
     completedAt: nullable(row.completedAt, instant), reason: nullable(row.reason, text), fill: nullable(row.fill, parseFill) };
 }
