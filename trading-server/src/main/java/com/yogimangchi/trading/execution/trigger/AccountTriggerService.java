@@ -9,6 +9,8 @@ import com.yogimangchi.trading.order.entity.TradingOrder;
 import com.yogimangchi.trading.order.repository.TradingOrderRepository;
 import com.yogimangchi.trading.position.entity.Position;
 import com.yogimangchi.trading.position.repository.PositionRepository;
+import com.yogimangchi.trading.position.service.HedgePositions;
+import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
 import com.yogimangchi.trading.tradingaccount.entity.TradingAccount;
 import com.yogimangchi.trading.tradingaccount.entity.Wallet;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
@@ -38,11 +40,14 @@ public class AccountTriggerService {
     private final TradingSymbolRepository symbols;
     private final AccountValuation valuation;
     private final LatestPriceStore livePrices;
+    private final HedgePositions hedge;
+    private final SymbolLeverageService leverage;
     public AccountTriggerService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols,
-            AccountValuation valuation, LatestPriceStore livePrices) {
+            AccountValuation valuation, LatestPriceStore livePrices, HedgePositions hedge, SymbolLeverageService leverage) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.valuation=valuation; this.livePrices=livePrices;
+        this.hedge=hedge; this.leverage=leverage;
     }
 
     /** No Redis I/O here. Replay and live execution share the same account lock and atomic financial transaction. */
@@ -75,11 +80,13 @@ public class AccountTriggerService {
             }
             String rejection = null;
             BigDecimal margin = null;
-            try { margin = TradingMath.margin(tick.domainMarkPrice(), order.getQuantity(), order.getLeverage()); }
+            int effectiveLeverage = leverage.current(accountId, order.getTradingSymbolId());
+            if (order.getLeverage() != effectiveLeverage) throw new IllegalStateException("Pending reservation leverage differs from symbol setting");
+            try { margin = hedge.additionalMargin(open, order.getTradingSymbolId(), order.getSide(), order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage); }
             catch (IllegalArgumentException exception) { rejection = "UNSUPPORTED_EXECUTION_NOTIONAL"; }
             if (symbols.findById(order.getTradingSymbolId()).filter(s -> s.getStatus()==TradingSymbolStatus.ACTIVE).isEmpty())
                 rejection = "SYMBOL_NOT_ACTIVE";
-            if (open.size() >= TradingMath.MAX_OPEN_POSITIONS) rejection = "POSITION_LIMIT";
+            if (open.size() >= TradingMath.MAX_OPEN_POSITIONS && hedge.existing(open, order.getTradingSymbolId(), order.getSide()) == null) rejection = "POSITION_LIMIT";
             wallet.releaseReservation(order.getReservedMargin());
             value = valuation.evaluate(wallet, open, snapshots, now);
             if (margin != null && margin.compareTo(value.availableBalance()) > 0) rejection = "INSUFFICIENT_MARGIN";
@@ -89,12 +96,11 @@ public class AccountTriggerService {
                 order.reject(rejection, now);
                 committed("rejected", accountId, order.getId(), tick.tradingSymbolId());
             } else {
-                Position position = positions.save(Position.open(accountId, order.getTradingSymbolId(), order.getSide(),
-                        order.getQuantity(), tick.domainMarkPrice(), order.getLeverage(), now));
+                Position position = hedge.apply(open, accountId, order.getTradingSymbolId(), order.getSide(),
+                        order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage, now);
                 wallet.openMargin(margin);
                 order.fill(position, tick.domainMarkPrice(), now);
                 fills.save(Fill.execute(order.getId(), tick.domainMarkPrice(), order.getQuantity(), tick.eventTime(), now, BigDecimal.ZERO));
-                open.add(position);
                 byId.put(position.getId(), position);
                 committed("limit-filled", accountId, order.getId(), tick.tradingSymbolId());
             }
@@ -107,7 +113,7 @@ public class AccountTriggerService {
         Position target = Objects.requireNonNull(byId.get(order.getPositionId()), "Pending CLOSE must reference an open lot");
         // Release only this order's reservation. Other pending CLOSE orders keep their reserved quantity.
         target.releaseCloseReservation(order.getQuantity());
-        BigDecimal pnl = TradingMath.pnl(target.getSide(), target.getEntryPrice(), price.domainMarkPrice(), order.getQuantity());
+        BigDecimal pnl = target.closingPnl(order.getQuantity(), price.domainMarkPrice());
         if (wallet.getBalance().add(pnl).signum() < 0) {
             order.reject("INSUFFICIENT_SETTLEMENT_CASH", now);
             committed("close-rejected", order.getAccountId(), order.getId(), order.getTradingSymbolId());

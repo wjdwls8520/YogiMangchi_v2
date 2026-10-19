@@ -59,6 +59,8 @@ class TradingMathTests {
                     .isInstanceOf(IllegalArgumentException.class);
         }
         assertThatThrownBy(() -> TradingMath.validateOrder(n("1"), 0, n("100"))).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> TradingMath.validateOrder(n("1"), 21, n("100"))).isInstanceOf(IllegalArgumentException.class);
+        TradingMath.validateOrder(n("1"), 21, n("100"));
+        TradingMath.validateOrder(n("1"), 100, n("100"));
+        assertThatThrownBy(() -> TradingMath.validateOrder(n("1"), 101, n("100"))).isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -11,7 +11,9 @@ public final class TradingMath {
     public static final BigDecimal MIN_NOTIONAL = BigDecimal.ONE;
     public static final BigDecimal MAX_NOTIONAL = new BigDecimal("1000000");
     public static final BigDecimal MAX_QUANTITY = new BigDecimal("1000000000000");
-    public static final int MAX_LEVERAGE = 20;
+    public static final int MAX_LEVERAGE = 100;
+    public static final int DEFAULT_LEVERAGE = 10;
+    public static final int BASIS_SCALE = 26;
     public static final int MAX_OPEN_POSITIONS = 100;
     public static final int MAX_PENDING_ORDERS = 100;
     public static final BigDecimal MAINTENANCE_RATE = new BigDecimal("0.005");
@@ -28,7 +30,7 @@ public final class TradingMath {
 
     public static void validateOrder(BigDecimal quantity, int leverage, BigDecimal price) {
         validateQuantity(quantity);
-        if (leverage < 1 || leverage > MAX_LEVERAGE) throw new IllegalArgumentException("Leverage must be between 1 and 20");
+        validateLeverage(leverage);
         validatePrice(price);
         BigDecimal notional = quantity.multiply(price);
         if (notional.compareTo(MIN_NOTIONAL) < 0 || notional.compareTo(MAX_NOTIONAL) > 0) {
@@ -41,6 +43,16 @@ public final class TradingMath {
                 || quantity.compareTo(MAX_QUANTITY) > 0) {
             throw new IllegalArgumentException("Quantity must be positive with at most 8 decimal places");
         }
+    }
+
+    public static void validateLeverage(int leverage) {
+        if (leverage < 1 || leverage > MAX_LEVERAGE) throw new IllegalArgumentException("Leverage must be between 1 and 100");
+    }
+
+    /** Remaining cost basis can be below the minimum NEW order notional after a partial close. */
+    public static BigDecimal basisMargin(BigDecimal basis, int leverage) {
+        validateLeverage(leverage);
+        return amount(basis.divide(BigDecimal.valueOf(leverage), AMOUNT_SCALE, RoundingMode.CEILING));
     }
 
     public static void validatePrice(BigDecimal price) {

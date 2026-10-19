@@ -12,8 +12,12 @@ public class OrderJsonConfiguration {
     @Bean
     Jackson2ObjectMapperBuilderCustomizer rejectBlankDecimalInputs() {
         // A blank quantity must not become null and silently request a full position close.
-        return builder -> builder.postConfigurer(mapper -> mapper.coercionConfigFor(BigDecimal.class)
+        return builder -> builder.postConfigurer(mapper -> {
+            mapper.disable(com.fasterxml.jackson.databind.DeserializationFeature.ACCEPT_FLOAT_AS_INT);
+            mapper.coercionConfigFor(Integer.class).setCoercion(CoercionInputShape.String, CoercionAction.Fail);
+            mapper.coercionConfigFor(BigDecimal.class)
                 .setAcceptBlankAsEmpty(false)
-                .setCoercion(CoercionInputShape.EmptyString, CoercionAction.Fail));
+                .setCoercion(CoercionInputShape.EmptyString, CoercionAction.Fail);
+        });
     }
 }

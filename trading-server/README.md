@@ -235,14 +235,66 @@ status 외에는 Guest Bearer 인증이 필요하다. 주문/종료의 `Idempote
 부분 종료의 동일 Key/다른 수량은 409다. 수량은 양수·최대 소수 8자리이며 잔여량 초과는 409 `CLOSE_QUANTITY_EXCEEDED`다.
 지정가 종료도 같은 멱등성 계약을 사용하며 수량 또는 지정가가 달라지면 충돌한다. 생략한 수량은 최초 주문 시 확정한다.
 종료에는 신규 진입 최소 Notional을 적용하지 않아 작은 잔여량도 정리할 수 있다. Fill은 실제 체결 `quantity`도 반환한다.
-Client의 임의 가격은 사용하지 않는다. 계정별 Key UNIQUE, Position별 OPEN/LIQUIDATE UNIQUE,
+Client의 임의 가격은 사용하지 않는다. 계정별 Key UNIQUE, 계정·종목·방향별 활성 Position UNIQUE, Position별 LIQUIDATE UNIQUE,
 Fill의 order_id UNIQUE와 계정 Row Lock을 함께 사용한다. Position/Wallet/Order/Fill은 하나의 Transaction이다.
 Commit 이후에만 성공 로그를 남긴다. Lock timeout/교착은 전체 rollback하며 무한 재시도하지 않는다.
 신규 주문에는 ACTIVE 종목과 보유 종목 전체의 fresh 가격, 충분한 가용 Margin이 필요하다.
 종료도 전체 fresh 평가를 요구하며 유지증거금 이하의 계정은 `ACCOUNT_AT_RISK`로 차단한다.
-손실 Lot 종료로 현금이 음수가 되면 거절한다. 수익 Lot을 먼저 종료해야 하는 경우가 있다.
+손실 Position 종료로 현금이 음수가 되면 거절한다. 수익 Position을 먼저 종료해야 하는 경우가 있다.
 가격이 새로 도착했지만 위험 처리가 끝나지 않았으면 503 `ENGINE_RECOVERING`이다. 동일 Key로 짧은 간격을 두고 재시도한다.
 단순 READY 상태도 개별 종목의 freshness 또는 주문 허용을 보장하지 않는다.
+
+### Hedge Mode 통합 Position 및 종목별 Leverage
+
+Hedge Mode만 지원한다. `(accountId, tradingSymbolId, side)`별 OPEN Position은 최대 하나이며,
+LONG/SHORT은 동시에 보유할 수 있다. 반대 방향 OPEN은 기존 노출을 상계하지 않는다.
+MARKET/LIMIT OPEN 체결은 같은 `HedgePositions` 경로에서 기존 Position ID를 유지하고 수량과 진입 원가를 더한다.
+Order/Fill은 매 체결마다 별개로 남는다. 수량이 0이 된 생애주기는 CLOSED/LIQUIDATED로 보존하고, 재진입하면 새 ID를 만든다.
+
+| Method | Path | 계약 |
+| --- | --- | --- |
+| GET | `/api/v1/trading/account/symbols/{symbolId}/leverage` | Bearer 계정의 종목 설정. 미설정이면 10배, `updatedAt=null`. 조회로 DB Row를 만들지 않음 |
+| PUT | 동일 경로 | `{"leverage":14}`. 정수 1~100. 두 방향 Position과 PENDING OPEN 예약을 원자적으로 재계산 |
+
+응답 예: `{"tradingSymbolId":1,"leverage":14,"maxLeverage":100,"marginMode":"CROSS","updatedAt":"2026-10-19T00:00:00Z"}`.
+설정은 PostgreSQL `symbol_leverage`에 저장하며 LONG/SHORT이 공유한다. ETH 등 다른 종목에는 영향을 주지 않는다.
+Frontend는 종목 선택 시 GET으로 복구하고, 변경 시 PUT 성공 후 그 값으로 OPEN을 보낸다.
+OPEN의 기존 `leverage` 입력은 유지하지만 서버 설정과 다르면 409 `LEVERAGE_MISMATCH`다.
+주문만으로 설정을 변경하지 않는다. 잘못된 범위는 `INVALID_LEVERAGE`(400), 비정수 JSON은 400이다.
+미존재/INACTIVE 종목은 `SYMBOL_NOT_AVAILABLE`(409), 미인증/만료는 401이다.
+
+레버리지 변경은 기존 Account DB Lock과 Transaction 안에서 남은 진입 원가 / 새 leverage로 두 방향 Margin을 계산한다.
+해당 종목 PENDING OPEN의 예약도 limitPrice * quantity / 새 leverage로 다시 계산한다.
+Wallet Used/Reserved의 전체 증감이 `min(balance,equity)`를 초과하면 `INSUFFICIENT_MARGIN`(409)로 전부 rollback한다.
+노출/예약이 있으면 전체 보유 종목의 fresh 가격과 위험 평가·Engine Gate를 확인한다.
+`PRICE_NOT_FRESH`/`ENGINE_RECOVERING`(503), `ACCOUNT_AT_RISK`(409)도 원자적으로 실패한다.
+동일 값 반복 PUT은 재무 변경을 반복하지 않는다. 수량·Entry·실현 PnL·CLOSE 예약은 바꾸지 않는다.
+`OrderResponse.requestedLeverage`는 최초 요청 값이고, `leverage`는 PENDING OPEN의 유효 값 또는 FILLED 시점 값이다.
+이미 완료된 Order/Fill의 기록을 현재 설정에 맞춰 다시 쓰지 않는다. CLOSE는 실제 체결 당시 Position leverage를 기록한다.
+
+Position의 `entry_notional NUMERIC(66,26)`은 남은 진입 원가다. 가격 18자리 × 수량 8자리 곱을 정확히 누적하고,
+표시용 `entryPrice`만 원가 / 현재 수량을 HALF_EVEN 18자리로 산출한다. PnL은 반올림된 표시 평균 대신 원가를 사용한다.
+부분 종료에서는 원가를 수량 비례 HALF_EVEN 26자리로 배분하고 마지막 종료에서 잔여 전부를 정산한다.
+PnL의 금융 원장 반영은 기존 HALF_EVEN 18자리다. Fill 단위의 최하위 자리 반올림은 존재하나 평균가 재사용으로 오차를 누적하지 않는다.
+`initialQuantity`는 생애주기의 누적 진입 수량, `initialMargin`은 진입 시 반영한 Margin 증가분의 누적값이다.
+현재 Margin과 비교하는 상한이 아니며 레버리지 변경 자체는 이 이력을 바꾸지 않는다. `exitPrice`는 최종 종료 Fill 가격이다.
+추가 진입은 이전 실현 PnL과 CLOSE 예약을 보존하며, 손익을 Wallet Balance에 임의 정산하지 않는다.
+Gross 유지증거금은 LONG/SHORT 각각 Mark Notional의 0.5%를 합산한다. 100배에서도 노출/예약을 상계하지 않는다.
+Binance 리스크 Tier, 수수료/Funding, 호가 기반 체결·슬리피지·부분 Fill은 도입하지 않는다.
+
+#### V10 데이터 이관 및 배포 주의
+
+**백업 후 모든 구버전 Trading 프로세스와 Worker를 중지한 상태에서 Migration한다. 혼합 버전 실행과 무중단 Rolling 배포를 지원하지 않는다.**
+V10은 기존 Migration을 수정하지 않으며 PostgreSQL Transaction과 대상 테이블 잠금으로 원자적으로 변환한다.
+Wallet Used/Reserved와 실제 노출/예약, CLOSE 예약이 불일치하거나 합산 노출이 허용 범위를 넘으면 전체 실패한다.
+이 경우 원장 조사·명시적인 위험 축소 후 재시도해야 하며, Migration이 데이터를 임의 삭제하거나 지갑을 초기화하지 않는다.
+계정·종목의 기존 OPEN/PENDING OPEN leverage 최댓값을 공유 설정으로 선택한다. 추가 이관 자금을 요구하지 않는 정책이다.
+같은 방향 OPEN 중 가장 작은 ID를 유지하고 남은 원가·수량·실현 PnL·CLOSE 예약을 합산한다.
+다른 원본 Position은 `MERGED`와 `mergedIntoPositionId`로 연결한 과거 스냅샷으로 보존하며 활성 평가에서는 제외한다.
+기존 CLOSED/LIQUIDATED 및 완료 Order/Fill의 원래 참조는 보존한다. PENDING CLOSE만 살아남은 ID로 옮기고
+`originalPositionId`에 원래 대상을 남긴다. Wallet Used/Reserved만 새 합계로 조정하고 Balance/실현 PnL은 유지한다.
+Preference인 symbol_leverage만 계정 삭제 시 CASCADE한다. 만료 미사용 Guest 정리를 위한 것으로 금융 이력에는 CASCADE를 적용하지 않는다.
+테스트는 격리된 PostgreSQL/Redis에서 이관·rollback을 확인한다. 실제 사용자 로컬/운영 DB 이관은 자동 실행하지 않는다.
 
 ### 지정가·가격 Trigger·강제청산
 
@@ -329,8 +381,9 @@ Producer 유실은 경고와 DB `gap_count`로 기록한다. 복구 시 현재 f
 `TRADING_TRIGGER_ENABLED=false`는 문서 추출/격리 테스트용이며 주문 Gate를 우회하지 않는다.
 
 금액/가격은 NUMERIC(38,18), Domain 자산 수량은 NUMERIC(28,8)이다. `execution.TradingMath`에서
-금액/PnL HALF_EVEN 18자리, 최초 Margin CEILING 18자리, Leverage 1~20, 1~1,000,000 USDT Notional,
-최대 10^12 수량/100개 OPEN Lot 정책을 정의한다. JSON 금액·수량은 정밀도를 보존하는 문자열이다.
+금액/PnL HALF_EVEN 18자리, Margin CEILING 18자리, Leverage 1~100, 새 주문 1~1,000,000 USDT Notional,
+최대 10^12 현재 수량/100개 OPEN Position 정책을 정의한다. 통합된 한 방향의 남은 진입 원가도 1,000,000 USDT 이하여야 한다.
+JSON 금액·수량은 정밀도를 보존하는 문자열이다.
 LONG PnL은 `(mark-entry)*quantity`, SHORT는 그 반대다. 평가자산은 `balance + unrealizedPnl`이며
 사용 가능 금액은 `max(0, min(balance, equity) - usedMargin - reservedMargin)`이다.
 미실현 이익으로 추가 Margin을 만들지 않으며 손실은 구매력을 줄인다. Margin은 현금 지출이 아닌 사용 제한이다.

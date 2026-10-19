@@ -44,6 +44,7 @@ class MarketOrderIntegrationTests {
     @Autowired LatestPriceStore prices;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
+    @Autowired com.yogimangchi.trading.leverage.service.SymbolLeverageService leverages;
     @MockitoSpyBean FillRepository fills;
     @org.springframework.test.context.bean.override.mockito.MockitoBean
     com.yogimangchi.trading.execution.trigger.TradingEngineGate gate;
@@ -62,7 +63,7 @@ class MarketOrderIntegrationTests {
         OrderResponse longOrder = create("2", Position.Side.LONG, 10, key());
         OrderResponse shortOrder = create("1", Position.Side.SHORT, 5, key());
         assertThat(longOrder.fill().price()).isEqualTo("1000.000000000000000000");
-        amount("used_margin", "400");
+        amount("used_margin", "600"); // Both Hedge directions share the newly selected 5x setting.
         price("1100");
         assertThat(accounts.summary(guest.accountId()).wallet().unrealizedPnl()).isEqualTo("100.000000000000000000");
         service.close(guest.accountId(), longOrder.positionId(), key());
@@ -123,9 +124,15 @@ class MarketOrderIntegrationTests {
     @Test void simultaneousCloseAndOpenPreserveBothChanges() throws Exception {
         OrderResponse initial = create("1", Position.Side.LONG, 1, key());
         price("1100");
-        assertThat(concurrent(2, i -> i == 0 ? service.close(guest.accountId(), initial.positionId(), key())
-                : create("1", Position.Side.LONG, 1, key()))).allMatch(OrderResponse.class::isInstance);
-        amount("balance", "10100"); amount("used_margin", "1100");
+        var results = concurrent(2, i -> i == 0 ? service.close(guest.accountId(), initial.positionId(), key())
+                : create("1", Position.Side.LONG, 1, key()));
+        assertThat(results).allMatch(OrderResponse.class::isInstance);
+        var added = results.stream().map(OrderResponse.class::cast).filter(o -> o.action().equals("OPEN")).findFirst().orElseThrow();
+        // Full CLOSE takes the remaining aggregate at its account-lock serialization point.
+        // If OPEN wins, it closes both units; otherwise OPEN begins a new lifecycle after CLOSE.
+        boolean mergedBeforeClose = added.positionId().equals(initial.positionId());
+        amount("balance", "10100"); amount("used_margin", mergedBeforeClose ? "0" : "1100");
+        assertThat(accounts.summary(guest.accountId()).positions()).hasSize(mergedBeforeClose ? 0 : 1);
         assertThat(fillCount()).isEqualTo(3);
     }
 
@@ -146,6 +153,7 @@ class MarketOrderIntegrationTests {
     }
 
     @Test void apiRequiresCredentialAndHidesOtherAccountsAndProviderData() throws Exception {
+        leverages.change(guest.accountId(), symbol, 2);
         String body = "{\"type\":\"MARKET\",\"tradingSymbolId\":" + symbol + ",\"side\":\"LONG\",\"quantity\":\"1\",\"leverage\":2,\"price\":1}";
         mvc.perform(post("/api/v1/trading/account/orders").header("Idempotency-Key", key()).contentType("application/json").content(body))
                 .andExpect(status().isUnauthorized());
@@ -162,6 +170,7 @@ class MarketOrderIntegrationTests {
     }
 
     private OrderResponse create(String quantity, Position.Side side, int leverage, String key) {
+        if (leverages.current(guest.accountId(), symbol) != leverage) leverages.change(guest.accountId(), symbol, leverage);
         return service.create(guest.accountId(), key, new CreateOrderRequest(TradingOrder.Type.MARKET, symbol, side, new BigDecimal(quantity), leverage, null));
     }
 
@@ -189,6 +198,7 @@ class MarketOrderIntegrationTests {
     }
 
     @Test void fixedLimitMarginSurvivesMarkMovesButOtherReservationsCanExhaustBalance() {
+        leverages.change(guest.accountId(), symbol, 1);
         var request = new CreateOrderRequest(TradingOrder.Type.LIMIT, symbol, Position.Side.LONG,
                 new BigDecimal("5"), 1, new BigDecimal("900"));
         service.create(guest.accountId(), key(), request);

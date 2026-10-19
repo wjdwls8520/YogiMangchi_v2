@@ -40,7 +40,7 @@ public class AccountValuation {
         BigDecimal maintenance = BigDecimal.ZERO;
         for (Position position : positions) {
             BigDecimal mark = snapshots.get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice();
-            pnl = pnl.add(TradingMath.pnl(position.getSide(), position.getEntryPrice(), mark, position.getQuantity()));
+            pnl = pnl.add(position.unrealizedPnl(mark));
             maintenance = maintenance.add(TradingMath.maintenance(mark, position.getQuantity()));
         }
         return new Value(capturedAt, snapshots, true, TradingMath.amount(pnl),

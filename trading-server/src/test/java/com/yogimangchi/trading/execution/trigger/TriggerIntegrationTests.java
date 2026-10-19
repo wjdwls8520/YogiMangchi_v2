@@ -45,6 +45,7 @@ class TriggerIntegrationTests {
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
     @Autowired MockMvc mvc;
+    @Autowired com.yogimangchi.trading.leverage.service.SymbolLeverageService leverages;
     @MockitoSpyBean TradingEngineGate gate;
     @MockitoSpyBean FillRepository fills;
     @MockitoSpyBean TriggerCandidates candidates;
@@ -296,6 +297,7 @@ class TriggerIntegrationTests {
     }
 
     private OrderResponse limit(Position.Side side,String quantity,String limit,int leverage) {
+        if (leverages.current(guest.accountId(), symbol) != leverage) leverages.change(guest.accountId(), symbol, leverage);
         return orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,symbol,side,new BigDecimal(quantity),leverage,new BigDecimal(limit)));
     }
 
@@ -590,6 +592,7 @@ class TriggerIntegrationTests {
         assertThat(jdbc.queryForObject("select "+column+" from trading.position where id=?",BigDecimal.class,id)).isEqualByComparingTo(expected);
     }
     private OrderResponse market(Position.Side side,String quantity,int leverage) {
+        if (leverages.current(guest.accountId(), symbol) != leverage) leverages.change(guest.accountId(), symbol, leverage);
         return orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,new BigDecimal(quantity),leverage,null));
     }
     private LatestMarkPrice tick(String amount) {
