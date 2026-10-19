@@ -22,6 +22,8 @@ public class TradingOrder {
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 16) private Status status;
     @Column(nullable = false, precision = 28, scale = 8) private BigDecimal quantity;
     @Column(nullable = false) private int leverage;
+    @Column(nullable = false, updatable = false) private int requestedLeverage;
+    @Column(updatable = false) private Long originalPositionId;
     @Column(precision = 38, scale = 18) private BigDecimal filledPrice;
     @Column(precision = 38, scale = 18) private BigDecimal limitPrice;
     @Column(nullable = false, precision = 38, scale = 18) private BigDecimal reservedMargin;
@@ -45,6 +47,7 @@ public class TradingOrder {
         TradingMath.validateQuantity(quantity);
         order.quantity = quantity.setScale(TradingMath.QUANTITY_SCALE);
         order.leverage = position.getLeverage();
+        order.requestedLeverage = order.leverage;
         order.filledPrice = TradingMath.amount(price);
         order.idempotencyKey = key;
         order.requestFingerprint = fingerprint;
@@ -66,6 +69,7 @@ public class TradingOrder {
         order.status = Status.PENDING;
         order.quantity = quantity.setScale(TradingMath.QUANTITY_SCALE);
         order.leverage = leverage;
+        order.requestedLeverage = leverage;
         order.limitPrice = TradingMath.amount(limitPrice);
         order.idempotencyKey = key;
         order.requestFingerprint = fingerprint;
@@ -95,6 +99,7 @@ public class TradingOrder {
         order.status = Status.PENDING;
         order.quantity = quantity.setScale(TradingMath.QUANTITY_SCALE);
         order.leverage = position.getLeverage();
+        order.requestedLeverage = order.leverage;
         order.limitPrice = TradingMath.amount(limitPrice);
         order.reservedMargin = TradingMath.amount(BigDecimal.ZERO);
         order.idempotencyKey = key;
@@ -108,6 +113,7 @@ public class TradingOrder {
                 || !position.getTradingSymbolId().equals(tradingSymbolId) || position.getSide() != side
                 || action == Action.CLOSE && !position.getId().equals(positionId)) throw new IllegalArgumentException("Invalid limit fill");
         positionId = position.getId();
+        leverage = position.getLeverage();
         filledPrice = TradingMath.amount(price);
         finish(Status.FILLED, null, now);
     }
@@ -129,6 +135,14 @@ public class TradingOrder {
     public Status getStatus() { return status; }
     public BigDecimal getQuantity() { return quantity; }
     public int getLeverage() { return leverage; }
+    public int getRequestedLeverage() { return requestedLeverage; }
+    public Long getOriginalPositionId() { return originalPositionId; }
+    public void repricePendingOpen(int effectiveLeverage) {
+        requirePending();
+        if (action != Action.OPEN) throw new IllegalStateException("Only OPEN reservations use leverage");
+        reservedMargin = TradingMath.margin(limitPrice, quantity, effectiveLeverage);
+        leverage = effectiveLeverage;
+    }
     public BigDecimal getFilledPrice() { return filledPrice; }
     public String getRequestFingerprint() { return requestFingerprint; }
     public Instant getCreatedAt() { return createdAt; }

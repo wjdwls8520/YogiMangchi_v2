@@ -48,6 +48,16 @@ public class Wallet {
         usedMargin = usedMargin.add(value);
     }
 
+    /** Validated account-wide under AccountLock; changes reservations and used margin atomically. */
+    public void reallocateMargin(BigDecimal used, BigDecimal reserved) {
+        BigDecimal newUsed = TradingMath.amount(used);
+        BigDecimal newReserved = TradingMath.amount(reserved);
+        if (newUsed.signum() < 0 || newReserved.signum() < 0
+                || newUsed.add(newReserved).compareTo(balance) > 0) throw new IllegalStateException("Insufficient cash margin");
+        usedMargin = newUsed;
+        reservedMargin = newReserved;
+    }
+
     /** Called only after account-wide fresh valuation and margin validation under the account DB lock. */
     public void settle(BigDecimal releasedMargin, BigDecimal pnl) {
         BigDecimal released = TradingMath.amount(releasedMargin);

@@ -36,15 +36,15 @@ class CloseMigrationTests {
             jdbc.update("insert into "+schema+".fill(id,order_id,price,quantity,price_event_time,executed_at,realized_pnl) values (1,1,102,1,now(),now(),2),(2,2,96,1,now(),now(),-4)");
             jdbc.update("insert into "+schema+".trading_order(id,account_id,trading_symbol_id,side,type,action,status,quantity,leverage,limit_price,reserved_margin,idempotency_key,request_fingerprint,created_at) "
                     +"values (3,1,1,'LONG','LIMIT','OPEN','PENDING',1,10,50,5,'old-pending',repeat('d',64),now())");
-            var ordersBefore=jdbc.queryForList("select * from "+schema+".trading_order order by id");
+            var ordersBefore=jdbc.queryForList("select id,position_id,leverage,status,quantity,filled_price,reserved_margin from "+schema+".trading_order order by id");
             var fillsBefore=jdbc.queryForList("select * from "+schema+".fill order by id");
             var walletBefore=jdbc.queryForList("select * from "+schema+".wallet");
             var flyway=Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load();
-            assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
+            assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
             assertThat(jdbc.queryForObject("select guest_account from "+schema+".trading_account where id=1",Boolean.class)).isTrue();
             jdbc.update("insert into "+schema+".trading_account(id,status,credential_hash,credential_expires_at,created_at,last_financial_change_at) values (2,'ACTIVE',repeat('e',64),now()+interval '7 days',now(),now())");
             assertThat(jdbc.queryForObject("select guest_account from "+schema+".trading_account where id=2",Boolean.class)).isFalse();
-            assertThat(jdbc.queryForList("select * from "+schema+".trading_order order by id")).isEqualTo(ordersBefore);
+            assertThat(jdbc.queryForList("select id,position_id,leverage,status,quantity,filled_price,reserved_margin from "+schema+".trading_order order by id")).isEqualTo(ordersBefore);
             assertThat(jdbc.queryForList("select * from "+schema+".fill order by id")).isEqualTo(fillsBefore);
             assertThat(jdbc.queryForList("select * from "+schema+".wallet")).isEqualTo(walletBefore);
             assertThat(jdbc.queryForList("select quantity from "+schema+".position order by id",BigDecimal.class))

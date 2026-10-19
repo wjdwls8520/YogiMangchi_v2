@@ -3,6 +3,8 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    INVALID_LEVERAGE(HttpStatus.BAD_REQUEST, "Leverage must be an integer between 1 and 100"),
+    LEVERAGE_MISMATCH(HttpStatus.CONFLICT, "OPEN leverage must match the account's current symbol setting; change it with PUT leverage first"),
     MARKETABLE_LIMIT_NOT_ALLOWED(HttpStatus.CONFLICT, "Limit BUY must be below the fresh Mark Price and limit SELL above it; equality is not allowed"),
     INVALID_CANDLE_CURSOR(HttpStatus.BAD_REQUEST, "before must be an ISO-8601 timestamp after the Unix epoch, not in the future, with at most millisecond precision"),
     INVALID_CANDLE_REQUEST(HttpStatus.BAD_REQUEST, "Candle request requires a positive tradingSymbolId, a supported interval and limit 1-500"),

@@ -40,7 +40,7 @@ public class TradingAccountController {
 
     @GetMapping("/account/positions")
     @SecurityRequirement(name = "guestBearer")
-    @Operation(summary = "Read the authenticated guest's open position lots",
+    @Operation(summary = "Read the authenticated guest's integrated Hedge Mode positions",
             description = "401: missing/expired credential; 409 TRADING_BUSY: retry after lock contention; 503: authentication storage unavailable.")
     public List<PositionResponse> positions(@AuthenticationPrincipal GuestPrincipal principal) {
         return accounts.summary(principal.accountId()).positions();

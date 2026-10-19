@@ -15,8 +15,8 @@ public class OrderController {
     private final TradingOrderService engine;
     public OrderController(TradingOrderService engine) { this.engine = engine; }
     @PostMapping("/orders")
-    @Operation(summary="OPEN a new lot with MARKET or reserve a PENDING LIMIT OPEN order",
-            description="Idempotency-Key: 8-100 letters, digits, underscore or hyphen. Replay returns the same order with its current state. LIMIT OPEN LONG must be strictly below fresh Mark; SHORT strictly above. Equality or crossing returns 409 MARKETABLE_LIMIT_NOT_ALLOWED. LIMIT margin uses limitPrice * quantity / leverage. 400 invalid request; 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price or recovering engine. Order book is reference data only; no client execution price.")
+    @Operation(summary="OPEN/add to an integrated Hedge position with MARKET or reserve a LIMIT OPEN",
+            description="Same account/symbol/side fills share one Position ID; LONG and SHORT coexist. Leverage 1-100 must match the shared symbol setting (default 10); use PUT leverage first or receive 409 LEVERAGE_MISMATCH. Idempotency-Key: 8-100 letters, digits, underscore or hyphen. Replay returns the same order with its current state. LIMIT OPEN LONG must be strictly below fresh Mark; SHORT strictly above. Equality or crossing returns 409 MARKETABLE_LIMIT_NOT_ALLOWED. LIMIT margin uses limitPrice * quantity / leverage. 400 invalid request; 401 credential; 409 margin/risk/idempotency conflict; 503 unavailable price or recovering engine. Order book is reference data only; no client execution price.")
     public OrderResponse create(@AuthenticationPrincipal GuestPrincipal principal, @RequestHeader("Idempotency-Key") String key,
             @RequestBody CreateOrderRequest request) { return engine.create(principal.accountId(), key, request); }
     @PostMapping("/positions/{positionId}/close")

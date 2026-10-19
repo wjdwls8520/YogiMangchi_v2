@@ -35,6 +35,8 @@ public class SecurityConfig {
                     "/api/v1/trading/account/positions/{positionId}/close",
                     "/api/v1/trading/account/positions/{positionId}/close-orders").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/orders", "/api/v1/trading/account/orders/pending").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/symbols/{symbolId}/leverage").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.PUT, "/api/v1/trading/account/symbols/{symbolId}/leverage").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/wallet",
                     "/api/v1/trading/account/positions", "/api/v1/trading/account/summary").hasRole("TRADER");
             authorize.requestMatchers(
@@ -71,7 +73,7 @@ public class SecurityConfig {
         }
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(allowed);
-        configuration.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key"));
         configuration.setAllowCredentials(false);
         configuration.setMaxAge(3600L);
