@@ -5,9 +5,8 @@ import type { TradingCommand } from "./mutation-request";
 export type OpenForm = { symbolId: number | null; type: "MARKET" | "LIMIT"; side: "LONG" | "SHORT";
   leverage: number; quantity: string; limitPrice: string; ratio: number };
 export type OrderIssue = { kind: "marketable" | "balance" | "input" | "unavailable"; message: string };
-export type SideLeverage = Record<OpenForm["side"], number>;
-export function formForSide(form: OpenForm, side: OpenForm["side"], leverages: SideLeverage): OpenForm {
-  return { ...form, side, leverage: leverages[side] };
+export function formForSide(form: OpenForm, side: OpenForm["side"], leverage: number): OpenForm {
+  return { ...form, side, leverage };
 }
 export function formForBookPrice(form: OpenForm, symbolId: number, price: string): OpenForm | null {
   return form.symbolId === symbolId && validLimitPrice(price) ? { ...form, type: "LIMIT", limitPrice: price, ratio: 0 } : null;
@@ -29,7 +28,7 @@ export function balanceIssue(type: OpenForm["type"]): OrderIssue {
 export function preflightOrder(form: OpenForm, side: OpenForm["side"], ready: boolean, mark: string | undefined, availableBalance: string | null | undefined): OrderIssue | null {
   if (!ready || !mark || !validSizingPrice(mark)) return { kind: "unavailable", message: "거래할 계정과 선택 종목의 최신 시세를 확인해 주세요." };
   const quantity = form.quantity.trim(), price = form.type === "LIMIT" ? form.limitPrice.trim() : mark;
-  if (form.leverage > SERVER_MAX_LEVERAGE) return {kind:"input",message:`현재 거래 서버는 ${SERVER_MAX_LEVERAGE}배까지 지원합니다. 선택한 레버리지의 주문은 서버 업데이트 후 가능합니다.`};
+  if (form.leverage > SERVER_MAX_LEVERAGE) return {kind:"input",message:`레버리지는 1~${SERVER_MAX_LEVERAGE}배 정수로 설정해 주세요.`};
   if (!validQuantity(quantity) || !Number.isInteger(form.leverage) || form.leverage < 1
     || (form.type === "LIMIT" && !validLimitPrice(price))) return { kind: "input", message: "주문 수량·지정가·레버리지를 확인해 주세요." };
   const relation = form.type === "LIMIT" ? marketableLimitIssue(side, price, mark) : null;

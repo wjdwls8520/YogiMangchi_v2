@@ -1,6 +1,7 @@
 import { tradingJson, TradingApiError } from "./client";
 import { parseCredential, parseGuest, type GuestCredential } from "./contracts";
 import { mutationRequest, type TradingCommand } from "./mutation-request";
+import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
 import { parseOrder } from "./orders";
 
 export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number };
@@ -90,7 +91,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { credential = null; publish("anonymous"); }
       });
     },
-    async read(path: "account/summary" | "account/orders/pending" | "account/orders?limit=50", expected: SessionSnapshot, signal: AbortSignal) {
+    async read(path: "account/summary" | "account/orders/pending" | "account/orders?limit=50" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal) {
       const current = credential;
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
       if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
@@ -99,6 +100,22 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         if (current !== credential || signal.aborted || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
         return value;
+      } catch (error) {
+        if (error instanceof TradingApiError && error.status === 401) invalidate(current);
+        throw error;
+      }
+    },
+    async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot) {
+      const path = leveragePath(symbolId);
+      if (!validLeverage(leverage)) throw new TradingApiError(400, "레버리지는 1~100배 정수로 설정해 주세요.");
+      const current = credential;
+      if (current && !usable(current)) invalidate(current);
+      if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      try {
+        const value = await tradingJson(origin, path, { token: current.accessToken, method: "PUT", body: { leverage } }, transport);
+        if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+        if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
+        return parseLeverage(value, symbolId);
       } catch (error) {
         if (error instanceof TradingApiError && error.status === 401) invalidate(current);
         throw error;

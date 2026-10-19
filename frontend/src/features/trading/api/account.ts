@@ -21,6 +21,15 @@ export function parseSummary(value: unknown, accountId: number | null) {
   if (id(row.accountId) !== accountId) return invalidContract();
   const wallet = record(row.wallet);
   if (wallet.quoteAsset !== "USDT") return invalidContract();
+  const positions = list(row.positions, parsePosition);
+  const sides = new Set<string>(), ids = new Set<number>();
+  const leverages = new Map<number, number>();
+  for (const position of positions) {
+    const key = `${position.tradingSymbolId}:${position.side}`;
+    if (position.status !== "OPEN" || position.leverage > 100 || sides.has(key) || ids.has(position.id)
+      || (leverages.has(position.tradingSymbolId) && leverages.get(position.tradingSymbolId) !== position.leverage)) return invalidContract();
+    sides.add(key); ids.add(position.id); leverages.set(position.tradingSymbolId, position.leverage);
+  }
   return {
     accountId, status: text(row.status), createdAt: instant(row.createdAt), valuedAt: instant(row.valuedAt),
     wallet: {
@@ -29,7 +38,7 @@ export function parseSummary(value: unknown, accountId: number | null) {
       unrealizedPnl: nullable(wallet.unrealizedPnl, decimal), equity: nullable(wallet.equity, decimal),
       availableBalance: nullable(wallet.availableBalance, decimal), valuationStatus: text(wallet.valuationStatus),
     },
-    positions: list(row.positions, parsePosition),
+    positions,
   };
 }
 

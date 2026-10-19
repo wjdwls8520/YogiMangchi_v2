@@ -8,7 +8,7 @@ import { parseOrder } from "../src/features/trading/api/orders";
 
 const snapshot = { phase: "ready" as const, accountId: 7, generation: 1 };
 const command: TradingCommand = { kind: "open", type: "MARKET", side: "LONG", tradingSymbolId: 927, quantity: "0.00100000", leverage: 10 };
-const response = { orderId: 3, positionId: 4, tradingSymbolId: 927, type: "MARKET", action: "OPEN", side: "LONG", status: "FILLED", quantity: "0.00100000", leverage: 10, limitPrice: null, reservedMargin: "0", reservedCloseQuantity: "0", createdAt: "2026-10-13T00:00:00Z", completedAt: "2026-10-13T00:00:00Z", reason: null, fill: { fillId: 5, quantity: "0.00100000", price: "64000.000000000000000001", priceEventTime: "2026-10-13T00:00:00Z", executedAt: "2026-10-13T00:00:00Z", realizedPnl: "0" } };
+const response = { orderId: 3, positionId: 4, tradingSymbolId: 927, type: "MARKET", action: "OPEN", side: "LONG", status: "FILLED", quantity: "0.00100000", leverage: 10, requestedLeverage: 10, limitPrice: null, reservedMargin: "0", reservedCloseQuantity: "0", createdAt: "2026-10-13T00:00:00Z", completedAt: "2026-10-13T00:00:00Z", reason: null, fill: { fillId: 5, quantity: "0.00100000", price: "64000.000000000000000001", priceEventTime: "2026-10-13T00:00:00Z", executedAt: "2026-10-13T00:00:00Z", realizedPnl: "0" } };
 
 test("mutation payloads match OPEN, CLOSE, LIMIT CLOSE and CANCEL without client execution prices", () => {
   assert.deepEqual(mutationRequest({ ...command, limitPrice: "wrong-unused-value" }), { path: "account/orders", body: { type: "MARKET", side: "LONG", tradingSymbolId: 927, quantity: "0.00100000", leverage: 10 }, keyed: true });
@@ -27,7 +27,7 @@ test("input validation and estimates never round financial strings through Numbe
   assert.equal(ratioQuantity("10000", "64000", 10, 25), "0.390625");
   assert.equal(ratioQuantity("1", "3", 1, 100), "0.33333333");
   assert.equal(ratioQuantity(null, "3", 1, 100), "");
-  assert.throws(() => mutationRequest({ ...command, leverage: 21 }));
+  assert.throws(() => mutationRequest({ ...command, leverage: 101 }));
   assert.throws(() => mutationRequest({ ...command, quantity: "0.000000001" }));
 });
 test("double clicks share one in-flight order and use one idempotency key", async () => {

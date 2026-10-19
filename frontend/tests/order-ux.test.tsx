@@ -57,23 +57,19 @@ test("book price fills LIMIT with the exact decimal and never changes quantity, 
   assert.equal(formForBookPrice(form,2,"99"),null);
   for(const price of ["0","-1","bad","1.0000000000000000001"])assert.equal(formForBookPrice(form,1,price),null);
 });
-test("Long and Short leverage are independent for sizing, preflight and outgoing payloads",()=>{
-  const leverages={LONG:5,SHORT:20};
-  const long=formForSide(initial,"LONG",leverages),short=formForSide(long,"SHORT",leverages);
-  assert.equal(long.leverage,5);assert.equal(short.leverage,20);
-  assert.equal(formForSide(short,"LONG",leverages).leverage,5);
+test("Long and Short use the same server leverage for sizing and outgoing payloads",()=>{
+  const long=formForSide(initial,"LONG",14),short=formForSide(long,"SHORT",14);
+  assert.equal(long.leverage,14); assert.equal(short.leverage,14);
   assert.equal(short.quantity,initial.quantity);
-  assert.equal(ratioInputQuantity("LIMIT","100","100",long.leverage,50),"2.5");
-  assert.equal(ratioInputQuantity("LIMIT","100","100",short.leverage,50),"10");
-  assert.equal(preflightOrder(long,"LONG",true,"100","10")?.kind,"balance");
-  assert.equal(preflightOrder(short,"SHORT",true,"100","10"),null);
+  assert.equal(ratioInputQuantity("LIMIT","100","100",long.leverage,50),"7");
   for(const form of [long,short]) {
     const body=mutationRequest({kind:"open",...form,tradingSymbolId:1}).body;
-    assert.ok(body && "leverage" in body);assert.equal(body.leverage,leverages[form.side]);
+    assert.ok(body && "leverage" in body);assert.equal(body.leverage,14);
   }
-  const html=renderToStaticMarkup(<><OrderLeverage side="LONG" value={5} disabled={false} onChange={()=>{}}/><OrderLeverage side="SHORT" value={20} disabled={false} onChange={()=>{}}/></>);
-  assert.match(html,/Long 레버리지/);assert.match(html,/Short 레버리지/);assert.match(html,/value="5" selected/);assert.match(html,/value="20" selected/);
+  const html=renderToStaticMarkup(<OrderLeverage value={14} disabled={false} onChange={()=>{}}/>);
+  assert.match(html,/공통 레버리지/); assert.match(html,/value="14" selected/);
 });
+
 test("every LIMIT ratio yields zero without a valid price, then sizes on the next selection",()=>{
   for(let percent=0;percent<=100;percent++)for(const price of ["","0","bad","-1"])
     assert.equal(ratioInputQuantity("LIMIT","10000",price,10,percent),"0");
@@ -89,14 +85,19 @@ test("the ratio slider supports individual percentages while quick presets remai
   for(const percent of [-1,101,0.5,NaN,Infinity])assert.equal(ratioQuantity("100","100",10,percent),"");
   for(const percent of [25,50,75,100])assert.ok(ratioQuantity("100","100",10,percent));
 });
-test("100x sizing is available but orders above the verified server cap remain blocked",()=>{
+test("100x sizing and orders are supported, 101x is rejected and server symbol maximum is respected",()=>{
   assert.equal(estimatedOrder("1","100",100)?.margin,"1");
   assert.equal(ratioInputQuantity("LIMIT","100","100",100,37),"37");
-  assert.match(preflightOrder({...initial,leverage:100},"LONG",true,"100","100")!.message,/서버는 20배/);
-  assert.throws(()=>mutationRequest({kind:"open",...initial,tradingSymbolId:1,leverage:100}));
-  const html=renderToStaticMarkup(<OrderLeverage side="LONG" value={100} disabled={false} onChange={()=>{}}/>);
-  assert.match(html,/value="100" selected/);assert.match(html,/현재 서버는 20배/);assert.match(html,/data-side="LONG"/);
+  assert.equal(preflightOrder({...initial,leverage:100},"LONG",true,"100","100"),null);
+  const body=mutationRequest({kind:"open",...initial,tradingSymbolId:1,leverage:100}).body;
+  assert.ok(body && "leverage" in body); assert.equal(body.leverage,100);
+  assert.throws(()=>mutationRequest({kind:"open",...initial,tradingSymbolId:1,leverage:101}));
+  const html=renderToStaticMarkup(<OrderLeverage value={100} disabled={false} onChange={()=>{}}/>);
+  assert.match(html,/value="100" selected/); assert.doesNotMatch(html,/대기|value="101"/);
+  const limited=renderToStaticMarkup(<OrderLeverage value={10} max={20} disabled={false} onChange={()=>{}}/>);
+  assert.doesNotMatch(limited,/value="21"/);
 });
+
 test("public order panel replaces authenticated inputs with a Guest CTA", () => {
   const market={symbolId:1,state:"READY" as const,recovery:0,price:{eventTime:now,decimal:"100",value:100}};
   let client:QueryClient|undefined;
@@ -145,7 +146,7 @@ test("preflight uses reservation-adjusted available balance and current edited q
   assert.equal(preflightOrder(form,"LONG",true,"100","989")?.kind,"balance");
   assert.equal(preflightOrder({...form,leverage:2},"LONG",true,"100","989"),null);
   assert.equal(preflightOrder(form,"LONG",true,"100",null)?.kind,"unavailable");
-  for(const value of [{...form,quantity:"0"},{...form,leverage:21},{...form,limitPrice:"NaN"}]) assert.equal(preflightOrder(value,"LONG",true,"100","1000")?.kind,"input");
+  for(const value of [{...form,quantity:"0"},{...form,leverage:101},{...form,limitPrice:"NaN"}]) assert.equal(preflightOrder(value,"LONG",true,"100","1000")?.kind,"input");
   assert.equal(preflightOrder(form,"LONG",false,"100","1000")?.kind,"unavailable");
 });
 test("precision is retained for 30-decimal Mark sizing, passive comparison and CEILING margin at 18 decimals",()=>{

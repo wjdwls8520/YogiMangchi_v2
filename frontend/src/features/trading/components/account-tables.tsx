@@ -41,13 +41,14 @@ export function PendingOrderTable({ orders, symbols }: { orders: readonly Tradin
   return <TradingTable caption="미체결 주문" columns={[
     { key: "symbol", label: "Symbol" }, { key: "type", label: "Type" },
     { key: "intent", label: "Action" }, { key: "side", label: "Side" }, { key: "quantity", label: "Quantity" },
-    { key: "price", label: "Limit Price" }, { key: "status", label: "Status" },
+    { key: "leverage", label: "현재 / 요청 배수" }, { key: "price", label: "Limit Price" }, { key: "status", label: "Status" },
     { key: "time", label: "Created (KST)" },
     { key: "action", label: "Cancel" },
   ]} rows={orders.map((order) => ({
     id: String(order.orderId),
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), type: order.type, intent: order.action, side: <span data-side={order.side}>{order.side}</span>,
+      leverage: `${order.leverage}× / ${order.requestedLeverage}×`,
       quantity: formatQuantity(order.quantity), price: price(order.limitPrice, order.tradingSymbolId, symbols), status: order.status,
       time:<time dateTime={order.createdAt}>{new Date(order.createdAt).toLocaleString("ko-KR",{timeZone:"Asia/Seoul"})}</time>,
       action: <CancelOrderButton orderId={order.orderId} symbol={symbolLabel(order.tradingSymbolId, symbols)} />,
@@ -58,7 +59,7 @@ export function PendingOrderTable({ orders, symbols }: { orders: readonly Tradin
 export function OrderHistoryTable({ orders, symbols }: { orders: readonly TradingOrder[]; symbols: readonly TradingSymbol[] }) {
   return <TradingTable caption="최근 주문 내역 최대 50건" columns={[
     { key: "symbol", label: "Symbol" }, { key: "action", label: "Action" },
-    { key: "type", label: "Type" }, { key: "quantity", label: "Quantity" },
+    { key: "type", label: "Type" }, { key: "leverage", label: "체결 / 요청 배수" }, { key: "quantity", label: "Quantity" },
     { key: "requested", label: "Requested Price" },
     { key: "price", label: "Fill Price" }, { key: "status", label: "Status" },
     { key: "realized", label: "Realized PnL" }, {key:"filled",label:"Filled (KST)"},
@@ -67,6 +68,7 @@ export function OrderHistoryTable({ orders, symbols }: { orders: readonly Tradin
     id: String(order.orderId),
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), action: `${order.action}${order.action==="LIQUIDATE" ? " · 강제청산" : ""} · ${order.side}`, type: order.type,
+      leverage: `${order.leverage}× / ${order.requestedLeverage}×`,
       quantity: formatQuantity(order.quantity), price: price(order.fill?.price, order.tradingSymbolId, symbols), status: order.status,
       requested:order.type==="MARKET" ? "시장가" : price(order.limitPrice,order.tradingSymbolId,symbols),
       realized:<span data-trend={pnlTrend(order.fill?.realizedPnl??null)}>{formatDecimal(order.fill?.realizedPnl)} USDT</span>,
