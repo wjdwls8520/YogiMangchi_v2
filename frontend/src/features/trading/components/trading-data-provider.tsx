@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, useSyncExternalStore, t
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { retryTradingQuery } from "../api/client";
 import { createGuestSession, initialSession, type GuestSession } from "../api/guest-session";
+import { TradingNoticeProvider } from "./trading-notices";
 import { GuestAccessProvider } from "./guest-access";
 
 const SessionContext = createContext<GuestSession | null>(null);
@@ -40,7 +41,8 @@ export function TradingDataProvider({ children }: { children: ReactNode }) {
     restore();
     return () => { unsubscribe(); window.removeEventListener("storage", syncStorage); window.removeEventListener("focus", restore); };
   }, [client, session]);
-  return <QueryClientProvider client={client}><SessionContext.Provider value={session}><GuestAccessProvider session={session}>{children}</GuestAccessProvider></SessionContext.Provider></QueryClientProvider>;
+  const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => initialSession);
+  return <QueryClientProvider client={client}><SessionContext.Provider value={session}><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`}><GuestAccessProvider session={session}>{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
 }
 
 export function useGuestSession() {

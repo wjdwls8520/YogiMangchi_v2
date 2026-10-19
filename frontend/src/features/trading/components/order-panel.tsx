@@ -1,5 +1,6 @@
 "use client";
 
+import { useTradingNotices } from "./trading-notices";
 import { useState } from "react";
 import { AccountWallet } from "./account-wallet";
 import { OrderChoices, OrderInput, OrderLeverage } from "./order-controls";
@@ -35,6 +36,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const { symbol, market, bookSelection } = useSelectedMarket();
   const { snapshot } = useGuestSession();
   const account = useTradingSummary();
+  const notices = useTradingNotices();
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
   const [stored, setForm] = useState<Form>({ identity, symbolId: null, type: "MARKET", side: "LONG", leverage: 10, quantity: "", limitPrice: "", ratio: 0 });
   const leverageState = useSymbolLeverage(symbol?.id ?? null);
@@ -51,7 +53,6 @@ function OpenOrderPanel({active}:{active:boolean}) {
       || command.quantity !== form.quantity.trim() || command.type !== form.type || command.leverage !== leverage
       || (command.type === "LIMIT" && command.limitPrice !== form.limitPrice.trim())) return;
     setServerWarning({ side: command.side, issue });
-    window.alert(issue.message);
   });
   const mark = freshMarkPrice(market);
   const ready = leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
@@ -81,7 +82,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
     update({ side });
     const commandForm = formForSide(form,side,leverage);
     const issue = preflightOrder(commandForm, side, ready, freshMarkPrice(market)?.decimal, account.data?.wallet.availableBalance);
-    if (issue) { setServerWarning({ side, issue }); window.alert(issue.message); return; }
+    if (issue) { setServerWarning({ side, issue }); notices.push({kind:"error",title:"주문을 제출할 수 없습니다",message:issue.message}); return; }
     if (!symbol) return;
     complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity,
       leverage: commandForm.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));

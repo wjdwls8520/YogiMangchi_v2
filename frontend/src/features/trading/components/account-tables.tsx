@@ -20,7 +20,7 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
     { key: "size", label: "Size" }, { key: "entry", label: "Entry Price" },
     { key: "mark", label: "Mark Price" },
     { key: "pnl", label: "미실현 PnL · 참고" }, { key: "roe", label: "ROE % · 참고" }, { key: "margin", label: "Margin" },
-    { key: "reserved", label: "청산 예약 수량" }, { key: "free", label: "청산 가능 수량" },
+    { key: "reserved", label: "청산 예약 수량" }, { key: "liquidation", label: "강제청산가" },
     { key: "action", label: "Close" },
   ]} rows={positions.map((position) => {const valuation=positionValuation(position,positionPrices[position.tradingSymbolId]);return ({
     id: String(position.id),
@@ -30,7 +30,7 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
       mark: <span title={valuation.mark ? "최신 WS Mark · 참고" : "시세 만료 또는 수신 대기"}>{price(valuation.mark, position.tradingSymbolId, symbols)}{!valuation.mark && <small> · 시세 대기</small>}</span>,
       leverage: <span data-side={position.side}>{position.leverage}×</span>, pnl: <span data-trend={pnlTrend(valuation.pnl)}>{formatDecimal(valuation.pnl)} USDT</span>,
       roe:<span data-trend={pnlTrend(valuation.roe)}>{formatDecimal(valuation.roe)}%</span>,
-      reserved:formatQuantity(position.reservedCloseQuantity), free:formatQuantity(position.freeCloseQuantity),
+      reserved:formatQuantity(position.reservedCloseQuantity), liquidation:<span title="서버가 강제청산 가격을 제공하지 않습니다." aria-label="강제청산가 서버 미제공">—</span>,
       margin: formatDecimal(position.margin),
       action: <PositionCloseEntry position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} layout="row" />,
     },

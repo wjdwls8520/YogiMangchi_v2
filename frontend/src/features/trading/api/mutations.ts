@@ -6,6 +6,8 @@ import { useGuestSession } from "../components/trading-data-provider";
 import { createTradingIntent, mutationMessage, uncertainMutation, type TradingCommand } from "./mutation-request";
 import { tradingKeys } from "./query-keys";
 import type { GuestSession, SessionSnapshot } from "./guest-session";
+import { useTradingNotices } from "../components/trading-notices";
+import { orderNotice, orderFailureNotice } from "./notices";
 import { TradingApiError } from "./client";
 import { orderRejection, type OrderIssue } from "./order-preflight";
 import type { TradingOrder } from "./orders";
@@ -32,12 +34,17 @@ export function tradingMutationEffects(client: Pick<QueryClient, "invalidateQuer
 export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
   const { session, snapshot } = useGuestSession();
   const client = useQueryClient();
+  const notices = useTradingNotices();
   const [intent] = useState(() => createTradingIntent((request) => session.write(request.command, request.session, request.key)));
   const active = useRef(false);
   const [unconfirmed, setUnconfirmed] = useState<{ command: TradingCommand; session: SessionSnapshot } | null>(null);
+  const effects = tradingMutationEffects(client, session, onRejected, onFailed);
+  const isCurrent = (identity: SessionSnapshot) => session.getSnapshot().accountId === identity.accountId && session.getSnapshot().generation === identity.generation;
   const mutation = useMutation({ retry: false,
     mutationFn: (request: { command: TradingCommand; session: SessionSnapshot }) => intent.execute(request.command, request.session),
-    ...tradingMutationEffects(client, session, onRejected,onFailed),
+    ...effects,
+    onSuccess: (order, request) => { if (isCurrent(request.session)) notices.push(orderNotice(order, request.command)); },
+    onError: (error, request) => { effects.onError(error, request); if (isCurrent(request.session)) notices.push(orderFailureNotice(error)); },
   });
   const sameIdentity = (value: SessionSnapshot) => value.accountId === snapshot.accountId && value.generation === snapshot.generation;
   const pendingConfirmation = unconfirmed && sameIdentity(unconfirmed.session) ? unconfirmed : null;

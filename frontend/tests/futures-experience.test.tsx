@@ -114,10 +114,10 @@ function renderTrading(children:ReactNode) {
   function Subject(){client=useQueryClient();return <SelectedMarketProvider symbol={symbols[0]} market={{symbolId:1,state:"READY",recovery:0,price:mark}} orderBook={emptyOrderBook(1)} positionPrices={{1:mark}}>{children}</SelectedMarketProvider>;}
   try{return renderToStaticMarkup(<TradingDataProvider><Subject/></TradingDataProvider>);}finally{client?.clear();}
 }
-test("positions expose live ROE, reservation/free size and separate partial/full actions",()=>{
+test("positions expose ROE, liquidation price availability and separate partial/full actions",()=>{
   const html=renderTrading(<PositionTable positions={[position]} symbols={symbols}/>);
-  for(const text of ["ROE %","청산 예약 수량","청산 가능 수량","부분 청산","전체 청산"])assert.ok(html.includes(text));
-  assert.match(html,/role="table"/);assert.match(html,/data-key="roe"/);
+  for(const text of ["ROE %","청산 예약 수량","강제청산가","부분 청산","전체 청산"])assert.ok(html.includes(text));
+  assert.match(html,/role="table"/);assert.match(html,/data-key="roe"/);assert.doesNotMatch(html,/data-key="free"/);assert.match(html,/강제청산가 서버 미제공/);
 });
 test("row partial close stays in a closed modal while the Close tab keeps its inline editor",()=>{
   const row=renderTrading(<PositionCloseEntry position={position} symbol="BTC / USDT" layout="row"/>);

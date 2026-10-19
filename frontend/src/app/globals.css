@@ -101,6 +101,15 @@
   .close-position-summary { @apply grid grid-cols-2 gap-3 text-trade-meta; }
   .close-position-summary dt { @apply text-terminal-muted; }
   .close-position-summary dd { @apply mt-1 font-medium; overflow-wrap: anywhere; }
+  .trading-notices { @apply fixed right-4 top-16 z-[100] flex w-[360px] flex-col gap-2; max-width: calc(100% - 2rem); pointer-events: none; left: auto; bottom: auto; margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; }
+  .trading-notice { @apply grid grid-cols-[18px_minmax(0,1fr)_20px] items-start gap-3 rounded-[20px] border border-terminal-line bg-terminal-header p-4 text-trade-meta; pointer-events: auto; }
+  .trading-notice strong { @apply text-trade-body font-semibold text-terminal-text; }
+  .trading-notices .trading-notice p { @apply m-0 mt-1 break-words text-trade-meta leading-5 text-terminal-muted; }
+  .trading-notice-icon { @apply mt-0.5 flex size-[18px] items-center justify-center rounded-full border font-semibold; }
+  .trading-notice-icon[data-kind="success"] { @apply text-gain; }
+  .trading-notice-icon[data-kind="error"] { @apply text-loss; }
+  .trading-notice-icon[data-kind="warning"] { @apply text-brand-700; }
+  .trading-notices .trading-notice > button { @apply flex size-5 min-h-0 min-w-0 items-center justify-center rounded-none border-0 bg-transparent p-0 text-lg font-normal leading-none text-terminal-muted hover:text-terminal-text; }
   .wallet-overview { @apply border-t border-terminal-line p-3 text-trade-meta; }
   .wallet-overview h3 { @apply mb-2 text-trade-subheading font-semibold; }
   .wallet-overview dl { @apply grid gap-2; }

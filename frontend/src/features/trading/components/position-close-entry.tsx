@@ -1,5 +1,6 @@
 "use client";
 
+import { useTradingNotices } from "./trading-notices";
 import { useId, useRef, useState } from "react";
 import { formatDecimal, formatQuantity, type Position } from "../api/account";
 import { useTradingSummary } from "../api/queries";
@@ -23,6 +24,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
   const [quantity,setQuantity]=useState(""),[limitPrice,setPrice]=useState(""),[ratio,setRatio]=useState(0);
   const [warning,setWarning]=useState<string|null>(null),[result,setResult]=useState<string|null>(null);
   const action=useTradingMutation();
+  const notices=useTradingNotices();
   const locked=action.pending||action.unconfirmed||snapshot.phase!=="ready";
   const ready=snapshot.phase==="ready"&&summary.data?.status==="ACTIVE";
   const mark=positionPrices[position.tradingSymbolId],valuation=positionValuation(position,mark);
@@ -52,7 +54,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
     if(action.pending||snapshot.phase!=="ready")return;
     if(action.unconfirmed) {complete(await action.retry());return;}
     const command=positionCloseCommand(position,full ? "MARKET" : type,full ? position.quantity : quantity.trim(),limitPrice.trim(),mark,ready,full ? "full" : scope);
-    if(command.command===null) {setWarning(command.issue);if(layout!=="row")window.alert(command.issue);return;}
+    if(command.command===null) {setWarning(command.issue);notices.push({kind:"error",title:"청산을 제출할 수 없습니다",message:command.issue});return;}
     complete(await action.submit(command.command));
   }
   const issue=quantity ? positionCloseCommand(position,type,quantity.trim(),limitPrice.trim(),mark,ready,scope).issue : null;
