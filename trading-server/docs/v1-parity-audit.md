@@ -1,0 +1,141 @@
+# V1 → V2 Backend 기능 이식 기준표
+
+## 기준과 완료 범위
+
+- 조사일: 2026-10-20.
+- V1: `main`, `a3391b523356d0f44cfec21cb302e326f52b6db3`. 별도 임시 사본만 읽었다. V1 파일·원격은 변경하지 않았다.
+- V2: `origin/develop`, `2abaf45b149a5bc1cb4e4d01af1f5750af814e92`.
+- 이번 단계는 **Phase 0: 코드 기반 기능 조사와 전환 준비**다. Isolated 엔진이나 V1 전체 이식은 **NOT IMPLEMENTED**다. 현재 실행 코드는 여전히 Cross다.
+- V1 Controller 34개 / HTTP 매핑 142개 / Frontend API 모듈과 소비 화면을 조사했다. 개별 경로·메서드·소비자 증거는 [전체 API 목록](v1-api-inventory.md)에 있다.
+- V1은 실행하지 않았다. 정적 코드의 동작 근거와 실제 서비스의 정상 실행 검증을 구분한다. OAuth·메일·S3·운영 권한·과거 배포 상태는 UNVERIFIED다.
+
+사용자 의도는 **V1 제품 기능을 복원하되 V2 아키텍처를 유지**하는 것이다. Hedge 통합 포지션, 종목별 공유 1~100배, PostgreSQL 원장, 서버 Mark Price, Redis, 잠금·멱등성·복구를 유지하고 최종 선물 정책은 **Isolated Only**다. V1 코드 복사, Frontend 금융 정산, Cross 선택 기능은 목표가 아니다.
+
+## 정책 충돌과 경계
+
+이번 명시적 요청은 루트 README의 V1 참고 금지/대회로 단순화, Trading AGENTS의 Spot 제외/Cross 설명보다 우선한다. 이것이 기존 코드가 이미 Isolated라는 뜻은 아니다. 루트 파일과 Frontend는 이번 변경에서 읽기 전용으로 유지했다. 후속 구현과 함께 기존 문서의 실제 상태를 갱신해야 한다.
+
+Content는 회원/OAuth/프로필/커뮤니티/팔로우/신고/Content 알림을 소유한다. Trading은 선물/현물 가상 금융 원장/지갑/대회/성과/Trading 알림을 소유한다. 회원을 JPA 관계로 공유하거나 Content 테이블을 직접 읽지 않는다. Content 신규 애플리케이션과 루트 인프라 변경은 **별도 범위 승인 필요**다. Spot은 Trading 내부 별도 도메인으로 설계하고 Futures 증거금 모델을 재사용하지 않는다.
+
+판정: `PARITY`는 아래에 적은 핵심 코드 동작의 동등성이지 V1 실행 재현 완료가 아니다. `PARTIAL`, `BEHAVIOR_MISMATCH`, `MISSING`은 미완료다. `V2_IMPROVEMENT`는 보존 대상이며 V1 필수 기능이 아니다. `UNVERIFIED`는 정상 지원 근거가 부족하다.
+
+## 코드/화면 근거 약어
+
+V1 Java 경로는 `was/src/main/java/com/yogimangchi/` 기준, V2 Java는 `trading-server/src/main/java/com/yogimangchi/trading/` 기준이다. 각 행의 근거 파일과 API는 [동일 커밋의 API 목록](v1-api-inventory.md)에서 상세 경로로 연결된다.
+
+| 그룹 | V1 업무 구현 / Entity·Repository | V1 API → 실제 Frontend 소비 흐름 | V2 대응 구현 |
+|---|---|---|---|
+| F | `domain/futures/service/FuturesOrderService`, `FuturesLimitOrderService`, `FuturesPositionService`, `FuturesLeverageService`, `FuturesQueryService`; `entity/FuturesPosition`, `FuturesOrder`; `repository/query/*` | `/api/v1/futures/*` → `web/lib/api/futures.ts` → `web/hooks/useFuturesTradingSession.ts`, `web/components/futures/trading/*`, `web/app/(default)/assets/page.tsx` | `execution/TradingOrderService`, `execution/trigger/AccountTriggerService`, `position/*`, `leverage/*`, `tradingaccount/*`, `order/*`, `fill/*` |
+| S | `domain/spot/service/SpotOrderService`, `LimitOrderExecutionService`, `SpotOrderQueryService`, `SpotTradeHistoryQueryService`; `entity/Order`, `Holding`, `TradeHistory`; `repository/*` | `/api/v1/{mock,real}/spot/*` → `web/lib/api/trade.ts` → `web/components/trade/OrderForm.tsx`, `UserOrderHistory.tsx`, mock/trading/assets 화면 | 없음 |
+| A | `domain/asset/service/MockAssetService`, `RealAssetService`, `PortfolioCalculationService`; `domain/real/service/AssetTransferService`; `domain/portfolio/service/PortfolioService`; Assets/Holding/TransferHistory 및 각 Repository | `/asset/mock/*`, `/asset/real/detail`, `/real/assets/*`, `/portfolio/*` → `web/lib/api/{asset,trade,portfolio}.ts`, `web/components/asset/AssetTransferModal.tsx`, assets/member/me 화면 | Guest `tradingaccount/*` 만 존재 |
+| U | `global/auth/oauth/*`, `global/auth/jwt/*`, `domain/auth/service/*`, `domain/member/service/*`; Member/OAuthAccount/UserQuest/WithdrawnOAuthAccount/MemberFavoriteSymbol/MemberFollow 및 각 Repository | `/auth/*`, `/member/*`, `/favorites/symbols` → `web/lib/api/member.ts`, `favorite.ts`, AuthBootstrap/login/signup/verify/me/settings, profile/sidebar, CoinList | Guest `tradingaccount/security/*`, `security/SecurityConfig`만 존재 |
+| C | `domain/contest/service/*`, `domain/futures/controller/Contest*`; ContestSeason/Applicant/RejectedApplicant/Participant/SettlementPriceSnapshot/SettlementRun 및 각 Repository | `/contest/*`, `/me/contest/*`, `/admin/contest/*`, `/futures/contest/*` → `web/lib/api/{contest,contest-futures,admin-contest}.ts`, `useContestFuturesTradingSession`, contest/admin/assets/profile 화면 | 없음 |
+| B | `domain/community/service/*`, `facade/*`, `validator/*`, `domain/report/service/ReportService`; Post/Reply/Like/Report/File 및 각 Repository | `/community/*`, `/me/community/*`, `/me/reports/*`, `/report/type/community`, `/admin/community/*` → `web/lib/api/{post,post.server,me-community,admin-community}.ts`, community/me/member/admin 화면 | 없음 |
+| N | `domain/notification/service/NotificationService`, `NotificationSseService`; Notification/NotificationGroupState 및 각 Repository,`global/sse/enums/*` | `/notifications/*` → `web/lib/api/notifications.ts`, `web/app/SSEProvider.tsx`, `web/components/notifications/*`; 각 업무의 afterCommit 호출 | 개인 계정 이벤트 없음. 시장용 `marketdata/websocket/*`과 혼동하지 않음 |
+| M | `domain/market/*`, `domain/chartapi/*`, `domain/chartist/*`; FuturesSymbolPolicy/가격 Repository | `/market/*`, `/chartapi/*`, `/chartist/seasons/{seasonId}/results` → `useBinanceWebSocket`, `useBinanceTickers`, CoinChart/CoinHeader/CoinList, rank/community sidebar | `tradingsymbol/*`, `binance/*`, `marketdata/*`, `execution/trigger/*` |
+
+## 기능별 비교 및 이식 작업
+
+각 행은 위 그룹의 Backend/API/Frontend 근거를 상속한다. 의존성의 숫자는 요청서 Phase다. 검증은 후속 구현의 완료 조건이며 이번 조사에서 통과한 기능 테스트라고 주장하지 않는다.
+
+| ID / 기능 | 그룹 / 상태 | 확인한 동작과 차이 | 필요한 Backend / Frontend 변경 | 의존·우선순위 | 필수 검증 |
+|---|---|---|---|---|---|
+| F01 Market OPEN LONG/SHORT | F / PARITY | 서버 가격·Order·Position·Wallet 변경 흐름 존재. V1 ticker/수수료와 V2 Mark/무수수료 차이는 별도 행 | 기존 V2 체결 재사용 / 계약 유지 | 1→2 / P0 | 양방향·재시도·롤백 |
+| F02 Limit OPEN | F / BEHAVIOR_MISMATCH | V1 지정가 체결가, V2 현재 Mark 체결. 둘 다 PENDING 후 트리거 | V2 Mark trigger 유지, 모의 maker 의미 문서화 / 표시 변경 | 1→2 / P0 | crossing·갭·체결 시 재검증 |
+| F03 Hedge 동시 보유 | F / PARITY | 동일 종목 LONG/SHORT 동시 OPEN | 단일 side lifecycle 유지 / 양쪽 표시 | 1 / P0 | 반대 방향 보존 |
+| F04 동일 방향 합산·평균가 | F / PARITY | V1 addEntry, V2 exact entryNotional 기반 합산 | V2 정밀 원가 재사용 / 서버 평균가 사용 | 1 / P0 | 추가진입·부분청산 후 재진입 |
+| F05 레버리지 정책 | F / BEHAVIOR_MISMATCH | V1 방향별·DB 종목별 최대치, V2 종목 공유 1~100 | 요청대로 V2 공유 정책 유지 / ISOLATED 응답 수용 | 1 / P0 | 1/10/14/100, 양방향 원자 변경 |
+| F06 증거금 재배분 | F / PARTIAL | V2 used/reserved 재배분은 있으나 위험은 Cross | 격리 담보·각 방향 안전성 검사 / 최신 margin·예상가 표시 | 1 / P0 | 부족·즉시 위험 거절·예약 OPEN |
+| F07 포지션 격리 위험 | F / BEHAVIOR_MISMATCH | V1 포지션 단위, V2 계정 equity와 gross MM | 포지션 equity/MM 평가 신설, 계정 risk 청산 제거 / isolated 명시 | 1 / P0 | 타 종목·반대편·미사용 현금 비보전 |
+| F08 청산 예상가 | F / BEHAVIOR_MISMATCH | V1 entry*(1±1/L∓0.0005); V2 Cross 조건부 수치 | 표시·엔진 동일한 격리 공식 / 모드·상태 기준 전환 | 1 / P0 | 임계 앞/뒤 1 ULP, null·1배 |
+| F09 자동 강제청산·재처리 | F / BEHAVIOR_MISMATCH | V1 해당 포지션만, V2 계정 전 포지션+예약 주문 정리 | 해당 포지션 CLOSE 예약만 정리 / 개별 이벤트 연동 | 1 / P0 | 동시 두 방향 위험·한 번만 Fill |
+| F10 청산 갭 정산 | F / BEHAVIOR_MISMATCH | V1 저장 청산가로 정산, V2 실제 Mark로 지갑 손실 반영 | 격리 한도 초과 손실의 명시적 기록 필요 / 체결가·조정금 구분 | 1 / P0, 정책 게이트 | 급락·급등·재시작 gap·지갑 보전 |
+| F11 Market 부분/전체 CLOSE | F / PARTIAL | V2 수량/예약 방어·비례 margin 반환 존재; 수수료 없음 | 격리 정산과 수수료 적용 / 서버 순수령액 사용 | 1→2 / P0 | 부분 2회→전량, 잔여 basis·담보 |
+| F12 Limit 부분/전체 CLOSE | F / PARTIAL | V1 지정가, V2 Mark trigger; V2 예약 초과 거절 | 현재 수량 예약 불변조건 유지 / pending 갱신 | 1→2 / P0 | 1 BTC에 예약0.7+시장가0.5 거절 |
+| F13 CLOSE 예약 수량 | F / V2_IMPROVEMENT | V1은 이후 최신 CLOSE부터 overflow 취소, V2는 접수 때 명시 예약 | V2 사전 예약 유지 / freeCloseQuantity 사용 | 1→2 / P0 | 취소/체결/추가진입 경합 |
+| F14 Pending OPEN 담보 | F / PARTIAL | V2 margin만 예약, V1 fee 포함 차감 | 격리와 fee 예약 분리·합계 검증 / 비용 표시 | 1→2 / P0 | 더 유리한 체결·부족 거절·취소 반환 |
+| F15 거래 수수료 | F / MISSING | V1 MARKET0.0005/LIMIT0.0003; V2 Fee 필드·차감 없음 | Order/Fill fee와 Wallet 정산 / fee·net 별도 표시 | 2 / P0 | OPEN/CLOSE·100% 비율·rounding |
+| F16 강제청산 수수료 | F / BEHAVIOR_MISMATCH | V1 수수료를 가격 보정으로 설명하나 실행에서 별도 fee 차감 없음 | 임계값과 실제 부과의 구분 확정 / 서버 fee만 표시 | 1→2 / P0, 정책 게이트 | 이중 차감·가격 보정 위장 금지 |
+| F17 주문 취소 | F / PARITY | V2 상태 전이·담보/수량 해제·소유권 검증 | 기존 경로 재사용 / idempotency 유지 | 2 / P1 | 취소↔체결 race |
+| F18 주문 내역·필터 | F / PARTIAL | V1 cursor/size/symbol/상태, V2 beforeId/limit만 | 필터·cursor 계약 명시 / query 연동 | 3 / P1 | 접근권한·중복/누락 없는 페이지 |
+| F19 체결 내역 | F / PARTIAL | V1 UI trades는 주문 조회 재사용; V2 Fill 영속·Order DTO 일부 포함 | 전용 Fill 조회와 fee/time 계약 / 별도 탭 | 3 / P1 | ORDER/FILL 식별·부분/강제청산 |
+| F20 종료 포지션 생애주기 | F / MISSING | V1 closed 조회, V2 CLOSED/LIQUIDATED 이력은 DB에만 있음 | 전용 Position history API / lifecycle 기준 탭 | 3 / P1 | 3회 진입·2회 부분청산→종료1건 |
+| F21 실현·미실현 손익 | F / PARTIAL | V2 원가·누적 PnL 존재; fee/gap 분리 없음 | gross PnL·fee·adjustment·net 계약 / 중복 차감 금지 | 1→3 / P0 | 원장 항등식·이력 합계 |
+| F22 비동기 체결 알림 | N,F / MISSING | V1 afterCommit 개인 SSE·저장 알림, V2 요청 결과와 order polling뿐 | 인증 계정 이벤트·복구 cursor / toast 중복 제거 | 3 / P1 | 타 사용자 차단·재연결·commit 후 전송 |
+| S01 현물 시장가 매수/매도 | S / MISSING | V1 수수료 포함 지출 BUY/보유량 SELL·평균가 갱신 | Spot ledger·Holding·Order/Fill / 별도 화면 연동 | 4→5 / P1 | 소유 현금·수량·정산 atomic |
+| S02 현물 지정가·예약 | S / MISSING | BUY lockedMoney, SELL lockedQuantity, crossing 후 잔여 전량 체결 | Spot 예약/trigger 재사용 경계 / pending 표시 | 5 / P1 | 갭·재시작·예약 누수 |
+| S03 현물 취소·이력 | S / MISSING | real/mock 각각 orders/open/histories/cancel 존재 | 회원/모의 계정 분리·cursor / 필터 연동 | 5 / P1 | 부분 매도·취소 race·권한 |
+| S04 현물 부분체결 | S / UNVERIFIED | PARTIALLY_FILLED enum/조회는 있으나 실행은 getRemainingQuantity→completeOrder | 실제 지원으로 단정하지 않음; 호가 matching 도입 금지 / 상태는 실제 계약만 | 5 / P2 | 상태 생산 경로 확인 후 결정 |
+| S05 보유 자산·평균 원가 | S,A / MISSING | Holding quantity/lockedQuantity/averageBuyPrice 존재 | Spot 상태·조회 / 자산 탭 | 5 / P1 | 예약 수량 포함 원가·영수증 합계 |
+| A01 모의투자 참가·포기·재도전 | A / MISSING | MOCK 초기10000, retryCount, 중복 ACTIVE 방지, 포기 시 주문 정리 | V2 Guest를 삭제하지 않고 회원 MOCK 별도 / 참가·포기 UX | 4→5 / P1 | 중복 참가·이력 보존 |
+| A02 본투자 Spot/Futures 지갑 | A,U / MISSING | 가입 시 Spot10000/Futures0 INACTIVE, 퀘스트 후 ACTIVE | 회원 지갑 생성 이벤트와 중복 방지 / 해금 상태 | 4→5 / P1 | 회원 데이터와 금융 소유권 |
+| A03 자산 이체·내역 | A / MISSING | TRADE_SPOT↔TRADE_FUTURE만, requestId·ID순 lock | Trading 내부 두 ledger 이체 / transferable/history | 4→5 / P1 | 이중 이체·양방향 deadlock |
+| A04 Wallet/Portfolio | A / PARTIAL | V2 Guest wallet/summary만; V1 현물+선물 통합·타입별 자산 | 회원/계정 분리·성과 읽기 모델 / 서버 평가액 사용 | 1→5 / P1 | equity·미수수료·평가불가 |
+| A05 공개/자기 포트폴리오 | A,U / MISSING | V1 portfolio/me, /{memberId}; 지갑 없음204/회원 없음404 | Content 프로필→Trading 성과 API 조합 / 204 구분 | 4→5 / P2 | 공개 범위·자산 노출 정책 |
+| U01 Google/Kakao OAuth | U / MISSING | V1 provider+providerUserId 식별·기존/신규 분기 | Content 생성 승인 필요; Trading은 JWT 로컬 검증 / OAuth 이동 | 4 / P1 | provider 토큰 오용·탈퇴 계정 |
+| U02 소셜 가입·약관·닉네임 | U / MISSING | signupToken·약관·닉네임 lock·중복 방지, 비밀번호 가입 아님 | Content 전용 / 가입 흐름 | 4 / P1 | 단회 토큰·동시 닉네임·만료 |
+| U03 JWT 갱신·로그아웃 | U / MISSING | V1 AuthService 실제 존재; login.md의 미구현 설명은 낡음 | Content Access/Refresh 정책 별도 확정 / 쿠키·보관 계약 | 4 / P1 | refresh 재사용·logout·CSRF |
+| U04 Guest 경험 | U / V2_IMPROVEMENT | 7일 무작위 Bearer, Hash만 저장, 명시적 시작 | 유지; 회원으로 자동 합산 금지 / opt-in 유지 | 4 / P0 | credential 만료·소유권·비밀 로그 |
+| U05 Guest→회원 귀속 | U / UNVERIFIED | V1 Guest 자체 없음, V2 회원 연결 없음 | 명시적 소유권 증명/승격 또는 별도 계정 정책 필요 / 동의 흐름 | 4 / 정책 게이트 | 탈취·다중 Guest·중복 병합 |
+| U06 프로필 조회/수정 | U / MISSING | 닉네임/메시지/이미지 reset·업로드·보상 처리 | Content/S3 운영 방식은 별도 승인 / profile/settings | 4,7 / P1 | 이미지 실패 보상·개인정보 노출 |
+| U07 이메일 인증·인증정보 | U / MISSING | 소셜 이메일 코드 발송/검증/완료, VERIFIED_USER | Content/메일 Secret·재시도 계약 / verify·settings | 4 / P1 | TTL·횟수 제한·동일 이메일 |
+| U08 거래 해금 퀘스트 | U,A / MISSING | MOCK 체결3회+인증 회원, ADMIN 예외·지갑 활성화 | Content 자격/Trading 체결 이벤트 경계 / QuestModal | 4→5 / P1 | 중복 이벤트·해금 누락 복구 |
+| U09 회원 탈퇴·재가입 제한 | U / MISSING | soft withdraw·OAuth tombstone·토큰/이메일 정리·후속 청크 | Content→Trading 명시적 업무 계약 / 재인증·탈퇴 UI | 4,7 / P1 | 미결 금융 보존·부분 실패 복구 |
+| U10 관심 종목 | U / MISSING | 추가/삭제/목록 API, CoinList 소비 | Content 회원 선호, TradingSymbol ID 계약 / 목록 저장 | 7 / P2 | 중복·비활성 종목·소유권 |
+| U11 팔로우·팔로워 | U,B / MISSING | 추가/해제·양쪽 cursor 목록·알림 | Content / profile·FollowMembersModal | 7 / P2 | 자기 팔로우·중복·탈퇴 |
+| U12 회원 관리 | U / MISSING | ADMIN 목록 검색·강제 탈퇴 | Content ADMIN 인증 확정 후 / AdminGuard·users | 4,7 / P1 | USER 접근403·금융 이력 보존 |
+| C01 대회 생성·수정·상태 | C / MISSING | admin season CRUD 중 생성/수정/상태 지원; 물리삭제 API 없음 | Trading competition+ADMIN JWT / admin contest | 4→6 / P1 | 일정·수정 가능 상태·권한 |
+| C02 모집/진행/종료 조회 | C / MISSING | public 세 목록·인증 모집·상태 목록 | Trading public DTO / contest 목록 | 6 / P1 | 공개/비공개·기간 경계·cursor |
+| C03 참가 신청 | C / MISSING | 중복 applicant/participant 거절·내 pending 목록 | Trading memberId 자격 계약 / 신청 결과 | 4→6 / P1 | 동시 신청·탈퇴·기간 |
+| C04 승인/거절·이력 | C / MISSING | ADMIN participant 생성/전용 지갑·거절 사유·알림 | Trading admin 서비스 / members manager | 6 / P1 | 중복 승인·rollback·타 시즌 침범 |
+| C05 대회별 계정·지갑 | C / MISSING | 승인 시 CONTEST 지갑 생성, 다른 지갑 분리 | 기존 engine+Account/Rule 사용 / 계정 선택 | 1,2,4→6 / P0 | Guest/회원/시즌 완전 분리 |
+| C06 대회 선물 주문 | C,F / MISSING | contest market/limit open/close/cancel/leverage/조회 | Isolated engine 공유·종목별 제한 / contest-futures 계약 | 1,2→6 / P0 | 시즌 종료 차단·rule 최대 leverage |
+| C07 참가/거절/결과 자기 조회 | C / MISSING | me/contest 4경로, member 참여·개별 결과 | Trading 조회 / assets·profile·contest UX | 6 / P1 | 결과 전409·타인 접근 |
+| C08 순위·성과 | C,M / MISSING | 종료 final PnL·profitRate·공동 순위(1,1,3) | Trading 불변 결과 / rank·sidebar | 6 / P1 | 동률·수수료 반영·0 seed |
+| C09 자동/수동 종료·정산 | C / MISSING | scheduler+단계 run/snapshot/registry/deactivate/close/aggregate | 동결→예약 정리→청산→결과, 재시작 가능한 단위 / 종료 표시 | 1→3,6 / P0 | 중간 실패·대량 cursor·중복 실행 |
+| C10 종료 결과·종료 Wallet | C / MISSING | public/회원/자기 결과·finished wallet 존재 | Trading 결과 스냅샷 유지 / 종료 후 거래불가·조회 | 6 / P1 | 정산 후 가격 변동에 결과 불변 |
+| C11 차티스트 결과 | C,M / MISSING | 별도 수익 예측 엔진이 아닌 종료 대회 final_* 순위 DTO | 별도 도메인 추측 금지·대회 결과 재사용 / rank 연동 | 6 / P2 | cursor·미정산 빈 결과 |
+| B01 글 목록/상세/작성/수정/삭제 | B / MISSING | keyword/search·cursor·작성자·multipart·soft delete | Content / community 화면·SSR | 7 / P1 | 소유권·삭제 제외·첨부 제한 |
+| B02 검색 | B / MISSING | PostSearchDto.keyword, PostRepository 제목·내용 검색 및 cursor 구현 | Content 검색 파라미터 / 검색 호출 연동 | 7 / P2 | 검색어 변경·페이지 누락 |
+| B02a 카테고리/주간 인기글 | B / UNVERIFIED | UI all/best/latest 탭은 있으나 모두 같은 getPostsServer() 호출. 실제 인기/카테고리 분류 API 근거 없음. Top5는 종료 대회 순위임 | V1 완성 기능으로 단정하지 않음 / V2 추가 기획과 구분 | 별도 / P2 | 실제 정렬·분류 구현 근거 확인 |
+| B03 댓글/대댓글·대상 지정 | B / MISSING | parent/target 검증·작성/수정/삭제·자식 조회 | Content / CommentContainer | 7 / P1 | 부모/게시글 불일치·탈퇴·삭제 |
+| B04 글/댓글 좋아요 | B / MISSING | 중복 방지·해제·내 liked 목록·그룹 알림 | Content / LikeButton·내 활동 | 7 / P2 | 동시 중복·자기 알림 제외 |
+| B05 신고·취소·내역·사유 | B / MISSING | post/reply report·사유 타입·내 신고 목록 | Content / ReportModal·내 활동 | 7 / P1 | 중복·취소·잘못된 대상 |
+| B06 회원별 활동 | B,U / MISSING | 작성글/댓글·좋아요·신고·팔로우 | Content / me/member community | 7 / P2 | 본인/공개 정보 분리 |
+| B07 커뮤니티 실시간 피드 | B,N / MISSING | public UX_COMMUNITY_POST_CREATED SSE·heartbeat | Content 피드; 개인 금융 WS와 분리 / 새 글 배너 | 7 / P2 | 재연결·중복·익명 정보 |
+| B08 커뮤니티 운영 | B / MISSING | ADMIN 글/댓글 검색·탈퇴/활성 작성자 필터·삭제 | Content 운영 API / admin/community | 7 / P1 | 권한·상태전이·감사 기록 |
+| B09 첨부·프로필 이미지 | B,U / MISSING | 관리 S3 업로드·rollback 정리·관리 이미지 삭제 | Content 저장 수단 필요성/운영 영향 승인 / multipart | 4,7 / P1 | 악성 파일·용량·외부 실패 |
+| N01 알림 목록·상태·확인 | N / MISSING | cursor·미확인 수·lastChecked·그룹 상태 | 각 서비스 소유·Frontend 통합 / drawer·center | 3,7 / P1 | 타인 차단·그룹 갱신·cursor |
+| N02 읽음/전체/선택/삭제 | N / MISSING | V1 일부 물리 삭제; V2 이력 보존 정책 검토 필요 | 사용자 숨김과 금융 사실 보존 분리 / center action | 3,7 / P1 | 반복 요청·미확인 항목 보존 |
+| N03 금융/이체/대회 SSE | N / MISSING | 체결·청산·이체·승인·거절 afterCommit 영속 알림+SSE | Trading 계정 인증 채널·재전송 / SSEProvider 대응 | 3,5,6 / P1 | 도중 종료·반복 전송·소유권 |
+| N04 댓글/좋아요/팔로우 알림 | N,B / MISSING | 개인/그룹·dedupe·actor preview | Content 알림 / navigation·toast | 7 / P2 | 중복·자기 알림·탈퇴 수신자 |
+| M01 거래 종목 카탈로그 | M / PARTIAL | V1 Spot/Futures, V2 Futures12 DB·provider unit mapping | Futures 유지·Spot 승인 후 카탈로그 분리 / 하드코딩 금지 | 1,5 / P1 | 내부ID·provider변경·단위 |
+| M02 실시간 시세·차트·호가 | M / V2_IMPROVEMENT | V1 Browser Binance, V2 중앙 수신·Redis·Browser WS·history cursor | V2 경로 유지; Last/Mark 혼용 금지 / 서버 WS 사용 | 전 단계 / P0 | stale·clock skew·1000계약·gap |
+| M03 서버 가격·복구 | M,F / V2_IMPROVEMENT | DB cursor·Redis stream·replay·gate·bounded backoff | 금융 전환 때 그대로 재사용 / unavailable 표기 | 전 단계 / P0 | Redis 유실·재시작·중복 tick |
+| X01 Funding/TP-SL/뉴스 | M / UNVERIFIED | 조사한 V1 업무 코드에 실제 기능 근거 없음 | V1 필수 복원 목록에 넣지 않음 / V2 신규 기획 별도 | 별도 | 근거 발견 시 목록 수정 |
+| X02 일별 자산 스냅샷 | A / UNVERIFIED | PortfolioSnapshot Entity/Repository는 있으나 createSnapshot 호출·자정 배치 구현 근거 미발견 | 이름만으로 수익 곡선 기능을 완료로 판단하지 않음 / 별도 요구 확인 | 별도 | 생산 경로·실제 화면 확인 |
+
+## 복제하지 않을 V1 문제와 의도적 차이
+
+1. V1 `FuturesCurrentPriceService` 실제 코드는 **futures ticker cache**를 사용한다. 일부 설명서의 Mark 표기를 그대로 믿지 않는다. V2의 authoritative Mark와 freshness를 유지한다.
+2. V1 격리 청산은 저장된 임계값을 체결가처럼 사용하고 음수 반환을 0으로 막는다. 이 방식을 V2의 실제 Mark 체결 이력으로 위장하지 않는다. 갭 손실의 원장 처리 결정은 [전환 계약](isolated-margin-cutover.md)의 승인 항목이다.
+3. V1 수수료·가격·수량의 4/8자리 HALF_UP 및 UI Number 계산을 복사하지 않는다. V2 BigDecimal·exact basis·명시적 scale을 유지한다.
+4. V1 MOCK 포기는 Holding을 물리 삭제한다. V2 업무 이력 보존 규칙에 맞게 상태와 종료 이력을 남겨야 한다.
+5. V1 `PARTIALLY_FILLED`는 enum/조회에 있으나 실행 경로는 잔여 전량 체결이다. enum만으로 부분체결을 필수 기능이라고 만들지 않는다.
+6. V1 trade history 화면은 `FuturesOrderList mode="trades"`다. V2의 Order/Fill/Position lifecycle을 구분한 API는 유지·보완할 수 있지만 Order 목록을 closed Position이라고 부르지 않는다.
+7. V1의 실제 현물/선물 가격 종류 차이와 대회 종료 원장 집계(포지션 realized 합계 위주)는 수수료·이체·격리 gap까지 정합성 검증 후 이식해야 한다. 과거 버그까지 기능으로 복제하지 않는다.
+
+## 후속 단계와 승인 경계
+
+| 순서 | 독립 PR 단위 | 완료 게이트 |
+|---|---|---|
+| 0 | 이 조사표·API 근거·읽기 전용 원장 검사 | 코드/DB 조사, preflight PostgreSQL 테스트·기존 회귀 |
+| 1 | 격리 금융 계약→엔진/영속 필드/전환 migration | gap·fee 정책 확정, 실제 legacy 상태 복제 migration 시험, 표시/청산 동일식·잠금/복구, Frontend 호환 배포 순서 |
+| 2 | Market/Limit fee·주문 예상 비용·잔여 담보 정산 | 실제 원장 fee·100% 사이징·기존 멱등성·경합 |
+| 3 | Fill/closed Position history→개인 거래 이벤트 | 필터·cursor·생애주기·인증/재전송 |
+| 4 | **승인 후 Content 서버**·회원 JWT와 Trading 소유권 | 서비스/Secret/쿠키/Guest 연결 정책, root Compose/문서 범위 승인 |
+| 5 | Spot/Mock/회원 지갑/이체 | Spot/Futures 원장 분리·금융 합계·재시도 |
+| 6 | 대회 관리/계정·공유 engine→종료·랭킹 | ADMIN 권한·정산 재실행·타 계정 격리 |
+| 7 | Content 커뮤니티/프로필/알림·운영 | V1 목록 전 항목 테스트, 서비스 경계·실제 Frontend 연동 |
+
+이 표의 MISSING/PARTIAL/MISMATCH를 모두 구현·검증하기 전 **전체 이식 완료라고 보고하지 않는다.** 이번 PR은 위험한 데이터 이관이나 API 의미 변경을 실행하지 않는다. 신규 서비스/루트 파일 수정, 사용자 기존 포지션 강제 정리, Frontend 변경은 승인하지 않은 상태다.

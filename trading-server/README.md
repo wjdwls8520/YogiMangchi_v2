@@ -5,6 +5,21 @@ TradingSymbol 구조, 공개 거래 종목 조회 API, Binance Mark Price 수신
 Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/지정가 주문과 교차증거금 청산을 제공한다. 루트 `readme.md`,
 루트 및 이 디렉터리의 `AGENTS.md`를 따른다.
 
+## V1 기능 이식 조사와 Isolated 전환 준비
+
+2026-10-20 요청의 최종 목표는 V1 제품 기능과 V2 기술 구조를 결합한 Hedge + Isolated Only다.
+현재 실행 엔진은 여전히 Cross이며, 아래 자료는 구현 완료를 뜻하지 않는다.
+
+- [V1/V2 기능 비교·누락·단계별 이식 기준](docs/v1-parity-audit.md)
+- [V1 Controller 전체와 Frontend API 소비 근거](docs/v1-api-inventory.md)
+- [Isolated 금융 계약 제안·데이터/Frontend 전환 게이트](docs/isolated-margin-cutover.md)
+- [V10 원장 구조 읽기 전용 사전 점검](ops/isolated-margin-preflight.sql)
+
+사전 점검은 `psql -X -v ON_ERROR_STOP=1 -f ops/isolated-margin-preflight.sql`로 실행한다.
+연결정보는 기존 환경/Secret 관리 방식을 사용하고 명령이나 문서에 비밀번호를 넣지 않는다.
+결과는 원장 합계·참조·공유 레버리지·체결 사실의 구조적 불일치 건수이며,
+시세 기반 격리 위험 검증이나 migration 승인·성공을 보장하지 않는다. 데이터 변경은 수행하지 않는다.
+
 ## 버전과 의존성
 
 - Java 17, Spring Boot **3.5.16**, Gradle Wrapper **8.14.3**
