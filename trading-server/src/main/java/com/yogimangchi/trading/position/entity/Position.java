@@ -32,6 +32,10 @@ public class Position {
     @Column(precision = 38, scale = 18) private BigDecimal exitPrice;
     @Column(nullable = false, updatable = false) private Instant openedAt;
     private Instant closedAt;
+    @Column(nullable = false, length = 8, updatable = false) private String openedMarginMode = "ISOLATED";
+    @Column(precision = 38, scale = 18) private BigDecimal isolatedCutoverMargin;
+    @Column(precision = 38, scale = 18) private BigDecimal isolatedCutoverPrice;
+    private Instant isolatedCutoverAt;
 
     protected Position() { }
 
@@ -137,6 +141,15 @@ public class Position {
     }
 
     public Long getId() { return id; }
+    public void recordIsolatedCutover(BigDecimal mark, Instant now) {
+        if (status != Status.OPEN || !"CROSS".equals(openedMarginMode) || isolatedCutoverAt != null)
+            throw new IllegalStateException("Position is not eligible for isolated cutover");
+        TradingMath.validatePrice(mark);
+        isolatedCutoverMargin = margin;
+        isolatedCutoverPrice = TradingMath.amount(mark);
+        isolatedCutoverAt = Objects.requireNonNull(now);
+    }
+    public String getOpenedMarginMode() { return openedMarginMode; }
     public Long getAccountId() { return accountId; }
     public Long getTradingSymbolId() { return tradingSymbolId; }
     public Side getSide() { return side; }

@@ -11,6 +11,7 @@ import com.yogimangchi.trading.order.repository.TradingOrderRepository;
 import com.yogimangchi.trading.position.entity.Position;
 import com.yogimangchi.trading.position.repository.PositionRepository;
 import com.yogimangchi.trading.position.service.HedgePositions;
+import com.yogimangchi.trading.position.service.IsolatedMargin;
 import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
 import com.yogimangchi.trading.tradingaccount.entity.*;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
@@ -42,13 +43,15 @@ public class TradingOrderService {
     private final TradingEngineGate gate;
     private final HedgePositions hedge;
     private final SymbolLeverageService leverage;
+    private final IsolatedMargin isolated;
 
     public TradingOrderService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate,
-            HedgePositions hedge, SymbolLeverageService leverage) {
+            HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.valuation=valuation; this.gate=gate;
         this.hedge=hedge; this.leverage=leverage;
+        this.isolated=isolated;
     }
 
     @Transactional
@@ -81,7 +84,8 @@ public class TradingOrderService {
         List<Position> open = open(accountId);
         if (open.size() >= TradingMath.MAX_OPEN_POSITIONS && hedge.existing(open, request.tradingSymbolId(), request.side()) == null)
             throw new BusinessException(ErrorCode.POSITION_LIMIT_REACHED);
-        AccountValuation.Value value = valuation.calculate(wallet, open, Set.of(request.tradingSymbolId()));
+        var affected = open.stream().filter(p -> p.getTradingSymbolId().equals(request.tradingSymbolId())).toList();
+        AccountValuation.Value value = valuation.calculate(wallet, affected, Set.of(request.tradingSymbolId()));
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
         LatestMarkPrice price = value.prices().get(request.tradingSymbolId()).latestPrice().orElseThrow();
@@ -92,7 +96,10 @@ public class TradingOrderService {
                 : hedge.additionalMargin(open, request.tradingSymbolId(), request.side(), request.quantity(), requestedPrice, request.leverage()); }
         catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
         if (margin.compareTo(value.availableBalance()) > 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
-        if (value.equity().compareTo(value.maintenanceMargin().add(TradingMath.maintenance(price.domainMarkPrice(), request.quantity()))) <= 0)
+        Position target = hedge.existing(open, request.tradingSymbolId(), request.side());
+        if (target != null && isolated.risk(target, price.domainMarkPrice()).atRisk()
+                || isolated.projectedOpenRisk(target, request.side(), request.quantity(), requestedPrice,
+                        request.leverage(), price.domainMarkPrice()).atRisk())
             throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         Instant now = now();
         if (request.type() == TradingOrder.Type.LIMIT) {
@@ -140,10 +147,11 @@ public class TradingOrderService {
         if (position.getStatus() != Position.Status.OPEN) throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
         BigDecimal quantity = requestedQuantity == null ? position.getQuantity() : requestedQuantity;
         if (quantity.compareTo(position.getFreeCloseQuantity()) > 0) throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
-        AccountValuation.Value value = valuation.calculate(wallet, open);
+        AccountValuation.Value value = valuation.calculate(wallet, List.of(position));
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
-        if (value.equity().compareTo(value.maintenanceMargin()) <= 0) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+        if (isolated.risk(position, value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice()).atRisk())
+            throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         LatestMarkPrice price = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow();
         BigDecimal pnl = position.closingPnl(quantity, price.domainMarkPrice());
         if (wallet.getBalance().add(pnl).signum() < 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
@@ -172,7 +180,6 @@ public class TradingOrderService {
         if (previous != null) return previous;
         requireActive(account);
         Wallet wallet = wallet(accountId);
-        List<Position> open = open(accountId);
         Position position = positions.findById(positionId).filter(p -> p.getAccountId().equals(accountId))
                 .orElseThrow(() -> new BusinessException(ErrorCode.POSITION_NOT_FOUND));
         if (position.getStatus() != Position.Status.OPEN) throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
@@ -180,10 +187,11 @@ public class TradingOrderService {
         if (quantity.compareTo(position.getFreeCloseQuantity()) > 0) throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
         if (orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING).size() >= TradingMath.MAX_PENDING_ORDERS)
             throw new BusinessException(ErrorCode.PENDING_LIMIT_REACHED);
-        AccountValuation.Value value = valuation.calculate(wallet, open);
+        AccountValuation.Value value = valuation.calculate(wallet, List.of(position));
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
-        if (value.equity().compareTo(value.maintenanceMargin()) <= 0) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+        if (isolated.risk(position, value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice()).atRisk())
+            throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         Instant now = now();
         requirePassiveLimit(position.getSide(), request.limitPrice(),
                 value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice(), true);
@@ -259,6 +267,7 @@ public class TradingOrderService {
     private List<Position> open(Long accountId) { return positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN); }
     private void requireActive(TradingAccount account) {
         if (account.getStatus() != TradingAccount.Status.ACTIVE) throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
+        if (!account.isIsolated()) throw new BusinessException(ErrorCode.MARGIN_MIGRATION_REQUIRED);
     }
     private void requireFresh(AccountValuation.Value value) {
         if (!value.fresh()) throw new BusinessException(ErrorCode.PRICE_NOT_FRESH);

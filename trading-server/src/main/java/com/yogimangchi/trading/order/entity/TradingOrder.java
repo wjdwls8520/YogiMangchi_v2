@@ -32,6 +32,7 @@ public class TradingOrder {
     @Column(nullable = false, length = 100) private String idempotencyKey;
     @Column(nullable = false, length = 64) private String requestFingerprint;
     @Column(nullable = false) private Instant createdAt;
+    @Column(nullable = false, length = 8, updatable = false) private String submittedMarginMode = "ISOLATED";
     protected TradingOrder() { }
 
     public static TradingOrder market(Position position, Action action, BigDecimal quantity, BigDecimal price,
@@ -126,6 +127,7 @@ public class TradingOrder {
     }
 
     public Long getId() { return id; }
+    public String getSubmittedMarginMode() { return submittedMarginMode; }
     public Long getAccountId() { return accountId; }
     public Long getPositionId() { return positionId; }
     public Long getTradingSymbolId() { return tradingSymbolId; }

@@ -39,7 +39,7 @@ class CloseMigrationTests {
             var ordersBefore=jdbc.queryForList("select id,position_id,leverage,status,quantity,filled_price,reserved_margin from "+schema+".trading_order order by id");
             var fillsBefore=jdbc.queryForList("select * from "+schema+".fill order by id");
             var walletBefore=jdbc.queryForList("select * from "+schema+".wallet");
-            var flyway=Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load();
+            var flyway=Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("10").load();
             assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
             assertThat(jdbc.queryForObject("select guest_account from "+schema+".trading_account where id=1",Boolean.class)).isTrue();
             jdbc.update("insert into "+schema+".trading_account(id,status,credential_hash,credential_expires_at,created_at,last_financial_change_at) values (2,'ACTIVE',repeat('e',64),now()+interval '7 days',now(),now())");

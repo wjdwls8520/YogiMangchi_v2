@@ -2,13 +2,14 @@
 
 Yogimangchi V2의 독립 Spring Boot 애플리케이션이다. 현재 PostgreSQL/JPA 기반
 TradingSymbol 구조, 공개 거래 종목 조회 API, Binance Mark Price 수신과 정규화된 최신 가격 상태,
-Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/지정가 주문과 교차증거금 청산을 제공한다. 루트 `readme.md`,
+Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/지정가 주문과 격리증거금 청산을 제공한다. 루트 `readme.md`,
 루트 및 이 디렉터리의 `AGENTS.md`를 따른다.
 
 ## V1 기능 이식 조사와 Isolated 전환 준비
 
 2026-10-20 요청의 최종 목표는 V1 제품 기능과 V2 기술 구조를 결합한 Hedge + Isolated Only다.
-현재 실행 엔진은 여전히 Cross이며, 아래 자료는 구현 완료를 뜻하지 않는다.
+금융 Phase 1은 Hedge + Isolated Only로 전환했다. 전체 V1 이식은 아직 완료되지 않았으며,
+MARKET/LIMIT 거래 수수료와 전용 이력/개인 이벤트/회원/현물/대회/Content는 후속 Phase다.
 
 - [V1/V2 기능 비교·누락·단계별 이식 기준](docs/v1-parity-audit.md)
 - [V1 Controller 전체와 Frontend API 소비 근거](docs/v1-api-inventory.md)
@@ -221,11 +222,10 @@ V9는 기존 V1~V8의 Guest만 표시하며 향후 일반 계정의 DB 기본값
 **거래 이력이 있는 만료 Guest의 영구 보존량까지 줄이는 정책은 이번 정리에 포함하지 않는다.**
 해당 이력을 삭제/아카이브하려면 별도의 보존 기간과 운영 정책을 먼저 결정해야 한다.
 
-V4는 `trading_account`, `wallet`, `position`을 생성한다. 계정은 내부 ID, 상태, Credential Hash/만료,
+V4는 `trading_account`, `wallet`, `position`을 생성했다. 계정은 내부 ID, 상태, Credential Hash/만료,
 생성 시간과 마지막 재무 변경 시각을 가진다. Wallet은 계정당 하나이며 실제 잔액, 사용/예약 Margin,
-누적 실현 PnL을 보존한다. Position은 개별 체결 Lot 단위로 독립된 LONG/SHORT 수량·진입가·Leverage·Margin,
-OPEN/CLOSED/LIQUIDATED 상태·실현 PnL·청산가·생성/종료 시각을 가진다. 같은 종목의 여러 Lot도 USDT Wallet을 공유한다.
-시장가 주문은 개별 Position Lot을 만들고 부분/전체 종료를 지원한다. 동일 종목 합산은 하지 않는다.
+누적 실현 PnL을 보존한다. V4의 개별 체결 Lot 모델은 V10에서 아래의 Hedge 통합 Position으로 전환했다.
+현재 동일 종목·방향의 추가 진입은 하나의 OPEN Position에 합산하며 개별 체결은 Order/Fill에 남긴다.
 Position의 `quantity`와 `margin`은 잔여 값이며 `realizedPnl`은 누적 실현 손익이다.
 V7은 기존 원래 수량/증거금을 `initial_quantity`/`initial_margin`에 보존하고 종료된 Lot의 잔여 값을 0으로 이관한다.
 진입가/Leverage는 유지하며 마지막 종료 가격과 시각은 Position에, 각 부분 체결은 Order/Fill에 보존한다.
@@ -253,9 +253,10 @@ status 외에는 Guest Bearer 인증이 필요하다. 주문/종료의 `Idempote
 Client의 임의 가격은 사용하지 않는다. 계정별 Key UNIQUE, 계정·종목·방향별 활성 Position UNIQUE, Position별 LIQUIDATE UNIQUE,
 Fill의 order_id UNIQUE와 계정 Row Lock을 함께 사용한다. Position/Wallet/Order/Fill은 하나의 Transaction이다.
 Commit 이후에만 성공 로그를 남긴다. Lock timeout/교착은 전체 rollback하며 무한 재시도하지 않는다.
-신규 주문에는 ACTIVE 종목과 보유 종목 전체의 fresh 가격, 충분한 가용 Margin이 필요하다.
-종료도 전체 fresh 평가를 요구하며 유지증거금 이하의 계정은 `ACCOUNT_AT_RISK`로 차단한다.
-손실 Position 종료로 현금이 음수가 되면 거절한다. 수익 Position을 먼저 종료해야 하는 경우가 있다.
+신규 주문은 ACTIVE 종목과 해당 종목 fresh Mark, 충분한 free cash 및 진입 후 격리 안전성이 필요하다.
+종료에는 대상 Position의 fresh Mark를 요구하며 이미 격리 위험 상태라면 기존 오류 코드 `ACCOUNT_AT_RISK`로 차단한다.
+다른 Position의 미실현 수익/손실과 미사용 현금으로 대상 Position의 위험을 자동 보전하지 않는다.
+Legacy 전환 보류 계정의 신규 진입/종료/레버리지 변경은 `MARGIN_MIGRATION_REQUIRED`(409)다.
 가격이 새로 도착했지만 위험 처리가 끝나지 않았으면 503 `ENGINE_RECOVERING`이다. 동일 Key로 짧은 간격을 두고 재시도한다.
 단순 READY 상태도 개별 종목의 freshness 또는 주문 허용을 보장하지 않는다.
 
@@ -271,7 +272,7 @@ Order/Fill은 매 체결마다 별개로 남는다. 수량이 0이 된 생애주
 | GET | `/api/v1/trading/account/symbols/{symbolId}/leverage` | Bearer 계정의 종목 설정. 미설정이면 10배, `updatedAt=null`. 조회로 DB Row를 만들지 않음 |
 | PUT | 동일 경로 | `{"leverage":14}`. 정수 1~100. 두 방향 Position과 PENDING OPEN 예약을 원자적으로 재계산 |
 
-응답 예: `{"tradingSymbolId":1,"leverage":14,"maxLeverage":100,"marginMode":"CROSS","updatedAt":"2026-10-19T00:00:00Z"}`.
+응답 예: `{"tradingSymbolId":1,"leverage":14,"maxLeverage":100,"marginMode":"ISOLATED","updatedAt":"2026-10-20T00:00:00Z","marginTransitionStatus":"COMPLETE"}`.
 설정은 PostgreSQL `symbol_leverage`에 저장하며 LONG/SHORT이 공유한다. ETH 등 다른 종목에는 영향을 주지 않는다.
 Frontend는 종목 선택 시 GET으로 복구하고, 변경 시 PUT 성공 후 그 값으로 OPEN을 보낸다.
 OPEN의 기존 `leverage` 입력은 유지하지만 서버 설정과 다르면 409 `LEVERAGE_MISMATCH`다.
@@ -280,8 +281,8 @@ OPEN의 기존 `leverage` 입력은 유지하지만 서버 설정과 다르면 4
 
 레버리지 변경은 기존 Account DB Lock과 Transaction 안에서 남은 진입 원가 / 새 leverage로 두 방향 Margin을 계산한다.
 해당 종목 PENDING OPEN의 예약도 limitPrice * quantity / 새 leverage로 다시 계산한다.
-Wallet Used/Reserved의 전체 증감이 `min(balance,equity)`를 초과하면 `INSUFFICIENT_MARGIN`(409)로 전부 rollback한다.
-노출/예약이 있으면 전체 보유 종목의 fresh 가격과 위험 평가·Engine Gate를 확인한다.
+Wallet Used/Reserved의 전체 증감이 장부 현금 `balance`를 초과하면 `INSUFFICIENT_MARGIN`(409)로 전부 rollback한다.
+노출/예약이 있으면 해당 종목의 fresh Mark와 Engine Gate, 각 방향의 현재/변경 후 격리 위험을 확인한다.
 `PRICE_NOT_FRESH`/`ENGINE_RECOVERING`(503), `ACCOUNT_AT_RISK`(409)도 원자적으로 실패한다.
 동일 값 반복 PUT은 재무 변경을 반복하지 않는다. 수량·Entry·실현 PnL·CLOSE 예약은 바꾸지 않는다.
 `OrderResponse.requestedLeverage`는 최초 요청 값이고, `leverage`는 PENDING OPEN의 유효 값 또는 FILLED 시점 값이다.
@@ -294,61 +295,61 @@ PnL의 금융 원장 반영은 기존 HALF_EVEN 18자리다. Fill 단위의 최�
 `initialQuantity`는 생애주기의 누적 진입 수량, `initialMargin`은 진입 시 반영한 Margin 증가분의 누적값이다.
 현재 Margin과 비교하는 상한이 아니며 레버리지 변경 자체는 이 이력을 바꾸지 않는다. `exitPrice`는 최종 종료 Fill 가격이다.
 추가 진입은 이전 실현 PnL과 CLOSE 예약을 보존하며, 손익을 Wallet Balance에 임의 정산하지 않는다.
-Gross 유지증거금은 LONG/SHORT 각각 Mark Notional의 0.5%를 합산한다. 100배에서도 노출/예약을 상계하지 않는다.
-Binance 리스크 Tier, 수수료/Funding, 호가 기반 체결·슬리피지·부분 Fill은 도입하지 않는다.
+각 Position 유지증거금은 Mark Notional의 0.5%이며 위험 판단에는 0.05% 청산 비용 예약도 포함한다.
+100배에서도 LONG/SHORT 담보와 위험을 상계하지 않는다. Binance 리스크 Tier, Funding, 호가 기반 매칭은 도입하지 않는다.
 
-#### 조건부 강제청산 예상가 조회
+#### 포지션별 격리 강제청산 예상가
 
-`GET /api/v1/trading/account/summary`의 각 Position과 `GET /api/v1/trading/account/positions`는
-같은 `liquidationPrice`, `liquidationPriceStatus`, `liquidationPriceAsOf`를 제공한다. 기존 Guest Bearer 인증을 유지한다.
-이는 **다른 보유 종목의 Mark를 현재 Snapshot에 고정하고, 대상 종목 Mark만 변화시켰을 때의 첫 계정 위험 임계가격**이다.
-대상 종목의 LONG/SHORT에는 같은 가격 변화를 동시에 적용하며 두 행에 같은 결과가 나온다.
-개별 Position만 따로 청산하는 가격이나 실제 LIQUIDATE Fill 가격을 보장하지 않는다.
-중간 가격에서 주문이 체결되거나 다른 종목 가격·자산·포지션이 바뀌면 조건과 예상가도 바뀐다. 미래 주문 체결 경로는 예측하지 않는다.
+`GET /api/v1/trading/account/summary`와 `/api/v1/trading/account/positions`는 같은 Position DTO를 제공한다.
+`IsolatedMargin.risk()`의 **Position 담보 + HALF_EVEN18 gross PnL <= CEILING18 유지증거금 + CEILING18 청산 비용 예약**을
+실제 Trigger와 예상가 검증에 함께 사용한다. 유지증거금률0.5%, 청산 비용률0.05%다.
+대상 Position의 남은 exact basis/수량/담보만 사용하며 Wallet 미사용 현금·다른 종목·반대 방향 PnL은 사용하지 않는다.
+LONG/SHORT에는 각각 독립적인 예상가가 나온다. 레버리지 변경으로 담보가 바뀌면 예상가도 바뀐다.
+CLOSE 수량 예약은 담보를 변경하지 않으므로 그 자체로 예상가를 바꾸지 않는다.
 
-`AccountValuation.risk()`를 실제 엔진과 경계 검증에서 공유한다.
-각 Position PnL은 `방향 부호 * (Mark * 남은 수량 - 남은 진입 원가)`를 HALF_EVEN 18자리로 산출한다.
-계정 Equity는 `Wallet Balance + 모든 PnL`, 유지증거금은 각 방향의 `Mark * 수량 * 0.005`를 CEILING 18자리로 합산한다.
-`Equity <= 유지증거금`이면 계정이 위험 상태다. Hedge의 순노출이 0이어도 Gross 유지증거금은 0이 아니다.
-현재 모델에서 Used/Reserved Margin·CLOSE 예약·leverage 자체는 이 위험 공식의 항이 아니다.
-따라서 레버리지·예약만 변경하고 자산·노출·Mark가 같다면 예상가도 유지된다.
-
-| liquidationPriceStatus | liquidationPrice / 의미 |
-| --- | --- |
-| ESTIMATED_DOWNWARD | 양수 decimal string. 이 종목 Mark 하락 방향의 첫 계정 위험 가격 |
-| ESTIMATED_UPWARD | 양수 decimal string. 이 종목 Mark 상승 방향의 첫 계정 위험 가격. LONG 행에서도 가능 |
-| PRICE_UNAVAILABLE | null. 보유 종목 중 하나라도 시세 누락·만료·연결 불가 |
-| NO_THRESHOLD | null. 다른 Mark 고정 가정과 지원하는 양수 가격 범위 안에서 유효 경계가 없음 |
-| UNSUPPORTED_MODEL | null. 정밀도/가격 범위, 현재점의 반올림 모호성 또는 탐색 한도 때문에 경계를 증명할 수 없음 |
-| ALREADY_AT_RISK | null. 현재 Snapshot에서 이미 Equity가 유지증거금 이하 |
-
-`liquidationPriceAsOf`는 **필요한 모든 보유 종목의 서버 receivedAt 중 가장 오래된 시각**이다.
-Provider eventTime이나 실제 체결 예정 시각이 아니다. PRICE_UNAVAILABLE이면 시각도 null이고 오래된 예상가는 재사용하지 않는다.
-계정 금융 상태의 조회 시점은 기존 Summary `capturedAt`이다.
-
-반올림 전 선형식은 오차 한계 내 후보 구간을 좁히는 데만 사용한다. 최종 숫자는 엔진의 PnL/유지증거금 반올림으로 검증한다.
-HALF_EVEN/CEILING으로 생길 수 있는 미세한 위험 구간을 단조 이진 탐색으로 건너뛰지 않도록 구간 상·하한을 검사한다.
-반환값은 가격 10^-18 단위에서 위험 조건을 만족하고, 현재 가격 쪽의 바로 이웃 가격은 안전함을 확인한다.
-종목당 최대 512개/계정 조회당 최대 4096개 구간을 검사하며 증명에 실패하면 UNSUPPORTED_MODEL이다.
-종목별 결과를 한 번만 계산해 양방향 행에서 공유한다. 새 SQL·외부 호출·DB 쓰기를 추가하지 않으며
-기존 Account Lock과 한 번의 시세 Snapshot을 재사용한다. Wallet 단독 조회는 예상가 탐색을 하지 않는다.
-
-예: 현금 10,000 USDT, 단일 LONG 수량 100, 진입 원가 100,000, 현재 Mark 1,000인 Snapshot의 Position 일부:
+예: LONG20, entry1000, leverage10, collateral2000인 정상 Position 응답 일부:
 
 ```json
 {
-  "id": 101,
-  "tradingSymbolId": 1,
-  "side": "LONG",
-  "liquidationPrice": "904.522613065326633165",
+  "marginMode": "ISOLATED",
+  "openedMarginMode": "ISOLATED",
+  "liquidationPrice": "904.977375565610859728",
   "liquidationPriceStatus": "ESTIMATED_DOWNWARD",
-  "liquidationPriceAsOf": "2026-10-19T12:00:00Z"
+  "liquidationPriceAsOf": "2026-10-20T00:00:00Z"
 }
 ```
 
-Frontend는 값을 계산하지 않고 서버 decimal string을 표시한다. null은 `—`로 표시하고 상태에 따른 사유를 제공한다.
-표시 이름과 도움말에는 조건부 **계정 강제청산 예상가**이며 실제 체결가 보장이 아님을 명시한다.
-방향은 Position side에서 추정하지 말고 status로 판단한다. 새 알림 서버나 WebSocket 채널은 추가하지 않는다.
+| 상태 | 가격과 의미 |
+| --- | --- |
+| ESTIMATED_DOWNWARD | LONG의 양수 decimal string 위험 경계 |
+| ESTIMATED_UPWARD | SHORT의 양수 decimal string 위험 경계 |
+| PRICE_UNAVAILABLE | null. 이 Position 종목의 fresh Mark 없음. 다른 종목 누락은 영향을 주지 않음 |
+| NO_THRESHOLD | null. 지원하는 양수 가격 구간에 경계 없음. 예: 충분히 담보된 1배 LONG |
+| UNSUPPORTED_MODEL | null. 정밀도/범위/반올림 모호성/제한된 탐색으로 경계를 증명하지 못함 |
+| ALREADY_AT_RISK | null. 대상 Position이 이미 격리 위험 상태 |
+| MARGIN_MIGRATION_REQUIRED | null. 기존 Cross 노출의 안전 전환/검토가 완료되지 않음 |
+
+`liquidationPriceAsOf`는 대상 종목의 서버 receivedAt이다. Provider eventTime이나 체결 예정 시각이 아니다.
+시세 불가/전환 보류이면 null이며 오래된 수치를 재사용하지 않는다. Summary의 금융 snapshot 시각은 `valuedAt`이다.
+가격10^-18 그리드에서 위험 조건과 바로 안전한 이웃을 실제 반올림으로 검증한다. 단조성을 가정해 미세한 반올림 구간을
+넘기지 않는다. Position당512/계정 조회당4096개 구간으로 작업량을 제한하며 증명하지 못한 숫자를 보내지 않는다.
+이는 **담보 기반 예상 임계값**이다. 가격 gap은 실제 수신 Mark로 체결하며 표시 가격의 체결을 보장하지 않는다.
+
+Frontend는 `marginMode=ISOLATED`를 수용하고 서버 price/status/asOf만 표시한다. null은 사유와 함께 `—`로 표시한다.
+현재 Frontend의 CROSS 전용 parser를 별도 Work에서 먼저 호환 배포해야 한다. Backend Work는 Frontend를 수정하지 않는다.
+
+#### V11 Isolated 전환과 보존
+
+기존 V1~V10 migration은 수정하지 않았다. V11은 과거 Position/Order/Fill의 원래 margin mode를 CROSS로 보존하고
+fee/adjustment 원장을 추가한다. 현금·담보·원가·수량·기존 손익·참조를 바꾸거나 임의 청산하지 않는다.
+기존 OPEN이 있는 계정은 PENDING으로 두고, Trigger가 모든 기존 노출의 fresh Mark와 개별 격리 안전성을 확인한 후에만
+기존 margin 금액을 그대로 활성화한다. 전환 당시 margin/Mark/시각을 Position에 영속 기록한다.
+시세가 없으면 PENDING 유지, 이미 위험하거나 담보가 부족하면 REVIEW_REQUIRED로 영속 보류한다.
+가격이 회복돼도 검토 보류를 자동 해제하지 않는다. 신규 Guest와 기존 OPEN이 없는 계정은 COMPLETE/ISOLATED다.
+읽기 API는 LEGACY_CROSS/전환 상태를 구분하며 Cross 신규 거래나 선택 기능을 제공하지 않는다.
+
+모든 구버전 writer를 중지하고 backup/restore 검증 및 Frontend 호환 release를 완료한 뒤 배포한다.
+실제 사용자 DB에는 이 작업에서 migration을 적용하지 않는다. 자세한 승인/복구 절차는 [전환 계약](docs/isolated-margin-cutover.md)을 따른다.
 
 #### V10 데이터 이관 및 배포 주의
 
@@ -399,7 +400,8 @@ Wallet의 `reservedMargin`은 OPEN 예약 증거금이며 청산 예약 수량�
 시장가 0.5 BTC 종료는 409로 거절하며, 기존 지정가를 자동 축소/취소하지 않는다. 먼저 취소하거나 0.3 BTC 이하로 종료한다.
 Body/quantity 없는 전체 종료 역시 예약이 있다면 거절한다. 성공한 부분 종료 후에도 남은 예약은 잔여 수량을 넘지 않는다.
 같은 계정의 생성/취소/체결/강제청산은 DB Row Lock 후 최신 상태로 검증한다. 강제청산은 위험 검사를 먼저 수행하고
-모든 PENDING OPEN 증거금과 CLOSE 수량 예약을 반환한 뒤 **남은 수량만** 정산한다.
+위험 Position의 PENDING CLOSE 수량 예약만 반환·REJECTED 처리한 뒤 **남은 수량만** 정산한다.
+다른 Position과 무관 PENDING OPEN/CLOSE는 보존하며, 조건이 충족된 독립 OPEN은 새 lifecycle로 체결될 수 있다.
 동일 Tick에서 위험 조건이 충족되지 않은 주문은 ID 순서로 처리한다. CLOSE도 현금 잔액을 음수로 만드는 체결은
 `INSUFFICIENT_SETTLEMENT_CASH`로 거절하고 해당 수량 예약을 반환한다. 나머지 주문은 보존한다.
 V8은 수량 예약의 `0 <= reserved <= remaining` 제약과 CLOSE 대상 Position 보존 제약을 추가한다.
@@ -407,15 +409,18 @@ V8은 수량 예약의 `0 <= reserved <= remaining` 제약과 CLOSE 대상 Posit
 종목 비활성화를 실제 관리하는 API는 없다. Trigger 시 이미 INACTIVE인 신규 진입 주문은 REJECTED 처리한다.
 관리 기능 도입 전에는 OPEN Position/PENDING Order가 있는 종목을 임의 비활성화하지 않는다.
 
-유지증거금은 `sum(mark * quantity * 0.005)`다. 교차증거금의 `equity <= maintenanceMargin`이면
-계정의 모든 OPEN Lot을 같은 fresh 가격 벡터로 청산하고 모든 PENDING 예약을 반환·REJECTED 처리한다.
-청산가를 정확히 찍지 않고 건너뛰어도 `<=` 비교로 감지한다. 반대 방향/다른 종목의 PnL도 합산한다.
-청산 Position/Order/Fill과 Wallet은 계정 단위 하나의 Transaction이다. 이력 Action은 LIQUIDATE다.
-큰 가격 Gap의 손실을 0으로 잘라내지 않는다. 잔액이 0 이하면 BANKRUPT로 신규 거래를 차단하고 실제 손실을 보존한다.
-청산 후 잔액이 양수면 ACTIVE이며 새 거래가 가능하다. 자동 부채 보전/보험 기금은 제공하지 않는다.
-이것은 명시적인 모의투자 정책이며 Binance Maintenance Tier, Funding, 수수료 또는 실제 매칭 엔진의 복제가 아니다.
-현재 OPEN/CLOSE/LIQUIDATE의 Fee는 모두 0이며 기존 무수수료 정책을 유지한다. 정해지지 않은 Maker/Taker 요율을
-임의 적용하지 않는다. 실제 거래소 비용을 비교하는 수익률로 해석해서는 안 되며 Funding 역시 계산하지 않는다.
+격리 청산 조건은 위의 Position별 유지증거금과 청산 비용 예약을 사용한다. 해당 Position의 예약 정리, LIQUIDATE Order/Fill,
+Position 종료와 Wallet 정산은 기존 Account DB Lock 아래 하나의 Transaction이다. 다른 포지션은 자신의 위험 조건일 때만 청산한다.
+가격 Equality에 의존하지 않으며 Redis stream의 순서·재처리 경계를 유지한다. 같은 lifecycle은 한 번만 정산된다.
+
+자동 청산 fee는 실제 Mark * 체결 수량 * 0.0005를 CEILING18로 계산한다. actual gross PnL을 지우거나 가짜 체결가를 쓰지 않는다.
+`adjustment=max(0, fee - releasedMargin - grossPnl)`, Wallet 변화는 `grossPnl-fee+adjustment`이며 최대 담보 손실까지만 반영한다.
+예: LONG1 entry100 margin10, 실제 Mark80이면 gross=-20, fee=0.04, adjustment=10.04, Wallet 변화=-10이다.
+`FillResponse`는 gross realizedPnl/fee/settlementAdjustment/marginMode를 제공하고 Wallet에도 fee/adjustment 누적을 분리한다.
+adjustment는 모의 플랫폼의 초과 손실 보전이며 사용자 수익/입금이 아니다. 사용하지 않은 현금과 다른 담보를 자동 차감하지 않는다.
+잔액0/남은 Position 없음이면 BANKRUPT, 보호된 현금이나 다른 담보가 있으면 계정은 ACTIVE를 유지한다.
+MARKET/LIMIT OPEN/CLOSE의 거래 수수료는 후속 Phase 2에서 적용한다. 이번 단계의 자동 청산 fee와 혼동하지 않는다.
+Funding, Binance Maintenance Tier, 실제 호가 잔량 매칭은 제공하지 않는다.
 
 Worker는 매 Tick 전체 주문을 읽지 않는다. 종목별 OPEN Position 인덱스와 LONG/SHORT 지정가 범위 인덱스로
 후보 계정을 100개씩 Keyset 조회하고, 계정 잠금 후 최대 100개 PENDING/OPEN 항목을 재검증한다.
@@ -453,14 +458,17 @@ Producer 유실은 경고와 DB `gap_count`로 기록한다. 복구 시 현재 f
 최대 10^12 현재 수량/100개 OPEN Position 정책을 정의한다. 통합된 한 방향의 남은 진입 원가도 1,000,000 USDT 이하여야 한다.
 JSON 금액·수량은 정밀도를 보존하는 문자열이다.
 LONG PnL은 `(mark-entry)*quantity`, SHORT는 그 반대다. 평가자산은 `balance + unrealizedPnl`이며
-사용 가능 금액은 `max(0, min(balance, equity) - usedMargin - reservedMargin)`이다.
+사용 가능 금액은 `max(0, balance - usedMargin - reservedMargin)`이다. 미실현 수익도 새 담보로 사용하지 않는다.
+계정 equity는 합산 gross 정보일 뿐 개별 격리 청산의 기준이 아니다. 급격한 gap에서 초과 손실 조정 전 일시적으로
+음수 gross equity가 보일 수 있으나 실제 정산은 해당 담보 손실 한도를 보장하며 fee/adjustment를 따로 기록한다.
 미실현 이익으로 추가 Margin을 만들지 않으며 손실은 구매력을 줄인다. Margin은 현금 지출이 아닌 사용 제한이다.
 부분 종료의 반환 Margin은 `남은 Margin * 종료 수량 / 남은 수량`을 18자리 내림한다.
 마지막 종료에서는 잔여 Margin 전부를 반환하므로 반복 부분 종료 후 증거금 잔재가 남지 않는다.
 
 계정 Snapshot은 PostgreSQL 계정 Row Lock → Wallet → Position 순서로 읽어 동시 재무 변경과 섞이지 않게 한다.
 Lock 대기는 최대 2초이며 경합 실패는 409 `TRADING_BUSY`다. 가격은 하나의 메모리 Snapshot으로 평가한다.
-하나의 보유 종목이라도 FRESH가 아니면 전체 `unrealizedPnl/equity/availableBalance`는 null이고
+하나의 보유 종목이라도 FRESH가 아니면 합산 `unrealizedPnl/equity`는 null이고,
+DB 현금과 담보로 계산되는 `availableBalance`는 알려져 있다. Legacy 전환 보류 중에는 availableBalance가 null이다.
 `valuationStatus=UNAVAILABLE`이다. 해당 Position의 Mark/PnL도 null이며 마지막 가격을 0 또는 현재 값으로 취급하지 않는다.
 Open Position이 없는 계정의 평가 금액은 DB 현금만으로 계산할 수 있다. 시장 연결 상태와 DB 잔액을 혼동하지 않는다.
 
@@ -794,4 +802,5 @@ OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들�
 자동 테스트는 Runtime 명세에서 기존 Trading API, 인증 경계와 Market Summary 필드/타입을 검증한다.
 루트의 기존 `docs/trading-openapi.yaml`은 과거 Snapshot이며 최신 계약 확인에는 Runtime 문서를 사용한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-JWT/Content 인증, Admin, Funding/수수료, Competition/Ranking과 다중 노드 조정은 구현하지 않았다.
+JWT/Content 인증, Admin, Funding, MARKET/LIMIT 거래 수수료, Competition/Ranking과 다중 노드 조정은 아직 구현하지 않았다.
+자동 LIQUIDATE 수수료0.05%와 격리 gap adjustment는 구현했다. 전체 V1 동등성의 남은 항목은 기능 비교표에서 추적한다.

@@ -78,8 +78,9 @@ public final class TradingMath {
         return amount((Objects.requireNonNull(side) == Position.Side.LONG ? difference : difference.negate()).multiply(quantity));
     }
 
-    public static BigDecimal available(BigDecimal balance, BigDecimal used, BigDecimal reserved, BigDecimal unrealized) {
-        return amount(balance.min(balance.add(unrealized)).subtract(used).subtract(reserved).max(BigDecimal.ZERO));
+    public static BigDecimal available(BigDecimal balance, BigDecimal used, BigDecimal reserved) {
+        // Isolated collateral already reserves cash. Another position's profit/loss cannot change free cash.
+        return amount(balance.subtract(used).subtract(reserved).max(BigDecimal.ZERO));
     }
 
     public static BigDecimal maintenance(BigDecimal mark, BigDecimal quantity) {

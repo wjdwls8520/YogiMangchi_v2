@@ -1,6 +1,6 @@
 # Hedge + Isolated 전환 계약과 실행 게이트
 
-상태: **금융 정책 승인 / NOT IMPLEMENTED**. 2026-10-20 사용자가 아래 실제 Mark/gap adjustment/자동 청산0.05%/기존 margin 보존/위험 legacy 보류 권장안을 확정했다. 현재 Runtime OpenAPI와 실행 코드는 Cross다. 이 문서는 Isolated가 이미 제공되는 API 명세가 아니다.
+상태: **Phase 1 구현 / 배포 전 게이트 필요**. 2026-10-20 사용자가 실제 Mark/gap adjustment/자동 청산0.05%/기존 margin 보존/위험 legacy 보류 권장안을 확정했다. 신규 실행 엔진은 Isolated Only이며 전체 V1 이식은 미완료다. MARKET/LIMIT 거래 fee는 Phase 2 대상이다. 현재 계약의 원본은 Runtime OpenAPI와 Trading README다.
 
 ## 확인한 현재 원장
 
@@ -14,15 +14,15 @@ V2 `2abaf45`의 Position에는 `margin`, `entry_notional`, `reserved_close_quant
 
 교체: `AccountValuation.Value.atRisk()` 기반 전 계정 청산, `LiquidationPriceEstimator`의 Cross 조건부 탐색, 계정 미실현 손실로 다른 포지션까지 담보를 조달하는 가용잔고 규칙, `marginMode="CROSS"` 계약. 계정 합산 평가액은 정보용으로 남길 수 있지만 개별 격리 청산 근거로 사용하지 않는다.
 
-## 제안하는 금융 항등식
+## Phase 1 금융 항등식과 Phase 2 확장
 
 `B`: 현재 Wallet balance(격리 담보를 포함하는 장부 현금), `M_i`: Position i의 격리 담보, `R`: Pending OPEN 예약 담보 및 별도로 확정할 예약 fee, `U_i(P)`: exact basis로 계산한 gross 미실현 손익.
 
 - free cash = `B - ΣM_i - R`. 타 포지션의 미실현 수익을 새 주문 재원으로 쓰지 않는다.
 - position equity = `M_i + U_i(P)`.
-- gross maintenance = `ceil18(P * Q_i * 0.005)` 제안. 기존 V2 유지증거금률을 보존한다. V1에는 이 MM 계산이 없으므로 동일 공식이라고 주장하지 않는다.
-- fee reserve/실제 청산 fee 정책이 정해지면 risk = `position equity <= maintenance + 필요한 close fee reserve`. **fee를 임계값 보정에 넣는 것과 실제 fee 차감은 별개**다.
-- OPEN: exact basis 증가분에 대한 `ceil18(basis/leverage)` 담보를 추가 배정하고 실제 OPEN fee를 한 번 차감한다.
+- gross maintenance = `ceil18(P * Q_i * 0.005)` 를 사용한다. 기존 V2 유지증거금률을 보존한다. V1에는 이 MM 계산이 없으므로 동일 공식이라고 주장하지 않는다.
+- risk = `position equity <= maintenance + ceil18(Mark * quantity * 0.0005)`를 사용한다. 실제 LIQUIDATE에도 같은 fee 계산을 적용한다. **fee를 임계값 보정에 넣는 것과 실제 fee 차감은 별개**다.
+- OPEN: exact basis 증가분에 대한 `ceil18(basis/leverage)` 담보를 추가 배정한다. 실제 OPEN fee 차감은 Phase 2에서 추가한다.
 - partial CLOSE: 기존 `releasedMargin`(DOWN18, 전량은 잔액 전부)와 정확한 비례 basis를 재사용한다. 잔여 margin/basis/quantity/예약 수량을 한 Transaction에서 갱신한다.
 - leverage 변경: 각 방향 margin과 Pending OPEN 예약을 함께 재계산한다. free cash가 부족하거나 새 격리 equity가 위험 구간이면 전체 변경을 rollback한다. entry basis/quantity/gross realized는 바꾸지 않는다.
 - 강제청산: 위험한 Position만 종료한다. 해당 Position의 Pending CLOSE 예약만 해제·종료하며 다른 Position·무관 Pending 주문을 계정 단위로 일괄 취소하지 않는다.
@@ -47,13 +47,13 @@ V1 `FuturesLiquidationExecutionService`는 저장 청산가에서 정산하며 �
 1. 승인된 유지보수 창에서 모든 기존 Trading instance/worker와 금융 요청을 중지한다. 혼합 버전 실행을 금지한다.
 2. PostgreSQL의 일관된 backup과 실제 restore 시험, 애플리케이션 artifact/config 및 원장 합계 snapshot을 확보한다. Redis는 금융 backup 대체재가 아니다.
 3. [읽기 전용 검사](../ops/isolated-margin-preflight.sql)를 실행한다. 불일치가 하나라도 있으면 중단한다. 검사 성공도 전환 승인 또는 가격 위험 검증 성공은 아니다.
-4. 신규 migration에서 테이블을 잠그고 검사 조건을 다시 확인한다. 조회와 적용 사이 변경 가능성을 무시하지 않는다.
-5. 기존 `Position.margin`을 **동일 금액 그대로** 격리 담보로 전환하는 안을 권장한다. Wallet 총액/실현손익/과거 Order·Fill·Position 참조를 바꾸거나 미실현 수익을 임의 분배하지 않는다. 그 의미 변경에 대한 사용자 승인과 legacy 감사 snapshot이 필요하다.
-6. 재개 직전 각 종목의 유효한 Mark로 안전성을 재검사한다. 기존 Cross에서는 안전했으나 Isolated로는 이미 위험한 Position이 존재할 수 있다. **자동 재분배·임의 강제종료로 처리하지 않는다.** 대상이 있으면 재개를 보류하고 수동 정리/명시적 전환 정책을 승인받는다. 데이터 복원 없이 옛 Cross writer로 돌아가는 것도 금지한다.
+4. V11에서 원장 테이블을 잠그고 구조적 검사 조건을 다시 확인한다. 시세 검증이 필요한 기존 OPEN 계정은 PENDING으로 영속 보류한다. 조회와 적용 사이 변경 가능성을 무시하지 않는다.
+5. 기존 `Position.margin`을 **동일 금액 그대로** 격리 담보로 전환하는 안을 권장한다. Wallet 총액/실현손익/과거 Order·Fill·Position 참조를 바꾸거나 미실현 수익을 임의 분배하지 않는다. 그 의미 변경은 사용자 승인을 받았으며 전환 시 담보/Mark/시각을 각 legacy Position에 영속 기록한다.
+6. 신규 Trigger가 AccountLock 아래 모든 기존 노출의 fresh Mark로 안전성을 재검사한다. 이 검사가 끝나기 전 계정의 주문/종료/레버리지 쓰기는 MARGIN_MIGRATION_REQUIRED로 차단한다. 기존 Cross에서는 안전했으나 Isolated로는 이미 위험한 Position이 존재할 수 있다. **자동 재분배·임의 강제종료로 처리하지 않는다.** 대상 계정은 REVIEW_REQUIRED로 영속 보류하고 개별 수동 정리/처리 정책을 승인받는다. 가격이 회복돼도 이 보류를 자동 해제하지 않는다. 데이터 복원 없이 옛 Cross writer로 돌아가는 것도 금지한다.
 7. 테스트 DB에서 기존 상태(양방향/여러 종목/부분청산/예약/실현손익)를 재현하여 동일 총액·원장 link·반복 migration/no-op·실패 rollback을 검증한다.
 8. 모든 gate 통과 후 신버전만 재개한다. 새로운 Isolated 거래가 기록된 뒤에는 old artifact만 재기동하는 rollback을 허용하지 않고 정지→사전 backup 복구 또는 검증된 forward fix를 사용한다.
 
-현재6개 OPEN Position의 삭제, 자동 청산, Wallet reset은 승인되지 않았으며 실행하지 않았다. 이 단계에서는 Flyway migration 자체도 추가하지 않았다.
+현재6개 OPEN Position의 삭제, 자동 청산, Wallet reset은 승인되지 않았으며 실행하지 않았다. V11은 테스트 DB에서만 검증하며 실제 사용자 DB에는 적용하지 않았다.
 
 ## Frontend 호환 전환
 
@@ -65,7 +65,7 @@ V1 `FuturesLiquidationExecutionService`는 저장 청산가에서 정산하며 �
 2. Backend 격리/수수료 PR을 테스트하되 금융 의미 변경 배포는 아래 승인 전 보류한다. 두 margin mode를 사용자가 선택하는 기능은 만들지 않는다.
 3. 호환 Frontend release→거래 정지/DB 전환→Isolated Backend release→실제 양방향/청산 smoke test. 기존 Cross 예상가를 격리 예상가로 표시하지 않는다.
 
-예정 API: 기존 `/api/v1/trading/account/{summary,positions,wallet}`와 `/symbols/{id}/leverage`를 재사용하되 응답 mode/status의 정확한 계약은 구현 PR Runtime OpenAPI로 확정한다. `liquidationPrice` decimal string/null과 이유/asOf를 유지할 수 있지만 의미가 바뀌므로 `marginMode=ISOLATED` 및 개인 Position 기준임을 명시한다. 현재 Cross 상태 enum을 격리 상태처럼 재사용하지 않는다. Order Request의 Idempotency-Key, 인증 계정 결정, ProblemDetail.code는 보존한다. fee를 반영한 서버 주문 가능 수량/비용 계약도 Phase 2에서 제공하여100% 비율 계산의 UI 복제를 줄인다.
+Phase 1 API: 기존 `/api/v1/trading/account/{summary,positions,wallet}`와 `/symbols/{id}/leverage`를 재사용하되 응답 mode/status의 정확한 계약은 Runtime OpenAPI를 따른다. `liquidationPrice` decimal string/null과 status/asOf를 유지하고 Position의 `marginMode=ISOLATED`, `openedMarginMode`를 명시한다. LONG은 ESTIMATED_DOWNWARD, SHORT는 ESTIMATED_UPWARD다. 시세가 없으면 PRICE_UNAVAILABLE, legacy 보류는 MARGIN_MIGRATION_REQUIRED다. Wallet/Leverage에는 marginTransitionStatus=COMPLETE/PENDING/REVIEW_REQUIRED를 제공한다. legacy는 marginMode=LEGACY_CROSS이며 Cross 신규 거래는 불가능하다. Order Request의 Idempotency-Key, 인증 계정 결정, ProblemDetail.code는 보존한다. fee를 반영한 서버 주문 가능 수량/비용 계약도 Phase 2에서 제공하여100% 비율 계산의 UI 복제를 줄인다.
 
 **BLOCKED BY FRONTEND COORDINATION**: Frontend 파일을 이 Backend Work에서 수정하지 않는다. 필요한 대상은 `api/leverage-contract.ts`, `api/account.ts`, `components/account-tables.tsx`, 주문 사이징/비용/청산 표시 테스트다. 다른 Work에 메시지도 별도 지시 없이 보내지 않았다.
 

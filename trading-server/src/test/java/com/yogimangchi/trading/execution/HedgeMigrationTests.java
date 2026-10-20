@@ -131,7 +131,7 @@ class HedgeMigrationTests {
                 +"(4,1,null,1,'LONG','LIMIT','OPEN','PENDING',0.01,10,null,'legacy-pending',repeat('e',64),now(),null,70000,70)");
         jdbc.update("insert into "+s+".fill(order_id,price,quantity,price_event_time,executed_at,realized_pnl) values (1,80000,0.1,now()-interval '2 days',now()-interval '2 days',0),(2,85000,0.2,now()-interval '1 day',now()-interval '1 day',0)");
     }
-    private org.flywaydb.core.api.output.MigrateResult migrate(String s) { return Flyway.configure().dataSource(dataSource).schemas(s).defaultSchema(s).load().migrate(); }
+    private org.flywaydb.core.api.output.MigrateResult migrate(String s) { return Flyway.configure().dataSource(dataSource).schemas(s).defaultSchema(s).target("10").load().migrate(); }
     private void amount(String s,String table,String column,String where,String expected) { assertThat(jdbc.queryForObject("select "+column+" from "+s+"."+table+" where "+where,BigDecimal.class)).isEqualByComparingTo(expected); }
     private static String schema() { return "hedge_"+UUID.randomUUID().toString().replace("-",""); }
     private void drop(String s) { jdbc.execute("drop schema if exists "+s+" cascade"); }

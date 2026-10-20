@@ -131,14 +131,15 @@ class TriggerIntegrationTests {
         assertThat(positionCount("OPEN")).isZero();
     }
 
-    @Test void longLiquidationCrossesWithoutExactTouchAndCancelsAllReservations() throws Exception {
+    @Test void longLiquidationCrossesWithoutExactTouchAndPreservesUnrelatedReservations() throws Exception {
         market(Position.Side.LONG,"900",10);
         OrderResponse pending=limit(Position.Side.SHORT,"1","200",10);
         tick("88"); tick("102"); drain();
         assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
-        assertThat(orderStatus(pending.orderId())).isEqualTo("REJECTED");
-        amount("balance","-800"); amount("realized_pnl","-10800"); amount("used_margin","0"); amount("reserved_margin","0");
-        assertThat(accounts.summary(guest.accountId()).status()).isEqualTo("BANKRUPT");
+        assertThat(orderStatus(pending.orderId())).isEqualTo("PENDING");
+        amount("balance","1000"); amount("realized_pnl","-10800"); amount("used_margin","0"); amount("reserved_margin","20");
+        amount("fees_paid","39.6"); amount("settlement_adjustment","1839.6");
+        assertThat(accounts.summary(guest.accountId()).status()).isEqualTo("ACTIVE");
         assertThat(fillCount()).isEqualTo(2);
         tick("80"); drain(); assertThat(fillCount()).isEqualTo(2);
     }
@@ -161,7 +162,7 @@ class TriggerIntegrationTests {
         market(Position.Side.LONG,"900",10);
         LatestMarkPrice risk=skewedTick("88",6); skewedTick("102",6); drain();
         assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
-        amount("balance","-800"); amount("used_margin","0");
+        amount("balance","1000"); amount("used_margin","0");
         processor.process(guest.accountId(),risk,Map.of(symbol,risk));
         assertThat(fillCount()).isEqualTo(2);
     }
@@ -169,7 +170,7 @@ class TriggerIntegrationTests {
     @Test void shortLiquidationCrossesAndDuplicateEventCannotLiquidateAgain() throws Exception {
         market(Position.Side.SHORT,"1000",10);
         LatestMarkPrice risk=tick("111"); tick("99"); drain();
-        amount("balance","-1000"); assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
+        amount("balance","0"); assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
         processor.process(guest.accountId(),risk,Map.of(symbol,risk));
         assertThat(fillCount()).isEqualTo(2);
     }
@@ -215,7 +216,7 @@ class TriggerIntegrationTests {
         assertThat(orderStatus(pending.orderId())).isEqualTo("FILLED"); assertThat(fillCount()).isEqualTo(1);
     }
 
-    @Test void crossMarginLiquidatesAllSymbolsAtomicallyUsingOneFreshVector() throws Exception {
+    @Test void missingOtherSymbolDoesNotStopIsolatedLiquidationOrCloseTheHealthyOtherPosition() throws Exception {
         long ether=jdbc.queryForObject("select id from trading.trading_symbol where symbol='ETH'",Long.class);
         prices.beginSubscription(Set.of(symbol,ether)); tick("100");
         Instant now=Instant.now();
@@ -229,10 +230,10 @@ class TriggerIntegrationTests {
                 TradingOrder.Type.MARKET,ether,Position.Side.SHORT,new BigDecimal("500"),10,null));
         LatestMarkPrice btcRisk=tick("79");
         processor.process(guest.accountId(),btcRisk,Map.of(symbol,btcRisk));
-        assertThat(positionCount("OPEN")).isEqualTo(2); // Missing ETH cannot be interpreted as zero PnL.
+        assertThat(positionCount("OPEN")).isEqualTo(1); // ETH is preserved; BTC does not need its price to liquidate.
         processor.process(guest.accountId(),btcRisk,Map.of(symbol,btcRisk,ether,etherPrice));
-        assertThat(positionCount("LIQUIDATED")).isEqualTo(2); assertThat(fillCount()).isEqualTo(4);
-        amount("balance","-500"); amount("used_margin","0");
+        assertThat(positionCount("LIQUIDATED")).isEqualTo(1); assertThat(fillCount()).isEqualTo(3);
+        amount("balance","5000"); amount("used_margin","5000");
     }
 
     @Test void limitRejectsInsufficientExecutionMarginAndReleasesReservation() throws Exception {
@@ -268,7 +269,7 @@ class TriggerIntegrationTests {
             assertThatThrownBy(() -> reading.get(100,TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
             release.countDown();
             opening.get(3,TimeUnit.SECONDS); reading.get(3,TimeUnit.SECONDS);
-            assertThat(positionCount("LIQUIDATED")).isEqualTo(1); amount("balance","-1000");
+            assertThat(positionCount("LIQUIDATED")).isEqualTo(1); amount("balance","0");
             assertThat(fillCount()).isEqualTo(2);
         } finally { release.countDown(); pool.shutdownNow(); }
     }
@@ -468,7 +469,7 @@ class TriggerIntegrationTests {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({"LONG,110,80", "SHORT,90,120"})
-    void partialCloseThenLiquidationUsesOnlyRemainingExposureAndClearsBothReservationTypes(Position.Side side,String limit,String adverse) throws Exception {
+    void partialCloseThenLiquidationUsesOnlyRemainingExposureAndPreservesUnrelatedOpenReservation(Position.Side side,String limit,String adverse) throws Exception {
         var opened=market(side,"900",10);
         orders.close(guest.accountId(),opened.positionId(),key(),new ClosePositionRequest(new BigDecimal("300")));
         var closing=closeLimit(opened.positionId(),"400",limit);
@@ -477,9 +478,9 @@ class TriggerIntegrationTests {
         assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
         positionAmount(opened.positionId(),"quantity","0"); positionAmount(opened.positionId(),"reserved_close_quantity","0");
         positionAmount(opened.positionId(),"realized_pnl","-12000");
-        amount("balance","-2000"); amount("used_margin","0"); amount("reserved_margin","0");
-        assertThat(orderStatus(closing.orderId())).isEqualTo("REJECTED"); assertThat(orderStatus(opening.orderId())).isEqualTo("REJECTED");
-        assertThat(orders.pending(guest.accountId())).isEmpty();
+        amount("balance","4000"); amount("used_margin","0"); amount("reserved_margin","20");
+        assertThat(orderStatus(closing.orderId())).isEqualTo("REJECTED"); assertThat(orderStatus(opening.orderId())).isEqualTo("PENDING");
+        assertThat(orders.pending(guest.accountId())).hasSize(1);
         assertThat(orders.history(guest.accountId(),null,100).stream().filter(o -> o.action().equals("LIQUIDATE")))
                 .extracting(OrderResponse::quantity).containsExactly("600.00000000");
         assertThat(fillCount()).isEqualTo(3);
@@ -504,11 +505,11 @@ class TriggerIntegrationTests {
                 () -> { processor.process(guest.accountId(),risk,Map.of(symbol,risk)); return "processed"; });
         assertThat(results.stream().filter(BusinessException.class::isInstance).map(BusinessException.class::cast))
                 .hasSize(1).allMatch(e -> e.getCode()==ErrorCode.ACCOUNT_AT_RISK || e.getCode()==ErrorCode.ACCOUNT_NOT_ACTIVE);
-        amount("balance","-1000"); amount("used_margin","0"); assertThat(fillCount()).isEqualTo(2);
+        amount("balance","0"); amount("used_margin","0"); assertThat(fillCount()).isEqualTo(2);
         assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
     }
 
-    @Test void partialCloseThatCommitsFirstReducesSubsequentLiquidationRisk() throws Exception {
+    @Test void partialCloseThatCommitsFirstProtectsReleasedCashButNotTheRemainingIsolatedExposure() throws Exception {
         var opened=market(Position.Side.LONG,"1000",10);
         CountDownLatch valued=new CountDownLatch(1), release=new CountDownLatch(1);
         java.util.concurrent.atomic.AtomicBoolean first=new java.util.concurrent.atomic.AtomicBoolean(true);
@@ -527,8 +528,8 @@ class TriggerIntegrationTests {
             var risk=tick("89");
             Future<?> riskProcessing=pool.submit(() -> processor.process(guest.accountId(),risk,Map.of(symbol,risk)));
             release.countDown(); closing.get(3,TimeUnit.SECONDS); riskProcessing.get(3,TimeUnit.SECONDS);
-            positionAmount(opened.positionId(),"quantity","500"); amount("used_margin","5000"); amount("balance","10000");
-            assertThat(positionCount("LIQUIDATED")).isZero();
+            positionAmount(opened.positionId(),"quantity","0"); amount("used_margin","0"); amount("balance","5000");
+            assertThat(positionCount("LIQUIDATED")).isEqualTo(1); assertThat(fillCount()).isEqualTo(3);
         } finally { release.countDown(); pool.shutdownNow(); }
     }
 
@@ -541,10 +542,10 @@ class TriggerIntegrationTests {
         String state=orderStatus(closing.orderId());
         assertThat(state).isIn("FILLED","REJECTED");
         positionAmount(opened.positionId(),"reserved_close_quantity","0");
-        positionAmount(opened.positionId(),"quantity",state.equals("FILLED") ? "400" : "0");
-        amount("balance",state.equals("FILLED") ? "16600" : "-1000");
-        amount("used_margin",state.equals("FILLED") ? "4000" : "0");
-        assertThat(fillCount()).isEqualTo(2); assertThat(orders.pending(guest.accountId())).isEmpty();
+        positionAmount(opened.positionId(),"quantity","0");
+        amount("balance",state.equals("FILLED") ? "12600" : "0");
+        amount("used_margin","0");
+        assertThat(fillCount()).isEqualTo(state.equals("FILLED") ? 3 : 2); assertThat(orders.pending(guest.accountId())).isEmpty();
     }
 
     private List<Object> concurrentResults(Callable<?> first,Callable<?> second) throws Exception {
@@ -560,21 +561,18 @@ class TriggerIntegrationTests {
         } finally { pool.shutdownNow(); }
     }
 
-    @Test void rejectedLimitCloseReleasesReservationWithoutRealizingUnfundedLoss() throws Exception {
+    @Test void losingHedgeSideLiquidatesIndependentlyAndCannotAcceptAnotherCloseOrder() throws Exception {
         var losing=market(Position.Side.LONG,"200",10);
         var winning=market(Position.Side.SHORT,"200",10);
-        // The hedged account remains solvent, but the losing lot cannot settle alone.
+        // Opposite-side profit never prevents the losing side's isolated liquidation.
         tick("0.4"); drain();
-        var closing=closeLimit(losing.positionId(),"200","0.5");
+        assertThatThrownBy(() -> closeLimit(losing.positionId(),"200","0.5"))
+                .isInstanceOfSatisfying(BusinessException.class,e -> assertThat(e.getCode()).isEqualTo(ErrorCode.POSITION_NOT_OPEN));
         tick("1"); drain();
-        assertThat(orderStatus(closing.orderId())).isEqualTo("REJECTED");
-        assertThat(jdbc.queryForObject("select reason from trading.trading_order where id=?",String.class,closing.orderId()))
-                .isEqualTo("INSUFFICIENT_SETTLEMENT_CASH");
-        positionAmount(losing.positionId(),"reserved_close_quantity","0"); positionAmount(losing.positionId(),"quantity","200");
-        amount("balance","10000"); amount("used_margin","4000"); assertThat(fillCount()).isEqualTo(2);
+        positionAmount(losing.positionId(),"reserved_close_quantity","0"); positionAmount(losing.positionId(),"quantity","0");
+        amount("balance","8000"); amount("used_margin","2000"); assertThat(fillCount()).isEqualTo(3);
         orders.close(guest.accountId(),winning.positionId(),key());
-        orders.close(guest.accountId(),losing.positionId(),key());
-        amount("balance","10000"); amount("used_margin","0"); assertThat(positionCount("OPEN")).isZero();
+        amount("balance","27800"); amount("used_margin","0"); assertThat(positionCount("OPEN")).isZero();
     }
 
     @Test void staleCloseTickCannotConsumeItsReservation() {

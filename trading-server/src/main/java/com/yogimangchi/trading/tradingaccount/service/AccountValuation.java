@@ -8,7 +8,6 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -19,23 +18,20 @@ public class AccountValuation {
     public record Value(Instant capturedAt, Map<Long, LatestPriceStore.Snapshot> prices,
                         boolean fresh, BigDecimal unrealizedPnl, BigDecimal equity,
                         BigDecimal availableBalance, BigDecimal maintenanceMargin) {
-        public boolean atRisk() { return fresh && equity.compareTo(maintenanceMargin) <= 0; }
     }
 
-    /** Same rounded account risk calculation for live engine valuation and hypothetical price verification. */
-    public record Risk(BigDecimal unrealizedPnl, BigDecimal equity, BigDecimal maintenanceMargin) {
-        public BigDecimal buffer() { return equity.subtract(maintenanceMargin); }
-    }
+    /** Informational gross account valuation only. IsolatedMargin owns every liquidation decision. */
+    private record Totals(BigDecimal unrealizedPnl, BigDecimal equity, BigDecimal maintenanceMargin) { }
 
-    public Risk risk(Wallet wallet, List<Position> positions, Function<Position, BigDecimal> markFor) {
+    private Totals totals(Wallet wallet, List<Position> positions, Map<Long, LatestPriceStore.Snapshot> snapshots) {
         BigDecimal pnl = BigDecimal.ZERO;
         BigDecimal maintenance = BigDecimal.ZERO;
         for (Position position : positions) {
-            BigDecimal mark = markFor.apply(position);
+            BigDecimal mark = snapshots.get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice();
             pnl = pnl.add(position.unrealizedPnl(mark));
             maintenance = maintenance.add(TradingMath.maintenance(mark, position.getQuantity()));
         }
-        return new Risk(TradingMath.amount(pnl), TradingMath.amount(wallet.getBalance().add(pnl)), TradingMath.amount(maintenance));
+        return new Totals(TradingMath.amount(pnl), TradingMath.amount(wallet.getBalance().add(pnl)), TradingMath.amount(maintenance));
     }
 
     public Value calculate(Wallet wallet, List<Position> positions) {
@@ -54,10 +50,11 @@ public class AccountValuation {
     public Value evaluate(Wallet wallet, List<Position> positions, Map<Long, LatestPriceStore.Snapshot> snapshots, Instant capturedAt) {
         boolean fresh = positions.stream().allMatch(position -> snapshots.containsKey(position.getTradingSymbolId()))
                 && snapshots.values().stream().allMatch(snapshot -> snapshot.status() == LatestPriceStore.Status.FRESH);
-        if (!fresh) return new Value(capturedAt, snapshots, false, null, null, null, null);
-        Risk risk = risk(wallet, positions, position -> snapshots.get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice());
-        return new Value(capturedAt, snapshots, true, risk.unrealizedPnl(), risk.equity(),
-                TradingMath.available(wallet.getBalance(), wallet.getUsedMargin(), wallet.getReservedMargin(), risk.unrealizedPnl()),
-                risk.maintenanceMargin());
+        if (!fresh) return new Value(capturedAt, snapshots, false, null, null,
+                TradingMath.available(wallet.getBalance(), wallet.getUsedMargin(), wallet.getReservedMargin()), null);
+        Totals totals = totals(wallet, positions, snapshots);
+        return new Value(capturedAt, snapshots, true, totals.unrealizedPnl(), totals.equity(),
+                TradingMath.available(wallet.getBalance(), wallet.getUsedMargin(), wallet.getReservedMargin()),
+                totals.maintenanceMargin());
     }
 }
