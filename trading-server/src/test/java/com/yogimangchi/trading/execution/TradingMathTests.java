@@ -35,12 +35,10 @@ class TradingMathTests {
     }
 
     @Test
-    void lossesReduceBuyingPowerWhileUnrealizedGainsCannotFundMargin() {
-        assertThat(TradingMath.available(n("10000"), n("2000"), n("1000"), n("-5000")))
-                .isEqualByComparingTo("2000");
-        assertThat(TradingMath.available(n("10000"), n("2000"), n("1000"), n("5000")))
+    void onlyCashAndAllocatedOrReservedCollateralDetermineIsolatedBuyingPower() {
+        assertThat(TradingMath.available(n("10000"), n("2000"), n("1000")))
                 .isEqualByComparingTo("7000");
-        assertThat(TradingMath.available(n("10000"), n("2000"), n("1000"), n("-11000")))
+        assertThat(TradingMath.available(n("3000"), n("2000"), n("1000")))
                 .isEqualByComparingTo("0");
     }
 

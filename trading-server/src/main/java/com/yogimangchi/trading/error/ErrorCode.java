@@ -3,6 +3,7 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    MARGIN_MIGRATION_REQUIRED(HttpStatus.CONFLICT, "Legacy account is held pending safe isolated conversion or explicit review"),
     INVALID_LEVERAGE(HttpStatus.BAD_REQUEST, "Leverage must be an integer between 1 and 100"),
     LEVERAGE_MISMATCH(HttpStatus.CONFLICT, "OPEN leverage must match the account's current symbol setting; change it with PUT leverage first"),
     MARKETABLE_LIMIT_NOT_ALLOWED(HttpStatus.CONFLICT, "Limit BUY must be below the fresh Mark Price and limit SELL above it; equality is not allowed"),

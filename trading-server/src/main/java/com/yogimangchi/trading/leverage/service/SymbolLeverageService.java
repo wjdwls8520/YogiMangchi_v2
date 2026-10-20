@@ -9,6 +9,7 @@ import com.yogimangchi.trading.leverage.repository.SymbolLeverageRepository;
 import com.yogimangchi.trading.order.entity.TradingOrder;
 import com.yogimangchi.trading.order.repository.TradingOrderRepository;
 import com.yogimangchi.trading.position.entity.Position;
+import com.yogimangchi.trading.position.service.IsolatedMargin;
 import com.yogimangchi.trading.position.repository.PositionRepository;
 import com.yogimangchi.trading.tradingaccount.entity.TradingAccount;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
@@ -31,12 +32,14 @@ public class SymbolLeverageService {
     private final TradingSymbolRepository symbols;
     private final AccountValuation valuation;
     private final TradingEngineGate gate;
+    private final IsolatedMargin isolated;
 
     public SymbolLeverageService(AccountLock locks, SymbolLeverageRepository settings, PositionRepository positions,
             TradingOrderRepository orders, WalletRepository wallets, TradingSymbolRepository symbols,
-            AccountValuation valuation, TradingEngineGate gate) {
+            AccountValuation valuation, TradingEngineGate gate, IsolatedMargin isolated) {
         this.locks=locks; this.settings=settings; this.positions=positions; this.orders=orders;
         this.wallets=wallets; this.symbols=symbols; this.valuation=valuation; this.gate=gate;
+        this.isolated=isolated;
     }
 
     /** Used under AccountLock. No implicit setting changes from an OPEN order. */
@@ -47,10 +50,10 @@ public class SymbolLeverageService {
 
     @Transactional
     public LeverageResponse get(Long accountId, Long symbolId) {
-        locks.lock(accountId); requireSymbol(symbolId);
+        TradingAccount account = locks.lock(accountId); requireSymbol(symbolId);
         return settings.findByAccountIdAndTradingSymbolId(accountId, symbolId)
-                .map(s -> response(symbolId, s.getLeverage(), s.getUpdatedAt()))
-                .orElseGet(() -> response(symbolId, TradingMath.DEFAULT_LEVERAGE, null));
+                .map(s -> response(account, symbolId, s.getLeverage(), s.getUpdatedAt()))
+                .orElseGet(() -> response(account, symbolId, TradingMath.DEFAULT_LEVERAGE, null));
     }
 
     @Transactional
@@ -60,8 +63,9 @@ public class SymbolLeverageService {
         TradingAccount account = locks.lock(accountId);
         requireSymbol(symbolId);
         if (account.getStatus() != TradingAccount.Status.ACTIVE) throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
+        if (!account.isIsolated()) throw new BusinessException(ErrorCode.MARGIN_MIGRATION_REQUIRED);
         var previous = settings.findByAccountIdAndTradingSymbolId(accountId, symbolId);
-        if (previous.isPresent() && previous.get().getLeverage() == leverage) return response(symbolId, leverage, previous.get().getUpdatedAt());
+        if (previous.isPresent() && previous.get().getLeverage() == leverage) return response(account, symbolId, leverage, previous.get().getUpdatedAt());
         var wallet = wallets.findById(accountId).orElseThrow();
         var open = positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN);
         var affected = open.stream().filter(p -> p.getTradingSymbolId().equals(symbolId)).toList();
@@ -70,12 +74,15 @@ public class SymbolLeverageService {
         BigDecimal usedDelta = affected.stream().map(p -> p.marginAtLeverage(leverage).subtract(p.getMargin())).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal reservedDelta = pending.stream().map(o -> TradingMath.margin(o.getLimitPrice(), o.getQuantity(), leverage)
                 .subtract(o.getReservedMargin())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (!open.isEmpty() || !pending.isEmpty()) {
-            var value = valuation.calculate(wallet, open, java.util.Set.of(symbolId));
+        if (!affected.isEmpty() || !pending.isEmpty()) {
+            var value = valuation.calculate(wallet, affected, java.util.Set.of(symbolId));
             if (!value.fresh()) throw new BusinessException(ErrorCode.PRICE_NOT_FRESH);
             gate.requireCaughtUp(value.prices());
-            if (value.equity().compareTo(value.maintenanceMargin()) <= 0) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
-            BigDecimal capacity = wallet.getBalance().min(value.equity());
+            var mark = value.prices().get(symbolId).latestPrice().orElseThrow().domainMarkPrice();
+            if (affected.stream().anyMatch(p -> isolated.risk(p, mark).atRisk()
+                    || isolated.risk(p.getSide(), p.getQuantity(), p.getEntryNotional(), p.marginAtLeverage(leverage), mark).atRisk()))
+                throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+            BigDecimal capacity = wallet.getBalance();
             if (wallet.getUsedMargin().add(usedDelta).add(wallet.getReservedMargin()).add(reservedDelta).compareTo(capacity) > 0)
                 throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
         }
@@ -88,14 +95,15 @@ public class SymbolLeverageService {
         settings.save(setting);
         // A preference-only change does not turn an otherwise unused Guest into permanent financial history.
         if (!affected.isEmpty() || !pending.isEmpty()) account.recordFinancialChange(now);
-        return response(symbolId, leverage, now);
+        return response(account, symbolId, leverage, now);
     }
 
     private void requireSymbol(Long symbolId) {
         if (symbolId == null || symbolId <= 0 || symbols.findById(symbolId).filter(s -> s.getStatus() == TradingSymbolStatus.ACTIVE).isEmpty())
             throw new BusinessException(ErrorCode.SYMBOL_NOT_AVAILABLE);
     }
-    private static LeverageResponse response(Long symbolId, int leverage, Instant updated) {
-        return new LeverageResponse(symbolId, leverage, TradingMath.MAX_LEVERAGE, "CROSS", updated);
+    private static LeverageResponse response(TradingAccount account, Long symbolId, int leverage, Instant updated) {
+        return new LeverageResponse(symbolId, leverage, TradingMath.MAX_LEVERAGE, account.getMarginMode(), updated,
+                account.getMarginTransitionStatus().name());
     }
 }

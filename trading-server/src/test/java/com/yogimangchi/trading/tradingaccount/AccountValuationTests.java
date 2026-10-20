@@ -49,7 +49,7 @@ class AccountValuationTests {
         assertThat(value.fresh()).isFalse();
         assertThat(value.unrealizedPnl()).isNull();
         assertThat(value.equity()).isNull();
-        assertThat(value.availableBalance()).isNull();
+        assertThat(value.availableBalance()).isEqualByComparingTo("10000");
         assertThat(value.maintenanceMargin()).isNull();
         assertThat(value.prices().get(1L).status()).isEqualTo(LatestPriceStore.Status.FRESH);
         assertThat(value.prices().get(2L).status()).isEqualTo(LatestPriceStore.Status.MISSING);
@@ -63,7 +63,7 @@ class AccountValuationTests {
         prices.markUnavailable();
         var value = valuation.calculate(Wallet.open(1L), List.of(position));
         assertThat(value.fresh()).isFalse();
-        assertThat(value.availableBalance()).isNull();
+        assertThat(value.availableBalance()).isEqualByComparingTo("10000");
     }
 
     @Test

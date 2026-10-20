@@ -249,18 +249,19 @@ class HedgeTradingIntegrationTests {
         market(btc,Position.Side.SHORT,"1"); assertThat(openCount()).isEqualTo(2);
     }
 
-    @Test void hundredTimesLeverageLiquidatesAtGrossMaintenanceAndReleasesAllReservations() {
+    @Test void hundredTimesLeverageLiquidatesOnlyTheRiskySideAndAllowsAnIndependentPendingEntryLifecycle() {
         leverages.change(guest.accountId(),btc,100);
         var longOrder=market(btc,Position.Side.LONG,"590");
         market(btc,Position.Side.SHORT,"390");
         limit(Position.Side.LONG,"0.1","990");
         orders.createLimitClose(guest.accountId(),longOrder.positionId(),key(),new LimitCloseRequest(new BigDecimal("0.1"),new BigDecimal("1100")));
-        LatestMarkPrice tick=process("999"); // equity=9800, gross maintenance=4895.1: still solvent.
+        LatestMarkPrice tick=process("999"); // Both sides remain individually solvent.
         assertThat(openCount()).isEqualTo(2);
-        tick=process("970"); // equity=4000 <= 4753 despite the hedge; both directions liquidate.
+        tick=process("970"); // Only the old LONG liquidates; its independently pending OPEN can fill.
         trigger.process(guest.accountId(),tick,Map.copyOf(book));
-        assertThat(openCount()).isZero(); wallet("used_margin","0"); wallet("reserved_margin","0"); wallet("balance","4000");
-        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and action='LIQUIDATE'",Long.class,guest.accountId())).isEqualTo(2);
+        assertThat(openCount()).isEqualTo(2); wallet("used_margin","3900.97"); wallet("reserved_margin","0"); wallet("balance","4100");
+        assertThat(jdbc.queryForObject("select status from trading.position where id=?",String.class,longOrder.positionId())).isEqualTo("LIQUIDATED");
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and action='LIQUIDATE'",Long.class,guest.accountId())).isEqualTo(1);
         assertThat(orders.pending(guest.accountId())).isEmpty(); assertThat(fillCount()).isEqualTo(4);
     }
 
@@ -281,12 +282,12 @@ class HedgeTradingIntegrationTests {
         assertThat(financialSnapshot()).isEqualTo(before); position(first.positionId(),"quantity","1");
     }
 
-    @Test void missingOtherHeldSymbolPriceBlocksLeverageChangeEvenWhenTargetIsFresh() {
+    @Test void unrelatedMissingPriceDoesNotBlockIsolatedTargetLeverageChange() {
         market(btc,Position.Side.LONG,"1"); market(eth,Position.Side.LONG,"1");
-        var before=financialSnapshot();
         prices.beginSubscription(Set.of(btc,eth)); mark(btc,"1000");
-        rejects(() -> leverages.change(guest.accountId(),btc,20),ErrorCode.PRICE_NOT_FRESH);
-        assertThat(financialSnapshot()).isEqualTo(before);
+        leverages.change(guest.accountId(),btc,20);
+        wallet("used_margin","60");
+        assertThat(leverages.get(guest.accountId(),eth).leverage()).isEqualTo(10);
     }
 
     @Test void positionNotionalLimitRejectsOnlyOverLimitPendingFillAndReleasesItsMargin() {
@@ -315,7 +316,7 @@ class HedgeTradingIntegrationTests {
         mvc.perform(get(path).header("Authorization",bearer())).andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(10));
         assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,guest.accountId())).isZero();
         mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"leverage\":14}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.marginMode").value("CROSS")).andExpect(jsonPath("$.maxLeverage").value(100));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.marginMode").value("ISOLATED")).andExpect(jsonPath("$.maxLeverage").value(100));
         mvc.perform(get(path).header("Authorization",bearer())).andExpect(jsonPath("$.leverage").value(14));
         for(String invalid:List.of("101","0","14.5","\"14\"","null"))
             mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"leverage\":"+invalid+"}"))

@@ -1,117 +1,88 @@
 package com.yogimangchi.trading.tradingaccount.service;
 
 import com.yogimangchi.trading.execution.TradingMath;
+import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import com.yogimangchi.trading.position.entity.Position;
-import com.yogimangchi.trading.tradingaccount.entity.Wallet;
+import com.yogimangchi.trading.position.service.IsolatedMargin;
 import java.math.*;
 import java.time.Instant;
 import java.util.*;
 import org.springframework.stereotype.Component;
 
-/** Read-only conditional ACCOUNT threshold, never an individual position's execution price. */
+/** Position collateral threshold; another position's price or wallet cash cannot change it. */
 @Component
 public class LiquidationPriceEstimator {
-    public enum Status { ESTIMATED_DOWNWARD, ESTIMATED_UPWARD, PRICE_UNAVAILABLE, NO_THRESHOLD, UNSUPPORTED_MODEL, ALREADY_AT_RISK }
+    public enum Status { ESTIMATED_DOWNWARD, ESTIMATED_UPWARD, PRICE_UNAVAILABLE, NO_THRESHOLD,
+        UNSUPPORTED_MODEL, ALREADY_AT_RISK, MARGIN_MIGRATION_REQUIRED }
     public record Estimate(BigDecimal price, Status status, Instant asOf) { }
     private static final BigDecimal TICK = BigDecimal.ONE.scaleByPowerOfTen(-TradingMath.AMOUNT_SCALE);
     private static final BigDecimal MAX_PRICE = BigDecimal.TEN.pow(20).subtract(TICK);
-    private static final int SYMBOL_SEARCH_BUDGET = 512;
-    private static final int ACCOUNT_SEARCH_BUDGET = 4096;
-    private final AccountValuation valuation;
+    private final IsolatedMargin isolated;
 
-    public LiquidationPriceEstimator(AccountValuation valuation) { this.valuation = valuation; }
+    public LiquidationPriceEstimator(IsolatedMargin isolated) { this.isolated = isolated; }
 
-    public Map<Long, Estimate> estimate(Wallet wallet, List<Position> open, AccountValuation.Value value) {
-        Map<Long, List<Position>> grouped = new LinkedHashMap<>();
-        open.forEach(p -> grouped.computeIfAbsent(p.getTradingSymbolId(), ignored -> new ArrayList<>()).add(p));
-        Map<Long, Estimate> result = new HashMap<>();
-        if (grouped.isEmpty()) return Map.of();
-        Instant asOf = value.fresh() ? value.prices().values().stream()
-                .map(s -> s.latestPrice().orElseThrow().receivedAt()).min(Instant::compareTo).orElse(null) : null;
-        Budget accountBudget = new Budget(ACCOUNT_SEARCH_BUDGET);
-        for (var group : grouped.entrySet()) {
+    public Map<Long, Estimate> estimate(List<Position> open, Map<Long, LatestPriceStore.Snapshot> snapshots, boolean isolatedAccount) {
+        Map<Long, Estimate> estimates = new LinkedHashMap<>();
+        Budget accountBudget = new Budget(4096);
+        for (Position position : open) {
             Estimate estimate;
-            if (!value.fresh()) estimate = new Estimate(null, Status.PRICE_UNAVAILABLE, null);
-            else if (value.atRisk()) estimate = new Estimate(null, Status.ALREADY_AT_RISK, asOf);
+            var snapshot = snapshots.get(position.getTradingSymbolId());
+            if (!isolatedAccount) estimate = new Estimate(null, Status.MARGIN_MIGRATION_REQUIRED, null);
+            else if (snapshot == null || snapshot.status() != LatestPriceStore.Status.FRESH)
+                estimate = new Estimate(null, Status.PRICE_UNAVAILABLE, null);
             else {
-                try { estimate = threshold(wallet, open, value, group.getKey(), group.getValue(), asOf, accountBudget); }
+                var price = snapshot.latestPrice().orElseThrow();
+                try { estimate = threshold(position, price.domainMarkPrice(), price.receivedAt(), accountBudget); }
                 catch (ArithmeticException | IllegalArgumentException | SearchLimit exception) {
-                    // Never send an unverified number when precision/range/work bounds prevent a proof.
-                    estimate = new Estimate(null, Status.UNSUPPORTED_MODEL, asOf);
+                    estimate = new Estimate(null, Status.UNSUPPORTED_MODEL, price.receivedAt());
                 }
             }
-            result.put(group.getKey(), estimate);
+            estimates.put(position.getId(), estimate);
         }
-        return Map.copyOf(result);
+        return Collections.unmodifiableMap(estimates);
     }
 
-    private Estimate threshold(Wallet wallet, List<Position> open, AccountValuation.Value value,
-            Long symbol, List<Position> target, Instant asOf, Budget accountBudget) {
-        var others = open.stream().filter(p -> !p.getTradingSymbolId().equals(symbol)).toList();
-        BigDecimal fixed = valuation.risk(wallet, others, p -> mark(value, p.getTradingSymbolId())).buffer();
-        BigDecimal constant = fixed, net = BigDecimal.ZERO, gross = BigDecimal.ZERO;
-        for (Position p : target) {
-            boolean longSide = p.getSide() == Position.Side.LONG;
-            net = net.add(longSide ? p.getQuantity() : p.getQuantity().negate());
-            gross = gross.add(p.getQuantity());
-            constant = constant.add(longSide ? p.getEntryNotional().negate() : p.getEntryNotional());
-        }
-        BigDecimal slope = net.subtract(gross.multiply(TradingMath.MAINTENANCE_RATE));
-        // HALF_EVEN PnL error <= .5 ULP and CEILING maintenance error < 1 ULP per position.
-        // Use a deliberately wider 2 ULP envelope. This formula only bounds the search, not the returned price.
-        BigDecimal error = TICK.multiply(BigDecimal.valueOf(2L * target.size()));
-        BigDecimal current = mark(value, symbol);
-        TradingMath.validatePrice(current);
-        if (constant.add(slope.multiply(current)).subtract(error).signum() <= 0)
-            return new Estimate(null, Status.UNSUPPORTED_MODEL, asOf); // Rounded safe point too close to certify one adverse direction.
-        if (slope.signum() == 0) return new Estimate(null, Status.NO_THRESHOLD, asOf);
-        BigDecimal firstRoot = constant.negate().subtract(error).divide(slope, TradingMath.AMOUNT_SCALE, RoundingMode.FLOOR);
-        BigDecimal secondRoot = constant.negate().add(error).divide(slope, TradingMath.AMOUNT_SCALE, RoundingMode.CEILING);
-        // Widen outward regardless of slope; one extra price ULP covers opposite division rounding directions.
-        BigDecimal low = firstRoot.min(secondRoot).subtract(TICK).max(TICK);
-        BigDecimal high = firstRoot.max(secondRoot).add(TICK).min(MAX_PRICE);
-        boolean descending = slope.signum() > 0;
-        if (descending) high = high.min(current);
-        else low = low.max(current);
+    private Estimate threshold(Position position, BigDecimal current, Instant asOf, Budget accountBudget) {
+        if (isolated.risk(position, current).atRisk()) return new Estimate(null, Status.ALREADY_AT_RISK, asOf);
+        boolean descending = position.getSide() == Position.Side.LONG;
+        BigDecimal rate = TradingMath.MAINTENANCE_RATE.add(IsolatedMargin.LIQUIDATION_FEE_RATE);
+        BigDecimal slope = position.getQuantity().multiply(descending ? BigDecimal.ONE.subtract(rate) : BigDecimal.ONE.add(rate).negate());
+        BigDecimal constant = position.getMargin().add(descending ? position.getEntryNotional().negate() : position.getEntryNotional());
+        // HALF_EVEN PnL <= .5 ULP, maintenance/fee CEILING each < 1 ULP.
+        // Analytic roots bound the search; returned prices use the engine's rounded risk.
+        BigDecimal error = TICK.multiply(BigDecimal.valueOf(3));
+        BigDecimal first = constant.negate().subtract(error).divide(slope, TradingMath.AMOUNT_SCALE, RoundingMode.FLOOR);
+        BigDecimal second = constant.negate().add(error).divide(slope, TradingMath.AMOUNT_SCALE, RoundingMode.CEILING);
+        BigDecimal low = first.min(second).subtract(TICK).max(TICK);
+        BigDecimal high = first.max(second).add(TICK).min(MAX_PRICE);
+        if (descending) high = high.min(current); else low = low.max(current);
         if (low.compareTo(high) > 0) return new Estimate(null, Status.NO_THRESHOLD, asOf);
-        Budget symbolBudget = new Budget(SYMBOL_SEARCH_BUDGET);
-        BigInteger found = search(units(low), units(high), descending, fixed, target, symbolBudget, accountBudget);
+        BigInteger found = search(units(low), units(high), descending, position, new Budget(512), accountBudget);
         if (found == null) return new Estimate(null, Status.NO_THRESHOLD, asOf);
-        BigDecimal price = price(found);
-        BigDecimal nearer = price.add(descending ? TICK : TICK.negate());
-        // Verify the result and its immediate safe-side neighbour with the actual account engine arithmetic.
-        if (valuation.risk(wallet, open, p -> p.getTradingSymbolId().equals(symbol) ? price : mark(value, p.getTradingSymbolId())).buffer().signum() > 0
-                || nearer.signum() <= 0 || valuation.risk(wallet, open,
-                    p -> p.getTradingSymbolId().equals(symbol) ? nearer : mark(value, p.getTradingSymbolId())).buffer().signum() <= 0)
+        BigDecimal price = price(found), nearer = price.add(descending ? TICK : TICK.negate());
+        if (!isolated.risk(position, price).atRisk() || nearer.signum() <= 0 || isolated.risk(position, nearer).atRisk())
             return new Estimate(null, Status.UNSUPPORTED_MODEL, asOf);
         return new Estimate(price, descending ? Status.ESTIMATED_DOWNWARD : Status.ESTIMATED_UPWARD, asOf);
     }
 
-    /** Certified interval bounds, not a monotonic binary search: rounded Hedge risk can have tiny islands. */
-    private BigInteger search(BigInteger low, BigInteger high, boolean descending, BigDecimal fixed,
-            List<Position> target, Budget symbolBudget, Budget accountBudget) {
-        symbolBudget.consume(); accountBudget.consume();
-        BigDecimal lowPrice = price(low), highPrice = price(high);
-        BigDecimal minimum = fixed, maximum = fixed;
-        for (Position p : target) {
-            boolean longSide = p.getSide() == Position.Side.LONG;
-            minimum = minimum.add(p.unrealizedPnl(longSide ? lowPrice : highPrice))
-                    .subtract(TradingMath.maintenance(highPrice, p.getQuantity()));
-            maximum = maximum.add(p.unrealizedPnl(longSide ? highPrice : lowPrice))
-                    .subtract(TradingMath.maintenance(lowPrice, p.getQuantity()));
-        }
-        if (minimum.signum() > 0) return null; // Entire interval is safe; cannot skip an earlier risk crossing.
+    /** Rounded risk can have tiny islands; do not assume monotonic rounding. */
+    private BigInteger search(BigInteger low, BigInteger high, boolean descending, Position position, Budget positionBudget, Budget accountBudget) {
+        positionBudget.consume(); accountBudget.consume();
+        var lo = isolated.risk(position, price(low));
+        var hi = isolated.risk(position, price(high));
+        BigDecimal minimum = (descending ? lo.equity() : hi.equity()).subtract(hi.maintenanceMargin()).subtract(hi.closingFeeReserve());
+        BigDecimal maximum = (descending ? hi.equity() : lo.equity()).subtract(lo.maintenanceMargin()).subtract(lo.closingFeeReserve());
+        if (minimum.signum() > 0) return null;
         if (maximum.signum() <= 0) return descending ? high : low;
-        if (low.equals(high)) throw new IllegalStateException("Risk interval must resolve at one price ULP");
+        if (low.equals(high)) throw new IllegalStateException("One-price risk interval must resolve");
         BigInteger middle = low.add(high).shiftRight(1);
-        BigInteger nearer = descending ? search(middle.add(BigInteger.ONE), high, true, fixed, target, symbolBudget, accountBudget)
-                : search(low, middle, false, fixed, target, symbolBudget, accountBudget);
+        BigInteger nearer = descending ? search(middle.add(BigInteger.ONE), high, true, position, positionBudget, accountBudget)
+                : search(low, middle, false, position, positionBudget, accountBudget);
         if (nearer != null) return nearer;
-        return descending ? search(low, middle, true, fixed, target, symbolBudget, accountBudget)
-                : search(middle.add(BigInteger.ONE), high, false, fixed, target, symbolBudget, accountBudget);
+        return descending ? search(low, middle, true, position, positionBudget, accountBudget)
+                : search(middle.add(BigInteger.ONE), high, false, position, positionBudget, accountBudget);
     }
 
-    private static BigDecimal mark(AccountValuation.Value value, Long symbol) { return value.prices().get(symbol).latestPrice().orElseThrow().domainMarkPrice(); }
     private static BigInteger units(BigDecimal price) { return price.setScale(TradingMath.AMOUNT_SCALE, RoundingMode.UNNECESSARY).unscaledValue(); }
     private static BigDecimal price(BigInteger units) { return new BigDecimal(units, TradingMath.AMOUNT_SCALE); }
     private static final class Budget {

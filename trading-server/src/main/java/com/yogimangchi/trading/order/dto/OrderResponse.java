@@ -8,7 +8,10 @@ public record OrderResponse(Long orderId, Long positionId, Long tradingSymbolId,
         Instant createdAt, Instant completedAt, String reason, FillResponse fill,
         @Schema(description = "Immutable leverage at submission; leverage is the effective PENDING OPEN value, or the execution snapshot once FILLED") int requestedLeverage,
         @Schema(description = "Legacy target of a PENDING CLOSE reassigned during Hedge migration; null otherwise. Completed historical positionId values are preserved") Long originalPositionId) {
-    public record FillResponse(Long fillId, String quantity, String price, Instant priceEventTime, Instant executedAt, String realizedPnl) { }
+    public record FillResponse(Long fillId, String quantity, String price, Instant priceEventTime, Instant executedAt,
+            @Schema(description="Actual execution gross PnL, before fee or isolated shortfall adjustment") String realizedPnl,
+            String fee, @Schema(description="Platform-funded isolated gap shortfall; zero for historical Cross facts") String settlementAdjustment,
+            @Schema(description="Execution model: CROSS for retained legacy facts, ISOLATED for new executions") String marginMode) { }
     public static OrderResponse from(TradingOrder order, Fill fill) {
         return new OrderResponse(order.getId(), order.getPositionId(), order.getTradingSymbolId(), order.getType().name(),
                 order.getAction().name(), order.getSide().name(), order.getStatus().name(),
@@ -18,7 +21,8 @@ public record OrderResponse(Long orderId, Long positionId, Long tradingSymbolId,
                         ? order.getQuantity().toPlainString() : "0.00000000",
                 order.getCreatedAt(), order.getCompletedAt(), order.getReason(),
                 fill == null ? null : new FillResponse(fill.getId(), fill.getQuantity().toPlainString(), fill.getPrice().toPlainString(),
-                        fill.getPriceEventTime(), fill.getExecutedAt(), fill.getRealizedPnl().toPlainString()),
+                        fill.getPriceEventTime(), fill.getExecutedAt(), fill.getRealizedPnl().toPlainString(),
+                        fill.getFee().toPlainString(), fill.getSettlementAdjustment().toPlainString(), fill.getMarginMode()),
                 order.getRequestedLeverage(), order.getOriginalPositionId());
     }
 }

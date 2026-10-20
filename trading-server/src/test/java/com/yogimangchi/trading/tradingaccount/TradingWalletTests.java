@@ -34,12 +34,18 @@ class TradingWalletTests {
     }
 
     @Test
-    void gapLossIsNotClampedToInitialMarginOrCash() {
+    void gapLossMustHaveAnExplicitAdjustmentAndCannotSpendUnusedCash() {
         Wallet wallet = Wallet.open(1L);
         wallet.openMargin(n("1000"));
-        wallet.settle(n("1000"), n("-12000"));
-        assertThat(wallet.getBalance()).isEqualByComparingTo("-2000");
+        assertThatThrownBy(() -> wallet.settle(n("1000"), n("-2000"))).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> wallet.settle(n("1000"), n("-12000"))).isInstanceOf(IllegalStateException.class);
+        assertThat(wallet.getBalance()).isEqualByComparingTo("10000");
+        assertThat(wallet.getUsedMargin()).isEqualByComparingTo("1000");
+        wallet.settle(n("1000"), n("-12000"), n("5"), n("11005"));
+        assertThat(wallet.getBalance()).isEqualByComparingTo("9000");
         assertThat(wallet.getRealizedPnl()).isEqualByComparingTo("-12000");
+        assertThat(wallet.getFeesPaid()).isEqualByComparingTo("5");
+        assertThat(wallet.getSettlementAdjustment()).isEqualByComparingTo("11005");
         assertThat(wallet.getUsedMargin()).isZero();
     }
 

@@ -5,7 +5,7 @@
 - 조사일: 2026-10-20.
 - V1: `main`, `a3391b523356d0f44cfec21cb302e326f52b6db3`. 별도 임시 사본만 읽었다. V1 파일·원격은 변경하지 않았다.
 - V2: `origin/develop`, `2abaf45b149a5bc1cb4e4d01af1f5750af814e92`.
-- 이번 단계는 **Phase 0: 코드 기반 기능 조사와 전환 준비**다. Isolated 엔진이나 V1 전체 이식은 **NOT IMPLEMENTED**다. 현재 실행 코드는 여전히 Cross다.
+- 이 표는 **Phase 0 조사 기준**의 차이를 보존한다. 아래 후속 진행 기록으로 구현 여부를 갱신하며 전체 이식 완료와 개별 Phase 완료를 구분한다.
 - V1 Controller 34개 / HTTP 매핑 142개 / Frontend API 모듈과 소비 화면을 조사했다. 개별 경로·메서드·소비자 증거는 [전체 API 목록](v1-api-inventory.md)에 있다.
 - V1은 실행하지 않았다. 정적 코드의 동작 근거와 실제 서비스의 정상 실행 검증을 구분한다. OAuth·메일·S3·운영 권한·과거 배포 상태는 UNVERIFIED다.
 
@@ -62,6 +62,7 @@ V1 Java 경로는 `was/src/main/java/com/yogimangchi/` 기준, V2 Java는 `tradi
 | F20 종료 포지션 생애주기 | F / MISSING | V1 closed 조회, V2 CLOSED/LIQUIDATED 이력은 DB에만 있음 | 전용 Position history API / lifecycle 기준 탭 | 3 / P1 | 3회 진입·2회 부분청산→종료1건 |
 | F21 실현·미실현 손익 | F / PARTIAL | V2 원가·누적 PnL 존재; fee/gap 분리 없음 | gross PnL·fee·adjustment·net 계약 / 중복 차감 금지 | 1→3 / P0 | 원장 항등식·이력 합계 |
 | F22 비동기 체결 알림 | N,F / MISSING | V1 afterCommit 개인 SSE·저장 알림, V2 요청 결과와 order polling뿐 | 인증 계정 이벤트·복구 cursor / toast 중복 제거 | 3 / P1 | 타 사용자 차단·재연결·commit 후 전송 |
+| F23 신규 주문 최소 금액 | F / BEHAVIOR_MISMATCH | V1 server MIN_ORDER_AMOUNT10, 현재 V2 MIN_NOTIONAL1 USDT | Phase 2에서 fee 포함 비용·최소 금액 계약 정리 / 서버 제약 사용 | 2 / P1 | 최소 경계·부분 CLOSE 예외 |
 | S01 현물 시장가 매수/매도 | S / MISSING | V1 수수료 포함 지출 BUY/보유량 SELL·평균가 갱신 | Spot ledger·Holding·Order/Fill / 별도 화면 연동 | 4→5 / P1 | 소유 현금·수량·정산 atomic |
 | S02 현물 지정가·예약 | S / MISSING | BUY lockedMoney, SELL lockedQuantity, crossing 후 잔여 전량 체결 | Spot 예약/trigger 재사용 경계 / pending 표시 | 5 / P1 | 갭·재시작·예약 누수 |
 | S03 현물 취소·이력 | S / MISSING | real/mock 각각 orders/open/histories/cancel 존재 | 회원/모의 계정 분리·cursor / 필터 연동 | 5 / P1 | 부분 매도·취소 race·권한 |
@@ -138,4 +139,19 @@ V1 Java 경로는 `was/src/main/java/com/yogimangchi/` 기준, V2 Java는 `tradi
 | 6 | 대회 관리/계정·공유 engine→종료·랭킹 | ADMIN 권한·정산 재실행·타 계정 격리 |
 | 7 | Content 커뮤니티/프로필/알림·운영 | V1 목록 전 항목 테스트, 서비스 경계·실제 Frontend 연동 |
 
-이 표의 MISSING/PARTIAL/MISMATCH를 모두 구현·검증하기 전 **전체 이식 완료라고 보고하지 않는다.** 이번 PR은 위험한 데이터 이관이나 API 의미 변경을 실행하지 않는다. 신규 서비스/루트 파일 수정, 사용자 기존 포지션 강제 정리, Frontend 변경은 승인하지 않은 상태다.
+이 표의 MISSING/PARTIAL/MISMATCH를 모두 구현·검증하기 전 **전체 이식 완료라고 보고하지 않는다.** 신규 서비스/루트 파일 수정, 사용자 기존 포지션 강제 정리, Frontend 변경은 승인하지 않은 상태다.
+
+## Phase 1 진행 기록
+
+`feature/trading/isolated-margin-parity`는 F06~F10 및 격리 담보 반환/예상가/레버리지 경로를 구현한다.
+위험 기준은 Position 담보이며 표시와 Trigger가 같은 IsolatedMargin 계산을 사용한다. 실제 Mark gap의 gross PnL·청산 fee·shortfall adjustment를 보존한다.
+V11은 기존 OPEN 노출을 PENDING으로 보존하고, 유효한 전체 기존 Mark와 각 Position 안전성 확인 후에만 담보 금액 그대로 전환한다.
+이미 위험한 legacy는 REVIEW_REQUIRED로 영속 보류한다. 실제 사용자 DB에는 migration을 적용하지 않는다.
+정확한 현재 API는 Runtime OpenAPI와 Trading README를 따른다. MARKET/LIMIT fee(F15)·이력(F18~20)·개인 이벤트(F22)는 여전히 후속 구현 대상이다.
+검증 결과와 병합 여부는 각 PR에서 확인하며 이 진행 기록만으로 전체 이식 완료를 의미하지 않는다.
+
+2026-10-20 Phase 1 검증: Java 17 `clean build` 및 마지막 검수 반영 후 `build` 성공.
+PostgreSQL/Redis 통합 검증을 포함한 전체476개 테스트 통과(실패·오류·건너뜀0).
+V11 legacy 보존/반복 적용/불일치 rollback, 격리 임계값·실제 gap 정산·보류 상태,
+개별 청산·반대편 보존·동시성·기존 Redis 복구와 API 인증 회귀를 확인했다.
+실제 사용자 DB migration과 Frontend 호환 배포는 실행하지 않았다.

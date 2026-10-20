@@ -6,6 +6,7 @@ import java.util.Optional;
 import org.springframework.data.repository.Repository;
 
 public interface PositionRepository extends Repository<Position, Long> {
+    void flush();
     Position save(Position position);
     Optional<Position> findById(Long id);
     List<Position> findByAccountIdAndStatusOrderByIdAsc(Long accountId, Position.Status status);

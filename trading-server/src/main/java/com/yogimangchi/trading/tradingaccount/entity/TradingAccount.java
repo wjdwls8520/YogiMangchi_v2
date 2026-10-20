@@ -8,6 +8,7 @@ import java.util.Objects;
 @Table(name = "trading_account")
 public class TradingAccount {
     public enum Status { ACTIVE, BANKRUPT }
+    public enum MarginTransitionStatus { COMPLETE, PENDING, REVIEW_REQUIRED }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -23,6 +24,9 @@ public class TradingAccount {
     private Instant createdAt;
     @Column(nullable = false)
     private Instant lastFinancialChangeAt;
+    @Enumerated(EnumType.STRING) @Column(nullable = false, length = 20)
+    private MarginTransitionStatus marginTransitionStatus;
+    private Instant isolatedActivatedAt;
 
     protected TradingAccount() { }
 
@@ -36,6 +40,8 @@ public class TradingAccount {
         result.credentialExpiresAt = expiresAt;
         result.createdAt = now;
         result.lastFinancialChangeAt = now;
+        result.marginTransitionStatus = MarginTransitionStatus.COMPLETE;
+        result.isolatedActivatedAt = now;
         return result;
     }
 
@@ -46,6 +52,19 @@ public class TradingAccount {
     }
 
     public void declareBankrupt() { status = Status.BANKRUPT; }
+    public boolean isIsolated() { return marginTransitionStatus == MarginTransitionStatus.COMPLETE; }
+    public void requireMarginReview() {
+        if (marginTransitionStatus != MarginTransitionStatus.PENDING) throw new IllegalStateException("Not awaiting margin transition");
+        marginTransitionStatus = MarginTransitionStatus.REVIEW_REQUIRED;
+    }
+    public void activateIsolated(Instant now) {
+        if (marginTransitionStatus != MarginTransitionStatus.PENDING) throw new IllegalStateException("Margin transition is not eligible");
+        marginTransitionStatus = MarginTransitionStatus.COMPLETE;
+        isolatedActivatedAt = Objects.requireNonNull(now);
+        recordFinancialChange(now);
+    }
+    public String getMarginMode() { return isIsolated() ? "ISOLATED" : "LEGACY_CROSS"; }
+    public MarginTransitionStatus getMarginTransitionStatus() { return marginTransitionStatus; }
     public Long getId() { return id; }
     public Status getStatus() { return status; }
     public boolean isGuestAccount() { return guestAccount; }

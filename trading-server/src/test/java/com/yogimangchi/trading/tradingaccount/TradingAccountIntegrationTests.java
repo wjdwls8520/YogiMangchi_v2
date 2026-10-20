@@ -145,7 +145,7 @@ class TradingAccountIntegrationTests {
         prices.beginSubscription(Set.of(symbolId));
         mvc.perform(get("/api/v1/trading/account/summary").header("Authorization", auth))
                 .andExpect(jsonPath("$.wallet.valuationStatus").value("UNAVAILABLE"))
-                .andExpect(jsonPath("$.wallet.availableBalance").doesNotExist())
+                .andExpect(jsonPath("$.wallet.availableBalance").value("9995.000000000000000000"))
                 .andExpect(jsonPath("$.wallet.equity").doesNotExist())
                 .andExpect(jsonPath("$.positions[0].unrealizedPnl").doesNotExist());
         Instant now = Instant.now();
@@ -154,7 +154,7 @@ class TradingAccountIntegrationTests {
                 .andExpect(jsonPath("$.wallet.valuationStatus").value("FRESH"))
                 .andExpect(jsonPath("$.wallet.unrealizedPnl").value("-1.000000000000000000"))
                 .andExpect(jsonPath("$.wallet.equity").value("9999.000000000000000000"))
-                .andExpect(jsonPath("$.wallet.availableBalance").value("9994.000000000000000000"));
+                .andExpect(jsonPath("$.wallet.availableBalance").value("9995.000000000000000000"));
         prices.markUnavailable();
         mvc.perform(get("/api/v1/trading/account/positions").header("Authorization", auth))
                 .andExpect(jsonPath("$[0].priceStatus").value("UNAVAILABLE"))
