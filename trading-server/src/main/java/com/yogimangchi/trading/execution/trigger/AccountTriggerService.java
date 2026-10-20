@@ -66,7 +66,7 @@ public class AccountTriggerService {
         var snapshots = snapshots(required, book, now);
         AccountValuation.Value value = valuation.evaluate(wallet, open, snapshots, now);
         if (!value.fresh()) return; // Re-evaluated on the next affected symbol tick; never invent a missing mark.
-        if (!open.isEmpty() && value.equity().compareTo(value.maintenanceMargin()) <= 0) {
+        if (!open.isEmpty() && value.atRisk()) {
             liquidate(account, wallet, open, pending, book, now);
             return;
         }

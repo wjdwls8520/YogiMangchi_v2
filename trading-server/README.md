@@ -282,6 +282,59 @@ PnL의 금융 원장 반영은 기존 HALF_EVEN 18자리다. Fill 단위의 최�
 Gross 유지증거금은 LONG/SHORT 각각 Mark Notional의 0.5%를 합산한다. 100배에서도 노출/예약을 상계하지 않는다.
 Binance 리스크 Tier, 수수료/Funding, 호가 기반 체결·슬리피지·부분 Fill은 도입하지 않는다.
 
+#### 조건부 강제청산 예상가 조회
+
+`GET /api/v1/trading/account/summary`의 각 Position과 `GET /api/v1/trading/account/positions`는
+같은 `liquidationPrice`, `liquidationPriceStatus`, `liquidationPriceAsOf`를 제공한다. 기존 Guest Bearer 인증을 유지한다.
+이는 **다른 보유 종목의 Mark를 현재 Snapshot에 고정하고, 대상 종목 Mark만 변화시켰을 때의 첫 계정 위험 임계가격**이다.
+대상 종목의 LONG/SHORT에는 같은 가격 변화를 동시에 적용하며 두 행에 같은 결과가 나온다.
+개별 Position만 따로 청산하는 가격이나 실제 LIQUIDATE Fill 가격을 보장하지 않는다.
+중간 가격에서 주문이 체결되거나 다른 종목 가격·자산·포지션이 바뀌면 조건과 예상가도 바뀐다. 미래 주문 체결 경로는 예측하지 않는다.
+
+`AccountValuation.risk()`를 실제 엔진과 경계 검증에서 공유한다.
+각 Position PnL은 `방향 부호 * (Mark * 남은 수량 - 남은 진입 원가)`를 HALF_EVEN 18자리로 산출한다.
+계정 Equity는 `Wallet Balance + 모든 PnL`, 유지증거금은 각 방향의 `Mark * 수량 * 0.005`를 CEILING 18자리로 합산한다.
+`Equity <= 유지증거금`이면 계정이 위험 상태다. Hedge의 순노출이 0이어도 Gross 유지증거금은 0이 아니다.
+현재 모델에서 Used/Reserved Margin·CLOSE 예약·leverage 자체는 이 위험 공식의 항이 아니다.
+따라서 레버리지·예약만 변경하고 자산·노출·Mark가 같다면 예상가도 유지된다.
+
+| liquidationPriceStatus | liquidationPrice / 의미 |
+| --- | --- |
+| ESTIMATED_DOWNWARD | 양수 decimal string. 이 종목 Mark 하락 방향의 첫 계정 위험 가격 |
+| ESTIMATED_UPWARD | 양수 decimal string. 이 종목 Mark 상승 방향의 첫 계정 위험 가격. LONG 행에서도 가능 |
+| PRICE_UNAVAILABLE | null. 보유 종목 중 하나라도 시세 누락·만료·연결 불가 |
+| NO_THRESHOLD | null. 다른 Mark 고정 가정과 지원하는 양수 가격 범위 안에서 유효 경계가 없음 |
+| UNSUPPORTED_MODEL | null. 정밀도/가격 범위, 현재점의 반올림 모호성 또는 탐색 한도 때문에 경계를 증명할 수 없음 |
+| ALREADY_AT_RISK | null. 현재 Snapshot에서 이미 Equity가 유지증거금 이하 |
+
+`liquidationPriceAsOf`는 **필요한 모든 보유 종목의 서버 receivedAt 중 가장 오래된 시각**이다.
+Provider eventTime이나 실제 체결 예정 시각이 아니다. PRICE_UNAVAILABLE이면 시각도 null이고 오래된 예상가는 재사용하지 않는다.
+계정 금융 상태의 조회 시점은 기존 Summary `capturedAt`이다.
+
+반올림 전 선형식은 오차 한계 내 후보 구간을 좁히는 데만 사용한다. 최종 숫자는 엔진의 PnL/유지증거금 반올림으로 검증한다.
+HALF_EVEN/CEILING으로 생길 수 있는 미세한 위험 구간을 단조 이진 탐색으로 건너뛰지 않도록 구간 상·하한을 검사한다.
+반환값은 가격 10^-18 단위에서 위험 조건을 만족하고, 현재 가격 쪽의 바로 이웃 가격은 안전함을 확인한다.
+종목당 최대 512개/계정 조회당 최대 4096개 구간을 검사하며 증명에 실패하면 UNSUPPORTED_MODEL이다.
+종목별 결과를 한 번만 계산해 양방향 행에서 공유한다. 새 SQL·외부 호출·DB 쓰기를 추가하지 않으며
+기존 Account Lock과 한 번의 시세 Snapshot을 재사용한다. Wallet 단독 조회는 예상가 탐색을 하지 않는다.
+
+예: 현금 10,000 USDT, 단일 LONG 수량 100, 진입 원가 100,000, 현재 Mark 1,000인 Snapshot의 Position 일부:
+
+```json
+{
+  "id": 101,
+  "tradingSymbolId": 1,
+  "side": "LONG",
+  "liquidationPrice": "904.522613065326633165",
+  "liquidationPriceStatus": "ESTIMATED_DOWNWARD",
+  "liquidationPriceAsOf": "2026-10-19T12:00:00Z"
+}
+```
+
+Frontend는 값을 계산하지 않고 서버 decimal string을 표시한다. null은 `—`로 표시하고 상태에 따른 사유를 제공한다.
+표시 이름과 도움말에는 조건부 **계정 강제청산 예상가**이며 실제 체결가 보장이 아님을 명시한다.
+방향은 Position side에서 추정하지 말고 status로 판단한다. 새 알림 서버나 WebSocket 채널은 추가하지 않는다.
+
 #### V10 데이터 이관 및 배포 주의
 
 **백업 후 모든 구버전 Trading 프로세스와 Worker를 중지한 상태에서 Migration한다. 혼합 버전 실행과 무중단 Rolling 배포를 지원하지 않는다.**
