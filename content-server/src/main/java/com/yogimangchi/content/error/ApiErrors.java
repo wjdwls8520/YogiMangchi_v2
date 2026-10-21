@@ -19,7 +19,7 @@ public class ApiErrors {
     private static final Logger log=LoggerFactory.getLogger(ApiErrors.class);
     @ExceptionHandler(AuthFailure.class)
     ResponseEntity<ProblemDetail> auth(AuthFailure e) { return problem(e.status(),e.code()); }
-    @ExceptionHandler({MethodArgumentNotValidException.class,HttpMessageNotReadableException.class,MethodArgumentTypeMismatchException.class})
+    @ExceptionHandler({MethodArgumentNotValidException.class,HttpMessageNotReadableException.class,MethodArgumentTypeMismatchException.class,org.springframework.web.bind.ServletRequestBindingException.class})
     ResponseEntity<ProblemDetail> validation(Exception e) { return problem(HttpStatus.BAD_REQUEST,"INVALID_REQUEST"); }
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ProblemDetail> conflict(DataIntegrityViolationException e) {
@@ -31,6 +31,8 @@ public class ApiErrors {
     ResponseEntity<ProblemDetail> protocol(Exception e) {
         return problem(HttpStatus.valueOf(((ErrorResponse)e).getStatusCode().value()),"INVALID_REQUEST");
     }
+    @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
+    ResponseEntity<ProblemDetail> busy(Exception e) { return problem(HttpStatus.CONFLICT,"MEMBER_BUSY"); }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ProblemDetail> unexpected(Exception e) {
         // SQL/provider response messages may contain personal data; do not dump request/token objects.
