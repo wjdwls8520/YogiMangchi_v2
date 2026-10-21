@@ -67,7 +67,7 @@ public class TradingOrderService {
         if (request.type() == TradingOrder.Type.MARKET && request.limitPrice() != null)
             throw new BusinessException(ErrorCode.INVALID_ORDER);
         if (request.type() == TradingOrder.Type.LIMIT) {
-            try { TradingMath.validateOrder(request.quantity(), request.leverage(), request.limitPrice()); }
+            try { TradingMath.validateNewOrder(request.quantity(), request.leverage(), request.limitPrice()); }
             catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
         }
         String hash = fingerprint("OPEN|" + request.type() + "|" + request.tradingSymbolId() + "|" + request.side()
@@ -92,10 +92,14 @@ public class TradingOrderService {
         if (request.type() == TradingOrder.Type.LIMIT) requirePassiveLimit(request.side(), request.limitPrice(), price.domainMarkPrice(), false);
         BigDecimal margin;
         BigDecimal requestedPrice = request.type() == TradingOrder.Type.LIMIT ? request.limitPrice() : price.domainMarkPrice();
-        try { margin = request.type() == TradingOrder.Type.LIMIT ? TradingMath.margin(requestedPrice, request.quantity(), request.leverage())
-                : hedge.additionalMargin(open, request.tradingSymbolId(), request.side(), request.quantity(), requestedPrice, request.leverage()); }
+        try {
+            TradingMath.validateNewOrder(request.quantity(), request.leverage(), requestedPrice);
+            margin = request.type() == TradingOrder.Type.LIMIT ? TradingMath.margin(requestedPrice, request.quantity(), request.leverage())
+                : hedge.additionalMargin(open, request.tradingSymbolId(), request.side(), request.quantity(), requestedPrice, request.leverage());
+        }
         catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
-        if (margin.compareTo(value.availableBalance()) > 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
+        BigDecimal fee = TradingFees.fee(requestedPrice, request.quantity(), TradingFees.rate(request.type()));
+        if (margin.add(fee).compareTo(value.availableBalance()) > 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
         Position target = hedge.existing(open, request.tradingSymbolId(), request.side());
         if (target != null && isolated.risk(target, price.domainMarkPrice()).atRisk()
                 || isolated.projectedOpenRisk(target, request.side(), request.quantity(), requestedPrice,
@@ -107,16 +111,16 @@ public class TradingOrderService {
                 throw new BusinessException(ErrorCode.PENDING_LIMIT_REACHED);
             TradingOrder pending = orders.save(TradingOrder.limit(accountId, request.tradingSymbolId(), request.side(),
                     request.quantity(), request.leverage(), request.limitPrice(), key, hash, now));
-            wallet.reserve(margin);
+            wallet.reserve(margin.add(fee));
             account.recordFinancialChange(now);
             logCommitted(pending, "pending");
             return OrderResponse.from(pending, null);
         }
         Position position = hedge.apply(open, accountId, request.tradingSymbolId(), request.side(),
                 request.quantity(), price.domainMarkPrice(), request.leverage(), now);
-        wallet.openMargin(margin);
+        wallet.openMargin(margin, fee);
         account.recordFinancialChange(now);
-        return record(position, TradingOrder.Action.OPEN, request.quantity(), price, key, hash, now, BigDecimal.ZERO);
+        return record(position, TradingOrder.Action.OPEN, request.quantity(), price, key, hash, now, BigDecimal.ZERO, fee);
     }
 
     @Transactional
@@ -154,13 +158,13 @@ public class TradingOrderService {
             throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         LatestMarkPrice price = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow();
         BigDecimal pnl = position.closingPnl(quantity, price.domainMarkPrice());
-        if (wallet.getBalance().add(pnl).signum() < 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
+        BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), quantity, TradingFees.MARKET_RATE);
         Instant now = now();
         Position.Settlement settlement = position.close(quantity, price.domainMarkPrice(), now, false);
-        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl());
+        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl(), fee, BigDecimal.ZERO);
         account.recordFinancialChange(now);
         if (wallet.getBalance().signum() == 0 && open.size() == 1 && position.getStatus() != Position.Status.OPEN) account.declareBankrupt();
-        return record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, key, hash, now, pnl);
+        return record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, key, hash, now, pnl, fee);
     }
 
     @Transactional
@@ -240,9 +244,9 @@ public class TradingOrderService {
     }
 
     private OrderResponse record(Position position, TradingOrder.Action action, BigDecimal quantity, LatestMarkPrice price,
-            String key, String hash, Instant now, BigDecimal pnl) {
+            String key, String hash, Instant now, BigDecimal pnl, BigDecimal fee) {
         TradingOrder order = orders.save(TradingOrder.market(position, action, quantity, price.domainMarkPrice(), key, hash, now));
-        Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), quantity, price.eventTime(), now, pnl));
+        Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), quantity, price.eventTime(), now, pnl, fee, BigDecimal.ZERO));
         logCommitted(order, "filled");
         return OrderResponse.from(order, fill);
     }

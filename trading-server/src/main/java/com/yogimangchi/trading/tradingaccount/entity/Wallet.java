@@ -47,9 +47,17 @@ public class Wallet {
     }
 
     public void openMargin(BigDecimal margin) {
+        openMargin(margin, BigDecimal.ZERO);
+    }
+
+    public void openMargin(BigDecimal margin, BigDecimal fee) {
         BigDecimal value = positive(margin);
-        requireCashCapacity(value);
+        BigDecimal charged = TradingMath.amount(fee);
+        if (charged.signum() < 0) throw new IllegalArgumentException("Fee cannot be negative");
+        requireCashCapacity(value.add(charged));
         usedMargin = usedMargin.add(value);
+        balance = TradingMath.amount(balance.subtract(charged));
+        feesPaid = feesPaid.add(charged);
     }
 
     /** Validated account-wide under AccountLock; changes reservations and used margin atomically. */

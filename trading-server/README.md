@@ -9,7 +9,8 @@ Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/�
 
 2026-10-20 요청의 최종 목표는 V1 제품 기능과 V2 기술 구조를 결합한 Hedge + Isolated Only다.
 금융 Phase 1은 Hedge + Isolated Only로 전환했다. 전체 V1 이식은 아직 완료되지 않았으며,
-MARKET/LIMIT 거래 수수료와 전용 이력/개인 이벤트/회원/현물/대회/Content는 후속 Phase다.
+Phase 2는 MARKET/LIMIT 거래 수수료와 서버 주문 비용·비율 수량 API를 추가한다.
+전용 이력/개인 이벤트/회원/현물/대회/Content는 후속 Phase다. 호환 Frontend 준비 전 배포하지 않는다.
 
 - [V1/V2 기능 비교·누락·단계별 이식 기준](docs/v1-parity-audit.md)
 - [V1 Controller 전체와 Frontend API 소비 근거](docs/v1-api-inventory.md)
@@ -395,7 +396,8 @@ LIMIT 필요 증거금은 계속 `limitPrice * quantity / leverage`이며 Mark �
 취소와 체결은 같은 계정 Row Lock으로 직렬화한다. 취소가 먼저면 CANCELED, 체결이 먼저면 취소는 409다.
 취소 재전송은 CANCELED를 그대로 반환하며, 가격/Redis 장애 중에도 취소할 수 있다.
 Position의 `reservedCloseQuantity`는 PENDING CLOSE 수량 합계이고 `freeCloseQuantity = quantity - reservedCloseQuantity`다.
-Wallet의 `reservedMargin`은 OPEN 예약 증거금이며 청산 예약 수량과 무관하다. Order 응답에도 두 예약값을 구분한다.
+Wallet/Order의 `reservedMargin`은 Pending OPEN의 **담보+예상 fee를 포함한 예약 현금**이다.
+Order의 `reservedFee`는 그 안에 포함된 fee 부분이며 추가로 합산하면 안 된다. CLOSE 예약 수량과는 무관하다.
 시장가 종료와 새 지정가 종료는 **예약되지 않은 수량만** 사용한다. 예를 들어 1 BTC 중 0.7 BTC 예약 상태에서
 시장가 0.5 BTC 종료는 409로 거절하며, 기존 지정가를 자동 축소/취소하지 않는다. 먼저 취소하거나 0.3 BTC 이하로 종료한다.
 Body/quantity 없는 전체 종료 역시 예약이 있다면 거절한다. 성공한 부분 종료 후에도 남은 예약은 잔여 수량을 넘지 않는다.
@@ -419,7 +421,29 @@ Position 종료와 Wallet 정산은 기존 Account DB Lock 아래 하나의 Tran
 `FillResponse`는 gross realizedPnl/fee/settlementAdjustment/marginMode를 제공하고 Wallet에도 fee/adjustment 누적을 분리한다.
 adjustment는 모의 플랫폼의 초과 손실 보전이며 사용자 수익/입금이 아니다. 사용하지 않은 현금과 다른 담보를 자동 차감하지 않는다.
 잔액0/남은 Position 없음이면 BANKRUPT, 보호된 현금이나 다른 담보가 있으면 계정은 ACTIVE를 유지한다.
-MARKET/LIMIT OPEN/CLOSE의 거래 수수료는 후속 Phase 2에서 적용한다. 이번 단계의 자동 청산 fee와 혼동하지 않는다.
+MARKET OPEN/CLOSE는0.05%, LIMIT OPEN/CLOSE는0.03%다. 모의 주문 유형에 따른 요율이며 실제 거래소 maker 판정을 뜻하지 않는다.
+`ceil18(actual Mark * quantity * feeRate)`를 Fill에 기록하고 Wallet balance에서 한 번 차감한다.
+OPEN fee는 free cash에서, CLOSE fee는 해제 담보와 gross PnL에서 정산한다. Position/Wallet realizedPnl은 gross다.
+LIMIT OPEN은 접수 시 limitPrice 기준 담보와 fee를 예약만 하며 아직 부과하지 않는다. 취소·거절은 모두 해제한다.
+실제 체결 Mark에서 추가 담보+fee를 재검사하며 자금 부족 시 REJECTED, 새 Fill/fee 차감은 없다.
+레버리지 변경 시 담보 예약만 바뀌고 fee 요율/예상 fee는 그대로다.
+
+#### 서버 주문 비용과 비율 수량
+
+`POST /api/v1/trading/account/orders/quote`는 같은 Guest Bearer 인증을 사용하며 Idempotency-Key는 필요 없다.
+Request는 `type`, `tradingSymbolId`, `side`, LIMIT일 때 `limitPrice`, 그리고 `quantity` 또는 정수 `balancePercentage`(1~100) 중 하나다.
+서버 종목 leverage와 fresh Mark로 계산하며, Order/Position/예약을 만들지 않는다.
+Response의 `quantity`, `referencePrice`, `notional`, `margin`, `feeRate`, `estimatedFee`, `totalRequired`, `availableBalance`는 decimal string이다.
+`leverage`, `balancePercentage`, `priceEventTime`, `quotedAt`도 제공한다. MARKET referencePrice는 서버 Mark, LIMIT은 입력 limitPrice다.
+비율은 free cash에 적용하고 8자리 수량 격자에서 담보 CEILING18+fee CEILING18가 예산을 넘지 않는 최대 수량을 찾는다.
+추가 진입에는 남은 exact basis/담보와 수량·원가 상한을 반영한다. 예를 들어 1개·Mark1000·10배 MARKET 비용은 담보100+fee0.5다.
+Frontend는 반환 수량/leverage를 기존 POST orders로 보내며 새 Idempotency-Key를 사용한다. Quote는 자금 예약이나 체결 보장이 아니다.
+시세·잔액·레버리지 변경 후에는 재견적이 필요하며 실제 주문 검증에서 실패할 수 있다. 동일 상태의100% 주문은 반올림 초과로 실패하지 않는다.
+오류는 기존 ProblemDetail.code를 사용한다: 잘못된 요청400, 미인증401, 자금/위험/모드409, freshness/recovery503.
+
+V12는 `trading_order.fee_rate`를 추가한다. 과거 체결과 Pending 계약은0으로 보존하고 기존 잔액·예약을 변경하지 않는다.
+새 주문만 MARKET/LIMIT 요율을 명시적으로 저장하며 완료 이력의 요율을 재작성하지 않는다. 응답·재조회 요율 표기는 동일하다.
+과거에 접수된 소액 주문도 기존 실행 범위에서 처리한다. 새 OPEN 접수 최소10 USDT와 소액 잔여 CLOSE를 혼동하지 않는다.
 Funding, Binance Maintenance Tier, 실제 호가 잔량 매칭은 제공하지 않는다.
 
 Worker는 매 Tick 전체 주문을 읽지 않는다. 종목별 OPEN Position 인덱스와 LONG/SHORT 지정가 범위 인덱스로
@@ -454,14 +478,14 @@ Producer 유실은 경고와 DB `gap_count`로 기록한다. 복구 시 현재 f
 `TRADING_TRIGGER_ENABLED=false`는 문서 추출/격리 테스트용이며 주문 Gate를 우회하지 않는다.
 
 금액/가격은 NUMERIC(38,18), Domain 자산 수량은 NUMERIC(28,8)이다. `execution.TradingMath`에서
-금액/PnL HALF_EVEN 18자리, Margin CEILING 18자리, Leverage 1~100, 새 주문 1~1,000,000 USDT Notional,
+금액/PnL HALF_EVEN 18자리, Margin/Fee CEILING 18자리, Leverage 1~100, 새 주문 10~1,000,000 USDT Notional,
 최대 10^12 현재 수량/100개 OPEN Position 정책을 정의한다. 통합된 한 방향의 남은 진입 원가도 1,000,000 USDT 이하여야 한다.
 JSON 금액·수량은 정밀도를 보존하는 문자열이다.
 LONG PnL은 `(mark-entry)*quantity`, SHORT는 그 반대다. 평가자산은 `balance + unrealizedPnl`이며
 사용 가능 금액은 `max(0, balance - usedMargin - reservedMargin)`이다. 미실현 수익도 새 담보로 사용하지 않는다.
 계정 equity는 합산 gross 정보일 뿐 개별 격리 청산의 기준이 아니다. 급격한 gap에서 초과 손실 조정 전 일시적으로
 음수 gross equity가 보일 수 있으나 실제 정산은 해당 담보 손실 한도를 보장하며 fee/adjustment를 따로 기록한다.
-미실현 이익으로 추가 Margin을 만들지 않으며 손실은 구매력을 줄인다. Margin은 현금 지출이 아닌 사용 제한이다.
+미실현 손익은 free cash를 바꾸지 않는다. 실제 정산된 손익/fee만 현금을 바꾸며 Margin은 현금 지출이 아닌 사용 제한이다.
 부분 종료의 반환 Margin은 `남은 Margin * 종료 수량 / 남은 수량`을 18자리 내림한다.
 마지막 종료에서는 잔여 Margin 전부를 반환하므로 반복 부분 종료 후 증거금 잔재가 남지 않는다.
 
@@ -802,5 +826,5 @@ OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들�
 자동 테스트는 Runtime 명세에서 기존 Trading API, 인증 경계와 Market Summary 필드/타입을 검증한다.
 루트의 기존 `docs/trading-openapi.yaml`은 과거 Snapshot이며 최신 계약 확인에는 Runtime 문서를 사용한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-JWT/Content 인증, Admin, Funding, MARKET/LIMIT 거래 수수료, Competition/Ranking과 다중 노드 조정은 아직 구현하지 않았다.
+JWT/Content 인증, Admin, Funding, Competition/Ranking과 다중 노드 조정은 아직 구현하지 않았다.
 자동 LIQUIDATE 수수료0.05%와 격리 gap adjustment는 구현했다. 전체 V1 동등성의 남은 항목은 기능 비교표에서 추적한다.

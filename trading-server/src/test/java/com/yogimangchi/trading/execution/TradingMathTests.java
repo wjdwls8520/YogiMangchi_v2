@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TradingMathTests {
     @Test void proportionalMarginKeepsRoundingRemainderUntilFinalClose() {
-        BigDecimal margin = TradingMath.margin(n("1"), n("1"), 3);
+        BigDecimal margin = TradingMath.basisMargin(n("1"), 3);
         BigDecimal first = TradingMath.releasedMargin(margin, n("1"), n("0.3"));
         BigDecimal second = TradingMath.releasedMargin(margin.subtract(first), n("0.7"), n("0.3"));
         BigDecimal last = TradingMath.releasedMargin(margin.subtract(first).subtract(second), n("0.4"), n("0.4"));
@@ -29,7 +29,7 @@ class TradingMathTests {
 
     @Test
     void marginAlwaysRoundsUpButPnlUsesHalfEvenAtEighteenDecimals() {
-        assertThat(TradingMath.margin(n("1"), n("1"), 3)).isEqualByComparingTo("0.333333333333333334");
+        assertThat(TradingMath.basisMargin(n("1"), 3)).isEqualByComparingTo("0.333333333333333334");
         assertThat(TradingMath.amount(n("0.0000000000000000005"))).isEqualByComparingTo("0");
         assertThat(TradingMath.amount(n("0.0000000000000000015"))).isEqualByComparingTo("0.000000000000000002");
     }
@@ -44,7 +44,9 @@ class TradingMathTests {
 
     @Test
     void supportedNotionalBoundariesIncludeSmallDomainPrices() {
-        TradingMath.validateOrder(n("1"), 1, n("1"));
+        TradingMath.validateOrder(n("1"), 1, n("1")); // Retained execution range.
+        TradingMath.validateNewOrder(n("10"), 1, n("1"));
+        assertThatThrownBy(() -> TradingMath.validateNewOrder(n("9.99999999"), 1, n("1"))).isInstanceOf(IllegalArgumentException.class);
         TradingMath.validateOrder(n("1000000000000"), 20, n("0.000001"));
         assertThatThrownBy(() -> TradingMath.validateOrder(n("0.1"), 1, n("1"))).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> TradingMath.validateOrder(n("1000001"), 20, n("1"))).isInstanceOf(IllegalArgumentException.class);

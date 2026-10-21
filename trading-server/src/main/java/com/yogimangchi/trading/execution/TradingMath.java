@@ -8,7 +8,9 @@ import java.util.Objects;
 /** USDT simulation policy. Quantity is domain asset units, never provider contract units. */
 public final class TradingMath {
     public static final BigDecimal INITIAL_BALANCE = new BigDecimal("10000");
+    // Retain the original execution range for already accepted pending contracts and existing positions.
     public static final BigDecimal MIN_NOTIONAL = BigDecimal.ONE;
+    public static final BigDecimal MIN_ORDER_NOTIONAL = new BigDecimal("10");
     public static final BigDecimal MAX_NOTIONAL = new BigDecimal("1000000");
     public static final BigDecimal MAX_QUANTITY = new BigDecimal("1000000000000");
     public static final int MAX_LEVERAGE = 100;
@@ -34,7 +36,7 @@ public final class TradingMath {
         validatePrice(price);
         BigDecimal notional = quantity.multiply(price);
         if (notional.compareTo(MIN_NOTIONAL) < 0 || notional.compareTo(MAX_NOTIONAL) > 0) {
-            throw new IllegalArgumentException("Notional must be between 1 and 1000000 USDT");
+            throw new IllegalArgumentException("Execution notional must be between 1 and 1000000 USDT");
         }
     }
 
@@ -43,6 +45,13 @@ public final class TradingMath {
                 || quantity.compareTo(MAX_QUANTITY) > 0) {
             throw new IllegalArgumentException("Quantity must be positive with at most 8 decimal places");
         }
+    }
+
+    /** New OPEN admission, distinct from validation of retained executions and small remaining exits. */
+    public static void validateNewOrder(BigDecimal quantity, int leverage, BigDecimal price) {
+        validateOrder(quantity, leverage, price);
+        if (price.multiply(quantity).compareTo(MIN_ORDER_NOTIONAL) < 0)
+            throw new IllegalArgumentException("Minimum new OPEN notional is 10 USDT");
     }
 
     public static void validateLeverage(int leverage) {

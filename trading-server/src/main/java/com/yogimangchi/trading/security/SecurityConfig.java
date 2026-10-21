@@ -31,6 +31,7 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/guest").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/orders",
+                    "/api/v1/trading/account/orders/quote",
                     "/api/v1/trading/account/orders/{orderId}/cancel",
                     "/api/v1/trading/account/positions/{positionId}/close",
                     "/api/v1/trading/account/positions/{positionId}/close-orders").hasRole("TRADER");

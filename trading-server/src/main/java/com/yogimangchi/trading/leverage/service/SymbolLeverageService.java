@@ -2,6 +2,7 @@ package com.yogimangchi.trading.leverage.service;
 
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.TradingMath;
+import com.yogimangchi.trading.execution.TradingFees;
 import com.yogimangchi.trading.execution.trigger.TradingEngineGate;
 import com.yogimangchi.trading.leverage.dto.LeverageResponse;
 import com.yogimangchi.trading.leverage.entity.SymbolLeverage;
@@ -72,7 +73,7 @@ public class SymbolLeverageService {
         var pending = orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING).stream()
                 .filter(o -> o.getTradingSymbolId().equals(symbolId) && o.getAction() == TradingOrder.Action.OPEN).toList();
         BigDecimal usedDelta = affected.stream().map(p -> p.marginAtLeverage(leverage).subtract(p.getMargin())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal reservedDelta = pending.stream().map(o -> TradingMath.margin(o.getLimitPrice(), o.getQuantity(), leverage)
+        BigDecimal reservedDelta = pending.stream().map(o -> TradingFees.reservation(o.getLimitPrice(), o.getQuantity(), leverage, o.getFeeRate())
                 .subtract(o.getReservedMargin())).reduce(BigDecimal.ZERO, BigDecimal::add);
         if (!affected.isEmpty() || !pending.isEmpty()) {
             var value = valuation.calculate(wallet, affected, java.util.Set.of(symbolId));
