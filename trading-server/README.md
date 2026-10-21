@@ -10,7 +10,8 @@ Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/�
 2026-10-20 요청의 최종 목표는 V1 제품 기능과 V2 기술 구조를 결합한 Hedge + Isolated Only다.
 금융 Phase 1은 Hedge + Isolated Only로 전환했다. 전체 V1 이식은 아직 완료되지 않았으며,
 Phase 2는 MARKET/LIMIT 거래 수수료와 서버 주문 비용·비율 수량 API를 추가한다.
-전용 이력/개인 이벤트/회원/현물/대회/Content는 후속 Phase다. 호환 Frontend 준비 전 배포하지 않는다.
+Phase 3은 전용 체결·종료 Position 이력과 영속 개인 거래 이벤트를 추가한다.
+회원/현물/대회/Content는 후속 Phase다. 호환 Frontend 준비 전 배포하지 않는다.
 
 - [V1/V2 기능 비교·누락·단계별 이식 기준](docs/v1-parity-audit.md)
 - [V1 Controller 전체와 Frontend API 소비 근거](docs/v1-api-inventory.md)
@@ -444,6 +445,69 @@ Frontend는 반환 수량/leverage를 기존 POST orders로 보내며 새 Idempo
 V12는 `trading_order.fee_rate`를 추가한다. 과거 체결과 Pending 계약은0으로 보존하고 기존 잔액·예약을 변경하지 않는다.
 새 주문만 MARKET/LIMIT 요율을 명시적으로 저장하며 완료 이력의 요율을 재작성하지 않는다. 응답·재조회 요율 표기는 동일하다.
 과거에 접수된 소액 주문도 기존 실행 범위에서 처리한다. 새 OPEN 접수 최소10 USDT와 소액 잔여 CLOSE를 혼동하지 않는다.
+
+#### 거래 이력과 개인 이벤트
+
+모두 기존 Guest Bearer로 인증하며 요청의 accountId를 받지 않는다. Redis/현재 Mark가 없어도 과거 기록 조회는 가능하다.
+
+| Method | Path | 계약 |
+| --- | --- | --- |
+| GET | `/api/v1/trading/account/orders` | 기존 배열/`beforeId` 유지. `tradingSymbolId`, `side`, `action`, `status`, `type` 필터 추가 |
+| GET | `/api/v1/trading/account/fills` | 최신 fillId 내림차순. 마지막 fillId를 beforeId로 사용. limit1~100(default50). 종목/side/action/type/실제 체결 시각 필터 |
+| GET | `/api/v1/trading/account/positions/history` | CLOSED/LIQUIDATED 생애주기 목록과 nextCursor. closedAt 내림차순, 같은 시각은 positionId 내림차순. limit1~100(default50) |
+| GET | `/api/v1/trading/account/events` | afterId(default0) 초과의 개인 이벤트를 eventId 오름차순으로 최대100개(default50) 재조회 |
+
+Fill에는 실제 positionId와 `lifecyclePositionId`를 구분한다. V10에서 합쳐진 donor의 과거 Order/Fill ID는 그대로이며
+lifecyclePositionId만 현재 통합 생애주기를 가리킨다. 주문 목록을 종료 Position 이력으로 위장하지 않는다.
+종료 Position의 `initialQuantity`는 누적 진입 수량이다. `entryPrice`는 마지막 잔여 원가의 표시 평균,
+`exitPrice`는 마지막 Fill 가격이며 전 생애의 가중 평균 청산가가 아니다.
+`realizedPnl`은 gross, `feesPaid`는 OPEN/CLOSE/LIQUIDATE의 생애주기 전체 fee,
+`settlementAdjustment`는 격리 초과 손실 조정이며 `netRealizedPnl=gross-fee+adjustment`다.
+역사적인 `openedMarginMode`와 마지막 체결의 `closingMarginMode`도 보존한다. OPEN/MERGED Row는 종료 목록에 포함하지 않는다.
+
+시각 필터는 Fill의 `executedFrom`(포함)/`executedBefore`(제외), 종료 이력의 `closedFrom`/`closedBefore`다.
+ISO-8601 Instant, 1970년 이후·최대 마이크로초 정밀도를 사용하며 from<before여야 한다.
+종료 이력의 nextCursor는 opaque 문자열이며 같은 필터로 그대로 다시 보낸다. 잘못된 cursor/필터/limit은400이다.
+
+V13의 `trading_event`는 Order 상태 Snapshot을 금융 원장과 같은 PostgreSQL Transaction에서 저장한다.
+금융 기록이나 이벤트 저장 중 하나라도 실패하면 함께 rollback한다. 별도 트랜잭션에서 commit 전 이벤트를 읽을 수 없다.
+`(order_id,order_status)` UNIQUE로 중복 전이를 막고, commit 후 신호는 전송 지연을 줄이는 용도로만 사용한다.
+이벤트의 원본은 DB이며 신호 유실/재시작 시 조회로 복구한다. V13 이전 알림은 임의로 소급 생성하지 않는다.
+추가 인덱스는 계정별 eventId 재전송, closedAt/id 페이지, 생애주기별 Order/merged donor 비용 조회를 지원한다.
+
+개인 전달은 `/ws/trading`을 사용한다. 공개 `/ws/market`은 계속 시세만 제공한다.
+기존의 bounded WS 전송기(단일 writer·전송 큐·느린 연결 종료)를 두 채널에서 실제로 공유한다.
+Spring MVC SSE의 개별 쓰기도 blocking이므로, 현재 사용 중인 WS 전송 제어를 재사용했다.
+[Spring Framework 비동기 요청 문서](https://docs.spring.io/spring-framework/reference/6.2/web/webmvc/mvc-ann-async.html)
+
+브라우저 WS handshake에는 Authorization header를 직접 넣을 수 없으므로 연결 후5초 안에 첫 프레임으로 인증한다.
+URL/query에 credential을 넣지 않는다. 운영에서는 WSS를 사용하고, 개인 프레임 원문이나 credential을 로그에 기록하지 않는다.
+Origin은 기존 `marketdata.websocket.allowed-origins`의 명시 목록만 허용한다.
+
+```json
+{"type":"AUTHENTICATE","credential":"<existing guest credential>","afterEventId":"0"}
+```
+
+afterEventId는 생략 시0이며, 받았던 마지막 eventId 문자열로 재접속한다. accountId를 지정할 수 없다.
+서버 프레임은 `{"type":"...","data":{...}}` 구조다.
+
+| type | data |
+| --- | --- |
+| CONNECTED | authenticationDeadlineSeconds=5, heartbeatSeconds=20, delivery=AT_LEAST_ONCE. 개인 데이터 없음 |
+| AUTHENTICATED | 적용된 afterEventId와 credential expiresAt. 이후에만 금융 이벤트 전달 |
+| TRADING_EVENT | eventId(decimal string), type, occurredAt, order(해당 commit의 OrderResponse Snapshot) |
+| HEARTBEAT / PONG | 연결 유지 정보. Client는20초마다 `{"type":"PING"}`을 보냄 |
+
+이벤트 type은 ORDER_PENDING/ORDER_FILLED/ORDER_CANCELED/ORDER_REJECTED/POSITION_LIQUIDATED다.
+인증 전에는 금융 이벤트 DB 조회/전달을 하지 않으며 credential 만료 시 큐에서 실제 쓰기 전에도 권한을 재검사한다.
+최대256연결/계정당3연결, 수신8192bytes·초당10메시지, 큐128개·write5초·무응답60초 제한을 둔다.
+DB reader와 socket writer/closer는 분리되고 금융 Transaction에서 socket을 쓰지 않는다.
+로컬 commit 신호를250ms 주기로 확인하며, 신호가 없어도5초 주기의 DB 조회가 누락을 복구한다.
+무효 인증/프로토콜/만료1008, 과부하/느린 연결1013, 전송·재조회 실패1011로 종료한다.
+
+재접속 전달은 at-least-once다. Frontend는 eventId로 중복을 제거하고 마지막 처리 cursor를 계정별로 관리한다.
+REST 주문 결과 토스트는 유지하되 동일 orderId/상태의 WS 알림과 중복 표시하지 않는다. 이벤트 후 Wallet/Position을 서버에서 재조회한다.
+읽음/삭제·통합 알림 센터와 Content 알림은 후속 단계다. 금융 이벤트를 public market broadcast로 보내지 않는다.
 Funding, Binance Maintenance Tier, 실제 호가 잔량 매칭은 제공하지 않는다.
 
 Worker는 매 Tick 전체 주문을 읽지 않는다. 종목별 OPEN Position 인덱스와 LONG/SHORT 지정가 범위 인덱스로

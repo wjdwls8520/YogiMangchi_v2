@@ -16,6 +16,7 @@ import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
 import com.yogimangchi.trading.tradingaccount.entity.*;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
 import com.yogimangchi.trading.tradingaccount.service.*;
+import com.yogimangchi.trading.tradingevent.service.TradingEvents;
 import com.yogimangchi.trading.tradingsymbol.entity.TradingSymbolStatus;
 import com.yogimangchi.trading.tradingsymbol.repository.TradingSymbolRepository;
 import java.math.BigDecimal;
@@ -44,14 +45,16 @@ public class TradingOrderService {
     private final HedgePositions hedge;
     private final SymbolLeverageService leverage;
     private final IsolatedMargin isolated;
+    private final TradingEvents events;
 
     public TradingOrderService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate,
-            HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated) {
+            HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated, TradingEvents events) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.valuation=valuation; this.gate=gate;
         this.hedge=hedge; this.leverage=leverage;
         this.isolated=isolated;
+        this.events=events;
     }
 
     @Transactional
@@ -208,9 +211,17 @@ public class TradingOrderService {
 
     @Transactional
     public List<OrderResponse> history(Long accountId, Long beforeId, int limit) {
+        return history(accountId,beforeId,limit,null,null,null,null,null);
+    }
+
+    @Transactional
+    public List<OrderResponse> history(Long accountId,Long beforeId,int limit,Long symbolId,Position.Side side,
+            TradingOrder.Action action,TradingOrder.Status status,TradingOrder.Type type) {
         if (limit < 1 || limit > 100 || beforeId != null && beforeId <= 0) throw new BusinessException(ErrorCode.INVALID_ORDER);
+        if (symbolId!=null && symbolId<=0) throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
         locks.lock(accountId);
-        List<TradingOrder> result = orders.history(accountId, beforeId == null ? Long.MAX_VALUE : beforeId, PageRequest.of(0, limit));
+        List<TradingOrder> result = orders.filteredHistory(accountId, beforeId == null ? Long.MAX_VALUE : beforeId,
+                symbolId,side,action,status,type,PageRequest.of(0, limit));
         Map<Long, Fill> byOrder = fills.findByOrderIdIn(result.stream().map(TradingOrder::getId).toList())
                 .stream().collect(Collectors.toMap(Fill::getOrderId, fill -> fill));
         return result.stream().map(order -> OrderResponse.from(order, byOrder.get(order.getId()))).toList();
@@ -247,11 +258,15 @@ public class TradingOrderService {
             String key, String hash, Instant now, BigDecimal pnl, BigDecimal fee) {
         TradingOrder order = orders.save(TradingOrder.market(position, action, quantity, price.domainMarkPrice(), key, hash, now));
         Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), quantity, price.eventTime(), now, pnl, fee, BigDecimal.ZERO));
-        logCommitted(order, "filled");
+        logCommitted(order, "filled", fill);
         return OrderResponse.from(order, fill);
     }
 
     private void logCommitted(TradingOrder order, String result) {
+        logCommitted(order,result,null);
+    }
+    private void logCommitted(TradingOrder order, String result, Fill fill) {
+        events.record(order,fill);
         org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                 new org.springframework.transaction.support.TransactionSynchronization() {
                     @Override public void afterCommit() {

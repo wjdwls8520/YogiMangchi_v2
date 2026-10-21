@@ -29,6 +29,8 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/candles").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/status").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
+            // /ws/trading requires an authenticated first frame before any account data is read/sent.
+            authorize.requestMatchers(HttpMethod.GET, "/ws/trading").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/guest").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/orders",
                     "/api/v1/trading/account/orders/quote",
@@ -36,6 +38,8 @@ public class SecurityConfig {
                     "/api/v1/trading/account/positions/{positionId}/close",
                     "/api/v1/trading/account/positions/{positionId}/close-orders").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/orders", "/api/v1/trading/account/orders/pending").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/fills", "/api/v1/trading/account/positions/history").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/events").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/symbols/{symbolId}/leverage").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.PUT, "/api/v1/trading/account/symbols/{symbolId}/leverage").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/wallet",

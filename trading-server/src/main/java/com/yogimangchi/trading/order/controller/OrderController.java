@@ -2,6 +2,8 @@ package com.yogimangchi.trading.order.controller;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.order.dto.*;
 import com.yogimangchi.trading.order.service.OrderQuoteService;
+import com.yogimangchi.trading.order.entity.TradingOrder;
+import com.yogimangchi.trading.position.entity.Position;
 import com.yogimangchi.trading.tradingaccount.security.GuestPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -43,10 +45,13 @@ public class OrderController {
     }
     @GetMapping("/orders")
     @Operation(summary="Read own order/fill history, newest first",
-            description="Use the last returned orderId as beforeId for the next page; limit 1-100, default 50.")
+            description="Use last orderId as beforeId; limit1-100 default50. Optional tradingSymbolId/side/action/status/type filters preserve the existing array response. Reading is account-private and creates no financial data.")
     public List<OrderResponse> history(@AuthenticationPrincipal GuestPrincipal principal,
-            @RequestParam(required=false) Long beforeId, @RequestParam(defaultValue="50") int limit) {
-        return engine.history(principal.accountId(), beforeId, limit);
+            @RequestParam(required=false) Long beforeId, @RequestParam(defaultValue="50") int limit,
+            @RequestParam(required=false) Long tradingSymbolId,@RequestParam(required=false) Position.Side side,
+            @RequestParam(required=false) TradingOrder.Action action,@RequestParam(required=false) TradingOrder.Status status,
+            @RequestParam(required=false) TradingOrder.Type type) {
+        return engine.history(principal.accountId(),beforeId,limit,tradingSymbolId,side,action,status,type);
     }
     @GetMapping("/orders/pending")
     @Operation(summary="Read own pending OPEN/CLOSE orders and their margin/quantity reservations")
