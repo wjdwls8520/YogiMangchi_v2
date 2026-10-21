@@ -1,6 +1,7 @@
 package com.yogimangchi.trading.order.entity;
 
 import com.yogimangchi.trading.execution.TradingMath;
+import com.yogimangchi.trading.execution.TradingFees;
 import com.yogimangchi.trading.position.entity.Position;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
@@ -33,6 +34,7 @@ public class TradingOrder {
     @Column(nullable = false, length = 64) private String requestFingerprint;
     @Column(nullable = false) private Instant createdAt;
     @Column(nullable = false, length = 8, updatable = false) private String submittedMarginMode = "ISOLATED";
+    @Column(nullable = false, precision = 8, scale = 6, updatable = false) private BigDecimal feeRate;
     protected TradingOrder() { }
 
     public static TradingOrder market(Position position, Action action, BigDecimal quantity, BigDecimal price,
@@ -43,6 +45,7 @@ public class TradingOrder {
         order.tradingSymbolId = position.getTradingSymbolId();
         order.side = position.getSide();
         order.type = Type.MARKET;
+        order.feeRate = TradingFees.MARKET_RATE;
         order.action = action;
         order.status = Status.FILLED;
         TradingMath.validateQuantity(quantity);
@@ -61,7 +64,8 @@ public class TradingOrder {
     public static TradingOrder limit(Long accountId, Long symbolId, Position.Side side, BigDecimal quantity,
             int leverage, BigDecimal limitPrice, String key, String fingerprint, Instant now) {
         TradingOrder order = new TradingOrder();
-        order.reservedMargin = TradingMath.margin(limitPrice, quantity, leverage);
+        order.feeRate = TradingFees.LIMIT_RATE;
+        order.reservedMargin = TradingFees.reservation(limitPrice, quantity, leverage, order.feeRate);
         order.accountId = accountId;
         order.tradingSymbolId = symbolId;
         order.side = side;
@@ -97,6 +101,7 @@ public class TradingOrder {
         order.side = position.getSide();
         order.type = Type.LIMIT;
         order.action = Action.CLOSE;
+        order.feeRate = TradingFees.LIMIT_RATE;
         order.status = Status.PENDING;
         order.quantity = quantity.setScale(TradingMath.QUANTITY_SCALE);
         order.leverage = position.getLeverage();
@@ -128,6 +133,11 @@ public class TradingOrder {
 
     public Long getId() { return id; }
     public String getSubmittedMarginMode() { return submittedMarginMode; }
+    public BigDecimal getFeeRate() { return feeRate; }
+    public BigDecimal getReservedFee() {
+        return status == Status.PENDING && action == Action.OPEN
+                ? TradingFees.fee(limitPrice, quantity, feeRate) : TradingMath.amount(BigDecimal.ZERO);
+    }
     public Long getAccountId() { return accountId; }
     public Long getPositionId() { return positionId; }
     public Long getTradingSymbolId() { return tradingSymbolId; }
@@ -142,7 +152,7 @@ public class TradingOrder {
     public void repricePendingOpen(int effectiveLeverage) {
         requirePending();
         if (action != Action.OPEN) throw new IllegalStateException("Only OPEN reservations use leverage");
-        reservedMargin = TradingMath.margin(limitPrice, quantity, effectiveLeverage);
+        reservedMargin = TradingFees.reservation(limitPrice, quantity, effectiveLeverage, feeRate);
         leverage = effectiveLeverage;
     }
     public BigDecimal getFilledPrice() { return filledPrice; }

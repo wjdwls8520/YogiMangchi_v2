@@ -1,16 +1,16 @@
 package com.yogimangchi.trading.position.service;
 
 import com.yogimangchi.trading.execution.TradingMath;
+import com.yogimangchi.trading.execution.TradingFees;
 import com.yogimangchi.trading.position.entity.Position;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.Objects;
 import org.springframework.stereotype.Component;
 
 /** Position-only collateral and liquidation arithmetic. Never uses another position or wallet equity. */
 @Component
 public class IsolatedMargin {
-    public static final BigDecimal LIQUIDATION_FEE_RATE = new BigDecimal("0.0005");
+    public static final BigDecimal LIQUIDATION_FEE_RATE = TradingFees.MARKET_RATE;
 
     public record Risk(BigDecimal unrealizedPnl, BigDecimal equity, BigDecimal maintenanceMargin,
                        BigDecimal closingFeeReserve) {
@@ -55,8 +55,7 @@ public class IsolatedMargin {
     public BigDecimal liquidationFee(BigDecimal mark, BigDecimal quantity) {
         TradingMath.validatePrice(mark);
         TradingMath.validateQuantity(quantity);
-        return mark.multiply(quantity).multiply(LIQUIDATION_FEE_RATE)
-                .setScale(TradingMath.AMOUNT_SCALE, RoundingMode.CEILING);
+        return TradingFees.fee(mark, quantity, LIQUIDATION_FEE_RATE);
     }
 
     public Settlement liquidationSettlement(BigDecimal collateral, BigDecimal grossPnl, BigDecimal fee) {

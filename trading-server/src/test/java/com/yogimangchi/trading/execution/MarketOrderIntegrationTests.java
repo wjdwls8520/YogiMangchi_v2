@@ -105,11 +105,11 @@ class MarketOrderIntegrationTests {
 
     @Test void simultaneousOrdersCannotOverspendWallet() throws Exception {
         List<Object> results = concurrent(8, i -> create("5", Position.Side.LONG, 1, key()));
-        assertThat(results.stream().filter(OrderResponse.class::isInstance)).hasSize(2);
+        assertThat(results.stream().filter(OrderResponse.class::isInstance)).hasSize(1); // A second 5000 margin also needs its OPEN fee.
         assertThat(results.stream().filter(BusinessException.class::isInstance).map(BusinessException.class::cast))
                 .allMatch(e -> e.getCode() == ErrorCode.INSUFFICIENT_MARGIN);
-        amount("used_margin", "10000"); amount("balance", "10000");
-        assertThat(count("trading_order")).isEqualTo(2);
+        amount("used_margin", "5000"); amount("balance", "10000");
+        assertThat(count("trading_order")).isEqualTo(1);
     }
 
     @Test void simultaneousDuplicateRequestsCreateExactlyOneFill() throws Exception {
@@ -182,7 +182,7 @@ class MarketOrderIntegrationTests {
         var pending = service.create(guest.accountId(), idempotency, request);
         assertThat(pending.status()).isEqualTo("PENDING");
         assertThat(accounts.summary(guest.accountId()).wallet().reservedMargin())
-                .isEqualTo(new BigDecimal(limit).divide(BigDecimal.TEN).setScale(18).toPlainString());
+                .isEqualTo(new BigDecimal(limit).multiply(new BigDecimal("0.1003")).setScale(18).toPlainString());
         assertThat(count("position")).isZero(); assertThat(fillCount()).isZero();
         price(side == Position.Side.LONG ? "900" : "1100");
         assertThat(service.create(guest.accountId(), idempotency, request).orderId()).isEqualTo(pending.orderId());
@@ -204,7 +204,7 @@ class MarketOrderIntegrationTests {
         service.create(guest.accountId(), key(), request);
         price("1100"); // Both orders are still passive; margin is 4500 for each, despite the new Mark.
         service.create(guest.accountId(), key(), request);
-        assertThat(new BigDecimal(accounts.summary(guest.accountId()).wallet().reservedMargin())).isEqualByComparingTo("9000");
+        assertThat(new BigDecimal(accounts.summary(guest.accountId()).wallet().reservedMargin())).isEqualByComparingTo("9002.7");
         rejects(() -> service.create(guest.accountId(), key(), request), ErrorCode.INSUFFICIENT_MARGIN);
         assertThat(count("trading_order")).isEqualTo(2); assertThat(fillCount()).isZero();
     }
@@ -326,8 +326,9 @@ class MarketOrderIntegrationTests {
     private long count(String table) { return jdbc.queryForObject("select count(*) from trading." + table + " where account_id=?", Long.class, guest.accountId()); }
     private long fillCount() { return jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?", Long.class, guest.accountId()); }
     private void amount(String column, String expected) {
+        var net=com.yogimangchi.trading.support.FeeLedgerAssertions.expected(jdbc,guest.accountId(),column,expected,BigDecimal.ZERO);
         assertThat(jdbc.queryForObject("select " + column + " from trading.wallet where account_id=?", BigDecimal.class, guest.accountId()))
-                .isEqualByComparingTo(expected);
+                .isEqualByComparingTo(net);
     }
     private static void rejects(Runnable action, ErrorCode code) {
         assertThatThrownBy(action::run).isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(code));

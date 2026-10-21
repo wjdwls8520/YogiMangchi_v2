@@ -50,8 +50,10 @@ class HedgeTradingIntegrationTests {
     GuestAccountResponse guest;
     long btc, eth;
     Map<Long,LatestMarkPrice> book;
+    BigDecimal fixtureFunding;
 
     @BeforeEach void setup() {
+        fixtureFunding=BigDecimal.ZERO;
         guest=accounts.createGuest();
         btc=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
         eth=jdbc.queryForObject("select id from trading.trading_symbol where symbol='ETH'",Long.class);
@@ -130,7 +132,7 @@ class HedgeTradingIntegrationTests {
         assertThat(leverages.get(guest.accountId(),eth).leverage()).isEqualTo(10);
         assertThat(accounts.summary(guest.accountId()).positions().stream().filter(p -> p.tradingSymbolId()==btc))
                 .allMatch(p -> p.leverage()==14);
-        assertThat(new BigDecimal(accounts.summary(guest.accountId()).wallet().availableBalance())).isEqualByComparingTo(new BigDecimal("10000").subtract(expected));
+        assertThat(new BigDecimal(accounts.summary(guest.accountId()).wallet().availableBalance())).isEqualByComparingTo(new BigDecimal("9998.2").subtract(expected));
     }
 
     @Test void leverageDecreaseRollsBackPositionsOrdersWalletAndSettingTogether() {
@@ -250,6 +252,7 @@ class HedgeTradingIntegrationTests {
     }
 
     @Test void hundredTimesLeverageLiquidatesOnlyTheRiskySideAndAllowsAnIndependentPendingEntryLifecycle() {
+        fundOpeningFees("500");
         leverages.change(guest.accountId(),btc,100);
         var longOrder=market(btc,Position.Side.LONG,"590");
         market(btc,Position.Side.SHORT,"390");
@@ -291,6 +294,7 @@ class HedgeTradingIntegrationTests {
     }
 
     @Test void positionNotionalLimitRejectsOnlyOverLimitPendingFillAndReleasesItsMargin() {
+        fundOpeningFees("500");
         leverages.change(guest.accountId(),btc,100);
         var profit=market(btc,Position.Side.LONG,"1"); mark(btc,"1100");
         orders.close(guest.accountId(),profit.positionId(),key()); mark(btc,"1000");
@@ -354,7 +358,15 @@ class HedgeTradingIntegrationTests {
     private LatestMarkPrice process(String value) { var tick=mark(btc,value); trigger.process(guest.accountId(),tick,Map.copyOf(book)); return tick; }
     private long openCount() { return jdbc.queryForObject("select count(*) from trading.position where account_id=? and status='OPEN'",Long.class,guest.accountId()); }
     private long fillCount() { return jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?",Long.class,guest.accountId()); }
-    private void wallet(String column,String value) { assertThat(jdbc.queryForObject("select "+column+" from trading.wallet where account_id=?",BigDecimal.class,guest.accountId())).isEqualByComparingTo(value); }
+    private void wallet(String column,String value) {
+        var expected=com.yogimangchi.trading.support.FeeLedgerAssertions.expected(jdbc,guest.accountId(),column,value,fixtureFunding);
+        assertThat(jdbc.queryForObject("select "+column+" from trading.wallet where account_id=?",BigDecimal.class,guest.accountId())).isEqualByComparingTo(expected);
+    }
+    private void fundOpeningFees(String amount) {
+        // Explicit disposable fixture funding isolates the position-cap scenario from OPEN fee capacity.
+        fixtureFunding=fixtureFunding.add(new BigDecimal(amount));
+        jdbc.update("update trading.wallet set balance=balance+? where account_id=?",new BigDecimal(amount),guest.accountId());
+    }
     private void position(long id,String column,String value) { assertThat(jdbc.queryForObject("select "+column+" from trading.position where id=?",BigDecimal.class,id)).isEqualByComparingTo(value); }
     private List<Object> financialSnapshot() { return List.of(jdbc.queryForList("select * from trading.wallet where account_id=?",guest.accountId()),jdbc.queryForList("select * from trading.position where account_id=? order by id",guest.accountId()),orders.history(guest.accountId(),null,100)); }
     private static void rejects(Runnable action,ErrorCode code) { assertThatThrownBy(action::run).isInstanceOfSatisfying(BusinessException.class,e -> assertThat(e.getCode()).isEqualTo(code)); }

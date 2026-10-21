@@ -1,6 +1,7 @@
 package com.yogimangchi.trading.execution.trigger;
 
 import com.yogimangchi.trading.execution.TradingMath;
+import com.yogimangchi.trading.execution.TradingFees;
 import com.yogimangchi.trading.fill.entity.Fill;
 import com.yogimangchi.trading.fill.repository.FillRepository;
 import com.yogimangchi.trading.marketdata.LatestMarkPrice;
@@ -94,16 +95,20 @@ public class AccountTriggerService {
             }
             String rejection = null;
             BigDecimal margin = null;
+            BigDecimal fee = null;
             int effectiveLeverage = leverage.current(accountId, order.getTradingSymbolId());
             if (order.getLeverage() != effectiveLeverage) throw new IllegalStateException("Pending reservation leverage differs from symbol setting");
-            try { margin = hedge.additionalMargin(open, order.getTradingSymbolId(), order.getSide(), order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage); }
+            try {
+                margin = hedge.additionalMargin(open, order.getTradingSymbolId(), order.getSide(), order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage);
+                fee = TradingFees.fee(tick.domainMarkPrice(), order.getQuantity(), order.getFeeRate());
+            }
             catch (IllegalArgumentException exception) { rejection = "UNSUPPORTED_EXECUTION_NOTIONAL"; }
             if (symbols.findById(order.getTradingSymbolId()).filter(s -> s.getStatus()==TradingSymbolStatus.ACTIVE).isEmpty())
                 rejection = "SYMBOL_NOT_ACTIVE";
             if (open.size() >= TradingMath.MAX_OPEN_POSITIONS && hedge.existing(open, order.getTradingSymbolId(), order.getSide()) == null) rejection = "POSITION_LIMIT";
             wallet.releaseReservation(order.getReservedMargin());
             BigDecimal available = TradingMath.available(wallet.getBalance(), wallet.getUsedMargin(), wallet.getReservedMargin());
-            if (margin != null && margin.compareTo(available) > 0) rejection = "INSUFFICIENT_MARGIN";
+            if (margin != null && fee != null && margin.add(fee).compareTo(available) > 0) rejection = "INSUFFICIENT_MARGIN";
             if (margin != null && isolated.projectedOpenRisk(hedge.existing(open, order.getTradingSymbolId(), order.getSide()),
                     order.getSide(), order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage, tick.domainMarkPrice()).atRisk())
                 rejection = "ACCOUNT_AT_RISK";
@@ -113,9 +118,10 @@ public class AccountTriggerService {
             } else {
                 Position position = hedge.apply(open, accountId, order.getTradingSymbolId(), order.getSide(),
                         order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage, now);
-                wallet.openMargin(margin);
+                wallet.openMargin(margin, fee);
                 order.fill(position, tick.domainMarkPrice(), now);
-                fills.save(Fill.execute(order.getId(), tick.domainMarkPrice(), order.getQuantity(), tick.eventTime(), now, BigDecimal.ZERO));
+                fills.save(Fill.execute(order.getId(), tick.domainMarkPrice(), order.getQuantity(), tick.eventTime(), now,
+                        BigDecimal.ZERO, fee, BigDecimal.ZERO));
                 byId.put(position.getId(), position);
                 committed("limit-filled", accountId, order.getId(), tick.tradingSymbolId());
             }
@@ -129,15 +135,17 @@ public class AccountTriggerService {
         // Release only this order's reservation. Other pending CLOSE orders keep their reserved quantity.
         target.releaseCloseReservation(order.getQuantity());
         BigDecimal pnl = target.closingPnl(order.getQuantity(), price.domainMarkPrice());
-        if (wallet.getBalance().add(pnl).signum() < 0) {
+        BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), order.getQuantity(), order.getFeeRate());
+        if (wallet.getBalance().add(pnl).subtract(fee).signum() < 0) {
             order.reject("INSUFFICIENT_SETTLEMENT_CASH", now);
             committed("close-rejected", order.getAccountId(), order.getId(), order.getTradingSymbolId());
             return;
         }
         Position.Settlement settlement = target.close(order.getQuantity(), price.domainMarkPrice(), now, false);
-        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl());
+        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl(), fee, BigDecimal.ZERO);
         order.fill(target, price.domainMarkPrice(), now);
-        fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now, settlement.realizedPnl()));
+        fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
+                settlement.realizedPnl(), fee, BigDecimal.ZERO));
         if (target.getStatus() != Position.Status.OPEN) { open.remove(target); byId.remove(target.getId()); }
         committed("limit-close-filled", order.getAccountId(), order.getId(), order.getTradingSymbolId());
     }

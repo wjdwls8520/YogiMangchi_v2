@@ -139,7 +139,7 @@ V1 Java 경로는 `was/src/main/java/com/yogimangchi/` 기준, V2 Java는 `tradi
 | 6 | 대회 관리/계정·공유 engine→종료·랭킹 | ADMIN 권한·정산 재실행·타 계정 격리 |
 | 7 | Content 커뮤니티/프로필/알림·운영 | V1 목록 전 항목 테스트, 서비스 경계·실제 Frontend 연동 |
 
-이 표의 MISSING/PARTIAL/MISMATCH를 모두 구현·검증하기 전 **전체 이식 완료라고 보고하지 않는다.** 신규 서비스/루트 파일 수정, 사용자 기존 포지션 강제 정리, Frontend 변경은 승인하지 않은 상태다.
+이 표의 MISSING/PARTIAL/MISMATCH를 모두 구현·검증하기 전 **전체 이식 완료라고 보고하지 않는다.** 사용자 기존 포지션 강제 정리와 Frontend 변경은 승인되지 않았다. 2026-10-21 사용자는 후속 Content 서비스와 필요한 루트 README/AGENTS/Compose/.env.example 수정 범위를 별도로 승인했다.
 
 ## Phase 1 진행 기록
 
@@ -155,3 +155,17 @@ PostgreSQL/Redis 통합 검증을 포함한 전체476개 테스트 통과(실패
 V11 legacy 보존/반복 적용/불일치 rollback, 격리 임계값·실제 gap 정산·보류 상태,
 개별 청산·반대편 보존·동시성·기존 Redis 복구와 API 인증 회귀를 확인했다.
 실제 사용자 DB migration과 Frontend 호환 배포는 실행하지 않았다.
+
+## Phase 2 진행 기록
+
+`feature/trading/futures-fees-and-order-quotes`: F15 수수료와 F23 새 OPEN 최소10 USDT를 복원한다.
+MARKET0.05%/LIMIT0.03%는 실제 Mark 체결 금액에 CEILING18로 부과하며 gross PnL과 구분한다.
+Pending OPEN은 담보+fee 예약, 취소/거절 시 전부 해제한다. leverage 변경은 fee를 다시 부과하지 않는다.
+V12는 기존 fee-free 접수 정책을0%로 보존하고 과거 금융 값을 바꾸지 않는다.
+서버 OPEN quote API가 비용·비율 수량을 계산하여 Frontend의100% 주문 수량 계산 복제를 대체한다.
+이력(F18~20), 개인 이벤트(F22), 회원/Spot/대회/Content 등은 여전히 후속 단계이며 전체 이식 완료가 아니다.
+
+2026-10-21 Phase 2 검증: Java17 `clean build` 성공, 전체499개 테스트 통과(실패·오류·건너뜀0).
+고정 수수료 금액·OPEN/CLOSE·지정가 실제 Mark·취소/거절·레버리지·비율10/25/50/100%·추가 진입·소액 잔여 종료,
+기존 수수료0% 소액 계약 실행과 V12 반복/이력 보존을 검증했다. 기존 재무 경합/rollback/replay 검증도 유지한다.
+실제 사용자 DB에 V11/V12를 적용하거나 Frontend를 배포하지 않았다.

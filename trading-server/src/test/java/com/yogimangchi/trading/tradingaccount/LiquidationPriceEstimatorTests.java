@@ -128,7 +128,7 @@ class LiquidationPriceEstimatorTests {
         assertThat(estimate(List.of(p), Map.of(1L, fresh(1, "1000", NOW))).get(p.getId())).isEqualTo(before);
     }
 
-    @ParameterizedTest @CsvSource({"LONG,0.00000001,100000000", "SHORT,0.00000001,100000000", "LONG,1000000000000,0.000001", "SHORT,1000000000000,0.000001"})
+    @ParameterizedTest @CsvSource({"LONG,0.00000001,1000000000", "SHORT,0.00000001,1000000000", "LONG,1000000000000,0.000001", "SHORT,1000000000000,0.000001"})
     void tinyQuantitiesAndAssetPricesUseTheActualRoundedRisk(Position.Side side, String quantity, String entry) {
         var p = position(1, side, quantity, entry, 100);
         assertBoundary(p, estimate(List.of(p), Map.of(1L, fresh(1, entry, NOW))).get(p.getId()));

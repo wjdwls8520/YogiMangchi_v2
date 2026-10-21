@@ -4,10 +4,13 @@ import com.yogimangchi.trading.fill.entity.Fill;
 import java.time.Instant;
 import io.swagger.v3.oas.annotations.media.Schema;
 public record OrderResponse(Long orderId, Long positionId, Long tradingSymbolId, String type, String action,
-        String side, String status, String quantity, int leverage, String limitPrice, String reservedMargin, String reservedCloseQuantity,
+        String side, String status, String quantity, int leverage, String limitPrice,
+        @Schema(description="Total pending OPEN cash reservation: collateral plus fee; reservedFee is already included") String reservedMargin, String reservedCloseQuantity,
         Instant createdAt, Instant completedAt, String reason, FillResponse fill,
         @Schema(description = "Immutable leverage at submission; leverage is the effective PENDING OPEN value, or the execution snapshot once FILLED") int requestedLeverage,
-        @Schema(description = "Legacy target of a PENDING CLOSE reassigned during Hedge migration; null otherwise. Completed historical positionId values are preserved") Long originalPositionId) {
+        @Schema(description = "Legacy target of a PENDING CLOSE reassigned during Hedge migration; null otherwise. Completed historical positionId values are preserved") Long originalPositionId,
+        @Schema(description="Immutable submitted execution fee rate; 0 for retained fee-free legacy contracts") String feeRate,
+        @Schema(description="Fee part of reservedMargin (total pending OPEN cash); not yet charged. Zero after completion/cancel or for CLOSE") String reservedFee) {
     public record FillResponse(Long fillId, String quantity, String price, Instant priceEventTime, Instant executedAt,
             @Schema(description="Actual execution gross PnL, before fee or isolated shortfall adjustment") String realizedPnl,
             String fee, @Schema(description="Platform-funded isolated gap shortfall; zero for historical Cross facts") String settlementAdjustment,
@@ -23,6 +26,6 @@ public record OrderResponse(Long orderId, Long positionId, Long tradingSymbolId,
                 fill == null ? null : new FillResponse(fill.getId(), fill.getQuantity().toPlainString(), fill.getPrice().toPlainString(),
                         fill.getPriceEventTime(), fill.getExecutedAt(), fill.getRealizedPnl().toPlainString(),
                         fill.getFee().toPlainString(), fill.getSettlementAdjustment().toPlainString(), fill.getMarginMode()),
-                order.getRequestedLeverage(), order.getOriginalPositionId());
+                order.getRequestedLeverage(), order.getOriginalPositionId(), order.getFeeRate().stripTrailingZeros().toPlainString(), order.getReservedFee().toPlainString());
     }
 }

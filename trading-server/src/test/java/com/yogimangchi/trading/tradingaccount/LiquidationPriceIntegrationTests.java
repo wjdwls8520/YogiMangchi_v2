@@ -150,7 +150,7 @@ class LiquidationPriceIntegrationTests {
         assertThat(orderStatus(otherClose.orderId())).isEqualTo("PENDING");
         assertThat(orderStatus(pending.orderId())).isEqualTo("PENDING");
         assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and action='LIQUIDATE'",Long.class,guest.accountId())).isEqualTo(1);
-        assertThat(n(accounts.wallet(guest.accountId()).balance())).isEqualByComparingTo("9900");
+        assertThat(n(accounts.wallet(guest.accountId()).balance())).isEqualByComparingTo("9889.95");
     }
 
     @Test void gapUsesActualMarkAndGrossLossWhileSeparateAdjustmentProtectsUnusedCash() {
@@ -165,9 +165,9 @@ class LiquidationPriceIntegrationTests {
         assertThat(n(fill.settlementAdjustment())).isEqualByComparingTo("1904");
         assertThat(fill.marginMode()).isEqualTo("ISOLATED");
         var wallet=accounts.wallet(guest.accountId());
-        assertThat(n(wallet.balance())).isEqualByComparingTo("9900");
+        assertThat(n(wallet.balance())).isEqualByComparingTo("9895");
         assertThat(n(wallet.realizedPnl())).isEqualByComparingTo("-2000");
-        assertThat(n(wallet.feesPaid())).isEqualByComparingTo("4");
+        assertThat(n(wallet.feesPaid())).isEqualByComparingTo("9"); // OPEN 5 + liquidation 4.
         assertThat(n(wallet.settlementAdjustment())).isEqualByComparingTo("1904");
         assertThat(accounts.summary(guest.accountId()).status()).isEqualTo("ACTIVE");
     }
@@ -180,7 +180,7 @@ class LiquidationPriceIntegrationTests {
         trigger.process(guest.accountId(),btcRisk,book);
         trigger.process(guest.accountId(),ethRisk,book);
         assertThat(accounts.summary(guest.accountId()).positions()).isEmpty();
-        assertThat(n(accounts.wallet(guest.accountId()).balance())).isEqualByComparingTo("9899");
+        assertThat(n(accounts.wallet(guest.accountId()).balance())).isEqualByComparingTo("9893.95");
         assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and action='LIQUIDATE'",Long.class,guest.accountId())).isEqualTo(2);
         assertThat(n(accounts.wallet(guest.accountId()).usedMargin())).isZero();
     }

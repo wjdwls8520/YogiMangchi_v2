@@ -1,6 +1,6 @@
 # Hedge + Isolated 전환 계약과 실행 게이트
 
-상태: **Phase 1 구현 / 배포 전 게이트 필요**. 2026-10-20 사용자가 실제 Mark/gap adjustment/자동 청산0.05%/기존 margin 보존/위험 legacy 보류 권장안을 확정했다. 신규 실행 엔진은 Isolated Only이며 전체 V1 이식은 미완료다. MARKET/LIMIT 거래 fee는 Phase 2 대상이다. 현재 계약의 원본은 Runtime OpenAPI와 Trading README다.
+상태: **Phase 1 병합 / Phase 2 구현·검증 / 배포 게이트 유지**. 2026-10-20 사용자가 실제 Mark/gap adjustment/자동 청산0.05%/기존 margin 보존/위험 legacy 보류 권장안을 확정했다. 신규 실행 엔진은 Isolated Only이며 전체 V1 이식은 미완료다. 현재 금융/fee/quote 계약의 원본은 Runtime OpenAPI와 Trading README다.
 
 ## 확인한 현재 원장
 
@@ -16,13 +16,13 @@ V2 `2abaf45`의 Position에는 `margin`, `entry_notional`, `reserved_close_quant
 
 ## Phase 1 금융 항등식과 Phase 2 확장
 
-`B`: 현재 Wallet balance(격리 담보를 포함하는 장부 현금), `M_i`: Position i의 격리 담보, `R`: Pending OPEN 예약 담보 및 별도로 확정할 예약 fee, `U_i(P)`: exact basis로 계산한 gross 미실현 손익.
+`B`: 현재 Wallet balance(격리 담보를 포함하는 장부 현금), `M_i`: Position i의 격리 담보, `R`: Pending OPEN 담보+예상 fee를 포함하는 예약 현금, `U_i(P)`: exact basis로 계산한 gross 미실현 손익.
 
 - free cash = `B - ΣM_i - R`. 타 포지션의 미실현 수익을 새 주문 재원으로 쓰지 않는다.
 - position equity = `M_i + U_i(P)`.
 - gross maintenance = `ceil18(P * Q_i * 0.005)` 를 사용한다. 기존 V2 유지증거금률을 보존한다. V1에는 이 MM 계산이 없으므로 동일 공식이라고 주장하지 않는다.
 - risk = `position equity <= maintenance + ceil18(Mark * quantity * 0.0005)`를 사용한다. 실제 LIQUIDATE에도 같은 fee 계산을 적용한다. **fee를 임계값 보정에 넣는 것과 실제 fee 차감은 별개**다.
-- OPEN: exact basis 증가분에 대한 `ceil18(basis/leverage)` 담보를 추가 배정한다. 실제 OPEN fee 차감은 Phase 2에서 추가한다.
+- OPEN: exact basis 증가분에 대한 `ceil18(basis/leverage)` 담보를 추가 배정하고 실제 체결 명목금액의 fee를 free cash에서 한 번 차감한다.
 - partial CLOSE: 기존 `releasedMargin`(DOWN18, 전량은 잔액 전부)와 정확한 비례 basis를 재사용한다. 잔여 margin/basis/quantity/예약 수량을 한 Transaction에서 갱신한다.
 - leverage 변경: 각 방향 margin과 Pending OPEN 예약을 함께 재계산한다. free cash가 부족하거나 새 격리 equity가 위험 구간이면 전체 변경을 rollback한다. entry basis/quantity/gross realized는 바꾸지 않는다.
 - 강제청산: 위험한 Position만 종료한다. 해당 Position의 Pending CLOSE 예약만 해제·종료하며 다른 Position·무관 Pending 주문을 계정 단위로 일괄 취소하지 않는다.
@@ -40,7 +40,7 @@ V1 `FuturesLiquidationExecutionService`는 저장 청산가에서 정산하며 �
 
 이 정책은 V1의 암묵적 cap을 V2에서 추적 가능한 원장으로 바꾸는 제품상 결정이며 **사용자가 권장안으로 확정했다.** 대안으로 청산가를 체결가로 사용하는 V1 방식은 실제 Mark 기반 체결 요구와 충돌하므로 사용하지 않는다. 이 정책 승인은 실제6개 legacy Position을 임의 청산하거나 기존 DB를 즉시 변경하라는 승인이 아니다.
 
-수수료 제안: MARKET OPEN/CLOSE는0.05%, LIMIT 모의 trigger 체결은0.03%, 자동 청산은 실제 청산 명목금액의0.05%를 구분 기록한다. 별도 penalty rate를 임의 도입하지 않는다. 담보가 fee까지 충당하지 못하면 위 adjustment 규칙을 적용한다. Phase 1/2 PR 분리 시에는 수수료 없는 중간 엔진을 최종 정책처럼 배포하지 않고 통합 release gate를 둔다.
+수수료: MARKET OPEN/CLOSE0.05%, LIMIT 모의 trigger 체결0.03%, 자동 청산0.05%를 구분 기록한다. 별도 penalty rate를 도입하지 않는다. 강제청산 담보가 fee까지 충당하지 못하면 위 adjustment를 적용한다. V12 이전 Pending의0% 접수 계약·예약은 소급 변경하지 않는다. 새 OPEN 최소10 USDT이며 과거 접수 계약/소액 CLOSE와 구분한다. `/api/v1/trading/account/orders/quote`는 fee 포함 비용·비율 수량을 제공하며 예약을 만들지 않는다. Phase 1/2와 호환 Frontend를 통합 release gate로 관리한다.
 
 ## 기존 Cross Position 전환
 
@@ -84,4 +84,4 @@ Phase 1 API: 기존 `/api/v1/trading/account/{summary,positions,wallet}`와 `/sy
 1. **승인됨**: 실제 Mark Fill + 별도 영속 shortfall adjustment + 자동 청산0.05% 정책.
 2. **승인됨**: 기존 Cross 담보 금액 보존 전환, 이미 격리 위험인 legacy Position은 자동 종료하지 않고 전환 보류. 대상의 개별 처리에는 별도 승인이 필요하다.
 3. **배포 게이트**: 별도 Frontend Work의 호환 release와 유지보수 배포 순서. Frontend 수정 승인은 요청하거나 받지 않았다.
-4. **범위 승인 필요**: Phase 4의 `content-server/**` 신규 생성 및 필요한 루트 Compose/env/README. 금융 정책 승인은 실제 Secret 저장·Frontend 수정·신규 서비스 생성 승인에 해당하지 않는다.
+4. **별도 범위 승인됨(2026-10-21)**: Phase 4의 `content-server/**` 신규 생성과 필요한 루트 README/AGENTS/docker-compose.yml/.env.example 갱신. Content 인증 계약→Trading JWT 검증 순서다. Frontend 수정·실제 Secret 저장·Guest 금융 이력 자동 병합은 승인 범위에 포함하지 않는다.

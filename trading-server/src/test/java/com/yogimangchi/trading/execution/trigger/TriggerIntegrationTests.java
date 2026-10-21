@@ -138,7 +138,7 @@ class TriggerIntegrationTests {
         assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
         assertThat(orderStatus(pending.orderId())).isEqualTo("PENDING");
         amount("balance","1000"); amount("realized_pnl","-10800"); amount("used_margin","0"); amount("reserved_margin","20");
-        amount("fees_paid","39.6"); amount("settlement_adjustment","1839.6");
+        amount("fees_paid","84.6"); amount("settlement_adjustment","1839.6"); // OPEN45 + liquidation39.6.
         assertThat(accounts.summary(guest.accountId()).status()).isEqualTo("ACTIVE");
         assertThat(fillCount()).isEqualTo(2);
         tick("80"); drain(); assertThat(fillCount()).isEqualTo(2);
@@ -168,6 +168,7 @@ class TriggerIntegrationTests {
     }
 
     @Test void shortLiquidationCrossesAndDuplicateEventCannotLiquidateAgain() throws Exception {
+        fundOpeningFees();
         market(Position.Side.SHORT,"1000",10);
         LatestMarkPrice risk=tick("111"); tick("99"); drain();
         amount("balance","0"); assertThat(positionCount("LIQUIDATED")).isEqualTo(1);
@@ -217,6 +218,7 @@ class TriggerIntegrationTests {
     }
 
     @Test void missingOtherSymbolDoesNotStopIsolatedLiquidationOrCloseTheHealthyOtherPosition() throws Exception {
+        fundOpeningFees();
         long ether=jdbc.queryForObject("select id from trading.trading_symbol where symbol='ETH'",Long.class);
         prices.beginSubscription(Set.of(symbol,ether)); tick("100");
         Instant now=Instant.now();
@@ -237,8 +239,8 @@ class TriggerIntegrationTests {
     }
 
     @Test void limitRejectsInsufficientExecutionMarginAndReleasesReservation() throws Exception {
-        // Passive on entry (9999 margin), then the trigger Mark requires 10098, above the 10000 balance.
-        OrderResponse pending=limit(Position.Side.SHORT,"99","101",1);
+        // Initial margin+fee fits; adverse trigger Mark needs more than the available 10000.
+        OrderResponse pending=limit(Position.Side.SHORT,"98.98","101",1);
         tick("102"); drain();
         assertThat(orderStatus(pending.orderId())).isEqualTo("REJECTED");
         assertThat(jdbc.queryForObject("select reason from trading.trading_order where id=?",String.class,pending.orderId()))
@@ -247,6 +249,7 @@ class TriggerIntegrationTests {
     }
 
     @Test void crossingWaitsForAnUncommittedNewPositionInsteadOfSkippingIt() throws Exception {
+        fundOpeningFees();
         CountDownLatch beforeCommit=new CountDownLatch(1);
         CountDownLatch release=new CountDownLatch(1);
         java.util.concurrent.atomic.AtomicBoolean first=new java.util.concurrent.atomic.AtomicBoolean(true);
@@ -487,6 +490,7 @@ class TriggerIntegrationTests {
     }
 
     @Test void liquidationRollbackRestoresCloseReservationAsWellAsRemainingLot() {
+        fundOpeningFees();
         var opened=market(Position.Side.LONG,"1000",10);
         var closing=closeLimit(opened.positionId(),"600","110");
         var price=tick("89");
@@ -498,6 +502,7 @@ class TriggerIntegrationTests {
     }
 
     @Test void marketCloseAndLiquidationRaceNeverSettleTheSameQuantityTwice() throws Exception {
+        fundOpeningFees();
         var opened=market(Position.Side.LONG,"1000",10);
         var risk=tick("89");
         doNothing().when(gate).requireCaughtUp(anyMap());
@@ -510,6 +515,7 @@ class TriggerIntegrationTests {
     }
 
     @Test void partialCloseThatCommitsFirstProtectsReleasedCashButNotTheRemainingIsolatedExposure() throws Exception {
+        fundOpeningFees();
         var opened=market(Position.Side.LONG,"1000",10);
         CountDownLatch valued=new CountDownLatch(1), release=new CountDownLatch(1);
         java.util.concurrent.atomic.AtomicBoolean first=new java.util.concurrent.atomic.AtomicBoolean(true);
@@ -534,6 +540,7 @@ class TriggerIntegrationTests {
     }
 
     @Test void limitCloseAndLiquidationRaceUsesLatestLockedPositionState() throws Exception {
+        fundOpeningFees();
         var opened=market(Position.Side.LONG,"1000",10);
         var closing=closeLimit(opened.positionId(),"600","110");
         var risk=tick("89"); var profit=tick("111");
@@ -621,7 +628,14 @@ class TriggerIntegrationTests {
     private long fillCount() { return jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?",Long.class,guest.accountId()); }
     private long positionCount(String status) { return jdbc.queryForObject("select count(*) from trading.position where account_id=? and status=?",Long.class,guest.accountId(),status); }
     private void amount(String column,String expected) {
-        assertThat(jdbc.queryForObject("select "+column+" from trading.wallet where account_id=?",BigDecimal.class,guest.accountId())).isEqualByComparingTo(expected);
+        var net=com.yogimangchi.trading.support.FeeLedgerAssertions.expected(jdbc,guest.accountId(),column,expected,fixtureFunding);
+        assertThat(jdbc.queryForObject("select "+column+" from trading.wallet where account_id=?",BigDecimal.class,guest.accountId())).isEqualByComparingTo(net);
+    }
+    private BigDecimal fixtureFunding=BigDecimal.ZERO;
+    private void fundOpeningFees() {
+        // These disposable fixtures intentionally allocate all 10000 as position collateral AFTER OPEN fees.
+        fixtureFunding=new BigDecimal("50");
+        jdbc.update("update trading.wallet set balance=balance+50 where account_id=?",guest.accountId());
     }
     private void race(Runnable first,Runnable second) throws Exception {
         ExecutorService pool=Executors.newFixedThreadPool(2); CountDownLatch latch=new CountDownLatch(1);
