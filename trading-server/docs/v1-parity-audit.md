@@ -169,3 +169,30 @@ V12는 기존 fee-free 접수 정책을0%로 보존하고 과거 금융 값을 �
 고정 수수료 금액·OPEN/CLOSE·지정가 실제 Mark·취소/거절·레버리지·비율10/25/50/100%·추가 진입·소액 잔여 종료,
 기존 수수료0% 소액 계약 실행과 V12 반복/이력 보존을 검증했다. 기존 재무 경합/rollback/replay 검증도 유지한다.
 실제 사용자 DB에 V11/V12를 적용하거나 Frontend를 배포하지 않았다.
+
+## Phase 3 진행 기록
+
+`feature/trading/trade-history-and-events`: F18~F20의 주문 필터·Fill·종료 Position 생애주기 이력과 F22의 개인 거래 이벤트 계약을 제공한다.
+Fill은 부분청산·강제청산·수수료·조정액 및 원래 Position ID를 보존한다. 종료 이력은 합산 전 donor 체결까지 연결하여
+생애주기 gross PnL·fee·adjustment·net을 반환한다. OPEN/MERGED를 종료 이력으로 위장하지 않는다.
+필터·상한 있는 keyset pagination·계정 인증을 적용하며 시장 데이터 장애 중에도 이력을 읽을 수 있다.
+
+V13의 영속 이벤트 스냅샷은 금융 변경과 같은 Transaction에 기록한다. 실패하면 금융 변경도 rollback하며
+커밋 전/rollback 이벤트를 전송하지 않는다. `/ws/trading`은 첫 프레임 Guest 인증 후 본인 이벤트만 보내고
+만료 시 종료한다. REST 재조회와 재접속 cursor로 누락을 복구하며 eventId 중복 제거는 클라이언트 계약이다.
+기존 공개 `/ws/market` 및 요청 응답 토스트 계약은 유지한다. V13 이전 알림을 가짜로 소급 생성하지 않는다.
+알림 센터 읽음/숨김·Content/이체/대회 알림은 후속 단계다. 신규 외부 의존성은 없다.
+
+2026-10-21 최종 구현 전체 `build` 성공, 전체515개 테스트 통과(실패·오류·건너뜀0).
+이후 추가한 Runtime OpenAPI 검증을 포함한 이력 통합 테스트9개도 별도 실행하여 모두 통과했다.
+이전 `clean build`는514개 테스트를 통과했다. 실제 사용자 DB/Frontend는 변경하지 않았다.
+
+## Phase 4 인증 계약 결정
+
+2026-10-21 사용자가 설계 검토 후 다음 계약을 승인했다. 외부 로그인은 Google·Kakao만 지원하고
+Content가 회원·자체 JWT 발급을 소유한다. Trading은 공개키 검증 후 memberId로 자신의 계정을 찾는다.
+공급자 ID로 회원을 식별하고 이메일 자동 연결 및 Guest 금융 이력 자동 병합은 하지 않는다.
+OAuth state와 짧은 임시 세션을 사용하고 인증 토큰을 URL에 넣지 않는다.
+Access JWT15분은 JSON 응답/Frontend 메모리, Refresh7일은 HttpOnly·운영 Secure 쿠키로 관리하며
+DB에는 해시만 저장하고 사용 시 회전한다. 갱신·로그아웃은 CSRF 검증을 적용한다.
+로그아웃은 Refresh를 폐기하며 기존 Access는 최대15분 유효할 수 있다. Frontend 구현은 승인 범위에 포함되지 않는다.

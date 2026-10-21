@@ -1,4 +1,4 @@
-package com.yogimangchi.trading.marketdata.websocket;
+package com.yogimangchi.trading.websocket;
 
 import java.io.IOException;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -6,29 +6,37 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.BooleanSupplier;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 /** Exactly one writer per session; producers never perform network I/O or wait for a slow browser. */
-final class BoundedWebSocketSender {
+public final class BoundedWebSocketSender {
     private final WebSocketSession session;
     private final Executor writers;
     private final Consumer<CloseStatus> disconnect;
     private final ArrayBlockingQueue<TextMessage> messages;
+    private final BooleanSupplier maySend;
     private final AtomicBoolean draining = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile long sendStarted;
 
-    BoundedWebSocketSender(WebSocketSession session, Executor writers,
+    public BoundedWebSocketSender(WebSocketSession session, Executor writers,
                           Consumer<CloseStatus> disconnect, int capacity) {
+        this(session,writers,disconnect,capacity,() -> true);
+    }
+
+    public BoundedWebSocketSender(WebSocketSession session, Executor writers,
+                          Consumer<CloseStatus> disconnect, int capacity, BooleanSupplier maySend) {
         this.session = session;
         this.writers = writers;
         this.disconnect = disconnect;
         this.messages = new ArrayBlockingQueue<>(capacity);
+        this.maySend = maySend;
     }
 
-    void enqueue(String payload) {
+    public void enqueue(String payload) {
         if (closed.get()) {
             return;
         }
@@ -39,12 +47,12 @@ final class BoundedWebSocketSender {
         schedule();
     }
 
-    boolean sendingLongerThan(long nowNanos, long maxNanos) {
+    public boolean sendingLongerThan(long nowNanos, long maxNanos) {
         long started = sendStarted;
         return started != 0 && nowNanos - started > maxNanos;
     }
 
-    void discard() {
+    public void discard() {
         closed.set(true);
         messages.clear();
     }
@@ -65,6 +73,10 @@ final class BoundedWebSocketSender {
         try {
             TextMessage message;
             while (!closed.get() && (message = messages.poll()) != null) {
+                if (!maySend.getAsBoolean()) {
+                    fail(new CloseStatus(1008,"Delivery authorization expired"));
+                    return;
+                }
                 sendStarted = System.nanoTime();
                 session.sendMessage(message);
                 sendStarted = 0;

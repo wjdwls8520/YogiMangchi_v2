@@ -18,6 +18,7 @@ import com.yogimangchi.trading.tradingaccount.entity.Wallet;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
 import com.yogimangchi.trading.tradingaccount.service.AccountLock;
 import com.yogimangchi.trading.tradingaccount.service.IsolatedCutover;
+import com.yogimangchi.trading.tradingevent.service.TradingEvents;
 import com.yogimangchi.trading.tradingsymbol.entity.TradingSymbolStatus;
 import com.yogimangchi.trading.tradingsymbol.repository.TradingSymbolRepository;
 import java.math.BigDecimal;
@@ -45,12 +46,14 @@ public class AccountTriggerService {
     private final LatestPriceStore livePrices;
     private final HedgePositions hedge;
     private final SymbolLeverageService leverage;
+    private final TradingEvents events;
     public AccountTriggerService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols,
-            IsolatedMargin isolated, IsolatedCutover cutover, LatestPriceStore livePrices, HedgePositions hedge, SymbolLeverageService leverage) {
+            IsolatedMargin isolated, IsolatedCutover cutover, LatestPriceStore livePrices, HedgePositions hedge, SymbolLeverageService leverage, TradingEvents events) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.isolated=isolated; this.cutover=cutover; this.livePrices=livePrices;
         this.hedge=hedge; this.leverage=leverage;
+        this.events=events;
     }
 
     /** No Redis I/O here. Replay and live execution share the same account lock and atomic financial transaction. */
@@ -114,16 +117,16 @@ public class AccountTriggerService {
                 rejection = "ACCOUNT_AT_RISK";
             if (rejection != null) {
                 order.reject(rejection, now);
-                committed("rejected", accountId, order.getId(), tick.tradingSymbolId());
+                committed("rejected", order, null);
             } else {
                 Position position = hedge.apply(open, accountId, order.getTradingSymbolId(), order.getSide(),
                         order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage, now);
                 wallet.openMargin(margin, fee);
                 order.fill(position, tick.domainMarkPrice(), now);
-                fills.save(Fill.execute(order.getId(), tick.domainMarkPrice(), order.getQuantity(), tick.eventTime(), now,
+                Fill fill=fills.save(Fill.execute(order.getId(), tick.domainMarkPrice(), order.getQuantity(), tick.eventTime(), now,
                         BigDecimal.ZERO, fee, BigDecimal.ZERO));
                 byId.put(position.getId(), position);
-                committed("limit-filled", accountId, order.getId(), tick.tradingSymbolId());
+                committed("limit-filled", order, fill);
             }
             account.recordFinancialChange(now);
         }
@@ -138,16 +141,16 @@ public class AccountTriggerService {
         BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), order.getQuantity(), order.getFeeRate());
         if (wallet.getBalance().add(pnl).subtract(fee).signum() < 0) {
             order.reject("INSUFFICIENT_SETTLEMENT_CASH", now);
-            committed("close-rejected", order.getAccountId(), order.getId(), order.getTradingSymbolId());
+            committed("close-rejected", order, null);
             return;
         }
         Position.Settlement settlement = target.close(order.getQuantity(), price.domainMarkPrice(), now, false);
         wallet.settle(settlement.releasedMargin(), settlement.realizedPnl(), fee, BigDecimal.ZERO);
         order.fill(target, price.domainMarkPrice(), now);
-        fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
+        Fill fill=fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
                 settlement.realizedPnl(), fee, BigDecimal.ZERO));
         if (target.getStatus() != Position.Status.OPEN) { open.remove(target); byId.remove(target.getId()); }
-        committed("limit-close-filled", order.getAccountId(), order.getId(), order.getTradingSymbolId());
+        committed("limit-close-filled", order, fill);
     }
 
     private Map<Long, LatestPriceStore.Snapshot> snapshots(Set<Long> ids, Map<Long, LatestMarkPrice> book, Instant now) {
@@ -170,6 +173,7 @@ public class AccountTriggerService {
                     && position.getId().equals(order.getPositionId())) {
                 position.releaseCloseReservation(order.getQuantity());
                 order.reject("POSITION_LIQUIDATION", now);
+                events.record(order,null);
             }
         }
         BigDecimal fee = isolated.liquidationFee(price.domainMarkPrice(), position.getQuantity());
@@ -180,16 +184,17 @@ public class AccountTriggerService {
         String key = "liquidation:position:" + position.getId();
         TradingOrder order = orders.save(TradingOrder.market(position, TradingOrder.Action.LIQUIDATE,
                 settlement.quantity(), price.domainMarkPrice(), key, "0".repeat(64), now));
-        fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
+        Fill fill=fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
                 costs.grossPnl(), costs.fee(), costs.shortfallAdjustment()));
-        committed("liquidated", account.getId(), order.getId(), position.getTradingSymbolId());
+        committed("liquidated", order, fill);
         account.recordFinancialChange(now);
     }
 
-    private void committed(String result, Long accountId, Long orderId, Long symbolId) {
+    private void committed(String result, TradingOrder order, Fill fill) {
+        events.record(order,fill);
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
-                log.info("[Trading trigger] result={} accountId={} orderId={} symbolId={}", result, accountId, orderId, symbolId);
+                log.info("[Trading trigger] result={} accountId={} orderId={} symbolId={}", result, order.getAccountId(), order.getId(), order.getTradingSymbolId());
             }
         });
     }
