@@ -1,0 +1,5 @@
+# OAuth registration is opt-in locally; no dummy client credentials or generated signing keys.
+spring:
+  config:
+    activate:
+      on-profile: local
