@@ -4,7 +4,8 @@
 
 기존 Yogimangchi V1의 코드를 리팩터링하는 프로젝트가 아니라, V2의 목적과 구조에 맞게 **새로운 설계로 처음부터 구축한다.**
 
-기존 V1 코드는 참고하지 않는다.
+V1 기능 동등성 복원 작업에서는 기존 V1의 실제 제품 동작을 읽기 전용으로 조사한다.
+기술 구현은 현재 V2 구조를 유지하며 V1 코드를 그대로 복사하거나 과거의 정산·보안 문제를 재현하지 않는다.
 
 ---
 
@@ -97,6 +98,16 @@ OAuth2 로그인 성공 후 Yogimangchi 자체 JWT를 발급하고 이후 API �
 Guest 로그인 역시 자체 JWT를 발급하여 OAuth2 사용자와 동일한 인증 흐름을 사용한다.
 
 이를 통해 로그인 방식과 관계없이 Backend에서는 사용자를 동일한 방식으로 처리한다.
+
+현재 Content에는 Google/Kakao OAuth 로그인 증명, 약관·닉네임 가입, 자체 회원 JWT 발급과
+Refresh 회전·로그아웃, 본인 프로필 조회를 구현한다. 외부 OAuth2 공급자는 이 두 개로 제한한다.
+회원 Access JWT는15분이며 JSON 응답으로 제공하고 Frontend 메모리에서 Bearer로 사용한다.
+Refresh는 고정7일 HttpOnly 쿠키(운영 Secure)이며 DB에 해시만 보존한다.
+사용 시 회전하고 재사용 시 해당 로그인 세션 계열을 폐기한다. 갱신·로그아웃 등 쿠키 사용 요청에는 CSRF를 검증한다.
+로그아웃 후 이미 발급된 Access는 최대15분 유효할 수 있다. 인증 토큰을 URL에 넣지 않는다.
+현재 Trading의 기존 Guest Bearer는 유지하며 회원 JWT 계정 연동과 Guest JWT 전환은 별도 후속 단계다.
+Guest 금융 이력을 회원에게 자동 합치지 않는다. 실제 Frontend 변경은 Backend 작업에 포함하지 않는다.
+실행 설정과 정확한 API 계약은 [Content README](content-server/README.md), [Trading README](trading-server/README.md)를 따른다.
 
 ---
 
@@ -275,7 +286,8 @@ Trading 알림
 
 # 8. 애플리케이션 데이터 소유권
 
-현재는 공용 PostgreSQL Database `yogimangchi`를 사용하며, Trading은 `trading`, 향후 Content는 `content` Schema로 **데이터 소유권을 논리적으로 분리한다.** 현재 `content` Schema는 미리 생성하지 않는다.
+공용 PostgreSQL Database `yogimangchi`를 사용하며, Trading은 `trading`, Content는 `content` Schema로 **데이터 소유권을 논리적으로 분리한다.**
+각 서비스의 Flyway가 자신의 Schema만 관리한다. Content의 첫 migration은 실제 회원·인증 테이블을 생성하며 다른 서비스의 테이블에는 접근하지 않는다.
 
 ```text id="z9tqmv"
                 PostgreSQL
@@ -594,7 +606,7 @@ README
 API는 OpenAPI 3 기반으로 문서화한다.
 
 - Trading API 계약은 Controller/DTO에서 생성되는 개발 서버의 `/v3/api-docs`로 확인한다.
-- Content API 문서는 해당 애플리케이션 구현 시 제공한다.
+- Content API 계약도 Content 개발 서버의 `/v3/api-docs`에서 독립적으로 제공한다.
 
 개발 환경에서는 Swagger UI를 통해 API를 확인하고 테스트할 수 있다.
 운영 환경에서는 Swagger UI와 OpenAPI Docs endpoint를 외부에 노출하지 않는다.

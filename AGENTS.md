@@ -7,6 +7,7 @@
 특정 애플리케이션 또는 디렉터리에 별도의 `AGENTS.md`가 존재하는 경우 루트 규칙과 함께 해당 하위 규칙을 반드시 따른다.
 
 - `trading-server`를 수정할 경우 `trading-server/AGENTS.md`의 추가 규칙을 반드시 따른다.
+- `content-server`를 수정할 경우 `content-server/AGENTS.md`의 추가 규칙을 반드시 따른다.
 - 향후 다른 디렉터리에 별도의 `AGENTS.md`가 추가될 경우 해당 디렉터리 작업에는 그 규칙을 함께 적용한다.
 
 ---
@@ -108,7 +109,7 @@ Yogimangchi V2 Backend는 두 개의 독립된 Spring Boot 애플리케이션으
 - `content-server`와 `trading-server`의 책임을 임의로 합치거나 이동하지 않는다.
 - 두 애플리케이션은 향후 독립적으로 배포, 분리 및 확장할 수 있는 경계를 유지한다.
 - 공용 PostgreSQL Database 이름은 `yogimangchi`이며 애플리케이션의 데이터 소유권은 Schema 기준으로 분리한다.
-- Trading Schema는 `trading`, 향후 Content Schema는 `content`이며 현재 `content` Schema는 미리 생성하지 않는다.
+- Trading Schema는 `trading`, Content Schema는 `content`이며 각 서비스의 실제 기능에 필요한 테이블만 자신의 Flyway로 관리한다.
 - 다른 애플리케이션이 소유한 Entity를 현재 애플리케이션의 JPA Entity에서 연관관계로 참조하지 않는다.
 - 다른 애플리케이션이 소유한 테이블을 직접 조회, JOIN, INSERT, UPDATE 또는 DELETE하지 않는다.
 - 다른 애플리케이션의 데이터를 참조해야 하는 경우 필요한 식별자(ID)만 저장한다.
@@ -276,6 +277,12 @@ Rules:
 - `trading-server`는 JWT 인증을 위해 매 요청마다 `content-server`에 사용자 인증 여부를 조회하지 않는다.
 - 인증된 사용자는 애플리케이션 간에 `Member` Entity를 공유하지 않고 `memberId`를 기준으로 식별한다.
 - JWT Access/Refresh Token 구성과 클라이언트 저장 방식은 별도 결정 전까지 임의로 확정하지 않는다.
+
+2026-10-21 사용자 승인 계약: 회원 Access JWT15분(JSON 응답/Frontend 메모리), Refresh 고정7일
+HttpOnly·운영 Secure 쿠키, PostgreSQL 해시 저장·회전·재사용 계열 폐기, 쿠키 인증 요청 CSRF 검증.
+로그아웃은 Refresh를 폐기하고 기존 Access는 최대15분 유효할 수 있다. Google/Kakao 공급자 ID로
+회원을 구분하며 이메일 자동 계정 연결·Guest 금융 이력 자동 병합을 금지한다.
+현재 Trading Guest Bearer 유지와 최종 Guest JWT 전환을 구분하여 호환성과 소유권을 검증한다.
 
 ---
 

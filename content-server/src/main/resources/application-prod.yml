@@ -1,0 +1,28 @@
+spring:
+  datasource:
+    url: ${CONTENT_DB_URL}
+    username: ${CONTENT_DB_USERNAME}
+    password: ${CONTENT_DB_PASSWORD}
+  flyway:
+    url: ${CONTENT_DB_URL}
+    user: ${CONTENT_FLYWAY_USERNAME}
+    password: ${CONTENT_FLYWAY_PASSWORD}
+server:
+  address: 0.0.0.0
+  servlet:
+    session:
+      cookie:
+        secure: true
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+content:
+  auth:
+    issuer: ${YOGIMANGCHI_JWT_ISSUER}
+    frontend-return-uri: ${CONTENT_AUTH_RETURN_URI}
+    allowed-origins: ${CONTENT_HTTP_ALLOWED_ORIGINS}
+    secure-cookies: true
+  oauth:
+    enabled: ${CONTENT_OAUTH_ENABLED:true}
