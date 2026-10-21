@@ -1,7 +1,7 @@
 package com.yogimangchi.trading.tradingaccount.controller;
 
 import com.yogimangchi.trading.tradingaccount.dto.*;
-import com.yogimangchi.trading.tradingaccount.security.GuestPrincipal;
+import com.yogimangchi.trading.tradingaccount.security.TradingPrincipal;
 import com.yogimangchi.trading.tradingaccount.service.TradingAccountService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
@@ -32,25 +32,28 @@ public class TradingAccountController {
 
     @GetMapping("/account/wallet")
     @SecurityRequirement(name = "guestBearer")
-    @Operation(summary = "Read the authenticated guest's USDT wallet and current valuation",
+    @SecurityRequirement(name = "memberBearer")
+    @Operation(summary = "Read the authenticated trader's USDT wallet and current valuation",
             description = "401: missing/expired credential; 409 TRADING_BUSY: retry after lock contention; 503: authentication storage unavailable.")
-    public WalletResponse wallet(@AuthenticationPrincipal GuestPrincipal principal) {
+    public WalletResponse wallet(@AuthenticationPrincipal TradingPrincipal principal) {
         return accounts.wallet(principal.accountId());
     }
 
     @GetMapping("/account/positions")
     @SecurityRequirement(name = "guestBearer")
-    @Operation(summary = "Read the authenticated guest's integrated Hedge Mode positions",
+    @SecurityRequirement(name = "memberBearer")
+    @Operation(summary = "Read the authenticated trader's integrated Hedge Mode positions",
             description = "Each ISOLATED position has its own collateral threshold at its symbol's Mark Price, including maintenance and closing fee reserve. The opposite Hedge side, other symbols and unused wallet cash do not cover its losses. Gaps execute at actual Mark; the threshold is not a guaranteed fill price. Null/status explains unavailable target marks, no boundary, unsupported precision, already-at-risk exposure or a legacy margin conversion hold. 401: missing/expired credential; 409 TRADING_BUSY; 503: authentication storage unavailable.")
-    public List<PositionResponse> positions(@AuthenticationPrincipal GuestPrincipal principal) {
+    public List<PositionResponse> positions(@AuthenticationPrincipal TradingPrincipal principal) {
         return accounts.summary(principal.accountId()).positions();
     }
 
     @GetMapping("/account/summary")
     @SecurityRequirement(name = "guestBearer")
+    @SecurityRequirement(name = "memberBearer")
     @Operation(summary = "Read a coherent account, wallet and open-position snapshot",
             description = "Position liquidationPrice fields have the same independent isolated-collateral meaning as GET /account/positions. They are not guaranteed liquidation execution prices. Wallet gross realizedPnl, actual feesPaid and platform settlementAdjustment are separate; free cash excludes allocated/reserved collateral, not unrealized PnL. marginMode and marginTransitionStatus identify legacy conversion holds. 401: missing/expired credential; 409 TRADING_BUSY; 503: authentication storage unavailable.")
-    public AccountSummaryResponse summary(@AuthenticationPrincipal GuestPrincipal principal) {
+    public AccountSummaryResponse summary(@AuthenticationPrincipal TradingPrincipal principal) {
         return accounts.summary(principal.accountId());
     }
 }

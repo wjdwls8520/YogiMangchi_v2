@@ -22,10 +22,16 @@ public class Wallet {
     protected Wallet() { }
 
     public static Wallet open(Long accountId) {
+        return initialize(accountId,TradingMath.INITIAL_BALANCE);
+    }
+
+    public static Wallet emptyMemberWallet(Long accountId) { return initialize(accountId,BigDecimal.ZERO); }
+
+    private static Wallet initialize(Long accountId,BigDecimal initial) {
         if (accountId == null || accountId <= 0) throw new IllegalArgumentException("Account ID must be positive");
         Wallet wallet = new Wallet();
         wallet.accountId = accountId;
-        wallet.balance = TradingMath.amount(TradingMath.INITIAL_BALANCE);
+        wallet.balance = TradingMath.amount(initial);
         wallet.usedMargin = TradingMath.amount(BigDecimal.ZERO);
         wallet.reservedMargin = TradingMath.amount(BigDecimal.ZERO);
         wallet.realizedPnl = TradingMath.amount(BigDecimal.ZERO);

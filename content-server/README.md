@@ -2,7 +2,7 @@
 
 Java17 / Spring Boot3.5.16 / Gradle8.14.3 / PostgreSQL / Spring Security / springdoc2.9.1의 독립 Backend다.
 현재 구현은 **회원 인증 기반**이며 전체 V1 기능 이식 완료를 의미하지 않는다.
-Trading 금융 원장·Frontend를 수정하지 않는다. 회원 JWT의 Trading 계정 연동, Guest JWT 전환,
+Trading 금융 원장·Frontend를 직접 수정하지 않는다. 회원 JWT의 Trading 계정 연동은 [Trading 계약](../trading-server/README.md)을 따른다. Guest JWT 전환,
 프로필 변경·탈퇴·이미지·팔로우·커뮤니티는 후속 작업이다.
 
 ## 로그인과 토큰 계약

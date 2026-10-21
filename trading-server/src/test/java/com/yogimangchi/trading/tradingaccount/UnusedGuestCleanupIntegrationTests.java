@@ -32,6 +32,7 @@ import static org.assertj.core.api.Assertions.*;
 class UnusedGuestCleanupIntegrationTests {
     @Autowired TradingAccountService accounts;
     @Autowired UnusedGuestCleanupService cleanup;
+    @Autowired com.yogimangchi.trading.tradingaccount.service.MemberAccounts members;
     @Autowired GuestCredentialService credentials;
     @Autowired JdbcTemplate jdbc;
     @Autowired EntityManager em;
@@ -42,15 +43,13 @@ class UnusedGuestCleanupIntegrationTests {
         var valid = accounts.createGuest();
         var grace = expiredGuest();
         jdbc.update("update trading.trading_account set credential_expires_at=now()-interval '6 days' where id=?", grace.accountId());
-        var nonGuest = expiredGuest();
-        jdbc.update("update trading.trading_account set guest_account=false where id=?", nonGuest.accountId());
+        var nonGuest = members.open(90000001L);
         assertThat(credentials.authenticate(old.accessToken())).isEmpty();
         assertThat(credentials.authenticate(valid.accessToken())).isPresent();
         assertThat(cleanup.cleanupBatch()).isEqualTo(1);
         assertThat(exists(old.accountId())).isFalse();
         assertThat(jdbc.queryForObject("select count(*) from trading.wallet where account_id=?", Integer.class, old.accountId())).isZero();
         assertThat(exists(valid.accountId()) && exists(grace.accountId()) && exists(nonGuest.accountId())).isTrue();
-        assertThat(credentials.authenticate(nonGuest.accessToken())).isEmpty();
         assertThat(cleanup.cleanupBatch()).isZero();
     }
 

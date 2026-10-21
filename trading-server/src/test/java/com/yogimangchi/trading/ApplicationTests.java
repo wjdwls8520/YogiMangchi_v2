@@ -163,7 +163,11 @@ class ApplicationTests {
         for (String endpoint : new String[]{"summary", "wallet", "positions", "orders", "orders/pending"}) {
             var operation = paths.path("/api/v1/trading/account/" + endpoint).path("get");
             assertThat(operation.path("responses").has("200")).as(endpoint).isTrue();
-            assertThat(operation.at("/security/0/guestBearer").isArray()).as(endpoint).isTrue();
+            var security=operation.path("security");
+            assertThat(security).as(endpoint).hasSize(2);
+            assertThat(security).allSatisfy(requirement -> assertThat(requirement.size()).isEqualTo(1));
+            assertThat(security).anyMatch(requirement -> requirement.path("guestBearer").isArray());
+            assertThat(security).anyMatch(requirement -> requirement.path("memberBearer").isArray());
         }
         assertThat(document.at("/components/securitySchemes/guestBearer/scheme").asText()).isEqualTo("bearer");
         assertThat(schemas.at("/AccountSummaryResponse/properties/wallet/$ref").asText())

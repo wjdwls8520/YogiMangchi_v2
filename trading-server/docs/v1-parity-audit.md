@@ -196,3 +196,31 @@ OAuth state와 짧은 임시 세션을 사용하고 인증 토큰을 URL에 넣�
 Access JWT15분은 JSON 응답/Frontend 메모리, Refresh7일은 HttpOnly·운영 Secure 쿠키로 관리하며
 DB에는 해시만 저장하고 사용 시 회전한다. 갱신·로그아웃은 CSRF 검증을 적용한다.
 로그아웃은 Refresh를 폐기하며 기존 Access는 최대15분 유효할 수 있다. Frontend 구현은 승인 범위에 포함되지 않는다.
+
+## Phase 4 회원 인증 기반 구현
+
+Content 인증 기반은 `feature/content/oauth-member-auth`, PR26으로 develop에 병합했다.
+Google OIDC/Kakao OAuth2만 등록하며 provider ID·약관/개인정보 동의·닉네임 가입과 본인 프로필 읽기를 제공한다.
+RS256 Access15분·Refresh 고정7일·해시 저장·회전·재사용 family 폐기·CSRF를 구현했다.
+공개 JWKS에는 개인키가 없고 OAuth 임시 세션으로 업무 API를 인증하지 않는다.
+2026-10-21 Content `clean build` 및 최종 `build` 성공,20개 테스트 통과(실패·오류·건너뜀0).
+실제 OAuth 네트워크/운영 Secret은 사용하지 않았다.
+
+`feature/trading/member-jwt-accounts`는 회원 JWT의 공개키 검증과 명시적 본인 선물 계정 생성을 연결한다.
+V14의 member_id는 Content 테이블을 읽거나 FK로 연결하지 않는 scalar ID다.
+동시 최초 생성은 PostgreSQL Transaction 잠금과 Unique로 하나만 생성하며 Wallet도 같은 Transaction에 저장한다.
+회원 선물은 V1 배분에 맞춰0 USDT로 시작하며 기존 Guest10000 계정·원장은 자동 연결하거나 변경하지 않는다.
+인증/GET에는 생성·충전 부작용이 없다. 본인 계정 미생성은409로 구분한다.
+기존 private REST/WS는 검증한 소유권으로 범위를 제한하며 JWT 만료 시 WS를 종료한다.
+현재 Trading의 로컬 단일 설정에 prod Profile을 추가하여 Swagger 차단·별도 migration 계정·HTTPS issuer/명시적 Origin을 요구한다.
+
+2026-10-22 Trading `clean build` 성공, 전체525개 테스트 통과(실패·오류·건너뜀0).
+JWT 위조·공급자 issuer·잘못된 audience/token_use·만료·Guest 역할 거부, 인증/GET 무생성,
+반복·동시 회원 계정 생성, Guest/다른 회원 원장 격리, 실제 개인 WS JWT 인증·만료,
+V14 기존 Credential/Wallet 보존·반복 migration과 기존 금융/복구 회귀를 확인했다.
+JWT 검증을 실제 활성화한 prod Profile 기동·공개키 로딩·Swagger 차단 테스트도 별도 재실행하여 통과했다.
+
+U01~U03 중 OAuth/가입/토큰 기반과 U04 본인 프로필 읽기, 회원 소유권 경계는 구현했지만 Phase4 전체 완료는 아니다.
+Guest 최종 JWT 전환, 프로필 변경·탈퇴·이미지·팔로우/관심 종목, 지갑 이체·성과·공개 포트폴리오는 후속 작업이다.
+Spot/Mock·대회/랭킹·커뮤니티/알림 센터 역시 조사표의 미구현 항목으로 남는다.
+사용자 DB와 Frontend는 변경하지 않았다.
