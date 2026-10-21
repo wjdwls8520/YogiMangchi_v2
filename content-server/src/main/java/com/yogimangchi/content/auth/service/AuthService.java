@@ -38,7 +38,7 @@ public class AuthService {
         if(identities.findByProviderAndProviderSubject(identity.provider(),identity.subject()).isPresent() || members.existsByNickname(request.nickname()))
             throw new AuthFailure("MEMBER_ALREADY_EXISTS",HttpStatus.CONFLICT);
         if(!request.termAgree() || !request.privateAgree() || request.nickname()==null || !request.nickname().matches("[가-힣a-zA-Z0-9]{2,12}")
-                || request.profileMessage()!=null && request.profileMessage().length()>300) throw new AuthFailure("INVALID_REQUEST",HttpStatus.BAD_REQUEST);
+                || request.profileMessage()!=null && (request.profileMessage().length()>255 || request.profileMessage().indexOf('\0')>=0)) throw new AuthFailure("INVALID_REQUEST",HttpStatus.BAD_REQUEST);
         Instant now=now();
         var member=members.save(Member.signup(request.nickname(),request.profileMessage()==null ? "" : request.profileMessage(),now));
         identities.save(OAuthIdentity.link(member.getId(),identity.provider(),identity.subject(),identity.email()));

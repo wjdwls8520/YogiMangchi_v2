@@ -38,10 +38,14 @@ public class JwtKeys {
         var decoder=NimbusJwtDecoder.withPublicKey(key.toRSAPublicKey()).build();
         OAuth2TokenValidator<Jwt> contract=jwt -> jwt.getExpiresAt()!=null && jwt.getIssuedAt()!=null
                 && jwt.getAudience()!=null && jwt.getAudience().contains("content") && "access".equals(jwt.getClaimAsString("token_use"))
-                && jwt.getSubject()!=null && jwt.getSubject().matches("[1-9][0-9]{0,18}")
+                && validSubject(jwt.getSubject())
                 ? OAuth2TokenValidatorResult.success() : OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token"));
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(new JwtTimestampValidator(java.time.Duration.ZERO),new JwtIssuerValidator(issuer),contract));
         return decoder;
+    }
+    private static boolean validSubject(String value) {
+        if(value==null || !value.matches("[1-9][0-9]{0,18}")) return false;
+        try { return Long.parseLong(value)>0; } catch(NumberFormatException failure) { return false; }
     }
 
     @RestController
