@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    url: ${TRADING_DB_URL}
+    username: ${TRADING_DB_USERNAME}
+    password: ${TRADING_DB_PASSWORD}
+  flyway:
+    url: ${TRADING_DB_URL}
+    user: ${TRADING_FLYWAY_USERNAME}
+    password: ${TRADING_FLYWAY_PASSWORD}
+server:
+  address: 0.0.0.0
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+trading:
+  http:
+    allowed-origins: ${TRADING_HTTP_ALLOWED_ORIGINS}
+  member-auth:
+    enabled: ${TRADING_MEMBER_AUTH_ENABLED:true}
+    issuer: ${YOGIMANGCHI_JWT_ISSUER}
+    public-key-path: ${TRADING_JWT_PUBLIC_KEY_PATH}
+marketdata:
+  websocket:
+    allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS}

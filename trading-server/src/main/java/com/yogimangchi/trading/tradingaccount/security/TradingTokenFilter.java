@@ -5,7 +5,6 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.List;
 import org.springframework.dao.DataAccessException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -13,9 +12,9 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-public class GuestTokenFilter extends OncePerRequestFilter {
-    private final GuestCredentialService credentials;
-    public GuestTokenFilter(GuestCredentialService credentials) { this.credentials = credentials; }
+public class TradingTokenFilter extends OncePerRequestFilter {
+    private final TradingCredentials credentials;
+    public TradingTokenFilter(TradingCredentials credentials) { this.credentials = credentials; }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -30,19 +29,24 @@ public class GuestTokenFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String header = request.getHeader("Authorization");
         if (header != null) {
-            var principal = java.util.Optional.<GuestPrincipal>empty();
+            if(java.util.Collections.list(request.getHeaders("Authorization")).size()!=1) {
+                problem(response,401,"INVALID_ACCESS_TOKEN","Exactly one bearer credential is required"); return;
+            }
+            var principal = java.util.Optional.<TradingPrincipal>empty();
             try {
-                if (header.startsWith("Bearer ") && header.length() < 128) principal = credentials.authenticate(header.substring(7));
+                if (header.startsWith("Bearer ") && header.length() <= 8199) principal = credentials.authenticate(header.substring(7));
             } catch (DataAccessException | CannotCreateTransactionException exception) {
                 problem(response, 503, "AUTHENTICATION_UNAVAILABLE", "Authentication is temporarily unavailable");
                 return;
             }
             if (principal.isEmpty()) {
-                problem(response, 401, "INVALID_GUEST_CREDENTIAL", "Guest credential is invalid or expired");
+                problem(response, 401, header.contains(".") ? "INVALID_ACCESS_TOKEN" : "INVALID_GUEST_CREDENTIAL", "Trading credential is invalid or expired");
                 return;
             }
-            SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-                    principal.get(), null, List.of(new SimpleGrantedAuthority("ROLE_TRADER"))));
+            var authorities=new java.util.ArrayList<SimpleGrantedAuthority>();
+            if(principal.get().accountId()!=null) authorities.add(new SimpleGrantedAuthority("ROLE_TRADER"));
+            if(principal.get().memberId()!=null) authorities.add(new SimpleGrantedAuthority("ROLE_MEMBER"));
+            SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(principal.get(),null,authorities));
         }
         chain.doFilter(request, response);
     }

@@ -16,10 +16,12 @@ public class TradingAccount {
     private Status status;
     @Column(nullable = false, updatable = false)
     private boolean guestAccount;
-    @Column(nullable = false, length = 64, updatable = false)
+    @Column(length = 64, updatable = false)
     private String credentialHash;
-    @Column(nullable = false, updatable = false)
+    @Column(updatable = false)
     private Instant credentialExpiresAt;
+    @Column(updatable=false,unique=true)
+    private Long memberId;
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
     @Column(nullable = false)
@@ -51,6 +53,14 @@ public class TradingAccount {
         lastFinancialChangeAt = priceVectorTime;
     }
 
+    public static TradingAccount member(Long memberId,Instant now) {
+        if(memberId==null || memberId<=0) throw new IllegalArgumentException("Member ID must be positive");
+        TradingAccount result=new TradingAccount(); result.memberId=memberId; result.guestAccount=false;
+        result.status=Status.ACTIVE; result.createdAt=Objects.requireNonNull(now); result.lastFinancialChangeAt=now;
+        result.marginTransitionStatus=MarginTransitionStatus.COMPLETE; result.isolatedActivatedAt=now;
+        return result;
+    }
+
     public void declareBankrupt() { status = Status.BANKRUPT; }
     public boolean isIsolated() { return marginTransitionStatus == MarginTransitionStatus.COMPLETE; }
     public void requireMarginReview() {
@@ -66,6 +76,7 @@ public class TradingAccount {
     public String getMarginMode() { return isIsolated() ? "ISOLATED" : "LEGACY_CROSS"; }
     public MarginTransitionStatus getMarginTransitionStatus() { return marginTransitionStatus; }
     public Long getId() { return id; }
+    public Long getMemberId() { return memberId; }
     public Status getStatus() { return status; }
     public boolean isGuestAccount() { return guestAccount; }
     public Instant getCreatedAt() { return createdAt; }

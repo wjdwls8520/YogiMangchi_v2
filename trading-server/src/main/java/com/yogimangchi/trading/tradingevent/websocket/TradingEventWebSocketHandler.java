@@ -24,7 +24,7 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
     private static final int MAX_CLIENTS=256, MAX_PER_ACCOUNT=3;
     private static final long SECOND=TimeUnit.SECONDS.toNanos(1);
     private final ObjectMapper mapper;
-    private final GuestCredentialService credentials;
+    private final TradingCredentials credentials;
     private final TradingEvents events;
     private final Map<String,Client> clients=new ConcurrentHashMap<>();
     private final Object registrations=new Object();
@@ -34,7 +34,7 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
     private final ThreadPoolExecutor closers=pool(2,256,"trading-event-close");
     private final ScheduledExecutorService clock=Executors.newSingleThreadScheduledExecutor(threads("trading-event-watch"));
 
-    public TradingEventWebSocketHandler(ObjectMapper mapper,GuestCredentialService credentials,TradingEvents events) {
+    public TradingEventWebSocketHandler(ObjectMapper mapper,TradingCredentials credentials,TradingEvents events) {
         this.mapper=mapper; this.credentials=credentials; this.events=events;
     }
     @PostConstruct public void start() { clock.scheduleWithFixedDelay(this::sweep,250,250,TimeUnit.MILLISECONDS); }
@@ -85,7 +85,7 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
 
     private void authenticate(Client client,String token,long cursor) {
         try {
-            var principal=credentials.authenticate(token).filter(p -> p.expiresAt().isAfter(Instant.now())).orElse(null);
+            var principal=credentials.authenticate(token).filter(p -> p.accountId()!=null && p.expiresAt().isAfter(Instant.now())).orElse(null);
             if(principal==null) { disconnect(client,new CloseStatus(1008,"Invalid or expired credential")); return; }
             synchronized(registrations) {
                 if(client.closed.get()) return;
@@ -112,7 +112,7 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
                 if(client.sender.sendingLongerThan(now,5*SECOND) || now-client.activity>60*SECOND) {
                     disconnect(client,new CloseStatus(1013,"Trading stream timed out")); continue;
                 }
-                GuestPrincipal principal=client.principal;
+                TradingPrincipal principal=client.principal;
                 if(principal==null) {
                     if(now-client.connected>5*SECOND) disconnect(client,new CloseStatus(1008,"Authentication timed out"));
                     continue;
@@ -194,7 +194,7 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
         final AtomicBoolean closed=new AtomicBoolean(),authenticating=new AtomicBoolean(),reading=new AtomicBoolean();
         final long connected=System.nanoTime();
         volatile long activity=connected,heartbeat=connected,cursor,nextPoll;
-        volatile GuestPrincipal principal;
+        volatile TradingPrincipal principal;
         long rateWindow=connected; int messages;
         Client(WebSocketSession session) {
             this.session=session;

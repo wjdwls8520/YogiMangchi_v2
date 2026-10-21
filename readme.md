@@ -105,7 +105,8 @@ Refresh 회전·로그아웃, 본인 프로필 조회를 구현한다. 외부 OA
 Refresh는 고정7일 HttpOnly 쿠키(운영 Secure)이며 DB에 해시만 보존한다.
 사용 시 회전하고 재사용 시 해당 로그인 세션 계열을 폐기한다. 갱신·로그아웃 등 쿠키 사용 요청에는 CSRF를 검증한다.
 로그아웃 후 이미 발급된 Access는 최대15분 유효할 수 있다. 인증 토큰을 URL에 넣지 않는다.
-현재 Trading의 기존 Guest Bearer는 유지하며 회원 JWT 계정 연동과 Guest JWT 전환은 별도 후속 단계다.
+Trading은 자체 회원 JWT를 공개키로 검증하고 memberId로 자신의 선물 계정을 구분한다.
+회원 계정은 명시적으로 생성하며 초기 선물 잔액은0 USDT다. 기존 Guest Bearer/체험 자산은 유지하고 Guest JWT 전환은 후속 단계다.
 Guest 금융 이력을 회원에게 자동 합치지 않는다. 실제 Frontend 변경은 Backend 작업에 포함하지 않는다.
 실행 설정과 정확한 API 계약은 [Content README](content-server/README.md), [Trading README](trading-server/README.md)를 따른다.
 

@@ -11,7 +11,8 @@ Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/�
 금융 Phase 1은 Hedge + Isolated Only로 전환했다. 전체 V1 이식은 아직 완료되지 않았으며,
 Phase 2는 MARKET/LIMIT 거래 수수료와 서버 주문 비용·비율 수량 API를 추가한다.
 Phase 3은 전용 체결·종료 Position 이력과 영속 개인 거래 이벤트를 추가한다.
-회원/현물/대회/Content는 후속 Phase다. 호환 Frontend 준비 전 배포하지 않는다.
+Phase4의 Content Google/Kakao 회원 인증과 Trading 회원 JWT 계정 연결을 제공한다.
+Guest JWT 전환·프로필 확장/탈퇴·현물·대회·커뮤니티는 후속 작업이다. 호환 Frontend 준비 전 배포하지 않는다.
 
 - [V1/V2 기능 비교·누락·단계별 이식 기준](docs/v1-parity-audit.md)
 - [V1 Controller 전체와 Frontend API 소비 근거](docs/v1-api-inventory.md)
@@ -44,6 +45,7 @@ Java 17 이상과 Gradle 8.4 이상의 8.x를 지원하므로 기존 Wrapper를 
 | --- | --- |
 | `spring-boot-starter-web` | Spring MVC와 HTTP 서버 |
 | `spring-boot-starter-security` | 공개 경로 지정과 나머지 요청 차단 |
+| `spring-boot-starter-oauth2-resource-server` | Content 자체 JWT 공개키·issuer/audience/만료 검증. 별도 JWT 라이브러리 없이 Spring Nimbus JOSE 사용 |
 | `spring-boot-starter-data-jpa` | TradingSymbol 영속성과 트랜잭션 |
 | `spring-boot-starter-data-redis` | Lettuce 연결, 공유 Snapshot, Pub/Sub와 재생 가능한 Stream |
 | `spring-boot-starter-websocket` | Browser HTTP Upgrade, Session과 Raw JSON WebSocket 전송 |
@@ -59,12 +61,55 @@ Boot 4의 `starter-webmvc`, `starter-webmvc-test`, `starter-security-test`를 �
 Gradle `platform`으로 Boot BOM을 사용하며 별도의 dependency-management 플러그인은 없다.
 Redis는 현재 공유 가격/이벤트 기능에 사용한다. 기존 JDK WebSocket과 JPA는 Redis 프로토콜을
 제공하지 않으므로 Boot BOM이 관리하는 Spring Data Redis/Lettuce를 사용한다. 별도 버전을 고정하지 않는다.
-Validation, Lombok, JWT/OAuth2, H2 의존성은 추가하지 않았다. 트리거/주문은 기존 JPA/JDBC와 Redis 기능을 재사용한다.
+Validation, Lombok, OAuth2 Client, H2 의존성은 추가하지 않았다. 외부 로그인은 Content만 담당하며 Trading은 자체 JWT 검증만 수행한다.
+트리거/주문은 기존 JPA/JDBC와 Redis 기능을 재사용한다.
+
+## 회원 JWT와 계정 소유권
+
+외부 OAuth2는 Content의 Google/Kakao만 사용한다. Trading은 공급자 토큰이나 프론트엔드가 전달한
+회원/계정 ID를 신뢰하지 않고 Content 자체 Access JWT의 서명·issuer·audience=trading·token_use=access·만료·MEMBER/ADMIN claim을 검증한다.
+Content RSA 공개키만 로컬 파일로 읽으므로 매 요청 Content 호출이 없으며 서명 개인키를 공유하지 않는다.
+JWT의 임의 accountId claim도 계정 선택에 사용하지 않는다. 서버가 memberId로 자신의 trading_account를 찾는다.
+
+| 설정 | 계약 |
+|---|---|
+| TRADING_MEMBER_AUTH_ENABLED | 기본/local false로 기존 Guest 실행 유지, prod 기본true |
+| YOGIMANGCHI_JWT_ISSUER | Content 발급값과 일치, prod HTTPS 필수 |
+| TRADING_JWT_PUBLIC_KEY_PATH | 신뢰한 Content 키의 X509/SubjectPublicKeyInfo RSA PEM 공개키 파일.2048비트 이상 |
+
+공개키는 인증된 운영 경로로 배포한다. 임의 사용자 URL/토큰의 jku/jwk 값으로 검증 키를 선택하지 않는다.
+Content `/.well-known/jwks.json`은 공개키 확인용이며 현재 Trading은 고정 공개키 파일을 사용한다.
+키 교체는 Content/Trading 동시 배포 순서와 기존15분 Access를 고려해야 한다. 실제 Secret/개인키는 Repository에 넣지 않는다.
+
+회원은 `POST /api/v1/trading/accounts/member`를 명시적으로 호출한다. Content 자체 JWT만 허용하며
+응답은 `{accountId,memberId,status,quoteAsset,balance}`다. 최초에는 V1 본투자 선물 배분에 맞춘 **0 USDT** Wallet을 생성한다.
+같은 회원의 반복/동시 요청은 동일 계정과 현재 잔액을 반환한다. 반복 생성으로 초기 자금을 지급하거나 잔액을 리셋하지 않는다.
+명시적 서비스 간 식별자인 member_id만 저장하며 Content Member와 Entity 관계/FK/직접 조회는 없다.
+V14는 member_id UNIQUE·Guest/회원 소유권 CHECK를 추가하고 회원의 Guest credential 필드를 NULL로 구분한다.
+기존 Guest의 ID·Credential·Wallet·Order/Fill/Position은 변경하지 않는다. 기존 수동 비Guest 데이터가 소유권 제약에 맞지 않으면
+임의 귀속하지 않고 migration이 실패한다. 운영 전 해당 데이터를 별도로 확인해야 한다.
+
+첫 생성에는 잠글 행이 없으므로 member별 PostgreSQL Transaction advisory lock과 DB UNIQUE를 함께 사용한다.
+잠금은2초, 업무 Transaction은5초로 제한한다. Wallet 생성도 같은 Transaction이며 반복 조회는 기존 AccountLock을 따른다.
+인증/GET은 계정이나 Wallet을 자동 생성하지 않는다. 아직 계정을 열지 않은 회원의 금융 요청은409 TRADING_ACCOUNT_REQUIRED다.
+계정 생성 이후 기존 `/account/**` 및 `/ws/trading`에 자체 JWT를 사용할 수 있다. WebSocket은 동일 첫 프레임 credential 필드로 인증하고
+JWT 만료 시 연결·대기 전송을 종료한다. 공개 시세 WS에는 금융 이벤트를 넣지 않는다.
+
+기존 Guest Bearer와10000 USDT 체험 계정은 유지한다. Guest가 회원 API로 전환되거나 금융 이력이 자동 합쳐지지 않는다.
+Guest 정리 작업은 회원을 삭제하지 않는다. 두 인증은 공통 TradingPrincipal로 수렴하지만 소유권은 독립적이다.
+기존 Guest용401 코드/응답을 유지하며 JWT 검증 실패는 INVALID_ACCESS_TOKEN이다.
+기존 private API의 Swagger security는 guestBearer 또는 memberBearer이며, 회원 계정 생성은 memberBearer 전용이다.
+회원 선물에 자금을 배정하는 Spot/이체는 Phase5 후속 기능이다. 테스트의 직접 잔액 fixture를 실제 입금 API로 간주하지 않는다.
+
+Frontend 인계: Content Access를 메모리 Bearer로 전달하고 회원 계정을 한 번 명시적으로 연다.
+Guest Account ID/토큰을 회원 계정으로 재사용하거나 합산하지 않는다. 계정 생성 전409를 온보딩으로 처리하고,
+JWT 갱신·로그아웃은 Content CSRF/Refresh 계약을 따른다. Access는15분이며 로그아웃 후 만료까지 유효할 수 있다.
+이 작업에서 Frontend 변경, 실제 사용자 DB migration, 자산 이체, Guest JWT 전환·자동 병합은 수행하지 않았다.
 
 ## PostgreSQL과 마이그레이션
 
 Content와 Trading은 공용 Database `yogimangchi`를 사용하고, 애플리케이션별 Schema와
-데이터 소유권을 분리한다. Trading은 `trading`, 향후 Content는 `content` 스키마를 사용한다.
+데이터 소유권을 분리한다. Trading은 `trading`, Content는 `content` 스키마를 사용한다.
 `trading`은 Trading Server의 Flyway/Hibernate 공통 기본 스키마다.
 
 - V1: 테이블과 PK, Unique/Check/Not-null 제약 생성
@@ -101,13 +146,18 @@ Java Mapping 검증은 정확한 Decimal 나눗셈이 불가능한 배수도 거
 | `YOGIMANGCHI_REDIS_HOST` | Trading Server의 Redis 주소; 기본 localhost |
 | `YOGIMANGCHI_REDIS_PASSWORD` | Redis 인증이 필요한 배포 환경의 비밀번호; 기본 미설정 |
 
-현재는 `application.yml` 하나를 사용하고 Profile을 분리하지 않는다. 하나의 로컬 계정으로
+기본/local 설정은 `application.yml`을 사용한다. 하나의 로컬 계정으로
 Flyway 초기화와 애플리케이션을 실행한다. JDBC URL은 `localhost`의 지정 포트와
 고정 Database 이름 `yogimangchi`로 구성하며, 기본 Schema는 `trading`이다.
 실제 비밀번호/운영 주소를 저장소에 넣지 않는다. 루트 `.env.example`은 예시이며
 **Spring Boot는 `.env`를 자동으로 읽지 않는다.** 셸/IDE/배포 환경에서 변수를 전달한다.
 루트 `.env`는 Docker Compose용이며, IntelliJ에서 Trading Server를 실행할 때는
 Run Configuration의 Environment Variables에 Spring Boot용 환경변수를 별도로 전달한다.
+
+회원 인증 도입과 함께 `application-prod.yml`을 추가한다. prod는 외부 HTTP 바인딩, Swagger/OpenAPI 차단,
+TRADING_DB_URL/USERNAME/PASSWORD 앱 계정과 TRADING_FLYWAY_USERNAME/PASSWORD migration 계정을 별도로 요구한다.
+운영 Frontend의 TRADING_HTTP_ALLOWED_ORIGINS/TRADING_WS_ALLOWED_ORIGINS도 명시해야 한다.
+Trading 기본 Schema는 두 환경 모두 trading이며 ddl-auto=validate/open-in-view=false를 유지한다.
 
 ## 로컬 실행
 
@@ -152,7 +202,7 @@ Compose 위치 또는 Volume 키 변경으로 Volume의 실제 이름이 달라�
 현재 로컬 개발에서는 운영 전용 계정이나 별도 운영 설정을 사용하지 않는다.
 운영 계정 권한과 환경 설정 분리는 실제 운영 배포가 필요해질 때 결정한다.
 Swagger/OpenAPI는 기본 설정에서 활성화하며 서버는 `127.0.0.1`에 바인딩한다.
-운영 배포 시에는 Swagger/OpenAPI가 외부에 노출되지 않도록 별도 차단 구성을 도입한다.
+prod Profile에서는 Swagger/OpenAPI를 비활성화하고 Security 공개 경로에서도 제외한다.
 운영 TLS, 비밀값 전달, 백업/복구 및 Nginx/네트워크의 포트 노출 제한은 배포 시 별도로 검증한다.
 
 ## API와 보안
@@ -169,7 +219,7 @@ Provider/Provider Symbol/status는 공개 DTO에 없다. Repository는 필요한
 Service가 읽기 전용 트랜잭션을 가진다.
 
 Symbol 목록, Guest 계정 생성, 공개 가격 WebSocket과 로컬 문서에 필요한 경로만 공개한다.
-계정 조회는 아래 Guest Bearer 인증을 요구하며 명시하지 않은 다른 업무 경로는 차단한다.
+계정 조회는 Guest Bearer 또는 Content 회원 JWT 인증을 요구하며 명시하지 않은 다른 업무 경로는 차단한다.
 기본 계정 미생성, 폼 로그인/Basic/로그아웃/요청 캐시 비활성화를 유지한다.
 거래 REST는 Stateless이며 Cookie 인증이 없으므로 `/api/v1/trading/**`만 CSRF 검사에서 제외한다.
 다른 경로에는 기존 CSRF 보호를 유지한다. REST CORS 허용 Origin은 기본 localhost/127.0.0.1의 5173이며
@@ -485,7 +535,7 @@ URL/query에 credential을 넣지 않는다. 운영에서는 WSS를 사용하고
 Origin은 기존 `marketdata.websocket.allowed-origins`의 명시 목록만 허용한다.
 
 ```json
-{"type":"AUTHENTICATE","credential":"<existing guest credential>","afterEventId":"0"}
+{"type":"AUTHENTICATE","credential":"<guest bearer or Content access JWT>","afterEventId":"0"}
 ```
 
 afterEventId는 생략 시0이며, 받았던 마지막 eventId 문자열로 재접속한다. accountId를 지정할 수 없다.

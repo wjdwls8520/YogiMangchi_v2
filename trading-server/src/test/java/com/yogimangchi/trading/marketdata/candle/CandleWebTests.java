@@ -5,7 +5,7 @@ import com.yogimangchi.trading.binance.candle.BinanceCandleTargetLoader;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTarget;
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.security.SecurityConfig;
-import com.yogimangchi.trading.tradingaccount.security.GuestCredentialService;
+import com.yogimangchi.trading.tradingaccount.security.TradingCredentials;
 import java.util.List;
 import java.util.Optional;
 import java.time.Instant;
@@ -30,7 +30,7 @@ class CandleWebTests {
     @MockitoBean BinanceCandleTargetLoader targets;
     @MockitoBean BinanceCandleClient provider;
     @MockitoBean RedisCandleCache cache;
-    @MockitoBean GuestCredentialService credentials;
+    @MockitoBean TradingCredentials credentials;
 
     @BeforeEach void setup() {
         when(targets.load(1)).thenReturn(new BinanceSubscriptionTarget(1L, "BTC", "BTCUSDT", 1));
