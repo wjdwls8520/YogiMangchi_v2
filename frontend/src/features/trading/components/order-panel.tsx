@@ -1,16 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useTradingNotices } from "./trading-notices";
+import { useEffect, useRef, useState } from "react";
 import { AccountWallet } from "./account-wallet";
 import { OrderChoices, OrderInput, OrderLeverage } from "./order-controls";
 import { useSelectedMarket } from "./selected-market-provider";
 import { useGuestSession } from "./trading-data-provider";
 import { freshMarkPrice } from "../market/selected-market";
 import { useTradingSummary } from "../api/queries";
+import { readQuote } from "../api/quote";
+import { useOrderQuote } from "../api/quote-query";
+import { mutationMessage } from "../api/mutation-request";
+import { isolatedReady } from "../api/margin";
 import { useSymbolLeverage } from "../api/leverage";
 import { useTradingMutation } from "../api/mutations";
-import { estimatedOrder, validLimitPrice, validQuantity, validSizingPrice } from "../api/order-input";
-import { formForSymbol, formForSide, formForBookPrice, ratioInputQuantity, marketableLimitIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
+import { validLimitPrice, validQuantity, validSizingPrice } from "../api/order-input";
+import { formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
 import { formatMarketPrice } from "../market/price-format";
@@ -18,6 +23,7 @@ import { GuestStartPrompt } from "./guest-access";
 import { WalletOverview } from "./wallet-overview";
 import { CloseOrderPanel } from "./close-order-panel";
 import { TradingNavigation } from "./trading-navigation";
+import { GuestRetry } from "./guest-retry";
 
 type Form = OpenForm & { identity: string };
 export function OrderPanel() {
@@ -29,12 +35,18 @@ export function OrderPanel() {
     <div id="order-open-panel" role="tabpanel" aria-labelledby="order-open-tab" hidden={intent!=="open"}><OpenOrderPanel active={intent==="open"}/></div>
     <div id="order-close-panel" role="tabpanel" aria-labelledby="order-close-tab" hidden={intent!=="close"}><CloseOrderPanel active={intent==="close"}/></div>
     {snapshot.phase === "ready" && account.data && <WalletOverview wallet={account.data.wallet} />}
+    <GuestRetry />
   </section>;
 }
 function OpenOrderPanel({active}:{active:boolean}) {
   const { symbol, market, bookSelection } = useSelectedMarket();
-  const { snapshot } = useGuestSession();
+  const { session, snapshot } = useGuestSession();
   const account = useTradingSummary();
+  const notices = useTradingNotices();
+  const sizingRequest = useRef<AbortController | null>(null), sizingTicket = useRef(0), submitting = useRef(false);
+  const preflightRequest = useRef<AbortController | null>(null);
+  const [sizing,setSizing] = useState<{identity:string;symbolId:number;ticket:number}|null>(null);
+  const [preparing,setPreparing] = useState(false);
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
   const [stored, setForm] = useState<Form>({ identity, symbolId: null, type: "MARKET", side: "LONG", leverage: 10, quantity: "", limitPrice: "", ratio: 0 });
   const leverageState = useSymbolLeverage(symbol?.id ?? null);
@@ -46,16 +58,16 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const form: Form = { ...formForSide(switched ? { ...formForSymbol(stored, symbol?.id ?? null), quantity: "", limitPrice: "", ratio: 0 } : stored, stored.side, leverage), identity };
   // Commit the reset, so switching A -> B -> A cannot resurrect A's old inputs.
   if (switched) { setForm(form); setResult(null); setServerWarning(null); }
+  useEffect(() => () => { sizingRequest.current?.abort(); preflightRequest.current?.abort(); }, [identity,symbol?.id]);
   const action = useTradingMutation((issue, command, requestSession) => {
     if (command.kind !== "open" || command.tradingSymbolId !== symbol?.id || `${requestSession.accountId}:${requestSession.generation}` !== identity
       || command.quantity !== form.quantity.trim() || command.type !== form.type || command.leverage !== leverage
       || (command.type === "LIMIT" && command.limitPrice !== form.limitPrice.trim())) return;
     setServerWarning({ side: command.side, issue });
-    window.alert(issue.message);
   });
   const mark = freshMarkPrice(market);
-  const ready = leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
-  const locked = action.pending || action.unconfirmed || leverageState.pending || snapshot.phase !== "ready";
+  const ready = isolatedReady(account.data?.wallet) && leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
+  const locked = snapshot.retrying || preparing || action.pending || action.unconfirmed || leverageState.pending || snapshot.phase !== "ready";
   if (bookSelection !== seenBookSelection) {
     setSeenBookSelection(bookSelection);
     const next = bookSelection && bookSelection.identity === identity && active && !locked ? formForBookPrice(form,bookSelection.symbolId,bookSelection.price) : null;
@@ -66,10 +78,31 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const valid = validQuantity(quantity) && (form.type === "MARKET" || validLimitPrice(price));
   const canSize = ready && account.data?.wallet.availableBalance != null && (form.type === "LIMIT" ? validLimitPrice(price) : validSizingPrice(price));
   const ratioDisabled = locked || (form.type === "MARKET" && !canSize);
-  const estimate = leverageState.data ? estimatedOrder(quantity, price, form.leverage) : null;
-  function update(values: Partial<OpenForm>) { setForm({ ...formForSide({...form,...values},values.side??form.side,leverage), identity }); setResult(null); setServerWarning(null); action.clearError(); }
-  function selectRatio(percent: number) {
-    update({ ratio: percent, quantity: ratioInputQuantity(form.type,account.data?.wallet.availableBalance,price,form.leverage,percent) });
+  const quoteRequest = symbol ? {tradingSymbolId:symbol.id,type:form.type,side:form.side,quantity,...(form.type === "LIMIT" ? {limitPrice:price} : {})} : null;
+  const quote = useOrderQuote(quoteRequest, ready && valid && !preparing);
+  const estimate = quote.data?.leverage === leverage ? quote.data : undefined;
+  const sizingPending = sizing?.identity === identity && sizing.symbolId === symbol?.id;
+  function update(values: Partial<OpenForm>) {
+    sizingRequest.current?.abort(); sizingRequest.current=null; sizingTicket.current++; setSizing(null);
+    setForm({ ...formForSide({...form,...values},values.side??form.side,leverage), identity }); setResult(null); setServerWarning(null); action.clearError();
+  }
+  async function selectRatio(percent: number) {
+    if (locked) return;
+    if (percent === 0 || (form.type === "LIMIT" && !validLimitPrice(price))) { update({ratio:percent,quantity:"0"}); return; }
+    if (!canSize || !symbol) return;
+    update({ratio:percent});
+    const ticket=++sizingTicket.current, controller=new AbortController(); sizingRequest.current=controller;
+    setSizing({identity,symbolId:symbol.id,ticket});
+    try {
+      const value=await readQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side:form.side,balancePercentage:percent,...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
+      if (sizingTicket.current!==ticket || value.leverage!==leverage) return;
+      setForm(current=>current.identity===identity&&current.symbolId===symbol.id&&current.ratio===percent&&current.type===form.type&&current.side===form.side&&current.limitPrice===form.limitPrice ? {...current,quantity:value.quantity,ratio:percent} : current);
+    } catch(error) {
+      if (!controller.signal.aborted && sizingTicket.current===ticket) notices.push({kind:"error",title:"비율 수량을 계산하지 못했습니다",message:mutationMessage(error)});
+    } finally {
+      if (sizingTicket.current===ticket) sizingRequest.current=null;
+      setSizing(current=>current?.ticket===ticket ? null : current);
+    }
   }
   function complete(order: TradingOrder | null) {
     if (!order) return;
@@ -77,14 +110,22 @@ function OpenOrderPanel({active}:{active:boolean}) {
     setForm((current) => current.identity === identity && current.symbolId === order.tradingSymbolId ? { ...current, quantity: "", ratio: 0 } : current);
   }
   async function submit(side: "LONG" | "SHORT") {
-    if (locked || leverageState.blocked()) return;
+    if (locked || leverageState.blocked() || submitting.current || sizingRequest.current) return;
     update({ side });
     const commandForm = formForSide(form,side,leverage);
     const issue = preflightOrder(commandForm, side, ready, freshMarkPrice(market)?.decimal, account.data?.wallet.availableBalance);
-    if (issue) { setServerWarning({ side, issue }); window.alert(issue.message); return; }
+    if (issue) { setServerWarning({ side, issue }); notices.push({kind:"error",title:"주문을 제출할 수 없습니다",message:issue.message}); return; }
     if (!symbol) return;
-    complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity,
-      leverage: commandForm.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
+    submitting.current=true; setPreparing(true);
+    const controller=new AbortController(); preflightRequest.current=controller;
+    try {
+      const value=await readQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side,quantity,...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
+      if(controller.signal.aborted)return;
+      if (value.leverage!==leverage) { await leverageState.refresh(); notices.push({kind:"warning",title:"레버리지를 확인해 주세요",message:"서버 설정을 다시 조회했습니다. 확인 후 직접 주문해 주세요."}); return; }
+      complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity,
+        leverage: value.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
+    } catch(error) { if(!controller.signal.aborted)notices.push({kind:"error",title:"주문 견적을 확인하지 못했습니다",message:mutationMessage(error)}); }
+    finally { preflightRequest.current=null;submitting.current=false;setPreparing(false); }
   }
   function warning(side: OpenForm["side"]) {
     if (serverWarning?.side === side) return serverWarning.issue;
@@ -113,15 +154,18 @@ function OpenOrderPanel({active}:{active:boolean}) {
             <p className="order-input-hint">선택 비율로 수량을 채웁니다. 가격 변경 시 수량은 유지됩니다.</p>
             {!canSize && <p role="status" className="order-input-hint">{sizingUnavailable(form.type,price,ready,account.data?.wallet.availableBalance)}</p>}
           </div>
-          <dl className="order-estimates"><div><dt>예상 주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>예상 필요 증거금 · <span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {leverageState.data ? `${form.leverage}×` : "—"}</span></dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div></dl>
+          <dl className="order-estimates"><div><dt>예상 주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>예상 필요 증거금 · <span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {leverageState.data ? `${form.leverage}×` : "—"}</span></dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>예상 수수료</dt><dd>{formatDecimal(estimate?.estimatedFee)} USDT</dd></div><div><dt>총 필요 자산 · 담보 + 수수료</dt><dd>{formatDecimal(estimate?.totalRequired)} USDT</dd></div></dl>
         </div>
       </details>
+      {sizingPending && <p role="status" className="order-input-hint">서버에서 수수료 포함 비율 수량을 계산 중입니다.</p>}
+      {quote.error && <p role="status" className="order-input-hint">서버 견적: {quote.error}</p>}
       {form.quantity && !validQuantity(quantity) && !(form.type === "LIMIT" && quantity === "0" && !validLimitPrice(price)) && <p role="alert" className="order-input-hint">수량은 0보다 커야 하며 소수점은 8자리까지 지원합니다.</p>}
       {form.type === "LIMIT" && form.limitPrice && !validLimitPrice(price) && <p role="alert" className="order-input-hint">양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.</p>}
+      {account.data && !isolatedReady(account.data.wallet) && <p role="alert" className="order-warning">이전 담보 방식의 전환 확인이 필요합니다. 전환 완료 전에는 주문할 수 없습니다.</p>}
       {!ready && <p role="status" className="order-input-hint">거래할 계정과 선택 종목의 최신 시세를 확인하는 중입니다.</p>}
       <div className="order-actions" role="group" aria-label="포지션 진입">
         {(["LONG", "SHORT"] as const).map((side) => <div key={side}>
-          <button type="button" disabled={!ready || !valid || locked || !leverageState.ready} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{leverageState.data ? `${leverage}×` : "—"} · {action.pending ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
+          <button type="button" disabled={!ready || !valid || locked || !leverageState.ready || sizingPending} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{leverageState.data ? `${leverage}×` : "—"} · {action.pending || preparing ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
           {warning(side) && <p role="alert" className="order-warning" data-warning-side={side}>{warning(side)?.message}</p>}
         </div>)}
       </div>

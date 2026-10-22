@@ -1,10 +1,18 @@
 import { decimal, id, instant, invalidContract, list, nullable, record, text } from "./contracts";
+import { marginMode, transitionStatus } from "./margin";
 import type { TradingSymbol } from "../market/catalog";
 
 export function parsePosition(value: unknown) {
   const row = record(value);
   if (row.side !== "LONG" && row.side !== "SHORT") return invalidContract();
+  const liquidationPriceStatus = text(row.liquidationPriceStatus);
+  if (!["ESTIMATED_DOWNWARD","ESTIMATED_UPWARD","PRICE_UNAVAILABLE","NO_THRESHOLD","UNSUPPORTED_MODEL","ALREADY_AT_RISK","MARGIN_MIGRATION_REQUIRED"].includes(liquidationPriceStatus)
+    || !["ISOLATED","CROSS"].includes(text(row.openedMarginMode))) return invalidContract();
+  const liquidationPrice = nullable(row.liquidationPrice, decimal), liquidationPriceAsOf = nullable(row.liquidationPriceAsOf, instant);
+  if (liquidationPriceStatus.startsWith("ESTIMATED_") && (liquidationPrice === null || liquidationPriceAsOf === null || !/^[0-9.]+$/.test(liquidationPrice) || !/[1-9]/.test(liquidationPrice))) return invalidContract();
+  if (!liquidationPriceStatus.startsWith("ESTIMATED_") && liquidationPrice !== null) return invalidContract();
   return {
+    marginMode: marginMode(row.marginMode), openedMarginMode: text(row.openedMarginMode), liquidationPrice, liquidationPriceStatus, liquidationPriceAsOf,
     id: id(row.id), tradingSymbolId: id(row.tradingSymbolId), side: row.side,
     quantity: decimal(row.quantity), reservedCloseQuantity: decimal(row.reservedCloseQuantity),
     freeCloseQuantity: decimal(row.freeCloseQuantity), entryPrice: decimal(row.entryPrice),
@@ -33,7 +41,7 @@ export function parseSummary(value: unknown, accountId: number | null) {
   return {
     accountId, status: text(row.status), createdAt: instant(row.createdAt), valuedAt: instant(row.valuedAt),
     wallet: {
-      quoteAsset: "USDT", balance: decimal(wallet.balance), usedMargin: decimal(wallet.usedMargin),
+      quoteAsset: "USDT", marginMode: marginMode(wallet.marginMode), marginTransitionStatus: transitionStatus(wallet.marginTransitionStatus), feesPaid: decimal(wallet.feesPaid), settlementAdjustment: decimal(wallet.settlementAdjustment), balance: decimal(wallet.balance), usedMargin: decimal(wallet.usedMargin),
       reservedMargin: decimal(wallet.reservedMargin), realizedPnl: decimal(wallet.realizedPnl),
       unrealizedPnl: nullable(wallet.unrealizedPnl, decimal), equity: nullable(wallet.equity, decimal),
       availableBalance: nullable(wallet.availableBalance, decimal), valuationStatus: text(wallet.valuationStatus),

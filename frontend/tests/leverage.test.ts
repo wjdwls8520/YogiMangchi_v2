@@ -8,7 +8,7 @@ import { positionValuation } from "../src/features/trading/api/position-display"
 import { parsePosition } from "../src/features/trading/api/account";
 import { mutationMessage } from "../src/features/trading/api/mutation-request";
 
-const setting = { tradingSymbolId: 1, leverage: 10, maxLeverage: 100, marginMode: "CROSS", updatedAt: null };
+const setting = { tradingSymbolId: 1, leverage: 10, maxLeverage: 100, marginMode: "ISOLATED", marginTransitionStatus:"COMPLETE", updatedAt: null };
 const epoch = Date.parse("2026-10-19T00:00:00Z"), origin = "http://trade.example";
 function setup(transport: typeof fetch) {
   const values = new Map([[`yogimangchi.guest.v1:${origin}`, JSON.stringify({ accountId: 1,
@@ -17,10 +17,10 @@ function setup(transport: typeof fetch) {
   return { session: createGuestSession(origin, () => storage, transport, () => epoch), storage };
 }
 
-test("leverage contract binds symbol identity, strict integer range and CROSS mode", () => {
+test("leverage contract binds symbol identity, strict integer range and ISOLATED mode", () => {
   assert.deepEqual(parseLeverage(setting, 1), setting);
   assert.equal(parseLeverage({...setting,leverage:100},1).leverage,100);
-  for (const changed of [{leverage:101},{leverage:0},{leverage:1.5},{maxLeverage:20,leverage:21},{tradingSymbolId:2},{marginMode:"ISOLATED"},{updatedAt:"bad"}])
+  for (const changed of [{leverage:101},{leverage:0},{leverage:1.5},{maxLeverage:20,leverage:21},{tradingSymbolId:2},{marginMode:"CROSS"},{updatedAt:"bad"}])
     assert.throws(()=>parseLeverage({...setting,...changed},1));
   assert.throws(()=>leveragePath(0));
 });
@@ -69,7 +69,7 @@ test("leverage response from an old Guest is discarded, and 401 never silently c
 });
 
 test("updated server margin changes ROE while leverage alone never changes absolute PnL",()=>{
-  const position=parsePosition({id:1,tradingSymbolId:1,side:"LONG",quantity:"2",reservedCloseQuantity:"0",freeCloseQuantity:"2",entryPrice:"100",leverage:10,margin:"20",status:"OPEN",realizedPnl:"0",markPrice:"110",unrealizedPnl:"20",priceStatus:"FRESH",priceEventTime:new Date(epoch).toISOString(),openedAt:new Date(epoch).toISOString()});
+  const position=parsePosition({marginMode:"ISOLATED",openedMarginMode:"ISOLATED",liquidationPrice:null,liquidationPriceStatus:"NO_THRESHOLD",liquidationPriceAsOf:null,id:1,tradingSymbolId:1,side:"LONG",quantity:"2",reservedCloseQuantity:"0",freeCloseQuantity:"2",entryPrice:"100",leverage:10,margin:"20",status:"OPEN",realizedPnl:"0",markPrice:"110",unrealizedPnl:"20",priceStatus:"FRESH",priceEventTime:new Date(epoch).toISOString(),openedAt:new Date(epoch).toISOString()});
   const mark={decimal:"110",value:110,eventTime:epoch,expiresAt:epoch+5000};
   assert.equal(positionValuation(position,mark,epoch).roe,"100");
   const after=positionValuation({...position,leverage:100,margin:"2"},mark,epoch);

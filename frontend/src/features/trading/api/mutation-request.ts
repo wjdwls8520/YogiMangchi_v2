@@ -50,6 +50,9 @@ export function createTradingIntent(send: (request: TradingIntent) => Promise<Tr
 }
 
 const businessMessages: Record<string, string> = {
+  MARGIN_MIGRATION_REQUIRED:"담보 전환이 완료되지 않아 거래가 제한됩니다. Guest 재도전 또는 계정 상태 확인이 필요합니다.",
+  GUEST_ACCOUNT_REQUIRED:"Guest 계정에서만 재도전할 수 있습니다.",
+  GUEST_CREDENTIAL_EXPIRED:"Guest 인증이 만료되었습니다. 새 모의투자는 직접 시작해 주세요.",
   LEVERAGE_MISMATCH: "종목 레버리지가 변경되었습니다. 서버 설정을 다시 조회했습니다. 레버리지를 확인한 뒤 직접 주문해 주세요.",
   INVALID_LEVERAGE: "서버가 허용하는 범위의 정수 레버리지를 선택해 주세요.",
   POSITION_NOT_FOUND: "포지션을 찾을 수 없습니다. 최신 포지션 목록을 확인해 주세요.",
