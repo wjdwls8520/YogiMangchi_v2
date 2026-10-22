@@ -16,11 +16,12 @@ import org.springframework.web.cors.*;
 @Configuration(proxyBeanMethods=false)
 public class SecurityConfig {
     @Bean @Order(2)
-    SecurityFilterChain apiChain(HttpSecurity http,CorsConfigurationSource cors,@Value("${springdoc.api-docs.enabled}") boolean docs) throws Exception {
+    SecurityFilterChain apiChain(HttpSecurity http,CorsConfigurationSource cors,@Value("${springdoc.api-docs.enabled}") boolean docs,org.springframework.jdbc.core.JdbcTemplate jdbc) throws Exception {
         http.authorizeHttpRequests(a -> {
-            a.requestMatchers(HttpMethod.GET,"/.well-known/jwks.json","/api/v1/auth/csrf","/api/v1/auth/flow").permitAll();
+            a.requestMatchers(HttpMethod.GET,"/.well-known/jwks.json","/api/v1/auth/csrf","/api/v1/auth/flow","/api/v1/policies/current","/api/v1/policies/{type:TERMS|PRIVACY}/{version}").permitAll();
             a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout").permitAll();
-            a.requestMatchers(HttpMethod.GET,"/api/v1/members/me").authenticated();
+            a.requestMatchers(HttpMethod.GET,"/api/v1/members/me","/api/v1/members/me/consents","/api/v1/members/me/withdrawal").authenticated();
+            a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/consents").authenticated();
             a.requestMatchers(HttpMethod.PATCH,"/api/v1/members/me/profile").authenticated();
             a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/withdrawal").authenticated();
             a.requestMatchers(HttpMethod.PUT,"/api/v1/members/{memberId:[0-9]+}/follows").authenticated();
@@ -31,7 +32,7 @@ public class SecurityConfig {
             a.anyRequest().denyAll();
         }).cors(c -> c.configurationSource(cors))
                 .csrf(c -> c.csrfTokenRepository(new HttpSessionCsrfTokenRepository())
-                        .requireCsrfProtectionMatcher(r -> r.getRequestURI().substring(r.getContextPath().length()).startsWith("/api/v1/auth/")
+                        .requireCsrfProtectionMatcher(r -> r.getRequestURI().substring(r.getContextPath().length()).matches("/api/v1/auth/.*|/api/v1/members/me/withdrawal")
                                 && !Set.of("GET","HEAD","OPTIONS","TRACE").contains(r.getMethod())))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .securityContext(c -> c.securityContextRepository(new NullSecurityContextRepository()))
@@ -40,6 +41,10 @@ public class SecurityConfig {
                 .formLogin(c -> c.disable()).httpBasic(c -> c.disable()).logout(c -> c.disable()).requestCache(c -> c.disable())
                 .exceptionHandling(e -> e.authenticationEntryPoint((request,response,failure) -> ApiErrors.write(response,401,"AUTHENTICATION_REQUIRED"))
                         .accessDeniedHandler((request,response,failure) -> ApiErrors.write(response,403,"ACCESS_DENIED")));
+        // Keep the existing auth CSRF protection. Add protection for the OAuth-cookie/Bearer
+        // withdrawal flow, because Resource Server's default Bearer exemption would skip it.
+        http.addFilterBefore(new WithdrawalCsrfFilter(),org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
+        http.addFilterAfter(new ActiveMemberFilter(jdbc),org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
         return http.build();
     }
     @Bean CorsConfigurationSource cors(@Value("${content.auth.allowed-origins}") String value) {

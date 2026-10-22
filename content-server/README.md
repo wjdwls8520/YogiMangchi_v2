@@ -34,8 +34,8 @@ Refresh/로그아웃/가입/로그인 완료는 세션에 바인딩한 CSRF 검�
 | OAuth 시작 | GET /oauth2/authorization/google 또는 /kakao | 활성화 시에만 제공. state, Google nonce 생성 |
 | Provider callback | GET /login/oauth2/code/google 또는 /kakao | Spring Security가 code/state·OIDC를 검증. 고정 Frontend URI로 리다이렉트, URL에 자체 토큰 없음 |
 | CSRF 준비 | GET /api/v1/auth/csrf | credentials:include, `{headerName,token}` 반환. 이후 변경 요청에 이 헤더 사용 |
-| 증명 확인 | GET /api/v1/auth/flow |5분 로그인 증명 세션, SIGNUP_REQUIRED 또는 LOGIN_READY. 미인증401 |
-| 신규 가입 | POST /api/v1/auth/signup | nickname,termAgree,privateAgree,선택 profileMessage. 동의 둘 다 true, 닉네임 Unicode 문자/숫자1~8 코드 포인트. 잘못된 입력400, 중복409 |
+| 증명 확인 | GET /api/v1/auth/flow |5분 로그인 증명 세션, SIGNUP_REQUIRED, LOGIN_READY 또는 WITHDRAWAL_PENDING. 미인증401 |
+| 신규 가입 | POST /api/v1/auth/signup | nickname,termAgree,privateAgree,termsVersion,privacyVersion,선택 profileMessage. 동의 둘 다 true, 닉네임 Unicode 문자/숫자1~8 코드 포인트. 잘못된 입력400, 중복409 |
 | 기존 회원 | POST /api/v1/auth/login/complete | 검증된 증명을 소비하고 JWT JSON+Refresh 쿠키 발급 |
 | 갱신 | POST /api/v1/auth/refresh | Refresh 쿠키+CSRF, 새 Access JSON+회전 쿠키. 만료·재사용401 |
 | 로그아웃 | POST /api/v1/auth/logout | Refresh 쿠키+CSRF,204. 반복 안전 |
@@ -43,7 +43,7 @@ Refresh/로그아웃/가입/로그인 완료는 세션에 바인딩한 CSRF 검�
 | 공개 프로필 | GET /api/v1/members/{memberId} | ACTIVE 회원만 조회, 이메일·권한·공급자 식별자 제외. 미존재/탈퇴404 |
 | 닉네임 확인 | GET /api/v1/members/nickname/availability?nickname=... | 공개 사전 확인. 최종 저장 시 DB 고유 제약으로 재검증 |
 | 프로필 수정 | PATCH /api/v1/members/me/profile | 본인 Bearer만 허용. nickname/profileMessage 중 하나 이상. 중복409, 검증400 |
-| 탈퇴 | POST /api/v1/members/me/withdrawal | 본인 Bearer.202 PENDING 접수, Trading 확인 후 반복 요청200 COMPLETED. 반복 안전 |
+| 탈퇴 | POST /api/v1/members/me/withdrawal | 본인 Bearer+최근 동일 OAuth 증명 세션+CSRF+확인 본문.202 PENDING, Trading 확인 후 COMPLETED. GET 동일 경로로 상태 조회 |
 | 팔로우/취소 | PUT/DELETE /api/v1/members/{memberId}/follows | 본인 Bearer, 반복 안전. 자기 자신400, 미존재/탈퇴 대상404 |
 | 관계/집계 | GET /api/v1/members/{memberId}/follows | 공개 followerCount/followingCount. 선택 Bearer로 followed/follower/mine 확인 |
 | 팔로워/팔로잉 | GET /api/v1/members/{memberId}/followers 또는 /followings | 공개 목록. cursorId, size1~10(기본10), keyword12자 이하 |
@@ -76,29 +76,32 @@ DB VARCHAR(12)와 이전 migration은 변경하지 않는다. PostgreSQL 문자 
 탈퇴는 양방향 관계를 같은 Content Transaction에서 비활성화하며 일반 조회·집계에서 제외한다.
 이미지·bestCount·팔로우 알림은 구현하지 않은 값을 응답에 꾸며 넣지 않는다. 알림 저장/전달은 Content 알림 단계에서 연결한다.
 
-## 탈퇴 계약
+## 탈퇴·재가입·동의·회원 계정 생성 계약
 
-회원은 즉시 WITHDRAWN/withdrawnAt으로 소프트 삭제하고 프로필 메시지를 비운다. 공개 조회·로그인·갱신·프로필 변경을
-차단하며 모든 Refresh 계열을 폐기하고 브라우저 Refresh 쿠키와 임시 세션을 제거한다. 회원/OAuth 연결/가입 동의 이력은 물리 삭제하지 않는다. 닉네임은 계속 예약되며,
-동일 OAuth 계정의 재가입·개인정보 파기 정책은 이 endpoint에서 임의로 구현하지 않는다.
+최신 계약은 [회원 생애주기](docs/member-lifecycle.md)를 따른다. 기존 무본문 탈퇴 요청은 허용하지 않는다.
+탈퇴는 WITHDRAWING/PENDING 접수 → Trading 계정 잠금·금융 정리 커밋/204 → Content 개인정보 파기·WITHDRAWN/COMPLETED 순서다.
+PENDING은 탈퇴 확정이 아니다. Trading 확인 전 네트워크 장애를 완료로 표시하지 않는다.
+이미 발급된 JWT의 Content 회원 기능은 WITHDRAWING부터 차단하고, Trading은 정리 커밋부터 모든 금융 접근·체결·청산을 차단한다.
+확정 뒤에는 새 체결이 발생할 수 없다. 분산 서버 간 한 순간의 원자적 커밋을 약속하지 않는다.
 
-동일 Transaction에서 `content.member_withdrawal`에 PENDING 요청을 저장한다. Trading DB를 직접 수정하지 않는다.
-전송을 활성화하면 최대10건씩 별도 HTTP로 보내고 Trading204 응답 후 COMPLETED로 저장한다.
-실패 시5초부터 최대5분 간격으로 재시도하며 재시작 후에도 DB 요청을 이어 처리한다. 중복 전송은 Trading에서 멱등 처리한다.
-Content 서명키로60초짜리 전용 JWT(audience=trading-internal, token_use=member_withdrawal, sub=대상 memberId)를 발급한다.
-일반 회원/Guest 토큰은 내부 API에서 사용할 수 없다. 토큰·내부 오류 응답 본문을 저장하거나 로그에 남기지 않는다.
+동일 Google/Kakao 계정은 개인정보 파기 완료 후 SIGNUP_REQUIRED로 다시 가입할 수 있다. 반드시 새 memberId를 만들며 이전 금융 이력을 옮기지 않는다.
+닉네임은 WITHDRAWN에서 NULL, 프로필 메시지는 빈 문자열이다. OAuthIdentity(이메일/소셜 식별값), 모든 Refresh 인증 기록,
+불필요한 동의 이력과 기존 동의 시각은 제거한다. 회원 ID·탈퇴 상태·시각·최소 확인 버전/시각과 거래 참조는 보존한다.
+현재 이미지·외부 파일·커뮤니티는 없으므로 그런 데이터를 파기했다고 보고하지 않는다. 다른 기기의 임시 OAuth 증명은 최대5분이며
+과거 계정 인증을 복구하지 못한다. 백업/접속 로그 파기는 운영 환경별 별도 확인이 필요하다.
 
-Trading은 대기 주문을 취소하고 예약 금액을 해제하며 열린 포지션을 CLOSED/closeReason=MEMBER_WITHDRAWAL로 종료한다.
-실시간 시세를 기다리지 않고 Fill·청산가·추가 손익·수수료를 만들지 않는다. 기존 체결/실현 손익/수수료/잔액은 보존한다.
-탈퇴 종료는 정상 매매 종료 집계에서 제외하며 계정은 WITHDRAWN으로 유지해 재생성·기존 JWT 사용을 차단한다.
-Content 접수와 Trading 완료는 한 Transaction이 아니므로202는 전체 처리 완료를 의미하지 않는다.
-전송 전에는 기존 Access로 Trading을 사용할 수 있으며 이 구간은 전송 지연 또는 Access 만료(최대15분)에 영향을 받는다.
-탈퇴 후 토큰 만료로 상태 조회가 불가능해져도 영속 전송은 계속된다. 아직 없는 커뮤니티 데이터 삭제는 구현하지 않는다.
+정책 버전은 TERMS=ym-terms-v1, PRIVACY=ym-privacy-v1이다. `/api/v1/policies/current` 및 각 documentUrl에서
+동일 버전의 고정된 개발용 초안과 SHA-256을 읽을 수 있다. 운영자/문의처/위탁/보유기간은 운영 전 확정한다.
+동의는 가입과 같은 Transaction에서 버전별 서버 시각으로 기록한다. 기존 회원의 미상 버전 동의를 새로 위조하지 않는다.
+`GET/POST /api/v1/members/me/consents`로 재동의 상태와 제출을 처리한다. 과거 기록과 최초 동의 시각은 덮어쓰지 않는다.
 
-운영 Frontend와 Content API는 HTTPS의 **동일 site** 도메인(예: app.example.com/api.example.com)으로 배치한다.
-로컬도 localhost와127.0.0.1을 섞지 않고 동일한 호스트 이름을 사용한다.
-Vercel 기본 도메인과 별도 API 도메인은 cross-site여서 Lax 쿠키가 정상 전달되지 않는다.
-CORS는 명시한 Origin과 credentials만 허용한다. 이 Backend 작업은 Frontend 코드를 구현하지 않는다.
+신규 가입은 `member_trading_provision`에 PENDING 요청을 같은 Transaction으로 저장한다.
+기존 Content→Trading 신뢰 URL/서명키와60초 전용 JWT(token_use=member_provisioning)로 회원 계정 생성을 재전송한다.
+이 토큰은 탈퇴 API에 사용할 수 없다. Trading의 공개 회원 계정 생성 API도 같은 멱등한 생성 경로를 사용한다.
+Content의 `CONTENT_WITHDRAWAL_DELIVERY_ENABLED` 설정이 탈퇴·계정 생성 전달을 함께 활성화한다(운영 기본true).
+HTTP는 Content DB Transaction 밖에서 실행하며2초 연결/3초 요청 제한, 지연 재시도 최대300초, 배치10건이다.
+Trading이204를 보낸 뒤 Content 업데이트가 실패하면 요청이 남아 재전송된다. 금융 생성/탈퇴는 중복 실행에 안전하다.
+
 
 ## 실행
 
@@ -168,3 +171,8 @@ HTTP503 재시도 대기/새 worker 재개/전용 JWT 서명·계약/204 완료 
 [Kakao REST](https://developers.kakao.com/docs/ko/kakaologin/rest-api),
 [Spring OAuth2 Login](https://docs.spring.io/spring-security/reference/6.5/servlet/oauth2/login/advanced.html),
 [Spring CSRF](https://docs.spring.io/spring-security/reference/6.5/servlet/exploits/csrf.html).
+
+2026-10-23 회원 생애주기 보강 후 Java17 clean build 성공,96개 테스트 통과(실패·오류·건너뜀0).
+버전 동의/가입/outbox 원자성, 기존 미상 동의와 재동의 append, 문서 해시·불변성, 탈퇴 확인/실제 CSRF/본인 OAuth,
+Google·Kakao 재가입의 새 ID/닉네임 재사용, 개인정보·Refresh 파기, 동시 signup/refresh·탈퇴, HTTP 생성 전달 재시도와 V3→V4 이관을 검증했다.
+실제 외부 OAuth 및 Frontend/Content/Trading 전체 사용자 시나리오는 별도 검증 단계다.

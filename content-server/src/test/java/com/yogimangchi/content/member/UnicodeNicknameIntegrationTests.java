@@ -43,7 +43,7 @@ class UnicodeNicknameIntegrationTests extends TestEnvironment {
                     .andExpect(status().isOk()).andExpect(jsonPath("$.available").value(true));
             var identity=identity();
             var result=mvc.perform(post("/api/v1/auth/signup").session(proof(identity)).with(csrf()).contentType("application/json")
-                    .content(json.writeValueAsString(new SignupRequest(name,true,true,"")))).andExpect(status().isOk())
+                    .content(json.writeValueAsString(new SignupRequest(name,true,true,"","ym-terms-v1","ym-privacy-v1")))).andExpect(status().isOk())
                     .andExpect(jsonPath("$.nickname").value(name)).andReturn();
             var access=json.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
             Long memberId=access.path("memberId").longValue(); String bearer="Bearer "+access.path("accessToken").asText();
@@ -56,7 +56,7 @@ class UnicodeNicknameIntegrationTests extends TestEnvironment {
             mvc.perform(get("/api/v1/members/nickname/availability").param("nickname",name))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.available").value(false));
             mvc.perform(post("/api/v1/auth/signup").session(proof(identity())).with(csrf()).contentType("application/json")
-                    .content(json.writeValueAsString(new SignupRequest(name,true,true,"")))).andExpect(status().isConflict());
+                    .content(json.writeValueAsString(new SignupRequest(name,true,true,"","ym-terms-v1","ym-privacy-v1")))).andExpect(status().isConflict());
             var other=member();
             mvc.perform(patch("/api/v1/members/me/profile").header("Authorization","Bearer "+other.access().accessToken()).contentType("application/json")
                     .content(json.writeValueAsString(new UpdateProfileRequest(name,null))))
@@ -70,10 +70,10 @@ class UnicodeNicknameIntegrationTests extends TestEnvironment {
         for(String name:List.of("","abcdefghi","\uD801\uDC00".repeat(9),"a b","a\n","a\t","a!","\uD83D\uDE00","a\u200B","a\u2060","a\uFEFF","a\u00A0")) {
             mvc.perform(get("/api/v1/members/nickname/availability").param("nickname",name)).andExpect(status().isBadRequest());
             mvc.perform(post("/api/v1/auth/signup").session(proof(identity())).with(csrf()).contentType("application/json")
-                    .content(json.writeValueAsString(new SignupRequest(name,true,true,"")))).andExpect(status().isBadRequest());
+                    .content(json.writeValueAsString(new SignupRequest(name,true,true,"","ym-terms-v1","ym-privacy-v1")))).andExpect(status().isBadRequest());
             mvc.perform(patch("/api/v1/members/me/profile").header("Authorization","Bearer "+own.access().accessToken()).contentType("application/json")
                     .content(json.writeValueAsString(new UpdateProfileRequest(name,null)))).andExpect(status().isBadRequest());
-            assertThatThrownBy(() -> auth.signup(identity(),new SignupRequest(name,true,true,""))).isInstanceOf(AuthFailure.class);
+            assertThatThrownBy(() -> auth.signup(identity(),new SignupRequest(name,true,true,"","ym-terms-v1","ym-privacy-v1"))).isInstanceOf(AuthFailure.class);
             assertThatThrownBy(() -> profiles.nicknameAvailable(name)).isInstanceOf(AuthFailure.class);
             assertThatThrownBy(() -> profiles.change(own.access().memberId(),new UpdateProfileRequest(name,null))).isInstanceOf(AuthFailure.class);
         }
@@ -83,7 +83,7 @@ class UnicodeNicknameIntegrationTests extends TestEnvironment {
 
     @Test void legacyNineToTwelveCharacterNamesRemainReadableLoginAndRefreshCapable() throws Exception {
         for(int length=9;length<=12;length++) {
-            var identity=identity(); var own=auth.signup(identity,new SignupRequest(randomName(),true,true,"original"));
+            var identity=identity(); var own=auth.signup(identity,new SignupRequest(randomName(),true,true,"original","ym-terms-v1","ym-privacy-v1"));
             String legacy="legacy"+"a".repeat(length-6);
             jdbc.update("update content.member set nickname=? where id=?",legacy,own.access().memberId());
             mvc.perform(get("/api/v1/members/"+own.access().memberId())).andExpect(status().isOk()).andExpect(jsonPath("$.nickname").value(legacy));
@@ -107,7 +107,7 @@ class UnicodeNicknameIntegrationTests extends TestEnvironment {
 
     @Test void followSearchSupportsSupplementaryNamesAndLegacyTwelveCharacterNames() throws Exception {
         var actor=member(); String name="\uD800\uDF48".repeat(8); // Gothic letters.
-        var target=auth.signup(identity(),new SignupRequest(name,true,true,""));
+        var target=auth.signup(identity(),new SignupRequest(name,true,true,"","ym-terms-v1","ym-privacy-v1"));
         follows.change(actor.access().memberId(),target.access().memberId(),true);
         String endpoint="/api/v1/members/"+actor.access().memberId()+"/followings";
         mvc.perform(get(endpoint).param("keyword",name)).andExpect(status().isOk()).andExpect(jsonPath("$.content[0].nickname").value(name));
@@ -125,7 +125,7 @@ class UnicodeNicknameIntegrationTests extends TestEnvironment {
             assertThat(field.path("description").asText()).contains("code point");
         }
     }
-    private AuthService.Issued member() { return auth.signup(identity(),new SignupRequest(randomName(),true,true,"")); }
+    private AuthService.Issued member() { return auth.signup(identity(),new SignupRequest(randomName(),true,true,"","ym-terms-v1","ym-privacy-v1")); }
     private static String randomName() { return UUID.randomUUID().toString().replace("-","").substring(0,8); }
     private static VerifiedIdentity identity() { return new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"nickname@example.test",Instant.now().plusSeconds(300)); }
     private static MockHttpSession proof(VerifiedIdentity identity) { var session=new MockHttpSession(); session.setAttribute(VerifiedIdentity.SESSION_KEY,identity); return session; }

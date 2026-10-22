@@ -9,6 +9,8 @@ import org.springframework.data.repository.Repository;
 
 public interface RefreshSessionRepository extends Repository<RefreshSession,Long> {
     RefreshSession save(RefreshSession session);
+    @Query("select r.memberId from RefreshSession r where r.tokenHash=:hash")
+    Optional<Long> memberByHash(String hash);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from RefreshSession r where r.tokenHash=:hash")
     Optional<RefreshSession> lockByHash(String hash);

@@ -7,15 +7,15 @@ import com.yogimangchi.content.member.validation.NicknamePolicy;
 @Entity
 @Table(name="member")
 public class Member {
-    public enum Status { ACTIVE, WITHDRAWN }
+    public enum Status { ACTIVE, WITHDRAWING, WITHDRAWN }
     public enum Role { MEMBER, ADMIN }
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) private Long id;
-    @Column(nullable=false,length=12,unique=true) private String nickname;
+    @Column(length=12,unique=true) private String nickname;
     @Column(nullable=false,length=300) private String profileMessage;
     @Enumerated(EnumType.STRING) @Column(nullable=false,length=16) private Status status;
     @Enumerated(EnumType.STRING) @Column(nullable=false,length=16) private Role role;
-    @Column(nullable=false,updatable=false) private Instant termsAgreedAt;
-    @Column(nullable=false,updatable=false) private Instant privacyAgreedAt;
+    private Instant termsAgreedAt;
+    private Instant privacyAgreedAt;
     @Column(nullable=false,updatable=false) private Instant createdAt;
     private Instant withdrawnAt;
     protected Member() { }
@@ -27,13 +27,16 @@ public class Member {
         return member;
     }
     public Long getId() { return id; }
+    public void beginWithdrawal() {
+        if(status==Status.ACTIVE) status=Status.WITHDRAWING;
+    }
     public void withdraw(Instant now) {
         if(status==Status.WITHDRAWN) return;
-        status=Status.WITHDRAWN; withdrawnAt=java.util.Objects.requireNonNull(now);
-        profileMessage="";
+        status=Status.WITHDRAWN; nickname=null; withdrawnAt=java.util.Objects.requireNonNull(now);
+        profileMessage="";termsAgreedAt=null;privacyAgreedAt=null;
     }
     public void changeBasicProfile(String nickname,String message) {
-        if(nickname!=null && !NicknamePolicy.isValid(nickname) || message==null || message.length()>255 || message.indexOf('\0')>=0)
+        if(status!=Status.ACTIVE || nickname!=null && !NicknamePolicy.isValid(nickname) || message==null || message.length()>255 || message.indexOf('\0')>=0)
             throw new IllegalArgumentException("Invalid member profile");
         // Omitted nickname preserves old data without revalidating or rewriting it.
         if(nickname!=null) this.nickname=nickname;

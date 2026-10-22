@@ -30,7 +30,7 @@ class ProdSecurityIntegrationTests extends TestEnvironment {
         mvc.perform(get("/v3/api-docs")).andExpect(status().isUnauthorized());
         mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isUnauthorized());
         var id=new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"prod-test@example.test",Instant.now().plusSeconds(300));
-        var login=auth.signup(id,new SignupRequest("prodtest",true,true,""));
+        var login=auth.signup(id,new SignupRequest("prodtest",true,true,"","ym-terms-v1","ym-privacy-v1"));
         mvc.perform(post("/api/v1/auth/refresh").with(csrf()).cookie(new Cookie("CONTENT_REFRESH",login.refresh())))
                 .andExpect(status().isOk()).andExpect(header().string("Set-Cookie",org.hamcrest.Matchers.containsString("Secure")))
                 .andExpect(header().string("Set-Cookie",org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Domain="))));
