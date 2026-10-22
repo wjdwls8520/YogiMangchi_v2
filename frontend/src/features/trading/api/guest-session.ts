@@ -1,10 +1,11 @@
-import { tradingJson, TradingApiError } from "./client";
+import { tradingJson, tradingOrigin, TradingApiError } from "./client";
 import { parseCredential, parseGuest, type GuestCredential } from "./contracts";
 import { mutationRequest, type TradingCommand } from "./mutation-request";
 import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
 import type { QuoteRequest } from "./quote";
 import { parseOrder } from "./orders";
 import { parseGuestRetry } from "./guest-retry";
+import { openTradingEvents, type EventState, type TradingEvent } from "./trading-events";
 
 export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean };
 export const initialSession: SessionSnapshot = { phase: "loading", accountId: null, generation: 0 };
@@ -95,7 +96,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { credential = null; publish("anonymous"); }
       });
     },
-    async read(path: "account/summary" | "account/orders/pending" | "account/orders?limit=50" | "account/orders/quote" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
+    async read(path: "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | "account/orders/quote" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
       const current = credential;
       if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
       if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
@@ -108,6 +109,31 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         if (error instanceof TradingApiError && error.status === 401) invalidate(current);
         throw error;
       }
+    },
+    watchEvents(expected: SessionSnapshot, onEvent: (event: TradingEvent) => void, onState: (state: EventState) => void, onReady: () => void) {
+      const current = credential;
+      const active = () => !!current && current === credential && usable(current) && !retrying && snapshot.phase === "ready"
+        && expected.accountId === current.accountId && expected.generation === snapshot.generation;
+      if (!current || !active()) return () => {};
+      const socketUrl = new URL("/ws/trading", tradingOrigin(origin));
+      socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
+      return openTradingEvents({ url: socketUrl.href, current: active, onEvent, onState, onReady,
+        authenticate: (socket, cursor) => {
+          if (!active()) throw new DOMException("Session changed", "AbortError");
+          socket.send(JSON.stringify({ type: "AUTHENTICATE", credential: current.accessToken, afterEventId: cursor }));
+        },
+        read: async (cursor, signal) => {
+          if (!active()) throw new DOMException("Session changed", "AbortError");
+          try {
+            const value = await tradingJson(origin, `account/events?afterId=${cursor}&limit=100`, { token: current.accessToken, signal }, transport);
+            if (!active()) throw new DOMException("Session changed", "AbortError");
+            return value;
+          } catch (error) {
+            if (error instanceof TradingApiError && error.status === 401) invalidate(current);
+            throw error;
+          }
+        },
+      });
     },
     async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot) {
       if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");

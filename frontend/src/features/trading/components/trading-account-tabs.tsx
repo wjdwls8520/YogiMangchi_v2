@@ -1,22 +1,32 @@
 "use client";
 
-import { useRef } from "react";
-import { useTradingOrders, useTradingSummary } from "../api/queries";
+import { useRef, useState } from "react";
+import { useClosedHistory, useFillHistory, useOrderHistory, useTradingOrders, useTradingSummary } from "../api/queries";
 import { portfolioPositions } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
 import { AccountQueryState } from "./account-query-state";
-import { OrderHistoryTable, PendingOrderTable, PositionTable } from "./account-tables";
+import { ClosedPositionTable, FillHistoryTable, OrderHistoryTable, PendingOrderTable, PositionTable } from "./account-tables";
 import { PortfolioAllocationChart } from "./portfolio-allocation-chart";
 import { TradingNavigation, type TradingTab } from "./trading-navigation";
 import { useGuestSession } from "./trading-data-provider";
 import { WalletOverview } from "./wallet-overview";
-import { LiquidationFeedback } from "./liquidation-feedback";
+import { TradingEventStatus } from "./trading-event-status";
+import { emptyHistoryFilters, HistoryFilters } from "./history-filters";
 
-export type AccountView = "positions" | "orders" | "history" | "closed" | "portfolio";
+export type AccountView = "positions" | "orders" | "history" | "fills" | "closed" | "portfolio";
+function HistoryMore({ hasMore, busy, error, onMore }: { hasMore: boolean; busy: boolean; error: boolean; onMore: () => void }) {
+  return hasMore ? <div className="history-more">{error && <p role="alert">다음 내역을 불러오지 못했습니다. 다시 시도해 주세요.</p>}<button type="button" className="account-refresh" disabled={busy} onClick={onMore}>{busy ? "불러오는 중…" : error ? "다음 내역 다시 시도" : "더 보기"}</button></div> : null;
+}
 export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols }: {
   symbols: readonly TradingSymbol[]; activeTab?: AccountView; onSelect?: (view: AccountView) => void;
 }) {
-  const query = useTradingSummary(), pending = useTradingOrders("pending"), history = useTradingOrders("history");
+  const query = useTradingSummary(), pending = useTradingOrders("pending");
+  const [orderFilters, setOrderFilters] = useState({ ...emptyHistoryFilters });
+  const [fillFilters, setFillFilters] = useState({ ...emptyHistoryFilters });
+  const [closedFilters, setClosedFilters] = useState({ ...emptyHistoryFilters });
+  const ordersPage = useOrderHistory(orderFilters, activeTab === "history");
+  const fillsPage = useFillHistory(fillFilters, activeTab === "fills");
+  const closedPage = useClosedHistory(closedFilters, activeTab === "closed");
   const { snapshot } = useGuestSession();
   const body = useRef<HTMLDivElement>(null);
   const positions = query.data?.positions ?? [];
@@ -24,6 +34,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
     {id:"positions",label:"포지션",controls:"positions",count:query.data ? positions.length : undefined},
     {id:"orders",label:"미체결 주문",controls:"orders",count:pending.data?.length},
     {id:"history",label:"주문 내역",controls:"order-history"},
+    {id:"fills",label:"체결 내역",controls:"fill-history"},
     {id:"closed",label:"포지션 내역",controls:"closed-positions"},
     {id:"portfolio",label:"자산",controls:"portfolio-view"},
   ];
@@ -38,7 +49,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
     {snapshot.phase !== "ready" ? <div className="guest-account-message" id="guest-activity-panel" role="tabpanel" aria-labelledby={`activity-${activeTab}-tab`}>
       <p>로그인 또는 게스트로 참여하면 이용할 수 있습니다.</p>
     </div> : <>
-      <LiquidationFeedback orders={history.data} identity={`${snapshot.accountId}:${snapshot.generation}`} symbols={symbols} />
+      <TradingEventStatus key={`${snapshot.accountId}:${snapshot.generation}`} />
       <section hidden={activeTab !== "positions"} id="positions" className="activity-panel" role="tabpanel" aria-labelledby="activity-positions-tab">
         <h3 className="account-records-heading">보유 포지션 <span>Mark · PnL은 참고 표시, 수량·증거금은 서버 기준</span><button className="account-refresh" disabled={query.busy} onClick={query.retry}>새로고침</button></h3>
         <AccountQueryState loading={query.loading} error={query.error} empty={query.data && !positions.length ? "보유 중인 포지션이 없습니다." : undefined} onRetry={query.retry} busy={query.busy} />
@@ -50,12 +61,25 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
         {pending.data && pending.data.length > 0 && <PendingOrderTable orders={pending.data} symbols={symbols} />}
       </section>
       <section hidden={activeTab !== "history"} id="order-history" className="activity-panel" role="tabpanel" aria-labelledby="activity-history-tab">
-        <h3 className="account-records-heading">주문 내역 <span>최근 최대 50건 · 서버 체결 결과</span><button className="account-refresh" disabled={history.busy} onClick={history.retry}>새로고침</button></h3>
-        <AccountQueryState loading={history.loading} error={history.error} empty={history.data?.length===0 ? "주문 내역이 없습니다." : undefined} onRetry={history.retry} busy={history.busy} />
-        {history.data && history.data.length>0 && <OrderHistoryTable orders={history.data} symbols={symbols} />}
+        <h3 className="account-records-heading">주문 내역 <span>서버 주문 상태 · 50건씩 조회</span><button className="account-refresh" disabled={ordersPage.busy} onClick={ordersPage.retry}>새로고침</button></h3>
+        <HistoryFilters kind="orders" value={orderFilters} onChange={setOrderFilters} symbols={symbols} />
+        <AccountQueryState loading={ordersPage.loading} error={ordersPage.error} empty={ordersPage.items?.length===0 ? "주문 내역이 없습니다." : undefined} onRetry={ordersPage.retry} busy={ordersPage.busy} />
+        {ordersPage.items && ordersPage.items.length>0 && <OrderHistoryTable orders={ordersPage.items} symbols={symbols} />}
+        <HistoryMore hasMore={!!ordersPage.hasMore} busy={ordersPage.busy} error={ordersPage.moreError} onMore={ordersPage.loadMore} />
       </section>
-      <section hidden={activeTab !== "closed"} id="closed-positions" className="activity-panel account-query-state" role="tabpanel" aria-labelledby="activity-closed-tab">
-        <p>포지션 내역을 준비 중입니다. 현재 체결 기록은 주문 내역에서 확인할 수 있습니다.</p><button className="account-refresh" onClick={()=>select("history")}>주문 내역 보기</button>
+      <section hidden={activeTab !== "fills"} id="fill-history" className="activity-panel" role="tabpanel" aria-labelledby="activity-fills-tab">
+        <h3 className="account-records-heading">체결 내역 <span>부분 청산과 강제청산 포함 · 50건씩 조회</span><button className="account-refresh" disabled={fillsPage.busy} onClick={fillsPage.retry}>새로고침</button></h3>
+        <HistoryFilters kind="fills" value={fillFilters} onChange={setFillFilters} symbols={symbols} />
+        <AccountQueryState loading={fillsPage.loading} error={fillsPage.error} empty={fillsPage.items?.length===0 ? "체결 내역이 없습니다." : undefined} onRetry={fillsPage.retry} busy={fillsPage.busy} />
+        {fillsPage.items && fillsPage.items.length>0 && <FillHistoryTable fills={fillsPage.items} symbols={symbols} />}
+        <HistoryMore hasMore={!!fillsPage.hasMore} busy={fillsPage.busy} error={fillsPage.moreError} onMore={fillsPage.loadMore} />
+      </section>
+      <section hidden={activeTab !== "closed"} id="closed-positions" className="activity-panel" role="tabpanel" aria-labelledby="activity-closed-tab">
+        <h3 className="account-records-heading">포지션 내역 <span>종료된 포지션 단위 · 50건씩 조회</span><button className="account-refresh" disabled={closedPage.busy} onClick={closedPage.retry}>새로고침</button></h3>
+        <HistoryFilters kind="closed" value={closedFilters} onChange={setClosedFilters} symbols={symbols} />
+        <AccountQueryState loading={closedPage.loading} error={closedPage.error} empty={closedPage.items?.length===0 ? "종료된 포지션이 없습니다." : undefined} onRetry={closedPage.retry} busy={closedPage.busy} />
+        {closedPage.items && closedPage.items.length>0 && <ClosedPositionTable positions={closedPage.items} symbols={symbols} />}
+        <HistoryMore hasMore={!!closedPage.hasMore} busy={closedPage.busy} error={closedPage.moreError} onMore={closedPage.loadMore} />
       </section>
       <section hidden={activeTab !== "portfolio"} id="portfolio-view" className="activity-panel" role="tabpanel" aria-labelledby="activity-portfolio-tab">
         <AccountQueryState loading={query.loading} error={query.error} onRetry={query.retry} busy={query.busy} />

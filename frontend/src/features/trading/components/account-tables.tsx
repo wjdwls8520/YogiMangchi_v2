@@ -8,6 +8,7 @@ import { PositionCloseEntry } from "./position-close-entry";
 import { formatMarketPrice } from "../market/price-format";
 import { useSelectedMarket } from "./selected-market-provider";
 import { positionValuation } from "../api/position-display";
+import type { ClosedPositionHistory, FillHistory } from "../api/history";
 
 function price(value: string | null | undefined, symbolId: number, symbols: readonly TradingSymbol[]) {
   return formatMarketPrice(value, symbols.find((symbol) => symbol.id === symbolId)?.priceTickSize);
@@ -58,7 +59,7 @@ export function PendingOrderTable({ orders, symbols }: { orders: readonly Tradin
 }
 
 export function OrderHistoryTable({ orders, symbols }: { orders: readonly TradingOrder[]; symbols: readonly TradingSymbol[] }) {
-  return <TradingTable caption="최근 주문 내역 최대 50건" columns={[
+  return <TradingTable caption="주문 내역" columns={[
     { key: "symbol", label: "Symbol" }, { key: "action", label: "Action" },
     { key: "type", label: "Type" }, { key: "leverage", label: "체결 / 요청 배수" }, { key: "quantity", label: "Quantity" },
     { key: "requested", label: "Requested Price" },
@@ -78,4 +79,44 @@ export function OrderHistoryTable({ orders, symbols }: { orders: readonly Tradin
       time: <time dateTime={order.createdAt}>{new Date(order.createdAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}</time>,
     },
   }))} />;
+}
+
+function kst(value: string) {
+  return <time dateTime={value}>{new Date(value).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}</time>;
+}
+
+export function FillHistoryTable({ fills, symbols }: { fills: readonly FillHistory[]; symbols: readonly TradingSymbol[] }) {
+  return <TradingTable caption="체결 내역" columns={[
+    { key: "symbol", label: "Symbol" }, { key: "side", label: "Side / Action" }, { key: "type", label: "Type" },
+    { key: "quantity", label: "체결 수량" }, { key: "price", label: "체결가" }, { key: "leverage", label: "배수" },
+    { key: "gross", label: "Gross PnL" }, { key: "fee", label: "수수료" }, { key: "adjustment", label: "정산 조정" },
+    { key: "mode", label: "체결 담보 방식" }, { key: "order", label: "주문 / 포지션 ID" }, { key: "time", label: "체결 시각 (KST)" },
+  ]} rows={fills.map(fill => ({ id: String(fill.fillId), cells: {
+    symbol: symbolLabel(fill.tradingSymbolId, symbols), side: <span data-side={fill.side}>{fill.side} · {fill.action}</span>,
+    type: fill.type, quantity: formatQuantity(fill.quantity), price: price(fill.price, fill.tradingSymbolId, symbols),
+    leverage: <span data-side={fill.side}>{fill.leverage}×</span>,
+    gross: <span data-trend={pnlTrend(fill.realizedPnl)}>{formatDecimal(fill.realizedPnl)} USDT</span>,
+    fee: `${formatDecimal(fill.fee)} USDT`, adjustment: `${formatDecimal(fill.settlementAdjustment)} USDT`,
+    mode: fill.marginMode, order: `${fill.orderId} / ${fill.lifecyclePositionId}`, time: kst(fill.executedAt),
+  } }))} />;
+}
+
+export function ClosedPositionTable({ positions, symbols }: { positions: readonly ClosedPositionHistory[]; symbols: readonly TradingSymbol[] }) {
+  return <TradingTable caption="종료 포지션 내역" columns={[
+    { key: "symbol", label: "Symbol" }, { key: "side", label: "Side" }, { key: "status", label: "종료 상태" },
+    { key: "quantity", label: "누적 진입 수량" }, { key: "entry", label: "최종 잔여 평균 진입가" },
+    { key: "exit", label: "마지막 체결가" }, { key: "leverage", label: "배수" }, { key: "margin", label: "누적 투입 담보" },
+    { key: "gross", label: "Gross PnL" }, { key: "fees", label: "총 수수료" }, { key: "adjustment", label: "정산 조정" },
+    { key: "net", label: "Net PnL" }, { key: "mode", label: "진입 / 종료 담보 방식" },
+    { key: "opened", label: "진입 시각 (KST)" }, { key: "time", label: "종료 시각 (KST)" },
+  ]} rows={positions.map(position => ({ id: String(position.positionId), cells: {
+    symbol: symbolLabel(position.tradingSymbolId, symbols), side: <span data-side={position.side}>{position.side}</span>,
+    status: position.status, quantity: formatQuantity(position.initialQuantity),
+    entry: price(position.entryPrice, position.tradingSymbolId, symbols), exit: price(position.exitPrice, position.tradingSymbolId, symbols),
+    leverage: <span data-side={position.side}>{position.leverage}×</span>, margin: `${formatDecimal(position.initialMargin)} USDT`,
+    gross: <span data-trend={pnlTrend(position.realizedPnl)}>{formatDecimal(position.realizedPnl)} USDT</span>,
+    fees: `${formatDecimal(position.feesPaid)} USDT`, adjustment: `${formatDecimal(position.settlementAdjustment)} USDT`,
+    net: <span data-trend={pnlTrend(position.netRealizedPnl)}>{formatDecimal(position.netRealizedPnl)} USDT</span>,
+    mode: `${position.openedMarginMode} / ${position.closingMarginMode}`, opened: kst(position.openedAt), time: kst(position.closedAt),
+  } }))} />;
 }
