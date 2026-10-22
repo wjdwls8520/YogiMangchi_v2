@@ -14,6 +14,7 @@ import { CloseOrderFields } from "../src/features/trading/components/close-order
 import { PositionCloseEntry } from "../src/features/trading/components/position-close-entry";
 import { OrderHistoryTable, PendingOrderTable, PositionTable } from "../src/features/trading/components/account-tables";
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
+import { MemberProvider } from "../src/features/member/components/member-provider";
 import { SelectedMarketProvider } from "../src/features/trading/components/selected-market-provider";
 import { emptyOrderBook } from "../src/features/trading/market/order-book";
 import type { ReactNode } from "react";
@@ -112,7 +113,7 @@ test("shared close fields render MARKET without price, LIMIT with price, and res
 function renderTrading(children:ReactNode) {
   let client:QueryClient|undefined;
   function Subject(){client=useQueryClient();return <SelectedMarketProvider symbol={symbols[0]} market={{symbolId:1,state:"READY",recovery:0,price:mark}} orderBook={emptyOrderBook(1)} positionPrices={{1:mark}}>{children}</SelectedMarketProvider>;}
-  try{return renderToStaticMarkup(<TradingDataProvider><Subject/></TradingDataProvider>);}finally{client?.clear();}
+  try{return renderToStaticMarkup(<MemberProvider><TradingDataProvider><Subject/></TradingDataProvider></MemberProvider>);}finally{client?.clear();}
 }
 test("positions expose ROE, liquidation price availability and separate partial/full actions",()=>{
   const html=renderTrading(<PositionTable positions={[position]} symbols={symbols}/>);

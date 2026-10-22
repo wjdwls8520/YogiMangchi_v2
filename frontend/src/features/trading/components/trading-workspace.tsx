@@ -2,6 +2,7 @@ import { MarketChartPanel } from "./market-chart-panel";
 import { OrderPanel } from "./order-panel";
 import { TradingDataProvider } from "./trading-data-provider";
 import { GuestHeaderAction } from "./guest-access";
+import { MemberHeaderAction } from "../../member/components/member-provider";
 
 export function TradingWorkspace() {
   return (
@@ -22,6 +23,7 @@ export function TradingWorkspace() {
           </p>
           <p className="trading-header-product">선물 모의투자</p>
           <GuestHeaderAction />
+          <MemberHeaderAction />
         </div>
       </header>
       <main id="trading-main" tabIndex={-1} className="trading-workspace">

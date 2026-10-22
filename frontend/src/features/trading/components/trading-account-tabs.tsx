@@ -47,7 +47,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
     <TradingNavigation label="거래 활동" prefix="activity" tabs={snapshot.phase === "ready" ? tabs : tabs.map(tab => ({ ...tab, controls: "guest-activity-panel" }))} activeId={activeTab} onSelect={onSelect ? select : undefined} />
     <div ref={body} className="trading-account-body" role="region" aria-label="거래 활동 내용" tabIndex={0}>
     {snapshot.phase !== "ready" ? <div className="guest-account-message" id="guest-activity-panel" role="tabpanel" aria-labelledby={`activity-${activeTab}-tab`}>
-      <p>로그인 또는 게스트로 참여하면 이용할 수 있습니다.</p>
+      <p>{snapshot.mode === "member" ? "주문창에서 회원 선물 계정을 열면 이용할 수 있습니다." : "로그인 또는 게스트로 참여하면 이용할 수 있습니다."}</p>
     </div> : <>
       <TradingEventStatus key={`${snapshot.accountId}:${snapshot.generation}`} />
       <section hidden={activeTab !== "positions"} id="positions" className="activity-panel" role="tabpanel" aria-labelledby="activity-positions-tab">

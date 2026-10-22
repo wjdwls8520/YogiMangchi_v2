@@ -69,6 +69,38 @@
 }
 
 @layer components {
+  .member-shell { @apply mx-auto min-h-[70vh] max-w-3xl px-4 py-5 sm:px-6 sm:py-8; }
+  .member-shell > header { @apply mb-6 flex flex-wrap items-center justify-between gap-4; }
+  .member-logo { @apply text-xl font-bold text-terminal-text; }
+  .member-shell nav { @apply flex gap-4 text-sm text-terminal-secondary; }
+  .member-card { @apply rounded-sm border border-terminal-line bg-terminal-panel p-4 sm:p-6; }
+  .member-card h1 { @apply mb-6 text-xl font-bold; }
+  .member-card h2 { @apply mb-3 text-base font-semibold; }
+  .member-fields, .member-fields fieldset { @apply flex min-w-0 flex-col gap-4; }
+  .member-fields label { @apply flex min-w-0 flex-col gap-2 text-sm font-medium; }
+  .member-fields input:not([type="checkbox"]), .member-fields textarea, .member-search input { @apply min-h-11 w-full rounded-sm border border-terminal-line bg-terminal-raised px-3 py-2 text-sm text-terminal-text; }
+  .member-fields small, .member-note { @apply text-xs font-normal leading-relaxed text-terminal-muted; }
+  .member-fields label.member-check { @apply flex-row flex-wrap items-center gap-2 text-sm font-normal; }
+  .member-check a { @apply ml-auto text-xs text-brand-600 underline; }
+  .member-primary, .member-secondary { @apply inline-flex min-h-11 items-center justify-center rounded-sm px-4 py-2 text-sm font-semibold; }
+  .member-primary { @apply bg-brand-600 text-terminal-ink; }
+  .member-secondary { @apply border border-terminal-line bg-terminal-raised text-terminal-text; }
+  .member-primary:disabled, .member-secondary:disabled { @apply cursor-not-allowed opacity-50; }
+  .member-actions { @apply my-4 flex flex-wrap items-center gap-3; }
+  .member-message { @apply my-4 text-sm leading-relaxed text-terminal-secondary; }
+  .member-message[role="alert"] { @apply text-loss; }
+  .member-withdrawal-dialog { @apply overflow-y-auto; }
+  .member-withdrawal-policy { @apply my-4 list-disc space-y-3 pl-5 text-sm leading-relaxed text-terminal-secondary; }
+  .member-profile-message { @apply my-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-terminal-secondary; }
+  .member-search { @apply my-4 flex min-w-0 gap-2; }
+  .member-follow-list { @apply divide-y divide-terminal-line; }
+  .member-follow-list li { @apply py-3; }
+  .member-follow-list a { @apply font-semibold text-terminal-text; }
+  .member-session-action { @apply flex shrink-0 items-center gap-3 text-xs text-terminal-secondary; }
+  .member-session-action a { @apply text-brand-600; }
+}
+
+@layer components {
   .trading-brand-header {
     @apply border-b-4 border-terminal-gutter bg-terminal-header;
   }
