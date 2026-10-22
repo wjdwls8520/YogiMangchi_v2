@@ -2,6 +2,7 @@ package com.yogimangchi.content.member.entity;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import com.yogimangchi.content.member.validation.NicknamePolicy;
 
 @Entity
 @Table(name="member")
@@ -19,6 +20,7 @@ public class Member {
     private Instant withdrawnAt;
     protected Member() { }
     public static Member signup(String nickname,String message,Instant now) {
+        if(!NicknamePolicy.isValid(nickname)) throw new IllegalArgumentException("Invalid member nickname");
         Member member=new Member(); member.nickname=nickname; member.profileMessage=message;
         member.status=Status.ACTIVE; member.role=Role.MEMBER;
         member.termsAgreedAt=now; member.privacyAgreedAt=now; member.createdAt=now;
@@ -31,9 +33,11 @@ public class Member {
         profileMessage="";
     }
     public void changeBasicProfile(String nickname,String message) {
-        if(nickname==null || !nickname.matches("[가-힣a-zA-Z0-9]{2,12}") || message==null || message.length()>255 || message.indexOf('\0')>=0)
+        if(nickname!=null && !NicknamePolicy.isValid(nickname) || message==null || message.length()>255 || message.indexOf('\0')>=0)
             throw new IllegalArgumentException("Invalid member profile");
-        this.nickname=nickname; this.profileMessage=message;
+        // Omitted nickname preserves old data without revalidating or rewriting it.
+        if(nickname!=null) this.nickname=nickname;
+        this.profileMessage=message;
     }
     public String getNickname() { return nickname; }
     public String getProfileMessage() { return profileMessage; }

@@ -48,11 +48,11 @@ public class MemberController {
     }
     public record NicknameAvailability(boolean available) { }
     @GetMapping("/nickname/availability")
-    @Operation(summary="Check nickname availability",description="Public. Korean/English letters and digits,2-12 characters. Invalid input400. Availability is advisory; signup/profile changes still enforce DB uniqueness and can return409.")
+    @Operation(summary="Check nickname availability",description="Public.1-8 Unicode code points in Letter/Number categories (L/N), matching Frontend Unicode u regex. Spaces/punctuation/emoji/control/invisible separators rejected400. Availability is advisory; signup/profile changes still enforce DB uniqueness and can return409. Legacy9-12-character nicknames remain readable/login-capable but cannot be submitted as new nickname input.")
     public NicknameAvailability available(@RequestParam String nickname) { return new NicknameAvailability(profiles.nicknameAvailable(nickname)); }
     @PatchMapping("/me/profile")
     @SecurityRequirement(name="memberBearer")
-    @Operation(summary="Change own nickname or profile message",description="Bearer only; memberId comes from verified JWT. Provide nickname and/or profileMessage. Messages up to255 characters; empty clears, omitted/null preserves. 400 invalid,401 inactive/invalid credential,409 duplicate nickname or lock contention. Retained older messages above255 are not silently truncated: submit a valid replacement when editing. No image upload in this endpoint.")
+    @Operation(summary="Change own nickname or profile message",description="Bearer only; memberId comes from verified JWT. A provided nickname must be1-8 Unicode Letter/Number code points (L/N). Omitted/null nickname preserves legacy9-12-character names, including on message-only changes. Messages up to255 characters; empty clears, omitted/null preserves. 400 invalid,401 inactive/invalid credential,409 duplicate nickname or lock contention. Retained older messages above255 are not silently truncated: submit a valid replacement when editing. No image upload in this endpoint.")
     public ResponseEntity<MemberProfileResponse> update(@AuthenticationPrincipal Jwt jwt,@Valid @RequestBody UpdateProfileRequest body) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(profiles.change(Long.valueOf(jwt.getSubject()),body));
     }
