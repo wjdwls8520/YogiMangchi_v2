@@ -1,5 +1,5 @@
 import { tradingJson, tradingOrigin, TradingApiError } from "./client";
-import { parseCredential, parseGuest, type GuestCredential } from "./contracts";
+import { decimal, id, parseCredential, parseGuest, record, type GuestCredential } from "./contracts";
 import { mutationRequest, type TradingCommand } from "./mutation-request";
 import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
 import type { QuoteRequest } from "./quote";
@@ -7,9 +7,10 @@ import { parseOrder } from "./orders";
 import { parseGuestRetry } from "./guest-retry";
 import { openTradingEvents, type EventState, type TradingEvent } from "./trading-events";
 
-export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean };
+export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean; mode?: "member" | "checking" };
 export const initialSession: SessionSnapshot = { phase: "loading", accountId: null, generation: 0 };
 type StorageAccess = () => Pick<Storage, "getItem" | "setItem" | "removeItem">;
+type MemberCredential = { memberId: number; accessToken: string; expiresAt: string };
 
 // Tokens stay private: snapshots, query keys/data and errors never contain them.
 export function createGuestSession(origin: string, storage: StorageAccess, transport: typeof fetch = fetch, now = Date.now, legacyStorage?: StorageAccess) {
@@ -19,9 +20,14 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   let flight: Promise<void> | null = null;
   let retrying=false, writes=0;
   let retryFlight: Promise<ReturnType<typeof parseGuestRetry>> | null=null;
+  let mode: "guest" | "member" | "checking" = "guest";
+  let member: MemberCredential | null = null;
+  let memberRequest: { owner: MemberCredential; generation: number } | null = null;
+  let memberRefresh: (() => void) | undefined;
+  const eventReconnects = new Set<() => void>();
   const listeners = new Set<() => void>();
   function publish(phase: SessionSnapshot["phase"]) {
-    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}) };
+    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}), ...(mode !== "guest" ? { mode } : {}) };
     listeners.forEach((listener) => listener());
   }
   const usable = (value: GuestCredential) => Date.parse(value.expiresAt) > now();
@@ -56,6 +62,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   function invalidate(failed: GuestCredential) {
     if (credential !== failed) return;
     credential = null;
+    if (mode === "member") { publish("loading"); memberRefresh?.(); return; }
     try {
       const saved = storage().getItem(storageKey), value = saved === null ? null : stored(saved);
       // A late response from this tab must not erase another tab's new Guest.
@@ -68,18 +75,66 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     flight = Promise.resolve().then(operation).finally(() => { flight = null; });
     return flight;
   }
+  async function loadMember(open: boolean) {
+    const owner = member;
+    if (mode !== "member" || !owner || Date.parse(owner.expiresAt) <= now()) return;
+    if (memberRequest?.owner === owner) return;
+    credential = null; publish(open ? "creating" : "loading");
+    const generation = snapshot.generation;
+    const request = memberRequest = { owner, generation };
+    try {
+      const row = record(await tradingJson(origin, open ? "accounts/member" : "account/summary", { token: owner.accessToken, ...(open ? { method: "POST" as const } : {}) }, transport));
+      if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
+      if (open && (id(row.memberId) !== owner.memberId || row.status !== "ACTIVE" || row.quoteAsset !== "USDT")) throw new TradingApiError(422);
+      if (open) decimal(row.balance);
+      credential = { accountId: id(row.accountId), accessToken: owner.accessToken, expiresAt: owner.expiresAt }; publish("ready");
+    } catch (error) {
+      if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
+      publish(error instanceof TradingApiError && error.status === 404 ? "anonymous" : "error");
+    } finally { if (memberRequest === request) memberRequest = null; }
+  }
   return {
     storageKey,
     getSnapshot: () => snapshot,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    pauseMemberCheck(error = false) {
+      if (mode === "checking" && snapshot.phase === (error ? "error" : "loading")) return;
+      mode = "checking"; member = null; credential = null; publish(error ? "error" : "loading");
+    },
+    async enterMember(value: { memberId: number; accessToken: string; expiresAt: string }, refresh: () => void) {
+      memberRefresh = refresh;
+      if (mode === "member" && member?.memberId === value.memberId) {
+        member.accessToken = value.accessToken; member.expiresAt = value.expiresAt;
+        if (credential && snapshot.phase === "ready") {
+          const changed = credential.accessToken !== value.accessToken;
+          credential.accessToken = value.accessToken; credential.expiresAt = value.expiresAt;
+          if (changed) eventReconnects.forEach(reconnect => reconnect());
+          return;
+        }
+        if (memberRequest?.owner === member) return;
+        if (snapshot.phase === "anonymous") return;
+      } else { mode = "member"; member = { ...value }; }
+      await loadMember(false);
+    },
+    leaveMember() {
+      if (mode === "guest") return;
+      mode = "guest"; member = null; memberRefresh = undefined; credential = null; publish("loading");
+    },
+    createMember() { return run(() => loadMember(true)); },
     restore() {
+      if (mode === "member") return credential && usable(credential) && snapshot.phase === "ready" ? Promise.resolve() : run(() => loadMember(false));
+      if (mode !== "guest") return Promise.resolve();
       return run(() => {
+        if (mode !== "guest") return;
         try { replace(load()); }
         catch { credential = null; publish("error"); }
       });
     },
     createGuest() {
+      if (mode !== "guest") return Promise.resolve();
       return run(async () => {
+        if (mode !== "guest") return;
+        let generation = snapshot.generation;
         try {
           // Restore first: a double click or another tab must not replace a valid Guest.
           const existing = load();
@@ -88,12 +143,14 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           storage().setItem(`${storageKey}.probe`, "1");
           storage().removeItem(`${storageKey}.probe`);
           publish("creating");
+          generation = snapshot.generation;
           const created = parseGuest(await tradingJson(origin, "accounts/guest", { method: "POST" }, transport));
+          if (mode !== "guest" || snapshot.generation !== generation) return;
           if (!usable(created)) throw new TradingApiError(401);
           storage().setItem(storageKey, JSON.stringify(created));
           credential = created;
           publish("ready");
-        } catch { credential = null; publish("anonymous"); }
+        } catch { if (mode === "guest" && snapshot.generation === generation) { credential = null; publish("anonymous"); } }
       });
     },
     async read(path: "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | "account/orders/quote" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
@@ -117,7 +174,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       if (!current || !active()) return () => {};
       const socketUrl = new URL("/ws/trading", tradingOrigin(origin));
       socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
-      return openTradingEvents({ url: socketUrl.href, current: active, onEvent, onState, onReady,
+      const stream = openTradingEvents({ url: socketUrl.href, current: active, onEvent, onState, onReady,
         authenticate: (socket, cursor) => {
           if (!active()) throw new DOMException("Session changed", "AbortError");
           socket.send(JSON.stringify({ type: "AUTHENTICATE", credential: current.accessToken, afterEventId: cursor }));
@@ -134,6 +191,8 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           }
         },
       });
+      eventReconnects.add(stream.reconnect);
+      return () => { eventReconnects.delete(stream.reconnect); stream(); };
     },
     async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot) {
       if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");
@@ -171,6 +230,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       } finally {writes--;}
     },
     retryGuest(expected: SessionSnapshot, key: string) {
+      if (mode !== "guest") return Promise.reject(new TradingApiError(403, undefined, "GUEST_ACCOUNT_REQUIRED"));
       if(retryFlight)return retryFlight;
       const current=credential;
       if(!current||!usable(current)||snapshot.phase!=="ready"||expected.accountId!==current.accountId||expected.generation!==snapshot.generation){

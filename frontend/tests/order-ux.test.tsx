@@ -11,6 +11,7 @@ import { OrderLeverage } from "../src/features/trading/components/order-controls
 import { formForSide, formForBookPrice, ratioInputQuantity } from "../src/features/trading/api/order-preflight";
 import { SelectedMarketProvider } from "../src/features/trading/components/selected-market-provider";
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
+import { MemberProvider } from "../src/features/member/components/member-provider";
 import { estimatedOrder, ratioQuantity } from "../src/features/trading/api/order-input";
 import { balanceIssue, formForSymbol, marketableLimitIssue, orderRejection, preflightOrder, type OpenForm } from "../src/features/trading/api/order-preflight";
 import { tradingMutationEffects } from "../src/features/trading/api/mutations";
@@ -103,7 +104,7 @@ test("public order panel replaces authenticated inputs with a Guest CTA", () => 
   let client:QueryClient|undefined;
   function Subject() { client=useQueryClient();return <SelectedMarketProvider symbol={symbol} market={market} orderBook={emptyOrderBook(1)}><OrderPanel /></SelectedMarketProvider>; }
   try {
-    const html=renderToStaticMarkup(<TradingDataProvider><Subject /></TradingDataProvider>);
+    const html=renderToStaticMarkup(<MemberProvider><TradingDataProvider><Subject /></TradingDataProvider></MemberProvider>);
     assert.match(html,/진입 · Open/);assert.match(html,/청산 · Close/);
     assert.doesNotMatch(html,/id="order-quantity"/);assert.doesNotMatch(html,/id="limit-price"/);
     assert.match(html,/게스트로 모의투자 시작/);assert.doesNotMatch(html,/Order Book/);

@@ -112,7 +112,9 @@ export function openTradingEvents(options: {
     } catch (error) { if (!controller.signal.aborted) failed(error); }
   }
   void start();
-  return () => { stopped = true; clear(); };
+  const stop = () => { stopped = true; clear(); };
+  stop.reconnect = () => { if (!active()) return; clear(); attempts = 0; void start(); };
+  return stop;
 }
 
 // MARKET mutation feedback already covers immediate fills. These notices cover asynchronous server transitions.

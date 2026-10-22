@@ -100,3 +100,13 @@ test("asynchronous LIMIT fills and liquidation have distinct controlled notifica
   assert.equal(tradingEventNotice(liquidated)?.kind, "error");
   assert.equal(tradingEventNotice(parseTradingEvent({ ...event("4"), type: "ORDER_FILLED", order: { ...filled, type: "MARKET" } })), null);
 });
+test("credential rotation reconnects at the retained cursor without replaying a new silent baseline", async () => {
+  let reads = 0;
+  const h = harness(async () => { reads++; return []; }); await flush(); h.handshake();
+  h.sockets[0].frame("TRADING_EVENT", event("123"));
+  h.stop.reconnect(); h.handshake();
+  assert.equal(reads, 1); assert.equal(h.resumes.at(-1), "123");
+  h.sockets[1].frame("TRADING_EVENT", event("123"));
+  h.sockets[1].frame("TRADING_EVENT", event("124"));
+  assert.deepEqual(h.delivered.map(value => value.eventId), ["123", "124"]); h.stop();
+});

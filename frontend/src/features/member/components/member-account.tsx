@@ -1,0 +1,49 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
+import { contentMessage } from "../api/client";
+import { parseOwnProfile } from "../api/contracts";
+import { nicknameIssue } from "../api/nickname";
+import { useMember, MemberLogout } from "./member-provider";
+import { MemberShell, ProfileEditForm } from "./member-views";
+import { WithdrawalConfirmation } from "./withdrawal-confirmation";
+
+export function MemberAccount() {
+  const { session, snapshot } = useMember(), client = useQueryClient();
+  const [pending, setPending] = useState(false), [message, setMessage] = useState<string | null>(null), [error, setError] = useState<string | null>(null);
+  const active = useRef(false), dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (snapshot.phase !== "ready") dialog.current?.close(); }, [snapshot.phase]);
+  const profile = useQuery({ queryKey: ["member", "own", snapshot.memberId, snapshot.generation], enabled: snapshot.phase === "ready",
+    queryFn: async ({ signal }) => parseOwnProfile(await session.request("/members/me", { signal }), snapshot.memberId!),
+  });
+  async function save(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (active.current || snapshot.phase !== "ready") return;
+    const data = new FormData(event.currentTarget), nickname = String(data.get("nickname") ?? ""), profileMessage = String(data.get("profileMessage") ?? "");
+    const nicknameChanged = nickname !== profile.data?.nickname;
+    const nicknameError = nicknameChanged ? nicknameIssue(nickname) : null;
+    if (nicknameError || profileMessage.length > 255) { setError(nicknameError ?? "소개는 최대 255자로 입력해 주세요."); return; }
+    active.current = true; setPending(true); setError(null); setMessage(null);
+    try {
+      parseOwnProfile(await session.request("/members/me/profile", { method: "PATCH", body: { ...(nicknameChanged ? { nickname } : {}), profileMessage } }), snapshot.memberId!);
+      await client.invalidateQueries({ queryKey: ["member"] }); setMessage("프로필을 저장했습니다.");
+    } catch (error) { setError(contentMessage(error)); }
+    finally { active.current = false; setPending(false); }
+  }
+  return <MemberShell title="내 계정">
+    {snapshot.phase !== "ready" ? <><p role="status" className="member-message">{snapshot.phase === "loading" || snapshot.phase === "authenticating" ? "로그인 상태를 확인하는 중입니다." : snapshot.phase === "error" ? "회원 연결을 확인하지 못했습니다." : "로그인이 필요합니다."}</p><Link href="/login">로그인</Link>{snapshot.phase === "error" && <div className="member-actions"><button className="member-secondary" onClick={() => void session.restore().catch(() => {})}>로그인 다시 확인</button><MemberLogout /></div>}</> : <>
+      {profile.isPending && <p role="status">프로필을 불러오는 중입니다.</p>}
+      {profile.isError && <p role="alert" className="member-message">{contentMessage(profile.error)} <button className="account-refresh" onClick={() => void profile.refetch()}>다시 조회</button></p>}
+      {profile.data && <><p className="member-note">회원 #{profile.data.memberId} · {profile.data.role}</p><div className="member-actions"><Link href={`/members/${profile.data.memberId}`}>공개 프로필·팔로우 보기</Link><MemberLogout /></div>
+        <ProfileEditForm key={`${profile.data.nickname}:${profile.data.profileMessage}`} nickname={profile.data.nickname} message={profile.data.profileMessage} pending={pending} onSubmit={event => void save(event)} />
+        <p className="member-note">Guest 모의투자와 회원 선물 계정은 별개이며 기록을 자동 합치지 않습니다.</p>
+        <button type="button" className="account-refresh" disabled={pending} onClick={() => { setError(null); dialog.current?.showModal(); }}>회원 탈퇴</button></>}
+      {message && <p role="status" className="member-message">{message}</p>}{error && <p role="alert" className="member-message">{error}</p>}
+    </>}
+    <dialog ref={dialog} className="position-close-dialog member-withdrawal-dialog" aria-labelledby="member-withdraw-title" aria-describedby="member-withdraw-notice" aria-modal="true" onClose={event => event.currentTarget.querySelector("form")?.reset()}>
+      {/* The old endpoint does not verify confirmation or guarantee the new withdrawal policy. */}
+      <WithdrawalConfirmation onSubmit={event => event.preventDefault()} onCancel={() => dialog.current?.close()} />
+    </dialog>
+  </MemberShell>;
+}

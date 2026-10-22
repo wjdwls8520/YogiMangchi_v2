@@ -25,7 +25,7 @@ export function GuestRetry() {
       setError(uncertain ? "결과를 확인하지 못했습니다. 아래 버튼으로 같은 요청의 결과를 확인해 주세요. 자동으로 다시 초기화하지 않습니다." : mutationMessage(error));
     } finally {active.current=false;setPending(false);}
   }
-  if(snapshot.phase!=="ready")return null;
+  if(snapshot.phase!=="ready" || snapshot.mode)return null;
   return <div className="guest-retry">
     <button type="button" className="account-refresh" disabled={pending||snapshot.retrying} onClick={()=>{setError(null);dialog.current?.showModal();}}>모의투자 재도전</button>
     {completed?.accountId===snapshot.accountId&&<p role="status" className="order-input-hint">{completed.message}</p>}

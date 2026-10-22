@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { SiteFooter } from "../components/site-footer";
 import "./globals.css";
+import { MemberProvider } from "../features/member/components/member-provider";
 
 export const metadata: Metadata = {
   title: {
@@ -15,7 +16,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ko">
-      <body>{children}<SiteFooter /></body>
+      <body><MemberProvider>{children}<SiteFooter /></MemberProvider></body>
     </html>
   );
 }

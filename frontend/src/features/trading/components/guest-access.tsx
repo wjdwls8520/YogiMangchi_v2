@@ -27,14 +27,14 @@ export function GuestAccessProvider({ session, children }: { session: GuestSessi
     active.current = true;
     setFailed(false);
     try {
-      await session.createGuest();
+      if (snapshot.mode === "member") await session.createMember(); else await session.createGuest();
       if (session.getSnapshot().phase === "ready") close();
       else setFailed(true);
     } finally { active.current = false; }
   }
   useEffect(() => { if (snapshot.phase === "ready") close(); }, [snapshot.phase]);
   return <GuestAccessContext.Provider value={{ snapshot, open }}>{children}
-    <GuestStartDialog dialogRef={dialog} creating={snapshot.phase === "creating"} failed={failed} onStart={() => void start()} onCancel={close} onClose={restoreFocus} />
+    <GuestStartDialog member={snapshot.mode === "member"} dialogRef={dialog} creating={snapshot.phase === "creating"} failed={failed} onStart={() => void start()} onCancel={close} onClose={restoreFocus} />
   </GuestAccessContext.Provider>;
 }
 
@@ -47,31 +47,35 @@ function useGuestAccess() {
 export function GuestHeaderAction() {
   const { snapshot } = useGuestAccess();
   return snapshot.phase === "ready" ? <div className="guest-header-action">
-    <span id="guest-header-status" tabIndex={-1} className="preview-label" role="status">Guest 모의투자 · #{snapshot.accountId}</span>
+    <span id="guest-header-status" tabIndex={-1} className="preview-label" role="status">{snapshot.mode === "member" ? "회원 선물" : "Guest 모의투자"} · #{snapshot.accountId}</span>
   </div> : null;
 }
 
 export function GuestStartPrompt() {
   const { snapshot, open } = useGuestAccess();
+  if (snapshot.mode === "checking") return <div className="guest-entry-prompt"><p role="status">회원 로그인 상태를 확인하는 중입니다.</p></div>;
+  if (snapshot.mode === "member") return <div className="guest-entry-prompt"><p>{snapshot.phase === "loading" || snapshot.phase === "creating" ? "회원 선물 계정을 확인하는 중입니다." : snapshot.phase === "error" ? "회원 선물 계정을 확인하지 못했습니다. 서버 연결과 회원 인증 설정을 확인해 주세요." : "회원 선물 계정을 열어 보세요. 시작 잔액은 0 USDT이며 Guest 체험 자산과 분리됩니다."}</p><button type="button" className="guest-start-button" disabled={snapshot.phase === "loading" || snapshot.phase === "creating"} onClick={open}>회원 선물 계정 열기</button></div>;
   return <GuestEntryPrompt onStart={open} busy={snapshot.phase === "loading" || snapshot.phase === "creating"} storageError={snapshot.phase === "error"} />;
 }
 
-export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCancel, onClose }: {
+export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCancel, onClose, member = false }: {
   dialogRef: RefObject<HTMLDialogElement | null>; creating: boolean; failed: boolean;
-  onStart: () => void; onCancel: () => void; onClose: () => void;
+  onStart: () => void; onCancel: () => void; onClose: () => void; member?: boolean;
 }) {
   return <dialog ref={dialogRef} className="guest-start-dialog" aria-modal="true" aria-labelledby="guest-start-heading" aria-describedby="guest-start-description"
     onCancel={(event) => { if (creating) event.preventDefault(); }} onClose={onClose}>
-    <h2 id="guest-start-heading">게스트 모의투자 시작</h2>
+    <h2 id="guest-start-heading">{member ? "회원 선물 계정 열기" : "게스트 모의투자 시작"}</h2>
     <div id="guest-start-description">
+      {member ? <><p>회원 전용 선물 계정을 명시적으로 엽니다. 최초 잔액은 0 USDT입니다.</p><p>Guest의 체험 자산과 금융 이력을 가져오거나 초기화하지 않습니다.</p></> : <>
       <p>10,000 USDT의 가상 자산으로 실제 자금 없이 모의투자를 체험할 수 있습니다.</p>
       <p>모의투자 기록은 같은 브라우저에서 최대 7일간 유지됩니다. 다른 브라우저나 기기에서는 복구할 수 없습니다.</p>
       <p>브라우저 데이터를 삭제하거나 기간이 만료되면 복구할 수 없습니다.</p>
+      </>}
     </div>
-    {failed && <p role="alert" className="order-warning">계정을 생성하지 못했습니다. 연결과 브라우저 저장소 설정을 확인한 뒤 다시 시도해 주세요.</p>}
+    {failed && <p role="alert" className="order-warning">{member ? "회원 계정을 열지 못했습니다. 서버 연결과 인증 설정을 확인한 뒤 다시 시도해 주세요." : "계정을 생성하지 못했습니다. 연결과 브라우저 저장소 설정을 확인한 뒤 다시 시도해 주세요."}</p>}
     <div className="guest-dialog-actions">
       <button type="button" className="guest-cancel" disabled={creating} onClick={onCancel}>취소</button>
-      <button type="button" className="guest-start-button" disabled={creating} onClick={onStart}>{creating ? "계정 생성 중…" : "10,000 USDT로 시작하기"}</button>
+      <button type="button" className="guest-start-button" disabled={creating} onClick={onStart}>{creating ? "계정 생성 중…" : member ? "0 USDT 회원 계정 열기" : "10,000 USDT로 시작하기"}</button>
     </div>
   </dialog>;
 }

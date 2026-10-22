@@ -6,6 +6,7 @@ import { retryTradingQuery } from "../api/client";
 import { createGuestSession, initialSession, type GuestSession } from "../api/guest-session";
 import { TradingNoticeProvider } from "./trading-notices";
 import { GuestAccessProvider } from "./guest-access";
+import { useMember } from "../../member/components/member-provider";
 
 const SessionContext = createContext<GuestSession | null>(null);
 let browserSession: GuestSession | undefined;
@@ -27,6 +28,7 @@ export function bindGuestCache(client: QueryClient, session: GuestSession) {
 }
 
 export function TradingDataProvider({ children }: { children: ReactNode }) {
+  const { session: memberSession } = useMember();
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: {
     staleTime: 15_000, gcTime: 60_000, retry: retryTradingQuery,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
@@ -34,13 +36,27 @@ export function TradingDataProvider({ children }: { children: ReactNode }) {
   const [session] = useState(getSession);
   useEffect(() => {
     const unsubscribe = bindGuestCache(client, session);
-    const restore = () => { void session.restore(); };
+    const identity = memberSession.observeAccess(access => {
+      const phase = memberSession.getSnapshot().phase;
+      if (access && phase === "ready") {
+        void session.enterMember(access, () => { void memberSession.refresh().catch(() => {}); });
+      } else if (phase === "loading" || phase === "authenticating" || phase === "ending") session.pauseMemberCheck();
+      else { session.leaveMember(); void session.restore(); }
+    });
+    const restore = () => {
+      if (memberSession.getSnapshot().phase === "ready") void memberSession.restore().catch(() => {});
+      else if (["anonymous", "error"].includes(memberSession.getSnapshot().phase)) void session.restore();
+    };
     const syncStorage = (event: StorageEvent) => { if (event.key === null || event.key === session.storageKey) restore(); };
     window.addEventListener("storage", syncStorage);
     window.addEventListener("focus", restore);
-    restore();
-    return () => { unsubscribe(); window.removeEventListener("storage", syncStorage); window.removeEventListener("focus", restore); };
-  }, [client, session]);
+    return () => {
+      unsubscribe(); identity();
+      if (session.getSnapshot().mode === "member") session.pauseMemberCheck();
+      client.clear();
+      window.removeEventListener("storage", syncStorage); window.removeEventListener("focus", restore);
+    };
+  }, [client, session, memberSession]);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => initialSession);
   return <QueryClientProvider client={client}><SessionContext.Provider value={session}><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`}><GuestAccessProvider session={session}>{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
 }
