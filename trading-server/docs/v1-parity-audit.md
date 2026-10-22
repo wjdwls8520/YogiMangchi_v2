@@ -246,3 +246,15 @@ Content 접수202와 Trading 완료를 구분한다. 전송 전에는 기존 Tra
 (각 실패·오류·건너뜀0). 가격 없이 모든 주문 취소/포지션 종료, 기존 부분 실현 손익·수수료 보존,
 탈퇴 전용 서명/대상 격리, 무계정 tombstone·재생성 차단, 동시 주문 경합, 원장 불일치 rollback,
 격리 검토 보류 계정 종료와 Content 영속 재시도/전송 재개를 확인했다.
+
+## Phase 4 팔로우
+
+V1 FollowController/FollowService/MemberFollowRepositoryImpl/FollowFacadeService를 읽기 전용 조사했다.
+Content에 PUT/DELETE 팔로우, 공개 followers/followings 커서·검색, 관계/집계 조회를 추가했다.
+V1의 관계 ID 내림차순/기본·최대10개 조회는 유지한다. 잘못된 size/cursor는 V2에서400으로 명시한다.
+언팔로우는 V1의 물리 삭제 대신 비활성화하며 재팔로우는 새로운 관계 ID를 만들고 과거 행은 보존한다.
+회원 행 오름차순 잠금·활성 관계 부분 Unique로 중복 요청을 직렬화하며 집계는 활성 관계에서 직접 계산한다.
+탈퇴와 양방향 관계 해제는 동일 Content Transaction이다. Trading DB·Frontend는 수정하지 않는다.
+Content V3 migration, 기존 JdbcTemplate DTO Projection만 사용하며 추가 의존성이 없다.
+Content clean build38개 테스트 통과(실패·오류·건너뜀0). 이미지/bestCount는 가짜 필드를 추가하지 않는다.
+V1 follow 알림 저장/SSE는 아직 미이식이며 Content 알림 단계에서 실제 기능으로 연결해야 한다.

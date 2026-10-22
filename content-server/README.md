@@ -3,7 +3,7 @@
 Java17 / Spring Boot3.5.16 / Gradle8.14.3 / PostgreSQL / Spring Security / springdoc2.9.1의 독립 Backend다.
 현재 구현은 **회원 인증 기반**이며 전체 V1 기능 이식 완료를 의미하지 않는다.
 Trading 금융 원장·Frontend를 직접 수정하지 않는다. 회원 JWT의 Trading 계정 연동은 [Trading 계약](../trading-server/README.md)을 따른다. Guest JWT 전환,
-이미지·팔로우·커뮤니티는 후속 작업이다. 기본 프로필과 회원 탈퇴/Trading 정리 요청은 구현되어 있다.
+이미지·커뮤니티·팔로우 알림은 후속 작업이다. 기본 프로필·팔로우와 회원 탈퇴/Trading 정리 요청은 구현되어 있다.
 
 ## 로그인과 토큰 계약
 
@@ -44,6 +44,9 @@ Refresh/로그아웃/가입/로그인 완료는 세션에 바인딩한 CSRF 검�
 | 닉네임 확인 | GET /api/v1/members/nickname/availability?nickname=... | 공개 사전 확인. 최종 저장 시 DB 고유 제약으로 재검증 |
 | 프로필 수정 | PATCH /api/v1/members/me/profile | 본인 Bearer만 허용. nickname/profileMessage 중 하나 이상. 중복409, 검증400 |
 | 탈퇴 | POST /api/v1/members/me/withdrawal | 본인 Bearer.202 PENDING 접수, Trading 확인 후 반복 요청200 COMPLETED. 반복 안전 |
+| 팔로우/취소 | PUT/DELETE /api/v1/members/{memberId}/follows | 본인 Bearer, 반복 안전. 자기 자신400, 미존재/탈퇴 대상404 |
+| 관계/집계 | GET /api/v1/members/{memberId}/follows | 공개 followerCount/followingCount. 선택 Bearer로 followed/follower/mine 확인 |
+| 팔로워/팔로잉 | GET /api/v1/members/{memberId}/followers 또는 /followings | 공개 목록. cursorId, size1~10(기본10), keyword12자 이하 |
 | 공개키 | GET /.well-known/jwks.json | 공개 RSA 성분만 반환. 개인키 없음 |
 
 발급 응답: `{memberId,nickname,accessToken,tokenType:"Bearer",expiresIn:900,expiresAt}`.
@@ -55,6 +58,15 @@ Frontend에서 공급자 Access Token을 임의로 POST하여 회원이 되는 �
 회원 행 잠금으로 동시 부분 변경의 유실을 방지한다. 기존300자 컬럼과 과거 저장값을 임의로 축소하지 않는다.
 과거255자 초과 메시지가 있다면 닉네임 변경 시에도 유효한 메시지를 함께 제출해야 하며 그렇지 않으면409다.
 이미지 업로드·다른 회원의 프로필 변경은 제공하지 않는다. CORS는 설정한 Origin의 PATCH preflight를 허용한다.
+
+팔로우는 회원 ID 두 개를 오름차순으로 잠그고 변경하므로 중복·상호 요청과 탈퇴 경합을 직렬화한다.
+별도 회원 카운터를 증감하지 않고 ACTIVE 회원 사이의 활성 관계에서 집계한다. 조회는 명시적 JDBC DTO Projection이며
+부분 고유 인덱스와 커서 조회를 기존 PostgreSQL/JdbcTemplate로 처리한다. Entity/Querydsl/새 의존성은 추가하지 않는다.
+언팔로우는 관계를 비활성화하고 재팔로우는 새 관계 ID를 생성하므로 이전 이력을 보존하면서 최신 순서를 유지한다.
+목록은 관계 ID 내림차순이다. 첫 요청은 cursorId 생략, hasNext이면 nextCursorId를 다음 요청에 전달한다.
+닉네임 검색은 대소문자를 구분하지 않는 리터럴 부분 검색이며 검색어 변경 시 커서를 초기화한다. `%`를 와일드카드로 해석하지 않는다.
+탈퇴는 양방향 관계를 같은 Content Transaction에서 비활성화하며 일반 조회·집계에서 제외한다.
+이미지·bestCount·팔로우 알림은 구현하지 않은 값을 응답에 꾸며 넣지 않는다. 알림 저장/전달은 Content 알림 단계에서 연결한다.
 
 ## 탈퇴 계약
 
@@ -140,6 +152,9 @@ OpenAPI 인증 요구 및 PATCH CORS, 범위를 벗어난 JWT subject의401 응�
 2026-10-22 탈퇴 추가 후 `clean build` 및 최종 `build` 성공,30개 테스트 통과(실패·오류·건너뜀0).
 탈퇴 반복/소프트 삭제/모든 Refresh 폐기·쿠키 제거, 회원·Refresh·전송 요청의 원자적 rollback,
 HTTP503 재시도 대기/새 worker 재개/전용 JWT 서명·계약/204 완료 처리를 추가 검증했다.
+
+2026-10-22 팔로우 추가 후 clean build 성공,38개 테스트 통과(실패·오류·건너뜀0).
+인증·본인 소유권·중복 PUT/DELETE·이력 보존·커서/검색·관계 집계·탈퇴 제외·동시 중복/탈퇴 경합과 OpenAPI/CORS를 검증했다.
 
 공식 근거: [Google OIDC](https://developers.google.com/identity/openid-connect/openid-connect),
 [Kakao REST](https://developers.kakao.com/docs/ko/kakaologin/rest-api),

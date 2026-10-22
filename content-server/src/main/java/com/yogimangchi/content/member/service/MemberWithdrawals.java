@@ -24,6 +24,7 @@ public class MemberWithdrawals {
         var member=members.lockById(memberId).orElseThrow(AuthFailure::unauthorized);
         Instant now=Instant.now();
         member.withdraw(now);
+        jdbc.update("update content.member_follow set active=false,deactivated_at=now() where active and (follower_id=? or following_id=?)",memberId,memberId);
         refresh.revokeMember(memberId,now);
         jdbc.update("insert into content.member_withdrawal(member_id,status,requested_at,next_attempt_at) values (?,'PENDING',?,?) on conflict(member_id) do nothing",
                 memberId,java.sql.Timestamp.from(now),java.sql.Timestamp.from(now));
