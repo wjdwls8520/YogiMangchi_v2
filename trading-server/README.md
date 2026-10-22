@@ -5,14 +5,17 @@ TradingSymbol 구조, 공개 거래 종목 조회 API, Binance Mark Price 수신
 Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/지정가 주문과 격리증거금 청산을 제공한다. 루트 `readme.md`,
 루트 및 이 디렉터리의 `AGENTS.md`를 따른다.
 
-## V1 기능 이식 조사와 Isolated 전환 준비
+## V2 누락 기능 보완과 Isolated 전환
 
-2026-10-20 요청의 최종 목표는 V1 제품 기능과 V2 기술 구조를 결합한 Hedge + Isolated Only다.
-금융 Phase 1은 Hedge + Isolated Only로 전환했다. 전체 V1 이식은 아직 완료되지 않았으며,
-Phase 2는 MARKET/LIMIT 거래 수수료와 서버 주문 비용·비율 수량 API를 추가한다.
-Phase 3은 전용 체결·종료 Position 이력과 영속 개인 거래 이벤트를 추가한다.
-Phase4의 Content Google/Kakao 회원 인증과 Trading 회원 JWT 계정 연결을 제공한다.
-Guest JWT 전환·프로필 확장/탈퇴·현물·대회·커뮤니티는 후속 작업이다. 호환 Frontend 준비 전 배포하지 않는다.
+기존 금융 엔진은 Hedge + Isolated Only를 유지한다. MARKET/LIMIT 수수료, 서버 주문 비용·비율 수량,
+체결·종료 이력과 영속 개인 거래 이벤트를 구현했다. Content Google/Kakao 인증, Trading 회원 JWT 계정 연결,
+기본 프로필·탈퇴·팔로우도 구현되어 있다. Frontend는 이 Backend 작업에서 변경하지 않는다.
+
+V1은 필요한 누락 기능의 참고 자료이며 V1의 모든 기능이나 정책을 V2에 자동 추가하지 않는다.
+2026-10-22 사용자 확정으로 이메일 추가 인증·거래 해금 퀘스트는 제외하고 투자 성과·공개 포트폴리오는 후순위다.
+현재 우선순위는 Guest 경험이다. 재도전은 기존 Guest ID를 유지하고 자금을 초기화하는 기능이며
+아직 Backend reset API는 없다. 현재 기본 자금10000 USDT를 사용하되, 주문·포지션·예약 해제와
+재도전 이력 처리를 함께 정리해야 한다. 기존 계정이나 거래 이력을 임의 삭제하는 방식으로 구현하지 않는다.
 
 - [V1/V2 기능 비교·누락·단계별 이식 기준](docs/v1-parity-audit.md)
 - [V1 Controller 전체와 Frontend API 소비 근거](docs/v1-api-inventory.md)
