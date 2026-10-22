@@ -574,6 +574,18 @@
   .account-records-heading span {
     @apply text-trade-meta font-normal text-terminal-muted;
   }
+  .history-filters {
+    @apply flex flex-wrap items-end gap-2 border-b border-terminal-line bg-terminal-panel px-3 py-2;
+  }
+  .history-filters label {
+    @apply flex min-w-24 flex-col gap-1 text-trade-meta text-terminal-muted;
+  }
+  .history-filters select, .history-filters input {
+    @apply min-h-9 min-w-0 rounded-sm border border-terminal-line bg-terminal-raised px-2 text-trade-body text-terminal-text;
+    color-scheme: dark;
+  }
+  .history-more { @apply flex flex-col items-center border-t border-terminal-line py-2 text-trade-meta text-terminal-muted; }
+  .account-event-state { @apply flex min-h-7 items-center gap-2 border-b border-terminal-line px-3 text-trade-meta text-terminal-muted; }
   /* One accessible table per dataset; the same cells form mobile position rows. */
   .trading-table-scroll { overflow-x: auto; }
   .trading-table {

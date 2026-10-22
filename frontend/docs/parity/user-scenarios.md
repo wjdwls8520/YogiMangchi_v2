@@ -47,3 +47,5 @@
 | 단계 | 자동 테스트 | lint/typecheck/build | 실제 서버 / 브라우저 | 미검증·차단 |
 |---|---|---|---|---|
 | 0 전수조사 | 소스 경로·정적 연결·CSV 구조 점검 / 기존 테스트166개 통과(고아 test output 제거 후) | lint/typecheck/webpack build 통과 | V1 main 버전·Trading8081 OpenAPI 확인 | V1 실제 서버 미실행, Content8080 Runtime 대기, 사용자 시나리오 실행 전 |
+| 1 Trading 계약 복원 / PR34 | 177개 통과 | 모두 통과 | Guest20 MARKET OPEN/CLOSE·100배·강제청산가·100% 서버 견적·LIMIT 예약/취소·사용자 승인 재도전10000/동일ID/이력보존 | SHORT/다중 lifecycle 복합 시나리오·실제 강제청산 유도 미실행 |
+| 2 이력 및 개인 이벤트 | parser·100건 Fill 경계·재연결/중복/계정전환/heartbeat/오류 횟수·안전한 알림 테스트 추가 | 최종 검증 결과는 PR에 기록 | 실제 Fill/종료 포지션·CLOSE 필터·개인 WS 실시간·주문98 접수/취소 타 화면 갱신·6개 너비 확인 | 실제100건/비동기 LIMIT fill/강제청산 유도 미실행; 해당 복구 로직은 격리 검증 |
