@@ -19,6 +19,7 @@ public class MemberCredentials {
         Jwt jwt;
         try { jwt=decoder.decode(token); } catch(JwtException failure) { return Optional.empty(); }
         Long member=Long.valueOf(jwt.getSubject());
+        if(accounts.existsByMemberIdAndStatus(member,com.yogimangchi.trading.tradingaccount.entity.TradingAccount.Status.WITHDRAWN)) return Optional.empty();
         Long account=accounts.findAccountIdByMemberId(member).orElse(null);
         return Optional.of(new TradingPrincipal(account,jwt.getExpiresAt(),member));
     }

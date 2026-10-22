@@ -59,7 +59,7 @@ public class AccountTriggerService {
     /** No Redis I/O here. Replay and live execution share the same account lock and atomic financial transaction. */
     @Transactional
     public void process(Long accountId, LatestMarkPrice tick, Map<Long, LatestMarkPrice> book) {
-        TradingAccount account = locks.lock(accountId);
+        TradingAccount account = locks.lockIncludingWithdrawn(accountId);
         if (account.getStatus() != TradingAccount.Status.ACTIVE) return;
         Wallet wallet = wallets.findById(accountId).orElseThrow();
         List<Position> open = new ArrayList<>(positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN));

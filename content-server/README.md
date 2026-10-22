@@ -3,7 +3,7 @@
 Java17 / Spring Boot3.5.16 / Gradle8.14.3 / PostgreSQL / Spring Security / springdoc2.9.1의 독립 Backend다.
 현재 구현은 **회원 인증 기반**이며 전체 V1 기능 이식 완료를 의미하지 않는다.
 Trading 금융 원장·Frontend를 직접 수정하지 않는다. 회원 JWT의 Trading 계정 연동은 [Trading 계약](../trading-server/README.md)을 따른다. Guest JWT 전환,
-탈퇴·이미지·팔로우·커뮤니티는 후속 작업이다. 기본 프로필 조회·변경은 구현되어 있다.
+이미지·팔로우·커뮤니티는 후속 작업이다. 기본 프로필과 회원 탈퇴/Trading 정리 요청은 구현되어 있다.
 
 ## 로그인과 토큰 계약
 
@@ -43,6 +43,7 @@ Refresh/로그아웃/가입/로그인 완료는 세션에 바인딩한 CSRF 검�
 | 공개 프로필 | GET /api/v1/members/{memberId} | ACTIVE 회원만 조회, 이메일·권한·공급자 식별자 제외. 미존재/탈퇴404 |
 | 닉네임 확인 | GET /api/v1/members/nickname/availability?nickname=... | 공개 사전 확인. 최종 저장 시 DB 고유 제약으로 재검증 |
 | 프로필 수정 | PATCH /api/v1/members/me/profile | 본인 Bearer만 허용. nickname/profileMessage 중 하나 이상. 중복409, 검증400 |
+| 탈퇴 | POST /api/v1/members/me/withdrawal | 본인 Bearer.202 PENDING 접수, Trading 확인 후 반복 요청200 COMPLETED. 반복 안전 |
 | 공개키 | GET /.well-known/jwks.json | 공개 RSA 성분만 반환. 개인키 없음 |
 
 발급 응답: `{memberId,nickname,accessToken,tokenType:"Bearer",expiresIn:900,expiresAt}`.
@@ -54,6 +55,25 @@ Frontend에서 공급자 Access Token을 임의로 POST하여 회원이 되는 �
 회원 행 잠금으로 동시 부분 변경의 유실을 방지한다. 기존300자 컬럼과 과거 저장값을 임의로 축소하지 않는다.
 과거255자 초과 메시지가 있다면 닉네임 변경 시에도 유효한 메시지를 함께 제출해야 하며 그렇지 않으면409다.
 이미지 업로드·다른 회원의 프로필 변경은 제공하지 않는다. CORS는 설정한 Origin의 PATCH preflight를 허용한다.
+
+## 탈퇴 계약
+
+회원은 즉시 WITHDRAWN/withdrawnAt으로 소프트 삭제하고 프로필 메시지를 비운다. 공개 조회·로그인·갱신·프로필 변경을
+차단하며 모든 Refresh 계열을 폐기하고 브라우저 Refresh 쿠키와 임시 세션을 제거한다. 회원/OAuth 연결/가입 동의 이력은 물리 삭제하지 않는다. 닉네임은 계속 예약되며,
+동일 OAuth 계정의 재가입·개인정보 파기 정책은 이 endpoint에서 임의로 구현하지 않는다.
+
+동일 Transaction에서 `content.member_withdrawal`에 PENDING 요청을 저장한다. Trading DB를 직접 수정하지 않는다.
+전송을 활성화하면 최대10건씩 별도 HTTP로 보내고 Trading204 응답 후 COMPLETED로 저장한다.
+실패 시5초부터 최대5분 간격으로 재시도하며 재시작 후에도 DB 요청을 이어 처리한다. 중복 전송은 Trading에서 멱등 처리한다.
+Content 서명키로60초짜리 전용 JWT(audience=trading-internal, token_use=member_withdrawal, sub=대상 memberId)를 발급한다.
+일반 회원/Guest 토큰은 내부 API에서 사용할 수 없다. 토큰·내부 오류 응답 본문을 저장하거나 로그에 남기지 않는다.
+
+Trading은 대기 주문을 취소하고 예약 금액을 해제하며 열린 포지션을 CLOSED/closeReason=MEMBER_WITHDRAWAL로 종료한다.
+실시간 시세를 기다리지 않고 Fill·청산가·추가 손익·수수료를 만들지 않는다. 기존 체결/실현 손익/수수료/잔액은 보존한다.
+탈퇴 종료는 정상 매매 종료 집계에서 제외하며 계정은 WITHDRAWN으로 유지해 재생성·기존 JWT 사용을 차단한다.
+Content 접수와 Trading 완료는 한 Transaction이 아니므로202는 전체 처리 완료를 의미하지 않는다.
+전송 전에는 기존 Access로 Trading을 사용할 수 있으며 이 구간은 전송 지연 또는 Access 만료(최대15분)에 영향을 받는다.
+탈퇴 후 토큰 만료로 상태 조회가 불가능해져도 영속 전송은 계속된다. 아직 없는 커뮤니티 데이터 삭제는 구현하지 않는다.
 
 운영 Frontend와 Content API는 HTTPS의 **동일 site** 도메인(예: app.example.com/api.example.com)으로 배치한다.
 로컬도 localhost와127.0.0.1을 섞지 않고 동일한 호스트 이름을 사용한다.
@@ -81,6 +101,8 @@ Hibernate는 validate, open-in-view=false이며 운영 migration 계정과 앱 �
 | KAKAO_CLIENT_ID/SECRET | OAuth 활성화 시 필수. Kakao 콘솔 Client Secret 활성화 필요 |
 | CONTENT_AUTH_RETURN_URI | 고정 Frontend 콜백. 로컬 기본http://localhost:3000/auth/callback, 운영 HTTPS 필수 |
 | CONTENT_HTTP_ALLOWED_ORIGINS | 명시적인 Frontend Origin 목록. 운영 필수 |
+| CONTENT_WITHDRAWAL_DELIVERY_ENABLED | 로컬 기본false, 운영 기본true. 사용 시 Trading 회원 JWT 검증도 활성화 |
+| CONTENT_TRADING_BASE_URL | 로컬 기본http://localhost:8081, 운영 명시 필수. 신뢰한 내부 서비스 주소; 외부망에서는 HTTPS 사용 |
 | CONTENT_DB_URL/USERNAME/PASSWORD | 운영 앱 접속, 같은 yogimangchi DB |
 | CONTENT_FLYWAY_USERNAME/PASSWORD | 운영 Content migration 계정 |
 
@@ -114,6 +136,10 @@ local Swagger는 `/swagger-ui/index.html`, OpenAPI는 `/v3/api-docs`다. prod에
 2026-10-22 기본 프로필 추가 후 `clean build` 성공,27개 테스트 통과(실패·오류·건너뜀0).
 공개/비공개 필드, 본인 소유권, 비활성 회원 제외, 입력·중복 rollback, 동시 부분 변경,
 OpenAPI 인증 요구 및 PATCH CORS, 범위를 벗어난 JWT subject의401 응답을 추가 검증했다.
+
+2026-10-22 탈퇴 추가 후 `clean build` 및 최종 `build` 성공,30개 테스트 통과(실패·오류·건너뜀0).
+탈퇴 반복/소프트 삭제/모든 Refresh 폐기·쿠키 제거, 회원·Refresh·전송 요청의 원자적 rollback,
+HTTP503 재시도 대기/새 worker 재개/전용 JWT 서명·계약/204 완료 처리를 추가 검증했다.
 
 공식 근거: [Google OIDC](https://developers.google.com/identity/openid-connect/openid-connect),
 [Kakao REST](https://developers.kakao.com/docs/ko/kakaologin/rest-api),

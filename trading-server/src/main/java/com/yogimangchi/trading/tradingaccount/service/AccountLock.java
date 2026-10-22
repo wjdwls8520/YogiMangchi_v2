@@ -22,6 +22,13 @@ public class AccountLock {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public TradingAccount lock(Long accountId) {
+        var account=lockIncludingWithdrawn(accountId);
+        if(account.getStatus()==TradingAccount.Status.WITHDRAWN) throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
+        return account;
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public TradingAccount lockIncludingWithdrawn(Long accountId) {
         entityManager.createNativeQuery("SET LOCAL lock_timeout = '2s'").executeUpdate();
         return accounts.lockById(accountId).orElseThrow(() -> new BusinessException(ErrorCode.ACCOUNT_NOT_FOUND));
     }

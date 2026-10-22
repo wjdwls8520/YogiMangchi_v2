@@ -55,6 +55,7 @@ class MemberJwtIntegrationTests {
     @Autowired ObjectMapper json;
     @Autowired TradingAccountService guests;
     @Autowired MemberAccounts members;
+    @Autowired MemberWithdrawal withdrawals;
     @Autowired TradingOrderService orders;
     @Autowired LatestPriceStore prices;
     @Autowired DataSource dataSource;
@@ -188,6 +189,80 @@ class MemberJwtIntegrationTests {
         } finally { jdbc.execute("drop schema if exists "+schema+" cascade"); } // Disposable Testcontainers schema only.
     }
     private static String normalToken(long member) { return token(member,Instant.now().plusSeconds(300),"https://content.test","trading","access",List.of("MEMBER"),0L); }
+    @Test void withdrawalCancelsAllOrdersRetiresPositionsWithoutPriceFillFeeOrPnlAndIsIdempotent() throws Exception {
+        var own=members.open(member); Long id=own.accountId();
+        jdbc.update("update trading.wallet set balance=10000 where account_id=?",id);
+        var opened=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
+        Instant changed=Instant.now();
+        assertThat(prices.update(new LatestMarkPrice(btc,new BigDecimal("1050"),changed,changed))).isTrue();
+        orders.close(id,opened.positionId(),UUID.randomUUID().toString(),new com.yogimangchi.trading.order.dto.ClosePositionRequest(new BigDecimal("0.1")));
+        orders.createLimitClose(id,opened.positionId(),UUID.randomUUID().toString(),new com.yogimangchi.trading.order.dto.LimitCloseRequest(new BigDecimal("0.7"),new BigDecimal("1100")));
+        orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.SHORT,BigDecimal.ONE,10,new BigDecimal("1100")));
+        var ledger=jdbc.queryForMap("select balance,realized_pnl,fees_paid,settlement_adjustment from trading.wallet where account_id=?",id);
+        assertThat((BigDecimal)ledger.get("realized_pnl")).isPositive();
+        long fills=jdbc.queryForObject("select count(*) from trading.fill",Long.class);
+        prices.markUnavailable(); // No provider, Redis Mark or engine readiness is required for administrative closure.
+        String internal=token(member,Instant.now().plusSeconds(40),"https://content.test","trading-internal","member_withdrawal",List.of(),0L);
+        for(int i=0;i<2;i++) mvc.perform(post("/internal/v1/members/"+member+"/withdrawal").header("Authorization","Bearer "+internal)).andExpect(status().isNoContent());
+        assertThat(jdbc.queryForMap("select balance,realized_pnl,fees_paid,settlement_adjustment from trading.wallet where account_id=?",id)).isEqualTo(ledger);
+        assertThat(jdbc.queryForObject("select count(*) from trading.fill",Long.class)).isEqualTo(fills);
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'",Long.class,id)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='CANCELED' and reason='MEMBER_WITHDRAWAL'",Long.class,id)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from trading.position where account_id=? and status='CLOSED' and close_reason='MEMBER_WITHDRAWAL' and exit_price is null and reserved_close_quantity=0",Long.class,id)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select used_margin+reserved_margin from trading.wallet where account_id=?",BigDecimal.class,id)).isZero();
+        mvc.perform(post("/api/v1/trading/accounts/member").header("Authorization","Bearer "+normalToken(member))).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/trading/account/wallet").header("Authorization","Bearer "+normalToken(member))).andExpect(status().isUnauthorized());
+        assertThatThrownBy(() -> members.open(member)).isInstanceOf(com.yogimangchi.trading.error.BusinessException.class);
+    }
+
+    @Test void withdrawalRequiresDedicatedSignedPurposeAndMatchingMemberAndLeavesGuestAlone() throws Exception {
+        var guest=guests.createGuest();
+        String endpoint="/internal/v1/members/"+member+"/withdrawal";
+        mvc.perform(post(endpoint)).andExpect(status().isUnauthorized());
+        mvc.perform(post(endpoint).header("Authorization","Bearer "+normalToken(member))).andExpect(status().isUnauthorized());
+        mvc.perform(post(endpoint).header("Authorization","Bearer "+guest.accessToken())).andExpect(status().isUnauthorized());
+        String internal=token(member,Instant.now().plusSeconds(40),"https://content.test","trading-internal","member_withdrawal",List.of(),0L);
+        mvc.perform(post("/internal/v1/members/"+(member+100000)+"/withdrawal").header("Authorization","Bearer "+internal)).andExpect(status().isForbidden());
+        mvc.perform(post(endpoint).header("Authorization","Bearer "+internal)).andExpect(status().isNoContent());
+        mvc.perform(post("/api/v1/trading/accounts/member").header("Authorization","Bearer "+normalToken(member))).andExpect(status().isUnauthorized());
+        assertThat(jdbc.queryForObject("select status from trading.trading_account where member_id=?",String.class,member)).isEqualTo("WITHDRAWN");
+        mvc.perform(get("/api/v1/trading/account/wallet").header("Authorization","Bearer "+guest.accessToken())).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/trading/accounts/member").header("Authorization","Bearer "+internal)).andExpect(status().isUnauthorized());
+    }
+
+    @Test void inconsistentWithdrawalRollsBackAndLegacyMarginHoldDoesNotRequireConversion() {
+        var own=members.open(member); Long id=own.accountId();
+        jdbc.update("update trading.wallet set balance=10000 where account_id=?",id);
+        orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
+        jdbc.update("update trading.wallet set used_margin=used_margin+1 where account_id=?",id);
+        assertThatThrownBy(() -> withdrawals.withdraw(member)).isInstanceOf(IllegalStateException.class);
+        assertThat(jdbc.queryForObject("select status from trading.trading_account where id=?",String.class,id)).isEqualTo("ACTIVE");
+        assertThat(jdbc.queryForObject("select status from trading.position where account_id=?",String.class,id)).isEqualTo("OPEN");
+        jdbc.update("update trading.wallet set used_margin=used_margin-1,balance=1 where account_id=?",id);
+        jdbc.update("update trading.trading_account set margin_transition_status='REVIEW_REQUIRED',isolated_activated_at=null where id=?",id);
+        withdrawals.withdraw(member);
+        assertThat(jdbc.queryForObject("select status from trading.trading_account where id=?",String.class,id)).isEqualTo("WITHDRAWN");
+        assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,id)).isEqualByComparingTo("1");
+    }
+
+    @Test void concurrentOrderAndWithdrawalCannotLeaveExecutableExposure() throws Exception {
+        var own=members.open(member); Long id=own.accountId();
+        jdbc.update("update trading.wallet set balance=10000 where account_id=?",id);
+        var start=new CountDownLatch(1); var pool=Executors.newFixedThreadPool(2);
+        try {
+            var order=pool.submit(() -> {
+                start.await();
+                try { orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900"))); }
+                catch(com.yogimangchi.trading.error.BusinessException expected) { assertThat(expected.getCode()).isEqualTo(com.yogimangchi.trading.error.ErrorCode.ACCOUNT_NOT_ACTIVE); }
+                return null;
+            });
+            var withdrawal=pool.submit(() -> { start.await(); withdrawals.withdraw(member); return null; });
+            start.countDown(); order.get(10,TimeUnit.SECONDS); withdrawal.get(10,TimeUnit.SECONDS);
+            assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'",Long.class,id)).isZero();
+            assertThat(jdbc.queryForObject("select used_margin+reserved_margin from trading.wallet where account_id=?",BigDecimal.class,id)).isZero();
+            assertThat(jdbc.queryForObject("select status from trading.trading_account where id=?",String.class,id)).isEqualTo("WITHDRAWN");
+        } finally { start.countDown(); pool.shutdownNow(); }
+    }
     private static String token(long member,Instant expiry,String issuer,String audience,String use,List<String> roles,Long claimedAccount) {
         var claims=JwtClaimsSet.builder().issuer(issuer).subject(Long.toString(member)).issuedAt(Instant.now().minusSeconds(2)).expiresAt(expiry)
                 .audience(List.of(audience)).claim("token_use",use).claim("roles",roles).claim("accountId",claimedAccount).build();

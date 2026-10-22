@@ -29,5 +29,7 @@ public abstract class TestEnvironment {
         registry.add("YOGIMANGCHI_JWT_ISSUER",() -> "https://content.test");
         registry.add("CONTENT_AUTH_RETURN_URI",() -> "https://app.test/auth/callback");
         registry.add("CONTENT_HTTP_ALLOWED_ORIGINS",() -> "https://app.test");
+        registry.add("CONTENT_TRADING_BASE_URL",() -> "http://localhost:9");
+        registry.add("CONTENT_WITHDRAWAL_DELIVERY_ENABLED",() -> "false");
     }
 }

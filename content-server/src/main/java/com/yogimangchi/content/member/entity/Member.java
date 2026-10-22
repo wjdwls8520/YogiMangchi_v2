@@ -25,6 +25,11 @@ public class Member {
         return member;
     }
     public Long getId() { return id; }
+    public void withdraw(Instant now) {
+        if(status==Status.WITHDRAWN) return;
+        status=Status.WITHDRAWN; withdrawnAt=java.util.Objects.requireNonNull(now);
+        profileMessage="";
+    }
     public void changeBasicProfile(String nickname,String message) {
         if(nickname==null || !nickname.matches("[가-힣a-zA-Z0-9]{2,12}") || message==null || message.length()>255 || message.indexOf('\0')>=0)
             throw new IllegalArgumentException("Invalid member profile");

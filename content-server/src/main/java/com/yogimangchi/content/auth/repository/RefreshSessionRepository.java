@@ -15,4 +15,7 @@ public interface RefreshSessionRepository extends Repository<RefreshSession,Long
     @Modifying
     @Query("update RefreshSession r set r.status=com.yogimangchi.content.auth.entity.RefreshSession.Status.REVOKED,r.consumedAt=:now where r.familyId=:family and r.status<>com.yogimangchi.content.auth.entity.RefreshSession.Status.REVOKED")
     int revokeFamily(UUID family,Instant now);
+    @Modifying
+    @Query("update RefreshSession r set r.status=com.yogimangchi.content.auth.entity.RefreshSession.Status.REVOKED,r.consumedAt=:now where r.memberId=:memberId and r.status<>com.yogimangchi.content.auth.entity.RefreshSession.Status.REVOKED")
+    int revokeMember(Long memberId,Instant now);
 }

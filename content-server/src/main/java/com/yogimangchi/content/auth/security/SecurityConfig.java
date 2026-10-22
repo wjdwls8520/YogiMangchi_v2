@@ -22,6 +22,7 @@ public class SecurityConfig {
             a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout").permitAll();
             a.requestMatchers(HttpMethod.GET,"/api/v1/members/me").authenticated();
             a.requestMatchers(HttpMethod.PATCH,"/api/v1/members/me/profile").authenticated();
+            a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/withdrawal").authenticated();
             a.requestMatchers(HttpMethod.GET,"/api/v1/members/{memberId:[0-9]+}","/api/v1/members/nickname/availability").permitAll();
             if(docs) a.requestMatchers("/v3/api-docs","/v3/api-docs/**","/v3/api-docs.yaml","/swagger-ui.html","/swagger-ui/**").permitAll();
             a.anyRequest().denyAll();

@@ -117,6 +117,12 @@ public class Wallet {
     }
 
     public Long getAccountId() { return accountId; }
+    /** Release exposure only; retirement is not a priced settlement and must not rewrite ledger totals. */
+    public void releaseForWithdrawal(BigDecimal openMargins,BigDecimal pendingReservations) {
+        if(usedMargin.compareTo(openMargins)!=0 || reservedMargin.compareTo(pendingReservations)!=0)
+            throw new IllegalStateException("Withdrawal exposure does not match wallet reservations");
+        usedMargin=TradingMath.amount(BigDecimal.ZERO); reservedMargin=TradingMath.amount(BigDecimal.ZERO);
+    }
     public BigDecimal getBalance() { return balance; }
     public BigDecimal getUsedMargin() { return usedMargin; }
     public BigDecimal getReservedMargin() { return reservedMargin; }

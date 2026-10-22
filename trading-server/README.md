@@ -940,5 +940,28 @@ OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들�
 자동 테스트는 Runtime 명세에서 기존 Trading API, 인증 경계와 Market Summary 필드/타입을 검증한다.
 루트의 기존 `docs/trading-openapi.yaml`은 과거 Snapshot이며 최신 계약 확인에는 Runtime 문서를 사용한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-JWT/Content 인증, Admin, Funding, Competition/Ranking과 다중 노드 조정은 아직 구현하지 않았다.
+회원 JWT 검증과 Content 탈퇴 요청 처리는 구현했다. Admin, Funding, Competition/Ranking과 다중 노드 조정은 아직 구현하지 않았다.
 자동 LIQUIDATE 수수료0.05%와 격리 gap adjustment는 구현했다. 전체 V1 동등성의 남은 항목은 기능 비교표에서 추적한다.
+
+## 회원 탈퇴 처리
+
+사용자 승인 정책에 따라 탈퇴는 시장 주문 체결과 구분한다. Content가 회원을 소프트 삭제하고 영속 요청을 전송하며,
+Trading은 `POST /internal/v1/members/{memberId}/withdrawal`에서 Content 공개키로 검증한60초 전용 JWT만 허용한다.
+audience=trading-internal, token_use=member_withdrawal, sub와 경로 memberId 일치가 필수다. 일반 회원/Guest 토큰은 거절한다.
+내부 경로는 공개 Reverse Proxy에서 노출하지 않고 신뢰한 서비스 네트워크로 제한한다. 별도 공유 Secret·의존성은 없다.
+
+동일 AccountLock 안에서 모든 PENDING 주문을 CANCELED/MEMBER_WITHDRAWAL로 바꾸고 CLOSE 수량 예약을 해제한다.
+OPEN 포지션은 CLOSED/close_reason=MEMBER_WITHDRAWAL로 종료하고 quantity/margin/entryNotional을0으로 만든다.
+exitPrice는 null이며 가짜 Fill·손익0 매매·추가 수수료를 만들지 않는다. 과거 부분 체결의 실현 손익과 모든 이력은 보존한다.
+Wallet 사용/예약 금액은 실제 포지션·주문 합계와 일치하는지 검증한 후 해제하며 balance/PnL/fee/adjustment를 변경하지 않는다.
+일반 종료 포지션 조회/집계에서는 탈퇴 종료를 제외한다. 시세 장애나 격리 전환 REVIEW_REQUIRED는 탈퇴를 막지 않는다.
+불일치가 발견되면 전체 정리를 rollback하고 Content 요청은 재시도 대상으로 남는다.
+
+계정은 WITHDRAWN/withdrawnAt으로 보존하며 기존 JWT·재생성·금융 요청을 차단한다. 최초 계정 생성과 같은 member별 잠금을
+사용하여 계정이 없는 회원도 탈퇴 tombstone을 만들고 오래된 JWT로 신규 계정을 만드는 경합을 방지한다.
+거래 중인 요청과 탈퇴는 계정 잠금 순서대로 처리되며, 탈퇴가 완료된 계정의 가격 트리거는 건너뛴다.
+Content의204 유실에 따른 재전송도 안전하다. V15 migration은 기존 정상 종료 규칙과 탈퇴 종료의 null exitPrice를 구분한다.
+로컬 실제 DB에는 migration을 적용하지 않았다. Content 전송 설정과 인증 설정은 Content README를 따른다.
+
+2026-10-22 탈퇴 추가 후 clean build 및 최종 build 성공,529개 테스트 통과(실패·오류·건너뜀0).
+시세 없는 종료·기존 부분 손익/수수료 보존·전용 인증·반복/동시 요청·원장 불일치 rollback·검토 보류 계정을 검증했다.

@@ -12,6 +12,7 @@ public interface TradingAccountRepository extends Repository<TradingAccount, Lon
     Optional<TradingAccount> findById(Long id);
     @Query("select a.id from TradingAccount a where a.memberId=:memberId")
     Optional<Long> findAccountIdByMemberId(Long memberId);
+    boolean existsByMemberIdAndStatus(Long memberId,TradingAccount.Status status);
     Optional<TradingAccount> findByCredentialHash(String credentialHash);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

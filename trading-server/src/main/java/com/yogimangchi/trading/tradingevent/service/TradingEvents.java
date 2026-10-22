@@ -55,6 +55,8 @@ public class TradingEvents {
     @Transactional(readOnly=true, timeout=3)
     public List<TradingEventResponse> after(long accountId,long afterId,int limit) {
         if(afterId<0 || limit<1 || limit>100) throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
+        if(Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.trading_account where id=? and status='WITHDRAWN')",Boolean.class,accountId)))
+            throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         return jdbc.query("select id,event_type,payload,occurred_at from trading.trading_event where account_id=? and id>? order by id limit ?",(r,row) -> {
             try { return new TradingEventResponse(Long.toString(r.getLong("id")),r.getString("event_type"),r.getTimestamp("occurred_at").toInstant(),mapper.readValue(r.getString("payload"),OrderResponse.class)); }
             catch(JsonProcessingException e) { throw new IllegalStateException("Invalid retained trading event snapshot",e); }

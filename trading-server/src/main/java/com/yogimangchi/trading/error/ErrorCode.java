@@ -3,6 +3,7 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    WITHDRAWAL_SUBJECT_MISMATCH(HttpStatus.FORBIDDEN, "Withdrawal credential does not identify the requested member"),
     INVALID_HISTORY_REQUEST(HttpStatus.BAD_REQUEST, "Invalid history cursor, filter or limit (1-100)"),
     MARGIN_MIGRATION_REQUIRED(HttpStatus.CONFLICT, "Legacy account is held pending safe isolated conversion or explicit review"),
     INVALID_LEVERAGE(HttpStatus.BAD_REQUEST, "Leverage must be an integer between 1 and 100"),

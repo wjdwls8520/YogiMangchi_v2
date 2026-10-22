@@ -5,6 +5,10 @@ import com.yogimangchi.content.member.dto.MemberProfileResponse;
 import com.yogimangchi.content.member.dto.PublicMemberProfileResponse;
 import com.yogimangchi.content.member.dto.UpdateProfileRequest;
 import com.yogimangchi.content.member.service.MemberProfiles;
+import com.yogimangchi.content.member.service.MemberWithdrawals;
+import com.yogimangchi.content.auth.controller.AuthController;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -18,7 +22,20 @@ import org.springframework.web.bind.annotation.*;
 public class MemberController {
     private final MemberQueries members;
     private final MemberProfiles profiles;
-    public MemberController(MemberQueries members,MemberProfiles profiles) { this.members=members; this.profiles=profiles; }
+    private final MemberWithdrawals withdrawals;
+    private final boolean secureCookies;
+    public MemberController(MemberQueries members,MemberProfiles profiles,MemberWithdrawals withdrawals,@Value("${content.auth.secure-cookies}") boolean secureCookies) { this.members=members; this.profiles=profiles; this.withdrawals=withdrawals; this.secureCookies=secureCookies; }
+    @PostMapping("/me/withdrawal")
+    @SecurityRequirement(name="memberBearer")
+    @Operation(summary="Withdraw own membership",description="Bearer only. Soft-deletes membership, revokes refresh sessions and durably requests Trading cleanup. Returns202 PENDING until Trading acknowledges;200 COMPLETED on a later repeat. Repeats are idempotent. Trading cancels pending orders and administratively closes positions without market fills, new PnL or fees. No Guest history merge. Existing Access may remain valid in Trading until delivery, at most its15-minute expiry.")
+    public ResponseEntity<MemberWithdrawals.Result> withdraw(@AuthenticationPrincipal Jwt jwt,HttpServletRequest request) {
+        var result=withdrawals.request(Long.valueOf(jwt.getSubject()));
+        if(request.getSession(false)!=null) request.getSession(false).invalidate();
+        var expired=ResponseCookie.from(AuthController.REFRESH_COOKIE,"").path("/api/v1/auth").httpOnly(true)
+                .secure(secureCookies).sameSite("Lax").maxAge(0).build();
+        return ResponseEntity.status(result.status().equals("COMPLETED") ? 200 : 202).header(HttpHeaders.SET_COOKIE,expired.toString())
+                .cacheControl(CacheControl.noStore()).body(result);
+    }
     @GetMapping("/me")
     @SecurityRequirement(name="memberBearer")
     public ResponseEntity<MemberProfileResponse> me(@AuthenticationPrincipal Jwt jwt) {
