@@ -19,6 +19,9 @@ springdoc:
   swagger-ui:
     enabled: false
 content:
+  withdrawal:
+    delivery-enabled: ${CONTENT_WITHDRAWAL_DELIVERY_ENABLED:true}
+    trading-base-url: ${CONTENT_TRADING_BASE_URL}
   auth:
     issuer: ${YOGIMANGCHI_JWT_ISSUER}
     frontend-return-uri: ${CONTENT_AUTH_RETURN_URI}

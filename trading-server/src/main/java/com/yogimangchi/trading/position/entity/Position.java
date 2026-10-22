@@ -32,6 +32,7 @@ public class Position {
     @Column(precision = 38, scale = 18) private BigDecimal exitPrice;
     @Column(nullable = false, updatable = false) private Instant openedAt;
     private Instant closedAt;
+    @Column(length=32) private String closeReason;
     @Column(nullable = false, length = 8, updatable = false) private String openedMarginMode = "ISOLATED";
     @Column(precision = 38, scale = 18) private BigDecimal isolatedCutoverMargin;
     @Column(precision = 38, scale = 18) private BigDecimal isolatedCutoverPrice;
@@ -141,6 +142,18 @@ public class Position {
     }
 
     public Long getId() { return id; }
+    /** Administrative retirement, never a simulated Fill or a zero-PnL market trade. */
+    public BigDecimal closeForWithdrawal(Instant now) {
+        if(status!=Status.OPEN || reservedCloseQuantity.signum()!=0 || now.isBefore(openedAt))
+            throw new IllegalStateException("Withdrawal requires an unreserved open position");
+        BigDecimal released=margin;
+        quantity=BigDecimal.ZERO.setScale(TradingMath.QUANTITY_SCALE);
+        margin=TradingMath.amount(BigDecimal.ZERO);
+        entryNotional=BigDecimal.ZERO.setScale(TradingMath.BASIS_SCALE);
+        status=Status.CLOSED; closedAt=Objects.requireNonNull(now); closeReason="MEMBER_WITHDRAWAL";
+        // Preserve already realized PnL; there is no exit quote, additional PnL or trading fee.
+        return released;
+    }
     public void recordIsolatedCutover(BigDecimal mark, Instant now) {
         if (status != Status.OPEN || !"CROSS".equals(openedMarginMode) || isolatedCutoverAt != null)
             throw new IllegalStateException("Position is not eligible for isolated cutover");

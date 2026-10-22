@@ -7,7 +7,7 @@ import java.util.Objects;
 @Entity
 @Table(name = "trading_account")
 public class TradingAccount {
-    public enum Status { ACTIVE, BANKRUPT }
+    public enum Status { ACTIVE, BANKRUPT, WITHDRAWN }
     public enum MarginTransitionStatus { COMPLETE, PENDING, REVIEW_REQUIRED }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -29,6 +29,7 @@ public class TradingAccount {
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 20)
     private MarginTransitionStatus marginTransitionStatus;
     private Instant isolatedActivatedAt;
+    private Instant withdrawnAt;
 
     protected TradingAccount() { }
 
@@ -62,6 +63,12 @@ public class TradingAccount {
     }
 
     public void declareBankrupt() { status = Status.BANKRUPT; }
+    public void withdraw(Instant now) {
+        if(guestAccount) throw new IllegalStateException("Member account required");
+        if(status==Status.WITHDRAWN) return;
+        status=Status.WITHDRAWN; withdrawnAt=Objects.requireNonNull(now);
+        recordFinancialChange(now);
+    }
     public boolean isIsolated() { return marginTransitionStatus == MarginTransitionStatus.COMPLETE; }
     public void requireMarginReview() {
         if (marginTransitionStatus != MarginTransitionStatus.PENDING) throw new IllegalStateException("Not awaiting margin transition");

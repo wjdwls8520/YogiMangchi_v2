@@ -46,7 +46,7 @@ public class TradeHistoryService {
         if (status!=null && status!=Position.Status.CLOSED && status!=Position.Status.LIQUIDATED) invalid();
         Cursor key=decode(cursor);
         locks.lock(accountId);
-        StringBuilder sql=new StringBuilder("select id,trading_symbol_id,side,status,initial_quantity,entry_price,exit_price,leverage,initial_margin,realized_pnl,opened_margin_mode,opened_at,closed_at from trading.position where account_id=? and status in ('CLOSED','LIQUIDATED')");
+        StringBuilder sql=new StringBuilder("select id,trading_symbol_id,side,status,initial_quantity,entry_price,exit_price,leverage,initial_margin,realized_pnl,opened_margin_mode,opened_at,closed_at from trading.position where account_id=? and status in ('CLOSED','LIQUIDATED') and close_reason is null");
         List<Object> args=new ArrayList<>(List.of(accountId));
         if (key!=null) { sql.append(" and (closed_at,id)<(?,?)"); args.add(at(key.time())); args.add(key.id()); }
         add(sql,args,"trading_symbol_id",symbolId); add(sql,args,"side",side); add(sql,args,"status",status);

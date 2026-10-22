@@ -14,8 +14,8 @@ import org.springframework.security.oauth2.jwt.*;
 @Configuration(proxyBeanMethods=false)
 @ConditionalOnProperty(name="trading.member-auth.enabled",havingValue="true")
 public class MemberJwtConfiguration {
-    @Bean("memberJwtDecoder")
-    JwtDecoder memberJwtDecoder(@Value("${trading.member-auth.public-key-path}") String path,
+    @Bean
+    RSAPublicKey contentPublicKey(@Value("${trading.member-auth.public-key-path}") String path,
             @Value("${trading.member-auth.issuer}") String issuer,org.springframework.core.env.Environment environment) throws java.io.IOException {
         URI uri=URI.create(issuer);
         if(uri.getHost()==null || uri.getUserInfo()!=null || uri.getQuery()!=null || uri.getFragment()!=null
@@ -26,6 +26,10 @@ public class MemberJwtConfiguration {
         RSAPublicKey key;
         try(var input=Files.newInputStream(Path.of(path))) { key=RsaKeyConverters.x509().convert(input); }
         if(key==null || key.getModulus().bitLength()<2048) throw new IllegalArgumentException("RSA public key of at least2048 bits required");
+        return key;
+    }
+    @Bean("memberJwtDecoder")
+    JwtDecoder memberJwtDecoder(RSAPublicKey key,@Value("${trading.member-auth.issuer}") String issuer) {
         var decoder=NimbusJwtDecoder.withPublicKey(key).build();
         OAuth2TokenValidator<Jwt> contract=jwt -> {
             try {
