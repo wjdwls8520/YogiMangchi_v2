@@ -56,7 +56,7 @@ public class MemberWithdrawal {
             order.cancelForWithdrawal(now); events.record(order,null);
         }
         for(var position:open) released=released.add(position.closeForWithdrawal(now));
-        wallet.releaseForWithdrawal(released,reserved);
+        wallet.releaseExposure(released,reserved);
         if(wallet.getUsedMargin().signum()!=0 || wallet.getReservedMargin().signum()!=0)
             throw new IllegalStateException("Withdrawal found inconsistent reservations");
         account.withdraw(now);

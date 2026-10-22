@@ -14,8 +14,8 @@ Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/�
 V1은 필요한 누락 기능의 참고 자료이며 V1의 모든 기능이나 정책을 V2에 자동 추가하지 않는다.
 2026-10-22 사용자 확정으로 이메일 추가 인증·거래 해금 퀘스트는 제외하고 투자 성과·공개 포트폴리오는 후순위다.
 현재 우선순위는 Guest 경험이다. 재도전은 기존 Guest ID를 유지하고 자금을 초기화하는 기능이며
-아직 Backend reset API는 없다. 현재 기본 자금10000 USDT를 사용하되, 주문·포지션·예약 해제와
-재도전 이력 처리를 함께 정리해야 한다. 기존 계정이나 거래 이력을 임의 삭제하는 방식으로 구현하지 않는다.
+`POST /api/v1/trading/account/retry`로 같은 Guest의 자금을10000 USDT로 초기화할 수 있다.
+주문·포지션·예약 해제와 재도전 이력을 함께 처리하며 기존 계정이나 거래 이력을 삭제하지 않는다.
 
 - [V1/V2 기능 비교·누락·단계별 이식 기준](docs/v1-parity-audit.md)
 - [V1 Controller 전체와 Frontend API 소비 근거](docs/v1-api-inventory.md)
@@ -945,6 +945,39 @@ OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들�
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
 회원 JWT 검증과 Content 탈퇴 요청 처리는 구현했다. Admin, Funding, Competition/Ranking과 다중 노드 조정은 아직 구현하지 않았다.
 자동 LIQUIDATE 수수료0.05%와 격리 gap adjustment는 구현했다. 전체 V1 동등성의 남은 항목은 기능 비교표에서 추적한다.
+
+## Guest 재도전 API
+
+`POST /api/v1/trading/account/retry`는 본인 Guest Bearer만 허용한다. 회원 JWT403, 누락/만료 자격증명401,
+누락/잘못된 Idempotency-Key400, 잠금 경합409다. 요청 Body는 필요 없으며 accountId/잔액은 입력으로 신뢰하지 않는다.
+
+```http
+POST /api/v1/trading/account/retry
+Authorization: Bearer <기존 Guest 토큰>
+Idempotency-Key: <새 재도전마다 생성하는 UUID>
+```
+
+200 응답은 `{retryId,accountId,status:"ACTIVE",quoteAsset:"USDT",balance:"10000.000000000000000000",
+canceledOrderCount,closedPositionCount,resetAt}`다. 동일 키를 재전송하면 기존 응답을 반환하고 다시 초기화하지 않는다.
+그 뒤 새 주문을 넣었더라도 오래된 재시도 요청이 새 주문/자금을 지우지 않는다. 새로운 재도전에만 새 키를 사용한다.
+
+AccountLock 안에서 모든 대기 주문을 CANCELED/GUEST_RETRY로 만들고 CLOSE 예약을 해제한다.
+열린 포지션은 CLOSED/GUEST_RETRY로 종료하며 시장 체결·exitPrice·추가 손익·수수료를 만들지 않는다.
+사용/예약 증거금이 실제 포지션/주문 합계와 일치하는지 확인한 후 해제하고 잔액을10000으로 만든다.
+불일치가 있으면 주문·포지션·Wallet·이벤트·재도전 기록을 모두 rollback한다.
+시세 장애 중에도 가능하며 BANKRUPT·이전 격리 전환 보류 계정은 잔여 노출을 정리한 뒤 ACTIVE/ISOLATED로 돌아간다.
+
+Guest 계정 ID·토큰·만료 시각·종목 레버리지 설정은 유지한다. 토큰을 갱신하거나 새 계정을 만들지 않는다.
+기존 Order/Fill/Position 이력과 누적 realizedPnl/feesPaid/settlementAdjustment는 보존한다. 초기화는 매매 수익이 아니다.
+V16의 guest_retry에 초기화 전/후 잔액과 capital_adjustment, 종료/취소 건수, 요청 키를 같은 Transaction으로 저장한다.
+잔액이10000보다 높으면 감소할 수도 있다. 재도전 이력이 있는 계정은 미사용 Guest 정리 대상에서 제외한다.
+일반 종료 포지션 조회에서는 행정 종료를 제외하며 기존 실제 체결·부분 실현 손익은 계속 이력으로 남는다.
+
+Frontend는 성공 후 Wallet/Position/Pending Order를 다시 조회한다. 취소된 주문은 기존 개인 거래 이벤트에도 기록된다.
+새 이벤트 종류·투자 성과 API·이메일 인증·퀘스트·Frontend 수정은 추가하지 않았다. 실제 사용자 DB에는 V16을 적용하지 않았다.
+
+2026-10-22 재도전/회원 경계 통합 테스트21개와 최종 clean build 전체539개 테스트 통과(실패·오류·건너뜀0).
+초기화·이력/토큰 보존·중복 요청·동시 주문·예약 불일치 rollback·파산/전환 보류·만료·타 계정/회원 차단·정리 제외·OpenAPI를 검증했다.
 
 ## 회원 탈퇴 처리
 

@@ -35,6 +35,7 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.GET, "/ws/trading").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/guest").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/member").hasRole("MEMBER");
+            authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/retry").authenticated();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/orders",
                     "/api/v1/trading/account/orders/quote",
                     "/api/v1/trading/account/orders/{orderId}/cancel",

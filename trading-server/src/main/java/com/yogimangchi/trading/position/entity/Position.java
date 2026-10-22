@@ -144,13 +144,19 @@ public class Position {
     public Long getId() { return id; }
     /** Administrative retirement, never a simulated Fill or a zero-PnL market trade. */
     public BigDecimal closeForWithdrawal(Instant now) {
+        return closeAdministratively(now,"MEMBER_WITHDRAWAL");
+    }
+    public BigDecimal closeForGuestRetry(Instant now) {
+        return closeAdministratively(now,"GUEST_RETRY");
+    }
+    private BigDecimal closeAdministratively(Instant now,String reason) {
         if(status!=Status.OPEN || reservedCloseQuantity.signum()!=0 || now.isBefore(openedAt))
-            throw new IllegalStateException("Withdrawal requires an unreserved open position");
+            throw new IllegalStateException("Administrative closure requires an unreserved open position");
         BigDecimal released=margin;
         quantity=BigDecimal.ZERO.setScale(TradingMath.QUANTITY_SCALE);
         margin=TradingMath.amount(BigDecimal.ZERO);
         entryNotional=BigDecimal.ZERO.setScale(TradingMath.BASIS_SCALE);
-        status=Status.CLOSED; closedAt=Objects.requireNonNull(now); closeReason="MEMBER_WITHDRAWAL";
+        status=Status.CLOSED; closedAt=Objects.requireNonNull(now); closeReason=reason;
         // Preserve already realized PnL; there is no exit quote, additional PnL or trading fee.
         return released;
     }
