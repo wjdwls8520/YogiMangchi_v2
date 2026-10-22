@@ -2,7 +2,7 @@ package com.yogimangchi.trading.tradingaccount.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
-@Schema(description = "USDT decimal strings. balance includes allocated position collateral; free cash is balance-usedMargin-reservedMargin, independent of unrealized PnL. realizedPnl is gross; feesPaid and settlementAdjustment reconcile the net cash change. Valuation fields are unavailable if required marks are missing. Legacy conversion holds return null availableBalance.")
+@Schema(description = "USDT decimal strings. balance includes allocated position collateral; free cash is balance-usedMargin-reservedMargin, independent of unrealized PnL. realizedPnl/feesPaid/settlementAdjustment are lifetime Fill totals, preserved on Guest retry. Retry cash adjustments are recorded separately and are not trading PnL. Valuation fields are unavailable if required marks are missing. Legacy conversion holds return null availableBalance.")
 public record WalletResponse(String quoteAsset, String balance, String usedMargin,
         @Schema(description="Total pending OPEN reserved cash, including collateral and estimated fee; not charged until execution") String reservedMargin,
         String realizedPnl, String unrealizedPnl, String equity, String availableBalance, String valuationStatus,

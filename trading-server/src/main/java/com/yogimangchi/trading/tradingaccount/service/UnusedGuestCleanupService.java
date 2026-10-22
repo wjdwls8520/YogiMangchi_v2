@@ -27,6 +27,7 @@ public class UnusedGuestCleanupService {
                     and a.credential_expires_at <= ?
                     and not exists (select 1 from trading.trading_order o where o.account_id = a.id)
                     and not exists (select 1 from trading.position p where p.account_id = a.id)
+                    and not exists (select 1 from trading.guest_retry r where r.account_id = a.id)
                     and exists (select 1 from trading.wallet w where w.account_id = a.id
                         and w.balance = ? and w.realized_pnl = 0 and w.used_margin = 0 and w.reserved_margin = 0)
                 order by a.credential_expires_at, a.id
@@ -40,6 +41,7 @@ public class UnusedGuestCleanupService {
                         and w.balance = ? and w.realized_pnl = 0 and w.used_margin = 0 and w.reserved_margin = 0
                         and not exists (select 1 from trading.trading_order o where o.account_id = w.account_id)
                         and not exists (select 1 from trading.position p where p.account_id = w.account_id)
+                        and not exists (select 1 from trading.guest_retry r where r.account_id = w.account_id)
                     """, id, TradingMath.INITIAL_BALANCE);
             if (wallet == 0) continue;
             if (jdbc.update("delete from trading.trading_account where id = ? and guest_account", id) != 1) {

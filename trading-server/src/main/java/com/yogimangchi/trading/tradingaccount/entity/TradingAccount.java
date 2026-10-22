@@ -63,6 +63,14 @@ public class TradingAccount {
     }
 
     public void declareBankrupt() { status = Status.BANKRUPT; }
+    public void restartGuest(Instant now) {
+        if(!guestAccount || memberId!=null) throw new IllegalStateException("Guest account required");
+        if(!credentialExpiresAt.isAfter(now)) throw new IllegalStateException("Guest credential expired");
+        status=Status.ACTIVE;
+        marginTransitionStatus=MarginTransitionStatus.COMPLETE;
+        isolatedActivatedAt=Objects.requireNonNull(now);
+        recordFinancialChange(now);
+    }
     public void withdraw(Instant now) {
         if(guestAccount) throw new IllegalStateException("Member account required");
         if(status==Status.WITHDRAWN) return;

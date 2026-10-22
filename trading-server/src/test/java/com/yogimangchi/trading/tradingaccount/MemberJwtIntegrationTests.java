@@ -56,6 +56,7 @@ class MemberJwtIntegrationTests {
     @Autowired TradingAccountService guests;
     @Autowired MemberAccounts members;
     @Autowired MemberWithdrawal withdrawals;
+    @Autowired GuestRetryService guestRetries;
     @Autowired TradingOrderService orders;
     @Autowired LatestPriceStore prices;
     @Autowired DataSource dataSource;
@@ -189,6 +190,16 @@ class MemberJwtIntegrationTests {
         } finally { jdbc.execute("drop schema if exists "+schema+" cascade"); } // Disposable Testcontainers schema only.
     }
     private static String normalToken(long member) { return token(member,Instant.now().plusSeconds(300),"https://content.test","trading","access",List.of("MEMBER"),0L); }
+    @Test void memberCannotUseGuestRetryWithOrWithoutProvisionedAccount() throws Exception {
+        for(int i=0;i<2;i++) {
+            mvc.perform(post("/api/v1/trading/account/retry").header("Authorization","Bearer "+normalToken(member)).header("Idempotency-Key",UUID.randomUUID().toString()))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("GUEST_ACCOUNT_REQUIRED"));
+            members.open(member);
+        }
+        Long account=jdbc.queryForObject("select id from trading.trading_account where member_id=?",Long.class,member);
+        assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,account)).isZero();
+        assertThatThrownBy(() -> guestRetries.retry(account,UUID.randomUUID().toString())).isInstanceOf(com.yogimangchi.trading.error.BusinessException.class);
+    }
     @Test void withdrawalCancelsAllOrdersRetiresPositionsWithoutPriceFillFeeOrPnlAndIsIdempotent() throws Exception {
         var own=members.open(member); Long id=own.accountId();
         jdbc.update("update trading.wallet set balance=10000 where account_id=?",id);

@@ -3,6 +3,8 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    GUEST_ACCOUNT_REQUIRED(HttpStatus.FORBIDDEN, "Retry is available only to an authenticated Guest account"),
+    GUEST_CREDENTIAL_EXPIRED(HttpStatus.UNAUTHORIZED, "Guest credential expired before retry acquired the account lock"),
     WITHDRAWAL_SUBJECT_MISMATCH(HttpStatus.FORBIDDEN, "Withdrawal credential does not identify the requested member"),
     INVALID_HISTORY_REQUEST(HttpStatus.BAD_REQUEST, "Invalid history cursor, filter or limit (1-100)"),
     MARGIN_MIGRATION_REQUIRED(HttpStatus.CONFLICT, "Legacy account is held pending safe isolated conversion or explicit review"),
