@@ -4,12 +4,13 @@ import { formatDecimal, formatQuantity, parsePosition, parseSummary, portfolioPo
 import { portfolioAllocation } from "../src/features/trading/portfolio/allocation";
 
 export const positionFixture = {
+  marginMode:"ISOLATED",openedMarginMode:"ISOLATED",liquidationPrice:null,liquidationPriceStatus:"NO_THRESHOLD",liquidationPriceAsOf:null,
   id: 17, tradingSymbolId: 927, side: "LONG", quantity: "0.25000000", reservedCloseQuantity: "0.00000000", freeCloseQuantity: "0.25000000",
   entryPrice: "64000.000000000000000001", leverage: 10, margin: "1600.000000000000000001", status: "OPEN",
   realizedPnl: "0.00", markPrice: "64579.8", unrealizedPnl: "144.95", priceStatus: "FRESH",
   priceEventTime: "2026-10-13T00:00:00Z", openedAt: "2026-10-12T00:00:00Z",
 };
-const wallet = { quoteAsset: "USDT", balance: "10000", usedMargin: "1600", reservedMargin: "0", realizedPnl: "0", unrealizedPnl: "144.95", equity: "10144.95", availableBalance: "8544.95", valuationStatus: "FRESH" };
+const wallet = { marginMode:"ISOLATED",marginTransitionStatus:"COMPLETE",feesPaid:"0",settlementAdjustment:"0", quoteAsset: "USDT", balance: "10000", usedMargin: "1600", reservedMargin: "0", realizedPnl: "0", unrealizedPnl: "144.95", equity: "10144.95", availableBalance: "8544.95", valuationStatus: "FRESH" };
 const summary = { accountId: 3, status: "ACTIVE", createdAt: "2026-10-12T00:00:00Z", valuedAt: "2026-10-13T00:00:00Z", wallet, positions: [positionFixture] };
 
 test("real summary preserves decimal strings, empty positions and unavailable valuation", () => {

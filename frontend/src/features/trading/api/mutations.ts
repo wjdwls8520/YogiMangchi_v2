@@ -49,7 +49,7 @@ export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
   const sameIdentity = (value: SessionSnapshot) => value.accountId === snapshot.accountId && value.generation === snapshot.generation;
   const pendingConfirmation = unconfirmed && sameIdentity(unconfirmed.session) ? unconfirmed : null;
   async function submit(command: TradingCommand) {
-    if (active.current || snapshot.phase !== "ready") return null;
+    if (active.current || snapshot.retrying || snapshot.phase !== "ready") return null;
     active.current = true;
     try {
       const order = await mutation.mutateAsync({ command, session: snapshot });

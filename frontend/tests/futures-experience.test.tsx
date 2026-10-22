@@ -19,8 +19,8 @@ import { emptyOrderBook } from "../src/features/trading/market/order-book";
 import type { ReactNode } from "react";
 
 const now=Date.now(), mark={decimal:"110",value:110,eventTime:now,expiresAt:now+5000};
-const position=parsePosition({id:1,tradingSymbolId:1,side:"LONG",quantity:"1",reservedCloseQuantity:"0.2",freeCloseQuantity:"0.8",entryPrice:"100",leverage:10,margin:"10",status:"OPEN",realizedPnl:"0",markPrice:"100",unrealizedPnl:"0",priceStatus:"FRESH",priceEventTime:new Date(now).toISOString(),openedAt:new Date(now).toISOString()});
-const order=(id=1,action="OPEN",status="FILLED")=>parseOrder({orderId:id,positionId:1,tradingSymbolId:1,type:"LIMIT",action,side:"LONG",status,quantity:"0.2",leverage:10,requestedLeverage:10,limitPrice:"120",reservedMargin:"0",reservedCloseQuantity:status==="PENDING" ? "0.2" : "0",createdAt:new Date(now).toISOString(),completedAt:status==="PENDING" ? null : new Date(now).toISOString(),reason:null,fill:status==="FILLED" ? {fillId:id,quantity:"0.2",price:"121",priceEventTime:new Date(now).toISOString(),executedAt:new Date(now).toISOString(),realizedPnl:"4.2"} : null});
+const position=parsePosition({marginMode:"ISOLATED",openedMarginMode:"ISOLATED",liquidationPrice:null,liquidationPriceStatus:"NO_THRESHOLD",liquidationPriceAsOf:null,id:1,tradingSymbolId:1,side:"LONG",quantity:"1",reservedCloseQuantity:"0.2",freeCloseQuantity:"0.8",entryPrice:"100",leverage:10,margin:"10",status:"OPEN",realizedPnl:"0",markPrice:"100",unrealizedPnl:"0",priceStatus:"FRESH",priceEventTime:new Date(now).toISOString(),openedAt:new Date(now).toISOString()});
+const order=(id=1,action="OPEN",status="FILLED")=>parseOrder({orderId:id,positionId:1,tradingSymbolId:1,type:"LIMIT",action,side:"LONG",status,quantity:"0.2",leverage:10,requestedLeverage:10,feeRate:"0.0003",reservedFee:"0",limitPrice:"120",reservedMargin:"0",reservedCloseQuantity:status==="PENDING" ? "0.2" : "0",createdAt:new Date(now).toISOString(),completedAt:status==="PENDING" ? null : new Date(now).toISOString(),reason:null,fill:status==="FILLED" ? {fillId:id,quantity:"0.2",price:"121",priceEventTime:new Date(now).toISOString(),executedAt:new Date(now).toISOString(),realizedPnl:"4.2",fee:"0",settlementAdjustment:"0",marginMode:"ISOLATED"} : null});
 const symbols=[{id:1,symbol:"BTC",displaySymbol:"BTC / USDT",quoteAsset:"USDT",name:"Bitcoin"}];
 
 test("LONG/SHORT Mark, PnL and ROE update independently without mutating server position data",()=>{
@@ -117,7 +117,7 @@ function renderTrading(children:ReactNode) {
 test("positions expose ROE, liquidation price availability and separate partial/full actions",()=>{
   const html=renderTrading(<PositionTable positions={[position]} symbols={symbols}/>);
   for(const text of ["ROE %","청산 예약 수량","강제청산가","부분 청산","전체 청산"])assert.ok(html.includes(text));
-  assert.match(html,/role="table"/);assert.match(html,/data-key="roe"/);assert.doesNotMatch(html,/data-key="free"/);assert.match(html,/강제청산가 서버 미제공/);
+  assert.match(html,/role="table"/);assert.match(html,/data-key="roe"/);assert.doesNotMatch(html,/data-key="free"/);assert.match(html,/유효 임계값 없음/);
 });
 test("row partial close stays in a closed modal while the Close tab keeps its inline editor",()=>{
   const row=renderTrading(<PositionCloseEntry position={position} symbol="BTC / USDT" layout="row"/>);
@@ -135,7 +135,7 @@ test("pending and order history distinguish CLOSE, requested/fill prices, realiz
   const pending=renderTrading(<PendingOrderTable orders={[order(1,"CLOSE","PENDING")]} symbols={symbols}/>);
   assert.match(pending,/>CLOSE</);assert.match(pending,/Created \(KST\)/);
   const history=renderToStaticMarkup(<OrderHistoryTable orders={[order(2,"LIQUIDATE")]} symbols={symbols}/>);
-  for(const value of ["Requested Price","Fill Price","Realized PnL","Filled (KST)","강제청산","4.2"])assert.ok(history.includes(value));
+  for(const value of ["Requested Price","Fill Price","Gross PnL","Filled (KST)","강제청산","4.2"])assert.ok(history.includes(value));
 });
 test("partial and full close commands have distinct quantity and reservation guards",()=>{
   const unreserved={...position,reservedCloseQuantity:"0",freeCloseQuantity:"1"};

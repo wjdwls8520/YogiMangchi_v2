@@ -111,6 +111,8 @@
   .trading-notice-icon[data-kind="warning"] { @apply text-brand-700; }
   .trading-notices .trading-notice > button { @apply flex size-5 min-h-0 min-w-0 items-center justify-center rounded-none border-0 bg-transparent p-0 text-lg font-normal leading-none text-terminal-muted hover:text-terminal-text; }
   .wallet-overview { @apply border-t border-terminal-line p-3 text-trade-meta; }
+  .guest-retry { @apply border-t border-terminal-line p-3; }
+  .guest-retry .position-close-dialog p { @apply mb-3 text-terminal-secondary; }
   .wallet-overview h3 { @apply mb-2 text-trade-subheading font-semibold; }
   .wallet-overview dl { @apply grid gap-2; }
   .wallet-overview dl > div { @apply flex justify-between gap-2; }

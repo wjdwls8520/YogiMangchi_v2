@@ -12,7 +12,7 @@ import { parseTickers, visibleTicker } from "../market/tickers";
 export function useTradingSummary() {
   const { session, snapshot } = useGuestSession();
   const query = useQuery<ReturnType<typeof parseSummary>>({
-    queryKey: tradingKeys.summary(snapshot), enabled: snapshot.phase === "ready",
+    queryKey: tradingKeys.summary(snapshot), enabled: !snapshot.retrying && snapshot.phase === "ready",
     refetchInterval: (query) => query.state.status === "error" ? false : 5000,
     queryFn: async ({ signal }) => parseSummary(await session.read("account/summary", snapshot, signal), snapshot.accountId),
   });
@@ -28,7 +28,7 @@ export function useTradingSummary() {
 export function useTradingOrders(kind: "pending" | "history") {
   const { session, snapshot } = useGuestSession();
   const query = useQuery<ReturnType<typeof parseOrders>>({
-    queryKey: tradingKeys[kind](snapshot), enabled: snapshot.phase === "ready",
+    queryKey: tradingKeys[kind](snapshot), enabled: !snapshot.retrying && snapshot.phase === "ready",
     refetchInterval: (query) => query.state.status === "error" ? false : kind === "pending" ? 5000 : 10000,
     queryFn: async ({ signal }) => parseOrders(await session.read(kind === "pending" ? "account/orders/pending" : "account/orders?limit=50", snapshot, signal)),
   });

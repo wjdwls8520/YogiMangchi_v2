@@ -3,6 +3,7 @@
 import { useTradingNotices } from "./trading-notices";
 import { useId, useRef, useState } from "react";
 import { formatDecimal, formatQuantity, type Position } from "../api/account";
+import { isolatedReady } from "../api/margin";
 import { useTradingSummary } from "../api/queries";
 import { useTradingMutation } from "../api/mutations";
 import { closePreset, positionCloseCommand, positionValuation } from "../api/position-display";
@@ -25,8 +26,8 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
   const [warning,setWarning]=useState<string|null>(null),[result,setResult]=useState<string|null>(null);
   const action=useTradingMutation();
   const notices=useTradingNotices();
-  const locked=action.pending||action.unconfirmed||snapshot.phase!=="ready";
-  const ready=snapshot.phase==="ready"&&summary.data?.status==="ACTIVE";
+  const locked=snapshot.retrying||action.pending||action.unconfirmed||snapshot.phase!=="ready";
+  const ready=isolatedReady(summary.data?.wallet)&&position.marginMode==="ISOLATED"&&snapshot.phase==="ready"&&summary.data?.status==="ACTIVE";
   const mark=positionPrices[position.tradingSymbolId],valuation=positionValuation(position,mark);
   const scope=layout==="row" ? "partial" : "available";
   const fullAvailable=comparePrices(position.freeCloseQuantity,position.quantity)===0;

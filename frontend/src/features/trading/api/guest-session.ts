@@ -2,9 +2,11 @@ import { tradingJson, TradingApiError } from "./client";
 import { parseCredential, parseGuest, type GuestCredential } from "./contracts";
 import { mutationRequest, type TradingCommand } from "./mutation-request";
 import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
+import type { QuoteRequest } from "./quote";
 import { parseOrder } from "./orders";
+import { parseGuestRetry } from "./guest-retry";
 
-export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number };
+export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean };
 export const initialSession: SessionSnapshot = { phase: "loading", accountId: null, generation: 0 };
 type StorageAccess = () => Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -14,9 +16,11 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   let credential: GuestCredential | null = null;
   let snapshot = initialSession;
   let flight: Promise<void> | null = null;
+  let retrying=false, writes=0;
+  let retryFlight: Promise<ReturnType<typeof parseGuestRetry>> | null=null;
   const listeners = new Set<() => void>();
   function publish(phase: SessionSnapshot["phase"]) {
-    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1 };
+    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}) };
     listeners.forEach((listener) => listener());
   }
   const usable = (value: GuestCredential) => Date.parse(value.expiresAt) > now();
@@ -91,12 +95,12 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { credential = null; publish("anonymous"); }
       });
     },
-    async read(path: "account/summary" | "account/orders/pending" | "account/orders?limit=50" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal) {
+    async read(path: "account/summary" | "account/orders/pending" | "account/orders?limit=50" | "account/orders/quote" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
       const current = credential;
-      if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+      if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
       if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
       try {
-        const value = await tradingJson(origin, path, { token: current.accessToken, signal }, transport);
+        const value = await tradingJson(origin, path, { token: current.accessToken, signal, ...(path === "account/orders/quote" ? {method:"POST" as const,body:quote} : {}) }, transport);
         if (current !== credential || signal.aborted || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
         return value;
@@ -106,11 +110,13 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       }
     },
     async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot) {
+      if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");
       const path = leveragePath(symbolId);
       if (!validLeverage(leverage)) throw new TradingApiError(400, "레버리지는 1~100배 정수로 설정해 주세요.");
       const current = credential;
       if (current && !usable(current)) invalidate(current);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      writes++;
       try {
         const value = await tradingJson(origin, path, { token: current.accessToken, method: "PUT", body: { leverage } }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
@@ -119,13 +125,15 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       } catch (error) {
         if (error instanceof TradingApiError && error.status === 401) invalidate(current);
         throw error;
-      }
+      } finally {writes--;}
     },
     async write(command: TradingCommand, expected: SessionSnapshot, key: string) {
+      if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");
       const current = credential;
       if (current && !usable(current)) invalidate(current);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
       const request = mutationRequest(command);
+      writes++;
       try {
         const value = await tradingJson(origin, request.path, { token: current.accessToken, method: "POST", body: request.body,
           idempotencyKey: request.keyed ? key : undefined }, transport);
@@ -134,7 +142,31 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       } catch (error) {
         if (error instanceof TradingApiError && error.status === 401) invalidate(current);
         throw error;
+      } finally {writes--;}
+    },
+    retryGuest(expected: SessionSnapshot, key: string) {
+      if(retryFlight)return retryFlight;
+      const current=credential;
+      if(!current||!usable(current)||snapshot.phase!=="ready"||expected.accountId!==current.accountId||expected.generation!==snapshot.generation){
+        if(current&&!usable(current))invalidate(current);
+        return Promise.reject(new TradingApiError(401));
       }
+      if(!/^[A-Za-z0-9_-]{8,100}$/.test(key))return Promise.reject(new TradingApiError(400,undefined,"INVALID_IDEMPOTENCY_KEY"));
+      if(writes)return Promise.reject(new TradingApiError(409,undefined,"TRADING_BUSY"));
+      // Advance the cache/intent epoch before reset; late reads and old uncertain orders cannot revive it.
+      retrying=true;publish("ready");
+      retryFlight=(async()=>{
+        try {
+          const value=await tradingJson(origin,"account/retry",{method:"POST",token:current.accessToken,idempotencyKey:key},transport);
+          if(current!==credential)throw new DOMException("Session changed","AbortError");
+          return parseGuestRetry(value,current.accountId);
+        } catch(error){if(error instanceof TradingApiError&&error.status===401)invalidate(current);throw error;}
+        finally {
+          retrying=false;retryFlight=null;
+          if(current===credential)publish("ready");
+        }
+      })();
+      return retryFlight;
     },
   };
 }
