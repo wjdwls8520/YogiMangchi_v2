@@ -7,6 +7,7 @@ import com.yogimangchi.content.auth.oauth.VerifiedIdentity;
 import com.yogimangchi.content.error.AuthFailure;
 import com.yogimangchi.content.member.entity.*;
 import com.yogimangchi.content.member.repository.*;
+import com.yogimangchi.content.member.validation.NicknamePolicy;
 import java.time.*;
 import java.util.*;
 import org.springframework.http.HttpStatus;
@@ -35,10 +36,10 @@ public class AuthService {
     @Transactional(timeout=5)
     public Issued signup(VerifiedIdentity identity,SignupRequest request) {
         identity.requireFresh();
+        if(request==null || !request.termAgree() || !request.privateAgree() || !NicknamePolicy.isValid(request.nickname())
+                || request.profileMessage()!=null && (request.profileMessage().length()>255 || request.profileMessage().indexOf('\0')>=0)) throw new AuthFailure("INVALID_REQUEST",HttpStatus.BAD_REQUEST);
         if(identities.findByProviderAndProviderSubject(identity.provider(),identity.subject()).isPresent() || members.existsByNickname(request.nickname()))
             throw new AuthFailure("MEMBER_ALREADY_EXISTS",HttpStatus.CONFLICT);
-        if(!request.termAgree() || !request.privateAgree() || request.nickname()==null || !request.nickname().matches("[가-힣a-zA-Z0-9]{2,12}")
-                || request.profileMessage()!=null && (request.profileMessage().length()>255 || request.profileMessage().indexOf('\0')>=0)) throw new AuthFailure("INVALID_REQUEST",HttpStatus.BAD_REQUEST);
         Instant now=now();
         var member=members.save(Member.signup(request.nickname(),request.profileMessage()==null ? "" : request.profileMessage(),now));
         identities.save(OAuthIdentity.link(member.getId(),identity.provider(),identity.subject(),identity.email()));

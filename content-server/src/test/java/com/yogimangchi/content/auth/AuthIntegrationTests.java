@@ -207,6 +207,6 @@ class AuthIntegrationTests extends TestEnvironment {
     private AuthService.Issued signup(VerifiedIdentity identity) { return auth.signup(identity,new SignupRequest(nickname(),true,true,"")); }
     private static VerifiedIdentity identity(Provider provider,String email) { return new VerifiedIdentity(provider,UUID.randomUUID().toString(),email,Instant.now().plusSeconds(300)); }
     private static MockHttpSession proof(VerifiedIdentity identity) { var session=new MockHttpSession(); session.setAttribute(VerifiedIdentity.SESSION_KEY,identity); return session; }
-    private static String nickname() { return "u"+UUID.randomUUID().toString().replace("-","").substring(0,10); }
+    private static String nickname() { return UUID.randomUUID().toString().replace("-","").substring(0,8); }
     private static String body(String name,boolean terms,boolean privacy) { return "{\"nickname\":\""+name+"\",\"termAgree\":"+terms+",\"privateAgree\":"+privacy+",\"role\":\"ADMIN\",\"memberId\":1}"; }
 }

@@ -44,7 +44,7 @@ public class MemberFollows {
     @Transactional(readOnly=true,timeout=3)
     public FollowPage list(Long memberId,boolean followers,Long cursorId,Integer size,String keyword) {
         int limit=size==null ? 10 : size;
-        if(limit<1 || limit>10 || cursorId!=null && cursorId<=0 || keyword!=null && (keyword.length()>12 || keyword.indexOf('\0')>=0)) throw invalid();
+        if(limit<1 || limit>10 || cursorId!=null && cursorId<=0 || keyword!=null && (keyword.codePointCount(0,keyword.length())>12 || keyword.indexOf('\0')>=0)) throw invalid();
         active(memberId);
         String owner=followers ? "following_id" : "follower_id",other=followers ? "follower_id" : "following_id";
         String search=keyword==null ? "" : keyword.strip();

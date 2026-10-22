@@ -39,7 +39,7 @@ class MemberWithdrawalIntegrationTests extends TestEnvironment {
     VerifiedIdentity identity;
     @BeforeEach void setup() {
         identity=new VerifiedIdentity(Provider.KAKAO,UUID.randomUUID().toString(),"withdrawal@example.test",Instant.now().plusSeconds(300));
-        issued=auth.signup(identity,new SignupRequest("u"+UUID.randomUUID().toString().replace("-","").substring(0,10),true,true,"old profile"));
+        issued=auth.signup(identity,new SignupRequest(UUID.randomUUID().toString().replace("-","").substring(0,8),true,true,"old profile"));
     }
     @AfterEach void cleanup() { withdrawals.delivered(issued.access().memberId()); }
 

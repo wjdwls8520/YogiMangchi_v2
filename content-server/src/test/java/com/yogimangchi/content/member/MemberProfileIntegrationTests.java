@@ -114,5 +114,5 @@ class MemberProfileIntegrationTests extends TestEnvironment {
         return auth.signup(id,new SignupRequest(nickname(),true,true,"original"));
     }
     private String bearer() { return "Bearer "+own.access().accessToken(); }
-    private static String nickname() { return "u"+UUID.randomUUID().toString().replace("-","").substring(0,10); }
+    private static String nickname() { return UUID.randomUUID().toString().replace("-","").substring(0,8); }
 }

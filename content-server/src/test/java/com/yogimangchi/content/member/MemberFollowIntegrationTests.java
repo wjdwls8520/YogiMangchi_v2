@@ -121,6 +121,6 @@ class MemberFollowIntegrationTests extends TestEnvironment {
     private long rows(boolean active) { return jdbc.queryForObject("select count(*) from content.member_follow where follower_id=? and following_id=? and active=?",Long.class,a.access().memberId(),b.access().memberId(),active); }
     private static String url(AuthService.Issued member) { return "/api/v1/members/"+member.access().memberId()+"/follows"; }
     private AuthService.Issued member() {
-        return auth.signup(new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"follow@example.test",Instant.now().plusSeconds(300)),new SignupRequest("u"+UUID.randomUUID().toString().replace("-","").substring(0,10),true,true,"follow profile"));
+        return auth.signup(new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"follow@example.test",Instant.now().plusSeconds(300)),new SignupRequest(UUID.randomUUID().toString().replace("-","").substring(0,8),true,true,"follow profile"));
     }
 }

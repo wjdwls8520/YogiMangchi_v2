@@ -4,6 +4,7 @@ import com.yogimangchi.content.error.AuthFailure;
 import com.yogimangchi.content.member.dto.*;
 import com.yogimangchi.content.member.entity.Member;
 import com.yogimangchi.content.member.repository.MemberRepository;
+import com.yogimangchi.content.member.validation.NicknamePolicy;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -22,13 +23,13 @@ public class MemberProfiles {
     }
     @Transactional(readOnly=true,timeout=3)
     public boolean nicknameAvailable(String nickname) {
-        if(!validNickname(nickname)) throw invalid();
+        if(!NicknamePolicy.isValid(nickname)) throw invalid();
         return !members.existsByNickname(nickname); // Includes retained names until an actual withdrawal renames them.
     }
     @Transactional(timeout=5)
     public MemberProfileResponse change(Long memberId,UpdateProfileRequest request) {
         if(request==null || request.nickname()==null && request.profileMessage()==null
-                || request.nickname()!=null && !validNickname(request.nickname())
+                || request.nickname()!=null && !NicknamePolicy.isValid(request.nickname())
                 || request.profileMessage()!=null && (request.profileMessage().length()>255 || request.profileMessage().indexOf('\0')>=0)) throw invalid();
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
         var member=members.lockById(memberId).filter(m -> m.getStatus()==Member.Status.ACTIVE).orElseThrow(AuthFailure::unauthorized);
@@ -39,9 +40,8 @@ public class MemberProfiles {
         // A retained signup-era message may exceed the new edit limit; do not silently truncate untouched history.
         if(request.profileMessage()==null && message.length()>255)
             throw new AuthFailure("PROFILE_MESSAGE_UPDATE_REQUIRED",HttpStatus.CONFLICT);
-        member.changeBasicProfile(nickname,message);
+        member.changeBasicProfile(request.nickname(),message);
         return new MemberProfileResponse(member.getId(),member.getNickname(),member.getProfileMessage(),member.getRole().name(),member.getCreatedAt());
     }
-    private static boolean validNickname(String value) { return value!=null && value.matches("[가-힣a-zA-Z0-9]{2,12}"); }
     private static AuthFailure invalid() { return new AuthFailure("INVALID_PROFILE",HttpStatus.BAD_REQUEST); }
 }

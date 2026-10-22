@@ -35,7 +35,7 @@ Refresh/로그아웃/가입/로그인 완료는 세션에 바인딩한 CSRF 검�
 | Provider callback | GET /login/oauth2/code/google 또는 /kakao | Spring Security가 code/state·OIDC를 검증. 고정 Frontend URI로 리다이렉트, URL에 자체 토큰 없음 |
 | CSRF 준비 | GET /api/v1/auth/csrf | credentials:include, `{headerName,token}` 반환. 이후 변경 요청에 이 헤더 사용 |
 | 증명 확인 | GET /api/v1/auth/flow |5분 로그인 증명 세션, SIGNUP_REQUIRED 또는 LOGIN_READY. 미인증401 |
-| 신규 가입 | POST /api/v1/auth/signup | nickname,termAgree,privateAgree,선택 profileMessage. 동의 둘 다 true, 닉네임 한글/영문/숫자2~12자. 잘못된 입력400, 중복409 |
+| 신규 가입 | POST /api/v1/auth/signup | nickname,termAgree,privateAgree,선택 profileMessage. 동의 둘 다 true, 닉네임 Unicode 문자/숫자1~8 코드 포인트. 잘못된 입력400, 중복409 |
 | 기존 회원 | POST /api/v1/auth/login/complete | 검증된 증명을 소비하고 JWT JSON+Refresh 쿠키 발급 |
 | 갱신 | POST /api/v1/auth/refresh | Refresh 쿠키+CSRF, 새 Access JSON+회전 쿠키. 만료·재사용401 |
 | 로그아웃 | POST /api/v1/auth/logout | Refresh 쿠키+CSRF,204. 반복 안전 |
@@ -55,6 +55,14 @@ Refresh/로그아웃/가입/로그인 완료는 세션에 바인딩한 CSRF 검�
 Frontend에서 공급자 Access Token을 임의로 POST하여 회원이 되는 경로는 없다.
 
 프로필 메시지의 신규 가입·수정 입력은255자까지다. PATCH는 누락/null 필드를 유지하고 빈 문자열/공백 메시지는 비운다.
+
+닉네임 입력은 `^[\p{L}\p{N}]{1,8}$` 규칙이며 JavaScript에서는 `u` 플래그를 사용한다.
+특정 언어로 제한하지 않고 Unicode Letter/Number 범주만 허용한다. 공백·특수문자·이모지·제어문자·보이지 않는 구분문자는 거절한다.
+길이는 UTF-16 길이/Java String.length가 아닌 Unicode 코드 포인트 기준이다. 보충 평면 문자8개도 허용한다.
+가입 DTO/Service, 중복 확인, 프로필 수정 DTO/Service/Entity에 같은 NicknamePolicy를 사용하며 자동 trim/정규화/절단을 하지 않는다.
+기존9~12자 닉네임은 조회·로그인·갱신·소개글만 수정할 때 보존한다. 명시적으로 닉네임을 제출하면 기존 값과 같더라도 새 입력 규칙을 적용한다.
+DB VARCHAR(12)와 이전 migration은 변경하지 않는다. PostgreSQL 문자 길이는 코드 포인트 기준이므로 보충 평면8자도 저장된다.
+검색은 기존 닉네임 지원을 위해 최대12 코드 포인트를 유지한다. 중복 판정은 기존 DB 고유 제약/정확한 저장 문자열 기준이며 새 대소문자 통합이나 Unicode 정규화를 도입하지 않는다.
 회원 행 잠금으로 동시 부분 변경의 유실을 방지한다. 기존300자 컬럼과 과거 저장값을 임의로 축소하지 않는다.
 과거255자 초과 메시지가 있다면 닉네임 변경 시에도 유효한 메시지를 함께 제출해야 하며 그렇지 않으면409다.
 이미지 업로드·다른 회원의 프로필 변경은 제공하지 않는다. CORS는 설정한 Origin의 PATCH preflight를 허용한다.
