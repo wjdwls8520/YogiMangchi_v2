@@ -14,8 +14,9 @@ public class MemberAccounts {
     private final TradingAccountRepository accounts;
     private final WalletRepository wallets;
     private final AccountLock locks;
-    public MemberAccounts(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,AccountLock locks) {
-        this.entities=entities; this.accounts=accounts; this.wallets=wallets; this.locks=locks;
+    private final com.yogimangchi.trading.tradinground.MemberRounds rounds;
+    public MemberAccounts(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,AccountLock locks,com.yogimangchi.trading.tradinground.MemberRounds rounds) {
+        this.entities=entities; this.accounts=accounts; this.wallets=wallets; this.locks=locks;this.rounds=rounds;
     }
     @Transactional(timeout=5)
     public MemberAccountResponse open(Long memberId) {
@@ -27,7 +28,9 @@ public class MemberAccounts {
                 .setParameter("scope","trading-member-account:"+memberId).getSingleResult();
         Long accountId=accounts.findAccountIdByMemberId(memberId).orElseGet(() -> {
             var created=accounts.save(TradingAccount.member(memberId,Instant.now()));
-            wallets.save(Wallet.emptyMemberWallet(created.getId())); return created.getId();
+            var wallet=wallets.save(Wallet.open(created.getId()));
+            entities.flush();
+            rounds.begin(created,wallet,"INITIAL_GRANT",1,created.getCreatedAt());return created.getId();
         });
         // Load state only after acquiring the financial row lock (avoid a pre-lock managed stale Account).
         var account=locks.lock(accountId);

@@ -85,7 +85,7 @@ Content `/.well-known/jwks.json`은 공개키 확인용이며 현재 Trading은 
 키 교체는 Content/Trading 동시 배포 순서와 기존15분 Access를 고려해야 한다. 실제 Secret/개인키는 Repository에 넣지 않는다.
 
 회원은 `POST /api/v1/trading/accounts/member`를 명시적으로 호출한다. Content 자체 JWT만 허용하며
-응답은 `{accountId,memberId,status,quoteAsset,balance}`다. 최초에는 V1 본투자 선물 배분에 맞춘 **0 USDT** Wallet을 생성한다.
+응답은 `{accountId,memberId,status,quoteAsset,balance}`다. 신규 회원 계정은 **10,000 USDT** Wallet과1회차를 같은 Transaction에서 생성한다. 이미 존재하는 회원 계정에는 잔액만 보고 추가 지급하지 않는다.
 같은 회원의 반복/동시 요청은 동일 계정과 현재 잔액을 반환한다. 반복 생성으로 초기 자금을 지급하거나 잔액을 리셋하지 않는다.
 명시적 서비스 간 식별자인 member_id만 저장하며 Content Member와 Entity 관계/FK/직접 조회는 없다.
 V14는 member_id UNIQUE·Guest/회원 소유권 CHECK를 추가하고 회원의 Guest credential 필드를 NULL로 구분한다.
@@ -981,7 +981,7 @@ Frontend는 성공 후 Wallet/Position/Pending Order를 다시 조회한다. 취
 
 ## 회원 탈퇴 처리
 
-사용자 승인 정책에 따라 탈퇴는 시장 주문 체결과 구분한다. Content가 회원을 소프트 삭제하고 영속 요청을 전송하며,
+사용자 승인 정책에 따라 탈퇴는 시장 주문 체결과 구분한다. Content가 WITHDRAWING/PENDING으로 요청을 보존하고 전송하며, Trading 정리 커밋 확인 후 개인정보 파기·최종 Soft Delete를 수행한다.
 Trading은 `POST /internal/v1/members/{memberId}/withdrawal`에서 Content 공개키로 검증한60초 전용 JWT만 허용한다.
 audience=trading-internal, token_use=member_withdrawal, sub와 경로 memberId 일치가 필수다. 일반 회원/Guest 토큰은 거절한다.
 내부 경로는 공개 Reverse Proxy에서 노출하지 않고 신뢰한 서비스 네트워크로 제한한다. 별도 공유 Secret·의존성은 없다.
@@ -1001,3 +1001,28 @@ Content의204 유실에 따른 재전송도 안전하다. V15 migration은 기�
 
 2026-10-22 탈퇴 추가 후 clean build 및 최종 build 성공,529개 테스트 통과(실패·오류·건너뜀0).
 시세 없는 종료·기존 부분 손익/수수료 보존·전용 인증·반복/동시 요청·원장 불일치 rollback·검토 보류 계정을 검증했다.
+
+## 회원 모의투자 회차와 다시시작 (V17)
+
+[회차·재시작·이관 및 Frontend 계약](docs/member-rounds.md)을 따른다.
+신규 회원은 정확히 한 번10,000 USDT/1회차를 받는다. 기존 회원은 자금을 자동 재지급하지 않는다.
+Content의 영속 생성 요청과 명시적인 회원 계정 생성 API는 동일한 MemberAccounts 경로를 사용한다.
+
+- `POST /api/v1/trading/account/restart`: 회원 JWT+Idempotency-Key. 관리상 정리 후 다음 회차10,000 USDT.
+- `GET /api/v1/trading/account/rounds/current`: 현재 회차, 실시간 계정 요약, 회차 손익/수수료, 재시작 가능 여부.
+- `GET /api/v1/trading/account/rounds?cursorId=&limit=20`: 본인 전체 회차(최신순), nextCursorId.
+- `GET /api/v1/trading/account/rounds/{roundId}`: 본인 회차 요약. 종료 회차는 영속 스냅샷만 사용한다.
+- `GET /api/v1/trading/account/rounds/{roundId}/orders|fills|positions`: 본인 회차 원장, ID 커서·limit1~100.
+
+재시작의24시간은 DB에 기록된 마지막 성공 시각으로부터 계산한다. 새 요청 키로 제한을 우회할 수 없으며
+429 MEMBER_RESTART_LIMITED 응답의 nextAvailableAt을 사용한다. 같은 성공 키의 재전송은 원래 결과를 반환해 새 거래를 다시 지우지 않는다.
+Guest retry의 자격·기간·자금·기존 이력 정책은 유지한다. 금융 계산은 기존 엔진을 재사용하고 신규 의존성은 추가하지 않았다.
+Order/Fill/Position/TradingEvent의 round_id는 명시적이고 불변이다. 개인 HTTP/WS 이벤트에는 roundId/roundNumber가 추가된다.
+관리상 종료는 체결이 아니며 과거 Fill/PnL/수수료를 바꾸지 않는다. 잔여 수량·원가·해제 담보는 별도 retirement 스냅샷으로 보존한다.
+
+주의: 루트 README의 과거0 USDT/Guest 우선 설명은 이번 최신 승인 정책보다 앞선 설명이다. 이번 작업에서 루트 문서는 수정하지 않았다.
+
+2026-10-23 최종 Java17 clean build 전체557개 테스트 통과(실패·오류·건너뜀0).
+마지막 이관 사전 점검 보강 후 회원 JWT/최초 지급/회차/재시작/탈퇴·이관/OpenAPI 통합30개도 재검증하고 build에 성공했다.
+동시 요청·응답 유실 재전송·24시간·원자적 rollback/lock timeout·가격 Tick/청산/취소/조회 경합·잔여 원가 스냅샷과 Guest 회귀를 검증했다.
+중단 중 발생한 임시 PostgreSQL 컨테이너 시작 실패는 정상 Docker 상태에서 전체 재실행으로 해소했다. 사용자 DB/Volume은 변경하지 않았다.

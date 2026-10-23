@@ -25,13 +25,15 @@ public class WithdrawalSecurity {
                 boolean valid=jwt.getSubject().matches("[1-9][0-9]{0,18}") && Long.parseLong(jwt.getSubject())>0
                         && jwt.getIssuedAt()!=null && !jwt.getIssuedAt().isAfter(java.time.Instant.now()) && jwt.getExpiresAt()!=null && jwt.getExpiresAt().isAfter(jwt.getIssuedAt())
                         && Duration.between(jwt.getIssuedAt(),jwt.getExpiresAt()).compareTo(Duration.ofSeconds(60))<=0
-                        && List.of("trading-internal").equals(jwt.getAudience()) && "member_withdrawal".equals(jwt.getClaimAsString("token_use"));
+                        && List.of("trading-internal").equals(jwt.getAudience()) && java.util.Set.of("member_withdrawal","member_provisioning").contains(jwt.getClaimAsString("token_use"));
                 return valid ? OAuth2TokenValidatorResult.success() : invalid();
             } catch(RuntimeException failure) { return invalid(); }
         };
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(new JwtTimestampValidator(Duration.ZERO),new JwtIssuerValidator(issuer),contract));
         http.securityMatcher("/internal/**")
-                .authorizeHttpRequests(a -> a.requestMatchers(HttpMethod.POST,"/internal/v1/members/{memberId:[0-9]+}/withdrawal").authenticated().anyRequest().denyAll())
+                .authorizeHttpRequests(a -> a.requestMatchers(HttpMethod.POST,"/internal/v1/members/{memberId:[0-9]+}/withdrawal").access((auth,context)->new org.springframework.security.authorization.AuthorizationDecision(auth.get().getPrincipal() instanceof Jwt jwt && "member_withdrawal".equals(jwt.getClaimAsString("token_use"))))
+                    .requestMatchers(HttpMethod.POST,"/internal/v1/members/{memberId:[0-9]+}/trading-account").access((auth,context)->new org.springframework.security.authorization.AuthorizationDecision(auth.get().getPrincipal() instanceof Jwt jwt && "member_provisioning".equals(jwt.getClaimAsString("token_use"))))
+                    .anyRequest().denyAll())
                 .oauth2ResourceServer(o -> o.jwt(j -> j.decoder(decoder))
                         .authenticationEntryPoint((request,response,error) -> TradingTokenFilter.problem(response,401,"INVALID_WITHDRAWAL_CREDENTIAL","A dedicated Content withdrawal credential is required")))
                 .exceptionHandling(e -> e.authenticationEntryPoint((request,response,error) -> TradingTokenFilter.problem(response,401,"INVALID_WITHDRAWAL_CREDENTIAL","A dedicated Content withdrawal credential is required"))

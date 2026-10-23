@@ -57,6 +57,10 @@ class MemberJwtIntegrationTests {
     @Autowired MemberAccounts members;
     @Autowired MemberWithdrawal withdrawals;
     @Autowired GuestRetryService guestRetries;
+    @Autowired com.yogimangchi.trading.tradinground.MemberRounds rounds;
+    @Autowired com.yogimangchi.trading.execution.trigger.AccountTriggerService triggers;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
+    @Autowired com.yogimangchi.trading.tradingevent.service.TradingEvents events;
     @Autowired TradingOrderService orders;
     @Autowired LatestPriceStore prices;
     @Autowired DataSource dataSource;
@@ -81,7 +85,7 @@ class MemberJwtIntegrationTests {
                 .contentType("application/json").content("{\"memberId\":123,\"accountId\":123,\"balance\":10000}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.memberId").value(member)).andReturn();
         long account=json.readTree(response.getResponse().getContentAsString()).path("accountId").longValue();
-        assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,account)).isZero();
+        assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,account)).isEqualByComparingTo("10000");
         assertThat(jdbc.queryForObject("select credential_hash from trading.trading_account where id=?",String.class,account)).isNull();
         jdbc.update("update trading.wallet set balance=123.45 where account_id=?",account); // Disposable fixture, not a funding API.
         mvc.perform(post("/api/v1/trading/accounts/member").header("Authorization","Bearer "+token))
@@ -91,7 +95,7 @@ class MemberJwtIntegrationTests {
         assertThat(jdbc.queryForObject("select to_regclass('content.member')::text",String.class)).isNull();
     }
 
-    @Test void concurrentOpeningKeepsOneAccountAndOneZeroBalanceWallet() throws Exception {
+    @Test void concurrentOpeningKeepsOneAccountAndOneInitialGrantWallet() throws Exception {
         var start=new CountDownLatch(1); var pool=Executors.newFixedThreadPool(4);
         try {
             List<Future<Long>> tasks=new ArrayList<>();
@@ -100,7 +104,7 @@ class MemberJwtIntegrationTests {
             for(var task:tasks) ids.add(task.get(10,TimeUnit.SECONDS));
             assertThat(ids).hasSize(1);
             assertThat(jdbc.queryForObject("select count(*) from trading.wallet where account_id=?",Long.class,ids.iterator().next())).isEqualTo(1);
-            assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,ids.iterator().next())).isZero();
+            assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,ids.iterator().next())).isEqualByComparingTo("10000");
         } finally { start.countDown(); pool.shutdownNow(); }
     }
 
@@ -189,6 +193,225 @@ class MemberJwtIntegrationTests {
             assertThatThrownBy(() -> jdbc.update("update "+schema+".trading_account set member_id=1 where id=?",old)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
         } finally { jdbc.execute("drop schema if exists "+schema+" cascade"); } // Disposable Testcontainers schema only.
     }
+
+    @Test void memberRestartKeepsLedgerLinksSnapshotsAndOriginalIdempotentResult() throws Exception {
+        Long id=members.open(member).accountId();var first=rounds.current(id).round();
+        assertThat(first.roundNumber()).isEqualTo(1);assertThat(first.initialBalance()).startsWith("10000");
+        var opening=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
+        orders.createLimitClose(id,opening.positionId(),UUID.randomUUID().toString(),new com.yogimangchi.trading.order.dto.LimitCloseRequest(new BigDecimal("0.7"),new BigDecimal("1100")));
+        orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.SHORT,BigDecimal.ONE,10,new BigDecimal("1100")));
+        var before=jdbc.queryForMap("select balance,realized_pnl,fees_paid,settlement_adjustment from trading.wallet where account_id=?",id);
+        long fills=jdbc.queryForObject("select count(*) from trading.fill where round_id=?",Long.class,first.roundId());
+        prices.markUnavailable(); // Administrative reset must not require any Binance/Redis quote.
+        String key=UUID.randomUUID().toString();var result=rounds.restart(id,key);
+        assertThat(result.roundNumber()).isEqualTo(2);assertThat(result.canceledOrderCount()).isEqualTo(2);assertThat(result.closedPositionCount()).isEqualTo(1);
+        assertThat(result.nextAvailableAt()).isEqualTo(result.restartedAt().plusSeconds(86400));
+        assertThat(rounds.restart(id,key)).isEqualTo(result);
+        assertThat(jdbc.queryForObject("select count(*) from trading.fill where round_id=?",Long.class,first.roundId())).isEqualTo(fills);
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'",Long.class,id)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from trading.position where account_id=? and status='OPEN'",Long.class,id)).isZero();
+        assertThat(jdbc.queryForObject("select close_reason from trading.position where id=?",String.class,opening.positionId())).isEqualTo("MEMBER_RESTART");
+        assertThat(jdbc.queryForObject("select used_margin+reserved_margin from trading.wallet where account_id=?",BigDecimal.class,id)).isZero();
+        assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,id)).isEqualByComparingTo("10000");
+        var old=rounds.summary(id,first.roundId());assertThat(old.currentAccount()).isNull();
+        assertThat(old.round().finalWallet().path("balance").asText()).isEqualTo(before.get("balance").toString());
+        assertThat(rounds.current(id).feesPaid()).startsWith("0.000");
+        Instant now=Instant.now();prices.beginSubscription(Set.of(btc));prices.update(new LatestMarkPrice(btc,new BigDecimal("1000"),now,now));
+        var nextOrder=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
+        assertThat(jdbc.queryForObject("select round_id from trading.trading_order where id=?",Long.class,nextOrder.orderId())).isEqualTo(result.roundId());
+        assertThat(jdbc.queryForObject("select round_id from trading.position where id=?",Long.class,nextOrder.positionId())).isEqualTo(result.roundId());
+        assertThat(jdbc.queryForObject("select round_id from trading.fill where order_id=?",Long.class,nextOrder.orderId())).isEqualTo(result.roundId());
+        assertThat(events.after(id,0,100)).anyMatch(e->first.roundId().equals(e.roundId())).anyMatch(e->result.roundId().equals(e.roundId()));
+        assertThat(rounds.summary(id,first.roundId()).round().finalWallet()).isEqualTo(old.round().finalWallet());
+        String ownBearer="Bearer "+normalToken(member),base="/api/v1/trading/account/rounds/"+first.roundId();
+        mvc.perform(get(base+"/positions").header("Authorization",ownBearer)).andExpect(status().isOk()).andExpect(jsonPath("$.content[0].closeReason").value("MEMBER_RESTART")).andExpect(jsonPath("$.content[0].exitPrice").isEmpty());
+        mvc.perform(get(base+"/orders").header("Authorization",ownBearer)).andExpect(status().isOk()).andExpect(jsonPath("$.content[0].roundId").value(first.roundId()));
+        mvc.perform(get(base+"/fills").header("Authorization",ownBearer)).andExpect(status().isOk()).andExpect(jsonPath("$.content[0].fee").isString());
+        mvc.perform(post("/api/v1/trading/account/restart").header("Authorization","Bearer "+normalToken(member)).header("Idempotency-Key",UUID.randomUUID().toString()))
+            .andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.nextAvailableAt").exists()).andExpect(jsonPath("$.code").value("MEMBER_RESTART_LIMITED"));
+        assertThat(rounds.restart(id,key)).isEqualTo(result); // Reconfirmation must not reset new exposure.
+        assertThat(jdbc.queryForObject("select status from trading.position where id=?",String.class,nextOrder.positionId())).isEqualTo("OPEN");
+    }
+    @Test void concurrentDifferentRestartKeysCreateExactlyOneRoundAndCredit() throws Exception {
+        Long id=members.open(member).accountId();var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(4);
+        try {
+            var tasks=new ArrayList<Future<Boolean>>();
+            for(int i=0;i<4;i++)tasks.add(pool.submit(()->{start.await();try{rounds.restart(id,UUID.randomUUID().toString());return true;}catch(com.yogimangchi.trading.tradinground.RestartLimited expected){return false;}}));
+            start.countDown();int success=0;for(var task:tasks)if(task.get(12,TimeUnit.SECONDS))success++;
+            assertThat(success).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select count(*) from trading.member_restart where account_id=?",Long.class,id)).isEqualTo(1);
+            assertThat(rounds.list(id,null,100).content()).hasSize(2);
+        }finally{pool.shutdownNow();}
+    }
+    @Test void restartRollbackRestoresPendingOrdersWalletAndRoundAndRetryCanSucceed() {
+        Long id=members.open(member).accountId();
+        orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
+        var before=jdbc.queryForMap("select * from trading.wallet where account_id=?",id);String key=UUID.randomUUID().toString();
+        var tx=new org.springframework.transaction.support.TransactionTemplate(transactions);
+        assertThatThrownBy(()->tx.execute(status->{rounds.restart(id,key);throw new IllegalStateException("response before failed commit");})).isInstanceOf(IllegalStateException.class);
+        assertThat(jdbc.queryForMap("select * from trading.wallet where account_id=?",id)).isEqualTo(before);
+        assertThat(rounds.list(id,null,100).content()).hasSize(1);
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'",Long.class,id)).isEqualTo(1);
+        assertThat(rounds.restart(id,key).roundNumber()).isEqualTo(2);
+    }
+    @Test void thirdRoundRequiresElapsed24HoursAndGuestAndOtherOwnersCannotUseRoundApi() throws Exception {
+        Long id=members.open(member).accountId();rounds.restart(id,UUID.randomUUID().toString());
+        // Test-only persisted clock fixture: never a browser-supplied timestamp.
+        jdbc.update("update trading.member_restart set restarted_at=clock_timestamp()-interval '24 hours' where account_id=?",id);
+        assertThat(rounds.restart(id,UUID.randomUUID().toString()).roundNumber()).isEqualTo(3);
+        var other=members.open(MEMBERS.incrementAndGet());long foreign=rounds.current(other.accountId()).round().roundId();
+        mvc.perform(get("/api/v1/trading/account/rounds/"+foreign).header("Authorization","Bearer "+normalToken(member))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/trading/account/rounds/"+foreign+"/fills").header("Authorization","Bearer "+normalToken(member))).andExpect(status().isNotFound());
+        var guest=guests.createGuest();mvc.perform(post("/api/v1/trading/account/restart").header("Authorization","Bearer "+guest.accessToken()).header("Idempotency-Key",UUID.randomUUID().toString())).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/trading/account/rounds").header("Authorization","Bearer "+normalToken(member)).param("limit","1")).andExpect(status().isOk()).andExpect(jsonPath("$.nextCursorId").isNumber());
+    }
+    @Test void staleTickCannotRevivePastOrdersOrLiquidateNewRoundPosition() {
+        Long id=members.open(member).accountId();
+        var oldOrder=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
+        Instant oldTime=Instant.now();var oldTick=new LatestMarkPrice(btc,BigDecimal.ONE,oldTime,oldTime);
+        rounds.restart(id,UUID.randomUUID().toString());
+        Instant now=Instant.now();prices.update(new LatestMarkPrice(btc,new BigDecimal("1000"),now,now));
+        var fresh=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
+        triggers.process(id,oldTick,Map.of(btc,oldTick));
+        assertThat(jdbc.queryForObject("select status from trading.trading_order where id=?",String.class,oldOrder.orderId())).isEqualTo("CANCELED");
+        assertThat(jdbc.queryForObject("select status from trading.position where id=?",String.class,fresh.positionId())).isEqualTo("OPEN");
+    }
+    @Test void concurrentRestartAndWithdrawalCannotLeaveActiveRoundOrExposure() throws Exception {
+        Long id=members.open(member).accountId();var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);
+        try {
+            var restart=pool.submit(()->{start.await();try{rounds.restart(id,UUID.randomUUID().toString());}catch(com.yogimangchi.trading.error.BusinessException expected){assertThat(expected.getCode()).isEqualTo(com.yogimangchi.trading.error.ErrorCode.ACCOUNT_NOT_ACTIVE);}return null;});
+            var withdrawal=pool.submit(()->{start.await();withdrawals.withdraw(member);return null;});start.countDown();restart.get(12,TimeUnit.SECONDS);withdrawal.get(12,TimeUnit.SECONDS);
+            assertThat(jdbc.queryForObject("select status from trading.trading_account where id=?",String.class,id)).isEqualTo("WITHDRAWN");
+            assertThat(jdbc.queryForObject("select count(*) from trading.member_trading_round where account_id=? and status='ACTIVE'",Long.class,id)).isZero();
+        }finally{pool.shutdownNow();}
+    }
+    @Test void provisioningCredentialCannotWithdrawAndMemberAccessCannotProvisionInternally() throws Exception {
+        String credential=token(member,Instant.now().plusSeconds(55),"https://content.test","trading-internal","member_provisioning",List.of(),0L);
+        String endpoint="/internal/v1/members/"+member;
+        mvc.perform(post(endpoint+"/trading-account").header("Authorization","Bearer "+normalToken(member))).andExpect(status().isUnauthorized());
+        mvc.perform(post(endpoint+"/withdrawal").header("Authorization","Bearer "+credential)).andExpect(status().isForbidden());
+        for(int i=0;i<2;i++)mvc.perform(post(endpoint+"/trading-account").header("Authorization","Bearer "+credential)).andExpect(status().isNoContent());
+        assertThat(rounds.current(members.open(member).accountId()).round().roundNumber()).isEqualTo(1);
+    }
+
+    @Test void v17BackfillsExplicitLegacyRoundWithoutCreditingOrRewritingFinancialLedger() {
+        Long id=members.open(member).accountId();
+        orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
+        orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.SHORT,BigDecimal.ONE,10,new BigDecimal("1100")));
+        String schema="round_upgrade_"+UUID.randomUUID().toString().replace("-","");
+        try {
+            Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("16").load().migrate();
+            for(String table:List.of("trading_account","wallet","position","trading_order","fill","trading_event")) {
+                var columns=jdbc.queryForList("select column_name from information_schema.columns where table_schema=? and table_name=? order by ordinal_position",String.class,schema,table);
+                String names=String.join(",",columns);
+                String filter=table.equals("trading_account")?"id=?":table.equals("fill")?"order_id in (select id from trading.trading_order where account_id=?)":"account_id=?";
+                jdbc.update("insert into "+schema+"."+table+"("+names+") select "+names+" from trading."+table+" where "+filter,id);
+            }
+            var before=jdbc.queryForMap("select * from "+schema+".wallet where account_id=?",id);
+            var migrate=Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("17").load();
+            jdbc.update("delete from "+schema+".wallet where account_id=?",id); // Disposable legacy-corruption fixture only.
+            assertThatThrownBy(migrate::migrate).isInstanceOf(org.flywaydb.core.api.FlywayException.class).hasStackTraceContaining("member wallet missing");
+            jdbc.update("insert into "+schema+".wallet select * from trading.wallet where account_id=?",id);
+            assertThat(migrate.migrate().migrationsExecuted).isEqualTo(1);assertThat(migrate.migrate().migrationsExecuted).isZero();
+            assertThat(jdbc.queryForMap("select * from "+schema+".wallet where account_id=?",id)).isEqualTo(before);
+            var round=jdbc.queryForMap("select * from "+schema+".member_trading_round where account_id=?",id);
+            assertThat(round.get("initial_balance")).isNull();assertThat(round.get("funding")).isEqualTo("LEGACY_UNVERIFIED");
+            for(String table:List.of("position","trading_order","fill","trading_event"))
+                assertThat(jdbc.queryForObject("select count(*) from "+schema+"."+table+" where round_id is null",Long.class)).isZero();
+        }finally{jdbc.execute("drop schema if exists "+schema+" cascade");} // Disposable Testcontainers schema only.
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"ORDER","CANCEL","LIQUIDATION","SUMMARY"})
+    void restartSerializesWithFinancialEngineAndReads(String competing) throws Exception {
+        Long id=members.open(member).accountId();
+        orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
+        var pending=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
+        var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);Instant captured=Instant.now();
+        var tick=new LatestMarkPrice(btc,BigDecimal.ONE,captured,captured);
+        try{
+            var reset=pool.submit(()->{start.await();return rounds.restart(id,UUID.randomUUID().toString());});
+            var other=pool.submit(()->{start.await();switch(competing){
+                case "ORDER"->orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
+                case "CANCEL"->orders.cancel(id,pending.orderId());
+                case "LIQUIDATION"->triggers.process(id,tick,Map.of(btc,tick));
+                case "SUMMARY"->guests.summary(id);
+                default->throw new IllegalArgumentException();
+            }return null;});start.countDown();var result=reset.get(12,TimeUnit.SECONDS);other.get(12,TimeUnit.SECONDS);
+            assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING' and round_id<>?",Long.class,id,result.roundId())).isZero();
+            assertThat(jdbc.queryForObject("select used_margin from trading.wallet where account_id=?",BigDecimal.class,id)).isZero();
+            var reserved=jdbc.queryForObject("select coalesce(sum(reserved_margin),0) from trading.trading_order where account_id=? and status='PENDING'",BigDecimal.class,id);
+            assertThat(jdbc.queryForObject("select reserved_margin from trading.wallet where account_id=?",BigDecimal.class,id)).isEqualByComparingTo(reserved);
+            // If the tick wins the lock, liquidation and the already-pending OPEN can both
+            // legitimately execute in round1 before reset. Reset itself must never add a Fill.
+            long fills=jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?",Long.class,id);
+            if(competing.equals("LIQUIDATION"))assertThat(fills).isIn(1L,3L);else assertThat(fills).isEqualTo(1L);
+            assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='FILLED'",Long.class,id)).isEqualTo(fills);
+            assertThat(jdbc.queryForObject("select count(*) from trading.fill where round_id=?",Long.class,result.roundId())).isZero();
+        }finally{pool.shutdownNow();}
+    }
+    @Test void sameRestartKeyConcurrentCallsReturnOneOriginalResult() throws Exception {
+        Long id=members.open(member).accountId();String key=UUID.randomUUID().toString();var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(3);
+        try{
+            var tasks=new ArrayList<Future<com.yogimangchi.trading.tradinground.MemberRounds.Restart>>();for(int i=0;i<3;i++)tasks.add(pool.submit(()->{start.await();return rounds.restart(id,key);}));
+            start.countDown();var results=new HashSet<com.yogimangchi.trading.tradinground.MemberRounds.Restart>();for(var task:tasks)results.add(task.get(12,TimeUnit.SECONDS));
+            assertThat(results).hasSize(1);assertThat(rounds.list(id,null,100).content()).hasSize(2);
+        }finally{pool.shutdownNow();}
+    }
+    @Test void inconsistentExposureRollsBackCancellationsEventsAndNewRound() {
+        Long id=members.open(member).accountId();
+        var pending=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
+        jdbc.update("update trading.wallet set reserved_margin=reserved_margin+1 where account_id=?",id);
+        long count=jdbc.queryForObject("select count(*) from trading.trading_event where account_id=?",Long.class,id);
+        assertThatThrownBy(()->rounds.restart(id,UUID.randomUUID().toString())).isInstanceOf(IllegalStateException.class);
+        assertThat(jdbc.queryForObject("select status from trading.trading_order where id=?",String.class,pending.orderId())).isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_event where account_id=?",Long.class,id)).isEqualTo(count);
+        assertThat(rounds.list(id,null,100).content()).hasSize(1);
+    }
+    @Test void retirementPreservesRemainingBasisAndAlreadyExecutedFeesAfterPartialClose() {
+        Long id=members.open(member).accountId();
+        var opened=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
+        orders.close(id,opened.positionId(),UUID.randomUUID().toString(),new com.yogimangchi.trading.order.dto.ClosePositionRequest(new BigDecimal("0.2")));
+        var before=jdbc.queryForMap("select realized_pnl,fees_paid,settlement_adjustment from trading.wallet where account_id=?",id);
+        var first=rounds.current(id).round();rounds.restart(id,UUID.randomUUID().toString());
+        var retired=rounds.positions(id,first.roundId(),null,20).content().get(0);
+        assertThat(new BigDecimal(retired.retiredQuantity())).isEqualByComparingTo("0.8");
+        assertThat(new BigDecimal(retired.retiredEntryNotional())).isEqualByComparingTo("800");
+        assertThat(new BigDecimal(retired.retiredMargin())).isEqualByComparingTo("80");
+        assertThat(jdbc.queryForMap("select realized_pnl,fees_paid,settlement_adjustment from trading.wallet where account_id=?",id)).isEqualTo(before);
+    }
+    @Test void databaseLockTimeoutLeavesRoundAndFundingUntouched() throws Exception {
+        Long id=members.open(member).accountId();var locked=new CountDownLatch(1);var release=new CountDownLatch(1);var pool=Executors.newSingleThreadExecutor();
+        try{
+            var holding=pool.submit(()->new org.springframework.transaction.support.TransactionTemplate(transactions).execute(status->{jdbc.queryForObject("select id from trading.trading_account where id=? for update",Long.class,id);locked.countDown();try{release.await(8,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}return null;}));
+            assertThat(locked.await(5,TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(()->rounds.restart(id,UUID.randomUUID().toString())).isInstanceOf(org.springframework.dao.PessimisticLockingFailureException.class);
+            release.countDown();holding.get(5,TimeUnit.SECONDS);
+            assertThat(rounds.current(id).round().roundNumber()).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,id)).isEqualByComparingTo("10000");
+        }finally{release.countDown();pool.shutdownNow();}
+    }
+
+    @Test void roundApiOpenApiDescribesTypedLedgersAndIdempotentRestart() throws Exception {
+        var api=json.readTree(mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        for(String kind:List.of("orders","fills","positions")){
+            var route=api.path("paths").path("/api/v1/trading/account/rounds/{roundId}/"+kind).path("get");
+            assertThat(route.path("security").toString()).contains("memberBearer");
+            assertThat(route.path("responses").path("200").path("content").path("application/json").path("schema").toString()).contains("$ref");
+        }
+        assertThat(api.path("paths").path("/api/v1/trading/account/restart").path("post").path("parameters").toString()).contains("Idempotency-Key");
+    }
+
+    @Test void concurrentFirstProvisionAndWithdrawalCannotCreateUsableAccountAfterAcknowledgement() throws Exception {
+        var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);
+        try{
+            var provision=pool.submit(()->{start.await();try{members.open(member);}catch(com.yogimangchi.trading.error.BusinessException expected){assertThat(expected.getCode()).isEqualTo(com.yogimangchi.trading.error.ErrorCode.ACCOUNT_NOT_ACTIVE);}return null;});
+            var withdrawal=pool.submit(()->{start.await();withdrawals.withdraw(member);return null;});start.countDown();provision.get(12,TimeUnit.SECONDS);withdrawal.get(12,TimeUnit.SECONDS);
+            Long id=jdbc.queryForObject("select id from trading.trading_account where member_id=?",Long.class,member);
+            assertThat(jdbc.queryForObject("select status from trading.trading_account where id=?",String.class,id)).isEqualTo("WITHDRAWN");
+            assertThat(jdbc.queryForObject("select count(*) from trading.member_trading_round where account_id=? and status='ACTIVE'",Long.class,id)).isZero();
+            assertThatThrownBy(()->members.open(member)).isInstanceOf(com.yogimangchi.trading.error.BusinessException.class);
+        }finally{pool.shutdownNow();}
+    }
     private static String normalToken(long member) { return token(member,Instant.now().plusSeconds(300),"https://content.test","trading","access",List.of("MEMBER"),0L); }
     @Test void memberCannotUseGuestRetryWithOrWithoutProvisionedAccount() throws Exception {
         for(int i=0;i<2;i++) {
@@ -197,7 +420,7 @@ class MemberJwtIntegrationTests {
             members.open(member);
         }
         Long account=jdbc.queryForObject("select id from trading.trading_account where member_id=?",Long.class,member);
-        assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,account)).isZero();
+        assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,account)).isEqualByComparingTo("10000");
         assertThatThrownBy(() -> guestRetries.retry(account,UUID.randomUUID().toString())).isInstanceOf(com.yogimangchi.trading.error.BusinessException.class);
     }
     @Test void withdrawalCancelsAllOrdersRetiresPositionsWithoutPriceFillFeeOrPnlAndIsIdempotent() throws Exception {

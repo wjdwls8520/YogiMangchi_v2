@@ -25,10 +25,11 @@ public class MemberWithdrawal {
     private final TradingOrderRepository orders;
     private final AccountLock locks;
     private final TradingEvents events;
+    private final com.yogimangchi.trading.tradinground.MemberRounds rounds;
     public MemberWithdrawal(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,
-            PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events) {
+            PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events,com.yogimangchi.trading.tradinground.MemberRounds rounds) {
         this.entities=entities; this.accounts=accounts; this.wallets=wallets; this.positions=positions;
-        this.orders=orders; this.locks=locks; this.events=events;
+        this.orders=orders; this.locks=locks; this.events=events;this.rounds=rounds;
     }
     @Transactional(timeout=10)
     public void withdraw(Long memberId) {
@@ -55,10 +56,12 @@ public class MemberWithdrawal {
             else byId.get(order.getPositionId()).releaseCloseReservation(order.getQuantity());
             order.cancelForWithdrawal(now); events.record(order,null);
         }
+        rounds.captureRetirement(id);
         for(var position:open) released=released.add(position.closeForWithdrawal(now));
         wallet.releaseExposure(released,reserved);
         if(wallet.getUsedMargin().signum()!=0 || wallet.getReservedMargin().signum()!=0)
             throw new IllegalStateException("Withdrawal found inconsistent reservations");
+        rounds.finish(id,wallet,"MEMBER_WITHDRAWAL",now);
         account.withdraw(now);
     }
 }
