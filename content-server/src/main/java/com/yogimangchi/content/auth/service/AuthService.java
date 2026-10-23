@@ -81,7 +81,12 @@ public class AuthService {
     @Transactional(timeout=5)
     public void logout(String token) {
         if(!RefreshTokens.valid(token)) return;
-        sessions.lockByHash(RefreshTokens.hash(token)).ifPresent(s -> sessions.revokeFamily(s.getFamilyId(),Instant.now()));
+        String hash=RefreshTokens.hash(token);
+        var owner=sessions.memberByHash(hash);
+        // Serialize with rotation/withdrawal before locking a family. Otherwise a family-wide
+        // UPDATE can miss a successor inserted after its statement snapshot, or deadlock on it.
+        if(owner.isEmpty() || members.lockById(owner.get()).isEmpty()) return;
+        sessions.lockByHash(hash).ifPresent(s -> sessions.revokeFamily(s.getFamilyId(),now()));
     }
     private Issued issue(Member member,UUID family,Instant now,Instant expiry) {
         String refresh=RefreshTokens.issue();
