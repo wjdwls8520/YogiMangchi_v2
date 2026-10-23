@@ -31,7 +31,7 @@ export function bindGuestCache(client: QueryClient, session: GuestSession) {
 export function TradingDataProvider({ children }: { children: ReactNode }) {
   const { session: memberSession } = useMember();
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: {
-    staleTime: 15_000, gcTime: 60_000, retry: retryTradingQuery,
+    staleTime: 15_000, gcTime: 60_000, retry: retryTradingQuery, refetchIntervalInBackground: false,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
   } } }));
   const [session] = useState(getSession);
@@ -45,8 +45,7 @@ export function TradingDataProvider({ children }: { children: ReactNode }) {
       else { session.leaveMember(); void session.restore(); }
     });
     const restore = () => {
-      if (memberSession.getSnapshot().phase === "ready") void memberSession.restore().catch(() => {});
-      else if (["anonymous", "error"].includes(memberSession.getSnapshot().phase)) void session.restore();
+      if (["anonymous", "error"].includes(memberSession.getSnapshot().phase)) void session.restore();
     };
     const syncStorage = (event: StorageEvent) => { if (event.key === null || event.key === session.storageKey) restore(); };
     window.addEventListener("storage", syncStorage);
