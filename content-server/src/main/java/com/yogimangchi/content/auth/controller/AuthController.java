@@ -44,10 +44,11 @@ public class AuthController {
     }
     @PostMapping("/refresh")
     @Operation(summary="Rotate the HttpOnly refresh cookie and return a new 15-minute Access JWT",
-            description="Session CSRF header required. Token hashes retained in PostgreSQL. Reuse revokes the token family; concurrent refresh calls must be serialized by the client. Rotation does not extend the original 7-day expiry. 401 invalid/expired/reused.")
-    public ResponseEntity<AccessResponse> refresh(@CookieValue(name=REFRESH_COOKIE,required=false) String token,HttpServletResponse response) {
-        try { return issued(auth.refresh(token)); }
-        catch(AuthFailure failure) { response.addHeader(HttpHeaders.SET_COOKIE,cookie("",Instant.EPOCH).toString()); throw failure; }
+            description="Session CSRF header required. Token hashes retained in PostgreSQL. Reuse revokes the token family; concurrent refresh calls must be serialized by the client. Rotation does not extend the original 7-day expiry. 401 invalid/expired/reused; failed refresh never changes the Refresh cookie, so a delayed failure cannot erase a newer login cookie. This does not make an already revoked family usable. Do not blindly retry an ambiguous lost rotation response.")
+    public ResponseEntity<AccessResponse> refresh(@CookieValue(name=REFRESH_COOKIE,required=false) String token) {
+        // A response cannot conditionally delete only the cookie carried by its request.
+        // Logout owns explicit cookie removal; replay detection still commits in AuthService.
+        return issued(auth.refresh(token));
     }
     @PostMapping("/logout")
     @Operation(summary="Revoke the refresh family and clear the cookie",
