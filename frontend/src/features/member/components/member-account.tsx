@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { contentMessage } from "../api/client";
@@ -8,13 +8,15 @@ import { parseOwnProfile } from "../api/contracts";
 import { nicknameIssue } from "../api/nickname";
 import { useMember, MemberLogout } from "./member-provider";
 import { MemberShell, ProfileEditForm } from "./member-views";
-import { WithdrawalConfirmation } from "./withdrawal-confirmation";
+import { MemberWithdrawal } from "./member-withdrawal";
+import { MemberConsents } from "./member-consents";
+import { TradingDataProvider } from "../../trading/components/trading-data-provider";
+import { MemberSimulation } from "../../trading/components/member-simulation";
 
 export function MemberAccount() {
   const { session, snapshot } = useMember(), client = useQueryClient();
   const [pending, setPending] = useState(false), [message, setMessage] = useState<string | null>(null), [error, setError] = useState<string | null>(null);
-  const active = useRef(false), dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { if (snapshot.phase !== "ready") dialog.current?.close(); }, [snapshot.phase]);
+  const active = useRef(false);
   const profile = useQuery({ queryKey: ["member", "own", snapshot.memberId, snapshot.generation], enabled: snapshot.phase === "ready",
     queryFn: async ({ signal }) => parseOwnProfile(await session.request("/members/me", { signal }), snapshot.memberId!),
   });
@@ -32,18 +34,15 @@ export function MemberAccount() {
     finally { active.current = false; setPending(false); }
   }
   return <MemberShell title="내 계정">
-    {snapshot.phase !== "ready" ? <><p role="status" className="member-message">{snapshot.phase === "loading" || snapshot.phase === "authenticating" ? "로그인 상태를 확인하는 중입니다." : snapshot.phase === "error" ? "회원 연결을 확인하지 못했습니다." : "로그인이 필요합니다."}</p><Link href="/login">로그인</Link>{snapshot.phase === "error" && <div className="member-actions"><button className="member-secondary" onClick={() => void session.restore().catch(() => {})}>로그인 다시 확인</button><MemberLogout /></div>}</> : <>
+    {snapshot.phase !== "ready" ? <><p role="status" className="member-message">{snapshot.phase === "loading" || snapshot.phase === "authenticating" ? "로그인 상태를 확인하는 중입니다." : snapshot.phase === "error" ? "회원 연결을 확인하지 못했습니다." : snapshot.phase === "withdrawing" ? "탈퇴 진행 상태를 확인하는 중입니다. 완료 전까지 회원 기능은 중단됩니다." : "로그인이 필요합니다."}</p>{snapshot.phase !== "withdrawing" && <Link href="/login">로그인</Link>}{snapshot.phase === "error" && <div className="member-actions"><button className="member-secondary" onClick={() => void session.restore().catch(() => {})}>로그인 다시 확인</button><MemberLogout /></div>}</> : <>
       {profile.isPending && <p role="status">프로필을 불러오는 중입니다.</p>}
       {profile.isError && <p role="alert" className="member-message">{contentMessage(profile.error)} <button className="account-refresh" onClick={() => void profile.refetch()}>다시 조회</button></p>}
       {profile.data && <><p className="member-note">회원 #{profile.data.memberId} · {profile.data.role}</p><div className="member-actions"><Link href={`/members/${profile.data.memberId}`}>공개 프로필·팔로우 보기</Link><MemberLogout /></div>
         <ProfileEditForm key={`${profile.data.nickname}:${profile.data.profileMessage}`} nickname={profile.data.nickname} message={profile.data.profileMessage} pending={pending} onSubmit={event => void save(event)} />
         <p className="member-note">Guest 모의투자와 회원 선물 계정은 별개이며 기록을 자동 합치지 않습니다.</p>
-        <button type="button" className="account-refresh" disabled={pending} onClick={() => { setError(null); dialog.current?.showModal(); }}>회원 탈퇴</button></>}
+        <MemberConsents />{snapshot.consentStatus === "accepted" && <TradingDataProvider><MemberSimulation /></TradingDataProvider>}</>}
       {message && <p role="status" className="member-message">{message}</p>}{error && <p role="alert" className="member-message">{error}</p>}
     </>}
-    <dialog ref={dialog} className="position-close-dialog member-withdrawal-dialog" aria-labelledby="member-withdraw-title" aria-describedby="member-withdraw-notice" aria-modal="true" onClose={event => event.currentTarget.querySelector("form")?.reset()}>
-      {/* The old endpoint does not verify confirmation or guarantee the new withdrawal policy. */}
-      <WithdrawalConfirmation onSubmit={event => event.preventDefault()} onCancel={() => dialog.current?.close()} />
-    </dialog>
+    <MemberWithdrawal />
   </MemberShell>;
 }

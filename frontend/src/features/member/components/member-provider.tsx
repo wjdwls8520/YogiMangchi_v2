@@ -5,13 +5,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Link from "next/link";
 import { ContentApiError, contentMessage, contentOrigin } from "../api/client";
 import { createMemberSession, initialMember, type MemberSession } from "../api/session";
+import { MemberConsentGate } from "./member-consents";
 
 const origin = () => contentOrigin(process.env.NEXT_PUBLIC_CONTENT_SERVER_URL || "http://localhost:8080");
 let browserSession: MemberSession | undefined;
 const Context = createContext<{ session: MemberSession; origin: string; announce: (type: "changed" | "ended") => void } | null>(null);
 export function MemberProvider({ children }: { children: ReactNode }) {
   const [session] = useState(() => typeof window === "undefined" ? createMemberSession(origin()) : browserSession ??= createMemberSession(origin()));
-  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, gcTime: 60_000,
+  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, gcTime: typeof window === "undefined" ? Infinity : 60_000,
     retry: (count, error) => count < 2 && error instanceof ContentApiError && [0, 500, 502, 503, 504].includes(error.status),
   }, mutations: { retry: false } } }));
   const channel = useRef<BroadcastChannel | null>(null);
@@ -44,7 +45,7 @@ export function MemberProvider({ children }: { children: ReactNode }) {
     const timer = setTimeout(() => { void session.refresh().catch(() => {}); }, Math.max(1000, Date.parse(snapshot.expiresAt) - Date.now() - 30_000));
     return () => clearTimeout(timer);
   }, [session, snapshot.phase, snapshot.expiresAt]);
-  return <QueryClientProvider client={client}><Context.Provider value={context}>{children}</Context.Provider></QueryClientProvider>;
+  return <QueryClientProvider client={client}><Context.Provider value={context}><MemberConsentGate>{children}</MemberConsentGate></Context.Provider></QueryClientProvider>;
 }
 export function useMember() {
   const context = useContext(Context);

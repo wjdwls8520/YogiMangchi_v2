@@ -1,8 +1,8 @@
 import { ContentApiError, contentJson } from "./client";
-import { parseAccess, parseCsrf, type MemberAccess } from "./contracts";
+import { parseAccess, parseCsrf, parseWithdrawal, type MemberAccess } from "./contracts";
 
-export type MemberSnapshot = { phase: "loading" | "anonymous" | "authenticating" | "ready" | "ending" | "error";
-  memberId: number | null; nickname: string; expiresAt: string | null; generation: number };
+export type MemberSnapshot = { phase: "loading" | "anonymous" | "authenticating" | "ready" | "ending" | "withdrawing" | "error";
+  memberId: number | null; nickname: string; expiresAt: string | null; generation: number; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
 export const initialMember: MemberSnapshot = { phase: "loading", memberId: null, nickname: "", expiresAt: null, generation: 0 };
 export type CookieLock = <T>(operation: () => Promise<T>) => Promise<T>;
 export function browserCookieLock(origin: string): CookieLock {
@@ -16,6 +16,7 @@ export function browserCookieLock(origin: string): CookieLock {
 export function createMemberSession(origin: string, transport: typeof fetch = fetch, now = Date.now, lock = browserCookieLock(origin)) {
   let snapshot = initialMember, access: MemberAccess | null = null;
   let refreshFlight: Promise<void> | null = null, authFlight: Promise<void> | null = null, logoutFlight: Promise<void> | null = null;
+  let withdrawalAccess: MemberAccess | null = null, withdrawalFlight: Promise<ReturnType<typeof parseWithdrawal>> | null = null;
   const listeners = new Set<() => void>(), accessListeners = new Set<(value: Readonly<MemberAccess> | null) => void>();
   const emit = () => { listeners.forEach(fn => fn()); accessListeners.forEach(fn => fn(access)); };
   function clear(phase: MemberSnapshot["phase"]) {
@@ -29,7 +30,7 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
     const changed = snapshot.memberId !== parsed.memberId;
     access = Object.freeze(parsed);
     snapshot = { phase: "ready", memberId: parsed.memberId, nickname: parsed.nickname, expiresAt: parsed.expiresAt,
-      generation: snapshot.generation + (changed ? 1 : 0) }; emit();
+      generation: snapshot.generation + (changed ? 1 : 0), consentStatus: changed ? "checking" : snapshot.consentStatus ?? "checking" }; emit();
   }
   async function cookie(path: string, body?: object) {
     const csrf = parseCsrf(await contentJson(origin, "/auth/csrf", {}, transport));
@@ -37,7 +38,7 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
   }
   function refresh() {
     if (refreshFlight) return refreshFlight;
-    if (logoutFlight || snapshot.phase === "ending") return Promise.reject(new ContentApiError(401));
+    if (logoutFlight || snapshot.phase === "ending" || snapshot.phase === "withdrawing") return Promise.reject(new ContentApiError(401));
     if (!access && snapshot.phase !== "loading") clear("loading");
     const generation = snapshot.generation;
     refreshFlight = lock(async () => {
@@ -52,6 +53,7 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
   function authenticate(path: "/auth/signup" | "/auth/login/complete", body?: object) {
     if (authFlight) return authFlight;
     if (logoutFlight) return Promise.reject(new ContentApiError(401));
+    withdrawalAccess = null;
     clear("authenticating");
     const generation = snapshot.generation;
     authFlight = lock(async () => {
@@ -92,17 +94,53 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
     getSnapshot: () => snapshot,
     subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
     observeAccess(fn: (value: Readonly<MemberAccess> | null) => void) { accessListeners.add(fn); fn(access); return () => { accessListeners.delete(fn); }; },
-    forget: () => clear("anonymous"),
+    forget: () => { withdrawalAccess = null; clear("anonymous"); },
+    setConsentStatus(status: NonNullable<MemberSnapshot["consentStatus"]>, memberId: number, generation: number) {
+      if (snapshot.phase !== "ready" || snapshot.memberId !== memberId || snapshot.generation !== generation || snapshot.consentStatus === status) return;
+      snapshot = { ...snapshot, consentStatus: status }; emit();
+    },
     async restore() { if (access && Date.parse(access.expiresAt) - now() >= 30_000) return; await refresh(); },
     refresh,
     complete: () => authenticate("/auth/login/complete"),
-    signup: (body: { nickname: string; profileMessage: string; termAgree: boolean; privateAgree: boolean }) => authenticate("/auth/signup", body),
+    signup: (body: { nickname: string; profileMessage: string; termAgree: boolean; privateAgree: boolean; termsVersion: string; privacyVersion: string }) => authenticate("/auth/signup", body),
     authorized,
     request(path: string, options: Parameters<typeof contentJson>[2] = {}) {
       return authorized(current => contentJson(origin, path, { ...options, access: current.accessToken }, transport), !options.method || options.method === "GET");
     },
+    withdraw(body: { acknowledged: boolean; confirmation: string; policyVersion: string }) {
+      if (withdrawalFlight) return withdrawalFlight;
+      if (!body.acknowledged || body.confirmation !== "탈퇴합니다" || body.policyVersion !== "ym-withdrawal-v1") return Promise.reject(new ContentApiError(400, "WITHDRAWAL_CONFIRMATION_REQUIRED"));
+      withdrawalFlight = (async () => {
+        if (!access || Date.parse(access.expiresAt) - now() < 30_000) await refresh();
+        const current = access;
+        if (!current || snapshot.phase !== "ready") throw new ContentApiError(401);
+        return lock(async () => {
+          const csrf = parseCsrf(await contentJson(origin, "/auth/csrf", {}, transport));
+          if (access !== current || snapshot.phase !== "ready") throw new DOMException("Session changed", "AbortError");
+          withdrawalAccess = current; clear("withdrawing");
+          const generation = snapshot.generation;
+          const value = await contentJson(origin, "/members/me/withdrawal", { method: "POST", access: current.accessToken, csrf, body }, transport);
+          if (generation !== snapshot.generation || withdrawalAccess !== current) throw new DOMException("Session changed", "AbortError");
+          const result = parseWithdrawal(value);
+          if (result === "NOT_REQUESTED") throw new ContentApiError(422);
+          if (result === "COMPLETED") { withdrawalAccess = null; clear("anonymous"); }
+          return result;
+        });
+      })().finally(() => { withdrawalFlight = null; });
+      return withdrawalFlight;
+    },
+    async withdrawalStatus() {
+      const current = withdrawalAccess;
+      if (!current || Date.parse(current.expiresAt) <= now()) throw new ContentApiError(401);
+      const value = await contentJson(origin, "/members/me/withdrawal", { access: current.accessToken }, transport);
+      if (withdrawalAccess !== current) throw new DOMException("Session changed", "AbortError");
+      const status = parseWithdrawal(value);
+      if (status === "COMPLETED" || status === "NOT_REQUESTED") { withdrawalAccess = null; clear("anonymous"); }
+      return status;
+    },
     logout() {
       if (logoutFlight) return logoutFlight;
+      withdrawalAccess = null;
       clear("ending");
       const generation = snapshot.generation;
       logoutFlight = lock(async () => {

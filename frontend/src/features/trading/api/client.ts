@@ -1,7 +1,7 @@
 import { marketEndpoints } from "../market/catalog";
 
 export class TradingApiError extends Error {
-  constructor(readonly status: number, message = "Trading 데이터를 불러올 수 없습니다.", readonly code?: string) {
+  constructor(readonly status: number, message = "Trading 데이터를 불러올 수 없습니다.", readonly code?: string, readonly nextAvailableAt?: string) {
     super(message);
     this.name = "TradingApiError";
   }
@@ -9,7 +9,7 @@ export class TradingApiError extends Error {
 
 const serverCodes = new Set(["MARGIN_MIGRATION_REQUIRED", "GUEST_ACCOUNT_REQUIRED", "GUEST_CREDENTIAL_EXPIRED", "INVALID_LEVERAGE", "LEVERAGE_MISMATCH", "TRADING_BUSY", "CLOSE_QUANTITY_EXCEEDED", "ENGINE_RECOVERING", "ORDER_NOT_FOUND",
   "ORDER_NOT_PENDING", "PENDING_LIMIT_REACHED", "INVALID_ORDER", "INVALID_IDEMPOTENCY_KEY", "IDEMPOTENCY_CONFLICT",
-  "PRICE_NOT_FRESH", "INSUFFICIENT_MARGIN", "ACCOUNT_AT_RISK", "ACCOUNT_NOT_ACTIVE", "POSITION_NOT_FOUND",
+  "PRICE_NOT_FRESH", "INSUFFICIENT_MARGIN", "ACCOUNT_AT_RISK", "ACCOUNT_NOT_ACTIVE", "POSITION_NOT_FOUND", "MEMBER_ACCOUNT_REQUIRED", "MEMBER_RESTART_LIMITED", "ROUND_NOT_FOUND", "TRADING_ACCOUNT_REQUIRED",
   "POSITION_NOT_OPEN", "SYMBOL_NOT_AVAILABLE", "POSITION_LIMIT_REACHED", "ACCOUNT_NOT_FOUND", "MARKETABLE_LIMIT_NOT_ALLOWED"]);
 
 export function tradingOrigin(base: string) {
@@ -45,14 +45,18 @@ async function apiJson(origin: string, path: string, options: {
     });
     if (!response.ok) {
       let code: string | undefined;
+      let nextAvailableAt: string | undefined;
       try {
         const problem: unknown = await response.json();
         // Retain only known business codes, never arbitrary server strings.
         if (problem && typeof problem === "object" && !Array.isArray(problem)
           && typeof (problem as Record<string, unknown>).code === "string"
           && serverCodes.has((problem as Record<string, unknown>).code as string)) code = (problem as Record<string, unknown>).code as string;
+        const next = problem && typeof problem === "object" ? (problem as Record<string, unknown>).nextAvailableAt : null;
+        if (response.status === 429 && code === "MEMBER_RESTART_LIMITED" && typeof next === "string"
+          && next.length < 100 && /^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(next) && Number.isFinite(Date.parse(next))) nextAvailableAt = next;
       } catch { /* An unreadable error body must not replace the HTTP status. */ }
-      throw new TradingApiError(response.status, undefined, code);
+      throw new TradingApiError(response.status, undefined, code, nextAvailableAt);
     }
     try { return await response.json(); }
     catch { throw new TradingApiError(422, "서버 응답 형식을 확인할 수 없습니다."); }
