@@ -1,4 +1,5 @@
 package com.yogimangchi.trading.marketdata.websocket;
+import com.yogimangchi.trading.websocket.BoundedWebSocketSender;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -100,6 +101,19 @@ class BoundedWebSocketSenderTests {
         assertThat(closed).extracting(CloseStatus::getCode).containsExactly(1011);
         assertThat(jobs).isEmpty();
         verify(session, times(1)).sendMessage(any());
+    }
+
+    @Test void queuedPrivateMessageMustRecheckAuthorizationBeforeTheSocketWrite() {
+        var session=mock(WebSocketSession.class);
+        var jobs=new ArrayList<Runnable>();
+        var closed=new ArrayList<CloseStatus>();
+        var authorized=new java.util.concurrent.atomic.AtomicBoolean(true);
+        var sender=new BoundedWebSocketSender(session,jobs::add,closed::add,2,authorized::get);
+        sender.enqueue("private financial event");
+        authorized.set(false);
+        jobs.remove(0).run();
+        verifyNoInteractions(session);
+        assertThat(closed).extracting(CloseStatus::getCode).containsExactly(1008);
     }
 
     @Test

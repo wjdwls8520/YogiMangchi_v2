@@ -1,98 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import type { TradingSymbol } from "../market/catalog";
-import { PriceHistory } from "../market/history";
-import type { MarketPrice, MarketState } from "../market/stream";
+import type { MarketState } from "../market/stream";
 import type { SelectedMarket } from "../market/selected-market";
-import { ChartState, type MarketChartView } from "./chart-state";
+import { CANDLE_INTERVALS, type CandleInterval } from "../market/candles";
+import { CandlestickChart } from "./candlestick-chart";
+import { ChartState } from "./chart-state";
 
 const statusLabels: Record<MarketState, string> = {
-  CONNECTING: "연결 중", WAITING_FOR_FIRST_PRICE: "첫 시세 대기", READY: "실시간",
+  CONNECTING: "연결 중", WAITING_FOR_FIRST_PRICE: "첫 시세 대기", READY: "READY",
   UNAVAILABLE: "시세 이용 불가", RECONNECTING: "재연결 중",
 };
 
-const messages = {
-  loading: "시세를 불러오는 중입니다.",
-  unavailable: "현재 유효한 시세를 제공할 수 없습니다.",
-  empty: "표시할 가격 데이터가 없습니다.",
-} as const;
-
-export function TradingChart({ symbol, market, catalogView }: {
+export function TradingChart({ symbol, market, catalogView, interval, onIntervalChange }: {
   symbol: TradingSymbol | null; market: SelectedMarket; catalogView: "loading" | "ready" | "empty" | "unavailable";
+  interval: CandleInterval; onIntervalChange: (interval: CandleInterval) => void;
 }) {
-  const symbolId = symbol?.id;
-  const mount = useRef<HTMLDivElement>(null);
-  const state = market.state;
-  const latest = useRef<MarketPrice | null>(null);
-  const history = useRef(new PriceHistory());
-  const series = useRef<import("lightweight-charts").ISeriesApi<"Line"> | null>(null);
-  const [rendererFailed, setRendererFailed] = useState(false);
-  const append = useCallback((price: MarketPrice | null) => {
-    const current = series.current;
-    if (!price || !current) return;
-    try {
-      const update = history.current.append(price.eventTime, price.value);
-      if (!update) return;
-      if (update.pruned) current.setData(update.points as import("lightweight-charts").LineData<import("lightweight-charts").UTCTimestamp>[]);
-      else current.update(update.point as import("lightweight-charts").LineData<import("lightweight-charts").UTCTimestamp>);
-    } catch { queueMicrotask(() => { if (series.current === current) setRendererFailed(true); }); }
-  }, []);
-  useEffect(() => { latest.current = market.price; append(market.price); }, [market.price, append]);
-  useEffect(() => {
-    let disposed = false;
-    let chart: import("lightweight-charts").IChartApi | undefined;
-    async function start() {
-      try {
-        const { createChart, LineSeries, ColorType } = await import("lightweight-charts");
-        if (disposed || !mount.current) return;
-        chart = createChart(mount.current, {
-          autoSize: true,
-          layout: { background: { type: ColorType.Solid, color: "#ffffff" }, textColor: "#64748b", fontFamily: "Arial, sans-serif", fontSize: 11, attributionLogo: true },
-          grid: { vertLines: { color: "#f1f5f9" }, horzLines: { color: "#f1f5f9" } },
-          rightPriceScale: { borderColor: "#e2e8f0" },
-          timeScale: { borderColor: "#e2e8f0", timeVisible: true, secondsVisible: true, rightOffset: 3 },
-          localization: { locale: "ko-KR", timeFormatter: (time: number | object | string) => typeof time === "number" ? new Date(time * 1000).toLocaleTimeString("ko-KR", { hour12: false }) : String(time) },
-        });
-        series.current = chart.addSeries(LineSeries, { color: "#4f46e5", lineWidth: 2, priceFormat: {
-          type: "custom", minMove: 0.00000001,
-          formatter: (value: number) => value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }),
-        } });
-        append(latest.current);
-      } catch { if (!disposed) setRendererFailed(true); }
-    }
-    void start();
-    return () => { disposed = true; series.current = null; chart?.remove(); };
-  }, [symbolId, append]);
-  const view: MarketChartView = rendererFailed ? "unavailable"
-    : !symbol ? catalogView === "ready" ? "empty" : catalogView
-    : state === "READY" ? "ready" : state === "UNAVAILABLE" || state === "RECONNECTING" ? "unavailable" : "loading";
-  const title = rendererFailed ? "차트를 표시할 수 없습니다." : state === "RECONNECTING" && symbol ? "시세 연결을 복구하는 중입니다." : messages[view as keyof typeof messages];
-  const label = !symbol ? catalogView === "empty" ? "종목 없음" : catalogView === "unavailable" ? "서버 연결 불가" : "연결 중" : statusLabels[state];
-  return (
-    <section aria-labelledby="chart-heading" className="market-chart trading-section">
-      <header className="section-heading">
-        <h2 id="chart-heading" className="section-title">차트 <span className="ml-2 text-trade-meta font-normal text-slate-500">{symbol?.displaySymbol ?? "BTC / USDT"}</span></h2>
-        <span className="preview-label">{rendererFailed ? "차트 이용 불가" : label}</span>
-      </header>
-      <div role="group" aria-label="차트 주기 (현재 미지원)" className="chart-timeframes">
-        {["1m", "5m", "15m", "1h", "4h", "1d"].map((timeframe) => (
-          <button key={timeframe} type="button" disabled className="chart-timeframe">
-            {timeframe}
-          </button>
-        ))}
-        <span className="chart-timeframe-note">Timeframe 미지원</span>
-      </div>
-      <figure aria-labelledby="chart-caption" className="market-chart-figure">
-        <div data-market-chart-frame data-view={view} data-connection={symbol ? state : catalogView} aria-busy={view === "loading"} className="market-chart-frame">
-          <div ref={mount} data-chart-mount aria-label={`${symbol?.displaySymbol ?? "선택 종목"} Mark Price 선 그래프`} role="img" className="absolute inset-0 overflow-hidden" />
-          {view !== "ready" && <ChartState title={title} detail={view === "unavailable" ? "이전 그래프는 수신 이력이며 현재 유효한 가격이 아닙니다." : undefined} />}
-        </div>
-        <figcaption id="chart-caption" className="market-chart-caption">
-          <span>Mark Price · 접속 후 수신한 가격 흐름</span>
-          <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc.</a>
-        </figcaption>
-      </figure>
-    </section>
-  );
+  return <section aria-labelledby="chart-heading" className="market-chart trading-section">
+    <header className="section-heading">
+      <h2 id="chart-heading" className="section-title">차트 <span className="ml-2 text-trade-meta font-normal text-terminal-muted">{symbol?.displaySymbol ?? "종목 선택"}</span></h2>
+      <span className="preview-label">실시간 · {statusLabels[market.state]}</span>
+    </header>
+    <div role="group" aria-label="차트 주기" className="chart-timeframes">
+      {CANDLE_INTERVALS.map((value) => <button key={value} type="button" aria-pressed={interval === value}
+        onClick={() => onIntervalChange(value)} className="chart-timeframe">{value}</button>)}
+    </div>
+    {symbol ? <CandlestickChart key={`${symbol.id}:${interval}`} symbol={symbol} market={market} interval={interval} />
+      : <div data-market-chart-frame data-view={catalogView} className="market-chart-frame"><ChartState title={catalogView === "unavailable" ? "거래 종목을 불러올 수 없습니다." : catalogView === "empty" ? "거래 가능한 종목이 없습니다." : "거래 종목을 불러오는 중입니다."} /></div>}
+  </section>;
 }

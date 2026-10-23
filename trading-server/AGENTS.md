@@ -404,7 +404,11 @@ USDT Wallet
 
 Wallet을 독립 Position들의 단순 잔액 저장소처럼 취급하지 않는다.
 
-현재 구조는 Account 단위의 공유 USDT Wallet을 사용하는 Cross-Margin 성격을 가진다.
+선물의 최종 정책은 Hedge Mode + Isolated Margin Only다. 종목별 LONG/SHORT 설정 레버리지는 공유하되
+각 Position의 담보와 청산 위험은 독립적이다. 다른 Position의 수익이나 Wallet 미사용 현금으로
+위험 Position을 자동 보전하지 않는다. Cross 선택 기능을 제공하지 않는다.
+기존 Cross 이력의 원래 의미는 보존하며, 안전 전환을 완료하지 못한 노출은 명시적인 거래 보류 상태로 관리한다.
+실제 Mark gap 손익과 수수료, 격리 한도 초과 손실 조정액은 원장에 구분 기록한다.
 
 정확한 다음 계산 규칙은 관련 기능 구현 전에 명시적으로 정의하고 자동 테스트한다.
 

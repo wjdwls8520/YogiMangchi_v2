@@ -1,7 +1,8 @@
 package com.yogimangchi.trading.security;
 
-import com.yogimangchi.trading.tradingaccount.security.GuestCredentialService;
-import com.yogimangchi.trading.tradingaccount.security.GuestTokenFilter;
+import com.yogimangchi.trading.tradingaccount.security.TradingCredentials;
+import com.yogimangchi.trading.tradingaccount.security.TradingPrincipal;
+import com.yogimangchi.trading.tradingaccount.security.TradingTokenFilter;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,21 +23,34 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 public class SecurityConfig {
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, GuestCredentialService credentials) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http, TradingCredentials credentials,
+            @Value("${springdoc.api-docs.enabled:true}") boolean docs) throws Exception {
         http.authorizeHttpRequests(authorize -> {
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/symbols").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/tickers").permitAll();
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/candles").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/status").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
+            // /ws/trading requires an authenticated first frame before any account data is read/sent.
+            authorize.requestMatchers(HttpMethod.GET, "/ws/trading").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/guest").permitAll();
+            authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/member").hasRole("MEMBER");
+            authorize.requestMatchers(HttpMethod.POST,"/api/v1/trading/account/restart").hasRole("MEMBER");
+            authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/rounds","/api/v1/trading/account/rounds/current","/api/v1/trading/account/rounds/{roundId:[0-9]+}","/api/v1/trading/account/rounds/{roundId:[0-9]+}/{kind:orders|fills|positions}").hasRole("MEMBER");
+            authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/retry").authenticated();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/orders",
+                    "/api/v1/trading/account/orders/quote",
                     "/api/v1/trading/account/orders/{orderId}/cancel",
                     "/api/v1/trading/account/positions/{positionId}/close",
                     "/api/v1/trading/account/positions/{positionId}/close-orders").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/orders", "/api/v1/trading/account/orders/pending").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/fills", "/api/v1/trading/account/positions/history").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/events").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/symbols/{symbolId}/leverage").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.PUT, "/api/v1/trading/account/symbols/{symbolId}/leverage").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/wallet",
                     "/api/v1/trading/account/positions", "/api/v1/trading/account/summary").hasRole("TRADER");
-            authorize.requestMatchers(
+            if(docs) authorize.requestMatchers(
                     "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml",
                     "/swagger-ui.html", "/swagger-ui/**"
             ).permitAll();
@@ -45,17 +59,21 @@ public class SecurityConfig {
         http.cors(cors -> { })
                 .csrf(csrf -> csrf.ignoringRequestMatchers("/api/v1/trading/**"))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .addFilterBefore(new GuestTokenFilter(credentials), AnonymousAuthenticationFilter.class)
+                .addFilterBefore(new TradingTokenFilter(credentials), AnonymousAuthenticationFilter.class)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
                 .requestCache(AbstractHttpConfigurer::disable)
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint((request, response, failure) -> {
                     if (request.getRequestURI().substring(request.getContextPath().length()).startsWith("/api/v1/trading/")) {
-                        GuestTokenFilter.problem(response, 401, "GUEST_CREDENTIAL_REQUIRED", "A guest bearer credential is required");
+                        TradingTokenFilter.problem(response, 401, "GUEST_CREDENTIAL_REQUIRED", "A guest bearer credential is required");
                     } else new Http403ForbiddenEntryPoint().commence(request, response, failure);
                 }).accessDeniedHandler((request, response, failure) -> {
-                    GuestTokenFilter.problem(response, 403, "ACCESS_DENIED", "Access is denied");
+                    var authentication=org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+                    if(authentication!=null && authentication.getPrincipal() instanceof TradingPrincipal principal && principal.memberId()!=null && principal.accountId()==null) {
+                        TradingTokenFilter.problem(response,409,"TRADING_ACCOUNT_REQUIRED","Explicitly open your own member trading account first"); return;
+                    }
+                    TradingTokenFilter.problem(response, 403, "ACCESS_DENIED", "Access is denied");
                 }));
 
         return http.build();
@@ -70,7 +88,7 @@ public class SecurityConfig {
         }
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(allowed);
-        configuration.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key"));
         configuration.setAllowCredentials(false);
         configuration.setMaxAge(3600L);

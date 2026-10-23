@@ -7,10 +7,10 @@ export class TradingApiError extends Error {
   }
 }
 
-const serverCodes = new Set(["TRADING_BUSY", "CLOSE_QUANTITY_EXCEEDED", "ENGINE_RECOVERING", "ORDER_NOT_FOUND",
+const serverCodes = new Set(["MARGIN_MIGRATION_REQUIRED", "GUEST_ACCOUNT_REQUIRED", "GUEST_CREDENTIAL_EXPIRED", "INVALID_LEVERAGE", "LEVERAGE_MISMATCH", "TRADING_BUSY", "CLOSE_QUANTITY_EXCEEDED", "ENGINE_RECOVERING", "ORDER_NOT_FOUND",
   "ORDER_NOT_PENDING", "PENDING_LIMIT_REACHED", "INVALID_ORDER", "INVALID_IDEMPOTENCY_KEY", "IDEMPOTENCY_CONFLICT",
   "PRICE_NOT_FRESH", "INSUFFICIENT_MARGIN", "ACCOUNT_AT_RISK", "ACCOUNT_NOT_ACTIVE", "POSITION_NOT_FOUND",
-  "POSITION_NOT_OPEN", "SYMBOL_NOT_AVAILABLE", "POSITION_LIMIT_REACHED", "ACCOUNT_NOT_FOUND"]);
+  "POSITION_NOT_OPEN", "SYMBOL_NOT_AVAILABLE", "POSITION_LIMIT_REACHED", "ACCOUNT_NOT_FOUND", "MARKETABLE_LIMIT_NOT_ALLOWED"]);
 
 export function tradingOrigin(base: string) {
   try { return new URL(marketEndpoints(base).symbols).origin; }
@@ -19,15 +19,20 @@ export function tradingOrigin(base: string) {
 
 // Never propagate response bodies, URLs, headers or fetch error causes into UI/errors.
 export async function tradingJson(origin: string, path: string, options: {
-  token?: string; signal?: AbortSignal; method?: "GET" | "POST"; body?: object; idempotencyKey?: string;
+  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT"; body?: object; idempotencyKey?: string;
 } = {}, transport: typeof fetch = fetch): Promise<unknown> {
   return apiJson(origin, `/api/v1/trading/${path}`, options, transport);
 }
 export async function marketTickersJson(origin: string, signal: AbortSignal) {
   return apiJson(origin, "/api/v1/market/tickers", { signal });
 }
+export async function marketCandlesJson(origin: string, symbolId: number, interval: string, signal: AbortSignal, transport: typeof fetch = fetch, before?: string) {
+  const query = new URLSearchParams({ tradingSymbolId: String(symbolId), interval, limit: "300" });
+  if (before) query.set("before", before);
+  return apiJson(origin, `/api/v1/market/candles?${query}`, { signal }, transport);
+}
 async function apiJson(origin: string, path: string, options: {
-  token?: string; signal?: AbortSignal; method?: "GET" | "POST"; body?: object; idempotencyKey?: string;
+  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT"; body?: object; idempotencyKey?: string;
 }, transport: typeof fetch = fetch): Promise<unknown> {
   const signal = AbortSignal.any([AbortSignal.timeout(10_000), ...(options.signal ? [options.signal] : [])]);
   try {

@@ -18,7 +18,9 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ProblemDetail handleBusinessException(BusinessException exception) {
         log.info("Business request rejected code={}", exception.getCode());
-        return businessProblem(exception.getCode());
+        var problem=businessProblem(exception.getCode());
+        if(exception instanceof com.yogimangchi.trading.tradinground.RestartLimited limited) problem.setProperty("nextAvailableAt",limited.nextAvailableAt());
+        return problem;
     }
 
     @ExceptionHandler(PessimisticLockingFailureException.class)

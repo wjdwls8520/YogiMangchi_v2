@@ -1,6 +1,7 @@
 package com.yogimangchi.trading.execution.trigger;
 
 import com.yogimangchi.trading.execution.TradingMath;
+import com.yogimangchi.trading.execution.TradingFees;
 import com.yogimangchi.trading.fill.entity.Fill;
 import com.yogimangchi.trading.fill.repository.FillRepository;
 import com.yogimangchi.trading.marketdata.LatestMarkPrice;
@@ -9,11 +10,15 @@ import com.yogimangchi.trading.order.entity.TradingOrder;
 import com.yogimangchi.trading.order.repository.TradingOrderRepository;
 import com.yogimangchi.trading.position.entity.Position;
 import com.yogimangchi.trading.position.repository.PositionRepository;
+import com.yogimangchi.trading.position.service.HedgePositions;
+import com.yogimangchi.trading.position.service.IsolatedMargin;
+import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
 import com.yogimangchi.trading.tradingaccount.entity.TradingAccount;
 import com.yogimangchi.trading.tradingaccount.entity.Wallet;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
 import com.yogimangchi.trading.tradingaccount.service.AccountLock;
-import com.yogimangchi.trading.tradingaccount.service.AccountValuation;
+import com.yogimangchi.trading.tradingaccount.service.IsolatedCutover;
+import com.yogimangchi.trading.tradingevent.service.TradingEvents;
 import com.yogimangchi.trading.tradingsymbol.entity.TradingSymbolStatus;
 import com.yogimangchi.trading.tradingsymbol.repository.TradingSymbolRepository;
 import java.math.BigDecimal;
@@ -36,19 +41,25 @@ public class AccountTriggerService {
     private final TradingOrderRepository orders;
     private final FillRepository fills;
     private final TradingSymbolRepository symbols;
-    private final AccountValuation valuation;
+    private final IsolatedMargin isolated;
+    private final IsolatedCutover cutover;
     private final LatestPriceStore livePrices;
+    private final HedgePositions hedge;
+    private final SymbolLeverageService leverage;
+    private final TradingEvents events;
     public AccountTriggerService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols,
-            AccountValuation valuation, LatestPriceStore livePrices) {
+            IsolatedMargin isolated, IsolatedCutover cutover, LatestPriceStore livePrices, HedgePositions hedge, SymbolLeverageService leverage, TradingEvents events) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
-        this.fills=fills; this.symbols=symbols; this.valuation=valuation; this.livePrices=livePrices;
+        this.fills=fills; this.symbols=symbols; this.isolated=isolated; this.cutover=cutover; this.livePrices=livePrices;
+        this.hedge=hedge; this.leverage=leverage;
+        this.events=events;
     }
 
     /** No Redis I/O here. Replay and live execution share the same account lock and atomic financial transaction. */
     @Transactional
     public void process(Long accountId, LatestMarkPrice tick, Map<Long, LatestMarkPrice> book) {
-        TradingAccount account = locks.lock(accountId);
+        TradingAccount account = locks.lockIncludingWithdrawn(accountId);
         if (account.getStatus() != TradingAccount.Status.ACTIVE) return;
         Wallet wallet = wallets.findById(accountId).orElseThrow();
         List<Position> open = new ArrayList<>(positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN));
@@ -59,14 +70,27 @@ public class AccountTriggerService {
         open.forEach(p -> required.add(p.getTradingSymbolId()));
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
         var snapshots = snapshots(required, book, now);
-        AccountValuation.Value value = valuation.evaluate(wallet, open, snapshots, now);
-        if (!value.fresh()) return; // Re-evaluated on the next affected symbol tick; never invent a missing mark.
-        if (!open.isEmpty() && value.equity().compareTo(value.maintenanceMargin()) <= 0) {
-            liquidate(account, wallet, open, pending, book, now);
-            return;
+        if (!cutover.activateIfSafe(account, wallet, open, snapshots, now)) return;
+        // Each position needs only its own fresh Mark. An unavailable unrelated symbol cannot mask liquidation.
+        for (Position position : List.copyOf(open)) {
+            var snapshot = snapshots.get(position.getTradingSymbolId());
+            if (snapshot.status() == LatestPriceStore.Status.FRESH
+                    && (account.isGuestAccount() || !account.getMemberRoundStartedAt().isAfter(snapshot.latestPrice().orElseThrow().receivedAt()))
+                    && isolated.risk(position, snapshot.latestPrice().orElseThrow().domainMarkPrice()).atRisk()) {
+                liquidate(account, wallet, position, pending, snapshot.latestPrice().orElseThrow(), now);
+                // Hibernate inserts IDENTITY rows before dirty updates. Release the OPEN unique key
+                // before an independently pending OPEN can start a new lifecycle on this same tick.
+                positions.flush();
+                open.remove(position);
+                byId.remove(position.getId());
+            }
         }
+        if (wallet.getBalance().signum() <= 0 && open.isEmpty()) account.declareBankrupt();
+        if (account.getStatus() != TradingAccount.Status.ACTIVE
+                || snapshots.get(tick.tradingSymbolId()).status() != LatestPriceStore.Status.FRESH) return;
         for (TradingOrder order : pending) {
-            if (!order.getTradingSymbolId().equals(tick.tradingSymbolId()) || !order.crosses(tick.domainMarkPrice())
+            if (order.getStatus() != TradingOrder.Status.PENDING
+                    || !order.getTradingSymbolId().equals(tick.tradingSymbolId()) || !order.crosses(tick.domainMarkPrice())
                     || order.getCreatedAt().isAfter(tick.receivedAt())) continue;
             if (order.getAction() == TradingOrder.Action.CLOSE) {
                 close(order, byId, open, wallet, tick, now);
@@ -75,28 +99,35 @@ public class AccountTriggerService {
             }
             String rejection = null;
             BigDecimal margin = null;
-            try { margin = TradingMath.margin(tick.domainMarkPrice(), order.getQuantity(), order.getLeverage()); }
+            BigDecimal fee = null;
+            int effectiveLeverage = leverage.current(accountId, order.getTradingSymbolId());
+            if (order.getLeverage() != effectiveLeverage) throw new IllegalStateException("Pending reservation leverage differs from symbol setting");
+            try {
+                margin = hedge.additionalMargin(open, order.getTradingSymbolId(), order.getSide(), order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage);
+                fee = TradingFees.fee(tick.domainMarkPrice(), order.getQuantity(), order.getFeeRate());
+            }
             catch (IllegalArgumentException exception) { rejection = "UNSUPPORTED_EXECUTION_NOTIONAL"; }
             if (symbols.findById(order.getTradingSymbolId()).filter(s -> s.getStatus()==TradingSymbolStatus.ACTIVE).isEmpty())
                 rejection = "SYMBOL_NOT_ACTIVE";
-            if (open.size() >= TradingMath.MAX_OPEN_POSITIONS) rejection = "POSITION_LIMIT";
+            if (open.size() >= TradingMath.MAX_OPEN_POSITIONS && hedge.existing(open, order.getTradingSymbolId(), order.getSide()) == null) rejection = "POSITION_LIMIT";
             wallet.releaseReservation(order.getReservedMargin());
-            value = valuation.evaluate(wallet, open, snapshots, now);
-            if (margin != null && margin.compareTo(value.availableBalance()) > 0) rejection = "INSUFFICIENT_MARGIN";
-            if (value.equity().compareTo(value.maintenanceMargin().add(TradingMath.maintenance(tick.domainMarkPrice(), order.getQuantity()))) <= 0)
+            BigDecimal available = TradingMath.available(wallet.getBalance(), wallet.getUsedMargin(), wallet.getReservedMargin());
+            if (margin != null && fee != null && margin.add(fee).compareTo(available) > 0) rejection = "INSUFFICIENT_MARGIN";
+            if (margin != null && isolated.projectedOpenRisk(hedge.existing(open, order.getTradingSymbolId(), order.getSide()),
+                    order.getSide(), order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage, tick.domainMarkPrice()).atRisk())
                 rejection = "ACCOUNT_AT_RISK";
             if (rejection != null) {
                 order.reject(rejection, now);
-                committed("rejected", accountId, order.getId(), tick.tradingSymbolId());
+                committed("rejected", order, null);
             } else {
-                Position position = positions.save(Position.open(accountId, order.getTradingSymbolId(), order.getSide(),
-                        order.getQuantity(), tick.domainMarkPrice(), order.getLeverage(), now));
-                wallet.openMargin(margin);
+                Position position = hedge.apply(open, accountId, order.getTradingSymbolId(), order.getSide(),
+                        order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage, now);
+                wallet.openMargin(margin, fee);
                 order.fill(position, tick.domainMarkPrice(), now);
-                fills.save(Fill.execute(order.getId(), tick.domainMarkPrice(), order.getQuantity(), tick.eventTime(), now, BigDecimal.ZERO));
-                open.add(position);
+                Fill fill=fills.save(Fill.execute(order.getId(), tick.domainMarkPrice(), order.getQuantity(), tick.eventTime(), now,
+                        BigDecimal.ZERO, fee, BigDecimal.ZERO));
                 byId.put(position.getId(), position);
-                committed("limit-filled", accountId, order.getId(), tick.tradingSymbolId());
+                committed("limit-filled", order, fill);
             }
             account.recordFinancialChange(now);
         }
@@ -107,18 +138,20 @@ public class AccountTriggerService {
         Position target = Objects.requireNonNull(byId.get(order.getPositionId()), "Pending CLOSE must reference an open lot");
         // Release only this order's reservation. Other pending CLOSE orders keep their reserved quantity.
         target.releaseCloseReservation(order.getQuantity());
-        BigDecimal pnl = TradingMath.pnl(target.getSide(), target.getEntryPrice(), price.domainMarkPrice(), order.getQuantity());
-        if (wallet.getBalance().add(pnl).signum() < 0) {
+        BigDecimal pnl = target.closingPnl(order.getQuantity(), price.domainMarkPrice());
+        BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), order.getQuantity(), order.getFeeRate());
+        if (wallet.getBalance().add(pnl).subtract(fee).signum() < 0) {
             order.reject("INSUFFICIENT_SETTLEMENT_CASH", now);
-            committed("close-rejected", order.getAccountId(), order.getId(), order.getTradingSymbolId());
+            committed("close-rejected", order, null);
             return;
         }
         Position.Settlement settlement = target.close(order.getQuantity(), price.domainMarkPrice(), now, false);
-        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl());
+        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl(), fee, BigDecimal.ZERO);
         order.fill(target, price.domainMarkPrice(), now);
-        fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now, settlement.realizedPnl()));
+        Fill fill=fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
+                settlement.realizedPnl(), fee, BigDecimal.ZERO));
         if (target.getStatus() != Position.Status.OPEN) { open.remove(target); byId.remove(target.getId()); }
-        committed("limit-close-filled", order.getAccountId(), order.getId(), order.getTradingSymbolId());
+        committed("limit-close-filled", order, fill);
     }
 
     private Map<Long, LatestPriceStore.Snapshot> snapshots(Set<Long> ids, Map<Long, LatestMarkPrice> book, Instant now) {
@@ -134,38 +167,35 @@ public class AccountTriggerService {
         return result;
     }
 
-    private void liquidate(TradingAccount account, Wallet wallet, List<Position> open, List<TradingOrder> pending,
-            Map<Long, LatestMarkPrice> book, Instant now) {
-        Map<Long, Position> byId = new HashMap<>();
-        open.forEach(position -> byId.put(position.getId(), position));
+    private void liquidate(TradingAccount account, Wallet wallet, Position position, List<TradingOrder> pending,
+            LatestMarkPrice price, Instant now) {
         for (TradingOrder order : pending) {
-            if (order.getAction() == TradingOrder.Action.CLOSE) {
-                Objects.requireNonNull(byId.get(order.getPositionId()), "Pending CLOSE must reference an open lot")
-                        .releaseCloseReservation(order.getQuantity());
-            } else {
-                wallet.releaseReservation(order.getReservedMargin());
+            if (order.getStatus() == TradingOrder.Status.PENDING && order.getAction() == TradingOrder.Action.CLOSE
+                    && position.getId().equals(order.getPositionId())) {
+                position.releaseCloseReservation(order.getQuantity());
+                order.reject("POSITION_LIQUIDATION", now);
+                events.record(order,null);
             }
-            order.reject("ACCOUNT_LIQUIDATION", now);
         }
-        for (Position position : open) {
-            LatestMarkPrice price = book.get(position.getTradingSymbolId());
-            Position.Settlement settlement = position.close(position.getQuantity(), price.domainMarkPrice(), now, true);
-            wallet.settle(settlement.releasedMargin(), settlement.realizedPnl());
-            // ':' cannot occur in any accepted client key, including orders created before this migration.
-            String key = "liquidation:position:" + position.getId();
-            TradingOrder order = orders.save(TradingOrder.market(position, TradingOrder.Action.LIQUIDATE,
-                    settlement.quantity(), price.domainMarkPrice(), key, "0".repeat(64), now));
-            fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now, settlement.realizedPnl()));
-            committed("liquidated", account.getId(), order.getId(), position.getTradingSymbolId());
-        }
-        if (wallet.getBalance().signum() <= 0) account.declareBankrupt();
+        BigDecimal fee = isolated.liquidationFee(price.domainMarkPrice(), position.getQuantity());
+        Position.Settlement settlement = position.close(position.getQuantity(), price.domainMarkPrice(), now, true);
+        var costs = isolated.liquidationSettlement(settlement.releasedMargin(), settlement.realizedPnl(), fee);
+        wallet.settle(settlement.releasedMargin(), costs.grossPnl(), costs.fee(), costs.shortfallAdjustment());
+        // ':' cannot occur in any accepted client key. A retried completed lifecycle cannot settle twice.
+        String key = "liquidation:position:" + position.getId();
+        TradingOrder order = orders.save(TradingOrder.market(position, TradingOrder.Action.LIQUIDATE,
+                settlement.quantity(), price.domainMarkPrice(), key, "0".repeat(64), now));
+        Fill fill=fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
+                costs.grossPnl(), costs.fee(), costs.shortfallAdjustment()));
+        committed("liquidated", order, fill);
         account.recordFinancialChange(now);
     }
 
-    private void committed(String result, Long accountId, Long orderId, Long symbolId) {
+    private void committed(String result, TradingOrder order, Fill fill) {
+        events.record(order,fill);
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
-                log.info("[Trading trigger] result={} accountId={} orderId={} symbolId={}", result, accountId, orderId, symbolId);
+                log.info("[Trading trigger] result={} accountId={} orderId={} symbolId={}", result, order.getAccountId(), order.getId(), order.getTradingSymbolId());
             }
         });
     }

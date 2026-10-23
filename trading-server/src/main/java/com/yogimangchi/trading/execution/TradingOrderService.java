@@ -10,9 +10,13 @@ import com.yogimangchi.trading.order.entity.TradingOrder;
 import com.yogimangchi.trading.order.repository.TradingOrderRepository;
 import com.yogimangchi.trading.position.entity.Position;
 import com.yogimangchi.trading.position.repository.PositionRepository;
+import com.yogimangchi.trading.position.service.HedgePositions;
+import com.yogimangchi.trading.position.service.IsolatedMargin;
+import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
 import com.yogimangchi.trading.tradingaccount.entity.*;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
 import com.yogimangchi.trading.tradingaccount.service.*;
+import com.yogimangchi.trading.tradingevent.service.TradingEvents;
 import com.yogimangchi.trading.tradingsymbol.entity.TradingSymbolStatus;
 import com.yogimangchi.trading.tradingsymbol.repository.TradingSymbolRepository;
 import java.math.BigDecimal;
@@ -38,11 +42,19 @@ public class TradingOrderService {
     private final TradingSymbolRepository symbols;
     private final AccountValuation valuation;
     private final TradingEngineGate gate;
+    private final HedgePositions hedge;
+    private final SymbolLeverageService leverage;
+    private final IsolatedMargin isolated;
+    private final TradingEvents events;
 
     public TradingOrderService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
-            TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate) {
+            TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate,
+            HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated, TradingEvents events) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.valuation=valuation; this.gate=gate;
+        this.hedge=hedge; this.leverage=leverage;
+        this.isolated=isolated;
+        this.events=events;
     }
 
     @Transactional
@@ -58,7 +70,7 @@ public class TradingOrderService {
         if (request.type() == TradingOrder.Type.MARKET && request.limitPrice() != null)
             throw new BusinessException(ErrorCode.INVALID_ORDER);
         if (request.type() == TradingOrder.Type.LIMIT) {
-            try { TradingMath.validateOrder(request.quantity(), request.leverage(), request.limitPrice()); }
+            try { TradingMath.validateNewOrder(request.quantity(), request.leverage(), request.limitPrice()); }
             catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
         }
         String hash = fingerprint("OPEN|" + request.type() + "|" + request.tradingSymbolId() + "|" + request.side()
@@ -68,21 +80,33 @@ public class TradingOrderService {
         OrderResponse previous = existing(accountId, key, hash);
         if (previous != null) return previous;
         requireActive(account);
+        if (request.leverage() != leverage.current(accountId, request.tradingSymbolId())) throw new BusinessException(ErrorCode.LEVERAGE_MISMATCH);
         if (symbols.findById(request.tradingSymbolId()).filter(s -> s.getStatus() == TradingSymbolStatus.ACTIVE).isEmpty())
             throw new BusinessException(ErrorCode.SYMBOL_NOT_AVAILABLE);
         Wallet wallet = wallet(accountId);
         List<Position> open = open(accountId);
-        if (open.size() >= TradingMath.MAX_OPEN_POSITIONS) throw new BusinessException(ErrorCode.POSITION_LIMIT_REACHED);
-        AccountValuation.Value value = valuation.calculate(wallet, open, Set.of(request.tradingSymbolId()));
+        if (open.size() >= TradingMath.MAX_OPEN_POSITIONS && hedge.existing(open, request.tradingSymbolId(), request.side()) == null)
+            throw new BusinessException(ErrorCode.POSITION_LIMIT_REACHED);
+        var affected = open.stream().filter(p -> p.getTradingSymbolId().equals(request.tradingSymbolId())).toList();
+        AccountValuation.Value value = valuation.calculate(wallet, affected, Set.of(request.tradingSymbolId()));
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
         LatestMarkPrice price = value.prices().get(request.tradingSymbolId()).latestPrice().orElseThrow();
+        if (request.type() == TradingOrder.Type.LIMIT) requirePassiveLimit(request.side(), request.limitPrice(), price.domainMarkPrice(), false);
         BigDecimal margin;
         BigDecimal requestedPrice = request.type() == TradingOrder.Type.LIMIT ? request.limitPrice() : price.domainMarkPrice();
-        try { margin = TradingMath.margin(requestedPrice, request.quantity(), request.leverage()); }
+        try {
+            TradingMath.validateNewOrder(request.quantity(), request.leverage(), requestedPrice);
+            margin = request.type() == TradingOrder.Type.LIMIT ? TradingMath.margin(requestedPrice, request.quantity(), request.leverage())
+                : hedge.additionalMargin(open, request.tradingSymbolId(), request.side(), request.quantity(), requestedPrice, request.leverage());
+        }
         catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
-        if (margin.compareTo(value.availableBalance()) > 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
-        if (value.equity().compareTo(value.maintenanceMargin().add(TradingMath.maintenance(price.domainMarkPrice(), request.quantity()))) <= 0)
+        BigDecimal fee = TradingFees.fee(requestedPrice, request.quantity(), TradingFees.rate(request.type()));
+        if (margin.add(fee).compareTo(value.availableBalance()) > 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
+        Position target = hedge.existing(open, request.tradingSymbolId(), request.side());
+        if (target != null && isolated.risk(target, price.domainMarkPrice()).atRisk()
+                || isolated.projectedOpenRisk(target, request.side(), request.quantity(), requestedPrice,
+                        request.leverage(), price.domainMarkPrice()).atRisk())
             throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         Instant now = now();
         if (request.type() == TradingOrder.Type.LIMIT) {
@@ -90,16 +114,16 @@ public class TradingOrderService {
                 throw new BusinessException(ErrorCode.PENDING_LIMIT_REACHED);
             TradingOrder pending = orders.save(TradingOrder.limit(accountId, request.tradingSymbolId(), request.side(),
                     request.quantity(), request.leverage(), request.limitPrice(), key, hash, now));
-            wallet.reserve(margin);
+            wallet.reserve(margin.add(fee));
             account.recordFinancialChange(now);
             logCommitted(pending, "pending");
             return OrderResponse.from(pending, null);
         }
-        Position position = positions.save(Position.open(accountId, request.tradingSymbolId(), request.side(),
-                request.quantity(), price.domainMarkPrice(), request.leverage(), now));
-        wallet.openMargin(margin);
+        Position position = hedge.apply(open, accountId, request.tradingSymbolId(), request.side(),
+                request.quantity(), price.domainMarkPrice(), request.leverage(), now);
+        wallet.openMargin(margin, fee);
         account.recordFinancialChange(now);
-        return record(position, TradingOrder.Action.OPEN, position.getQuantity(), price, key, hash, now, BigDecimal.ZERO);
+        return record(position, TradingOrder.Action.OPEN, request.quantity(), price, key, hash, now, BigDecimal.ZERO, fee);
     }
 
     @Transactional
@@ -130,19 +154,20 @@ public class TradingOrderService {
         if (position.getStatus() != Position.Status.OPEN) throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
         BigDecimal quantity = requestedQuantity == null ? position.getQuantity() : requestedQuantity;
         if (quantity.compareTo(position.getFreeCloseQuantity()) > 0) throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
-        AccountValuation.Value value = valuation.calculate(wallet, open);
+        AccountValuation.Value value = valuation.calculate(wallet, List.of(position));
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
-        if (value.equity().compareTo(value.maintenanceMargin()) <= 0) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+        if (isolated.risk(position, value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice()).atRisk())
+            throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         LatestMarkPrice price = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow();
-        BigDecimal pnl = TradingMath.pnl(position.getSide(), position.getEntryPrice(), price.domainMarkPrice(), quantity);
-        if (wallet.getBalance().add(pnl).signum() < 0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
+        BigDecimal pnl = position.closingPnl(quantity, price.domainMarkPrice());
+        BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), quantity, TradingFees.MARKET_RATE);
         Instant now = now();
         Position.Settlement settlement = position.close(quantity, price.domainMarkPrice(), now, false);
-        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl());
+        wallet.settle(settlement.releasedMargin(), settlement.realizedPnl(), fee, BigDecimal.ZERO);
         account.recordFinancialChange(now);
         if (wallet.getBalance().signum() == 0 && open.size() == 1 && position.getStatus() != Position.Status.OPEN) account.declareBankrupt();
-        return record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, key, hash, now, pnl);
+        return record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, key, hash, now, pnl, fee);
     }
 
     @Transactional
@@ -162,7 +187,6 @@ public class TradingOrderService {
         if (previous != null) return previous;
         requireActive(account);
         Wallet wallet = wallet(accountId);
-        List<Position> open = open(accountId);
         Position position = positions.findById(positionId).filter(p -> p.getAccountId().equals(accountId))
                 .orElseThrow(() -> new BusinessException(ErrorCode.POSITION_NOT_FOUND));
         if (position.getStatus() != Position.Status.OPEN) throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
@@ -170,11 +194,14 @@ public class TradingOrderService {
         if (quantity.compareTo(position.getFreeCloseQuantity()) > 0) throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
         if (orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING).size() >= TradingMath.MAX_PENDING_ORDERS)
             throw new BusinessException(ErrorCode.PENDING_LIMIT_REACHED);
-        AccountValuation.Value value = valuation.calculate(wallet, open);
+        AccountValuation.Value value = valuation.calculate(wallet, List.of(position));
         requireFresh(value);
         gate.requireCaughtUp(value.prices());
-        if (value.equity().compareTo(value.maintenanceMargin()) <= 0) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+        if (isolated.risk(position, value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice()).atRisk())
+            throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
         Instant now = now();
+        requirePassiveLimit(position.getSide(), request.limitPrice(),
+                value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice(), true);
         position.reserveClose(quantity);
         TradingOrder order = orders.save(TradingOrder.limitClose(position, quantity, request.limitPrice(), key, hash, now));
         account.recordFinancialChange(now);
@@ -184,9 +211,17 @@ public class TradingOrderService {
 
     @Transactional
     public List<OrderResponse> history(Long accountId, Long beforeId, int limit) {
+        return history(accountId,beforeId,limit,null,null,null,null,null);
+    }
+
+    @Transactional
+    public List<OrderResponse> history(Long accountId,Long beforeId,int limit,Long symbolId,Position.Side side,
+            TradingOrder.Action action,TradingOrder.Status status,TradingOrder.Type type) {
         if (limit < 1 || limit > 100 || beforeId != null && beforeId <= 0) throw new BusinessException(ErrorCode.INVALID_ORDER);
+        if (symbolId!=null && symbolId<=0) throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
         locks.lock(accountId);
-        List<TradingOrder> result = orders.history(accountId, beforeId == null ? Long.MAX_VALUE : beforeId, PageRequest.of(0, limit));
+        List<TradingOrder> result = orders.filteredHistory(accountId, beforeId == null ? Long.MAX_VALUE : beforeId,
+                symbolId,side,action,status,type,PageRequest.of(0, limit));
         Map<Long, Fill> byOrder = fills.findByOrderIdIn(result.stream().map(TradingOrder::getId).toList())
                 .stream().collect(Collectors.toMap(Fill::getOrderId, fill -> fill));
         return result.stream().map(order -> OrderResponse.from(order, byOrder.get(order.getId()))).toList();
@@ -220,14 +255,18 @@ public class TradingOrderService {
     }
 
     private OrderResponse record(Position position, TradingOrder.Action action, BigDecimal quantity, LatestMarkPrice price,
-            String key, String hash, Instant now, BigDecimal pnl) {
+            String key, String hash, Instant now, BigDecimal pnl, BigDecimal fee) {
         TradingOrder order = orders.save(TradingOrder.market(position, action, quantity, price.domainMarkPrice(), key, hash, now));
-        Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), quantity, price.eventTime(), now, pnl));
-        logCommitted(order, "filled");
+        Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), quantity, price.eventTime(), now, pnl, fee, BigDecimal.ZERO));
+        logCommitted(order, "filled", fill);
         return OrderResponse.from(order, fill);
     }
 
     private void logCommitted(TradingOrder order, String result) {
+        logCommitted(order,result,null);
+    }
+    private void logCommitted(TradingOrder order, String result, Fill fill) {
+        events.record(order,fill);
         org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                 new org.springframework.transaction.support.TransactionSynchronization() {
                     @Override public void afterCommit() {
@@ -247,9 +286,15 @@ public class TradingOrderService {
     private List<Position> open(Long accountId) { return positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN); }
     private void requireActive(TradingAccount account) {
         if (account.getStatus() != TradingAccount.Status.ACTIVE) throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
+        if (!account.isIsolated()) throw new BusinessException(ErrorCode.MARGIN_MIGRATION_REQUIRED);
     }
     private void requireFresh(AccountValuation.Value value) {
         if (!value.fresh()) throw new BusinessException(ErrorCode.PRICE_NOT_FRESH);
+    }
+    private static void requirePassiveLimit(Position.Side side, BigDecimal limit, BigDecimal mark, boolean close) {
+        boolean buy = (side == Position.Side.LONG) != close;
+        int comparison = limit.compareTo(mark);
+        if (buy ? comparison >= 0 : comparison <= 0) throw new BusinessException(ErrorCode.MARKETABLE_LIMIT_NOT_ALLOWED);
     }
     private static Instant now() { return Instant.now().truncatedTo(ChronoUnit.MICROS); }
     private static void validateKey(String key) {

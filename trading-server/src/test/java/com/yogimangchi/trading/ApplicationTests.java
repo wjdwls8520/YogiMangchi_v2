@@ -21,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(properties = "binance.mark-price.enabled=false")
+@SpringBootTest(properties = {"binance.mark-price.enabled=false", "binance.order-book.enabled=false"})
 @AutoConfigureMockMvc
 @Import(PostgresTestConfiguration.class)
 class ApplicationTests {
@@ -43,6 +43,8 @@ class ApplicationTests {
     void externalBinanceConnectionIsDisabledInAutomatedTests() {
         assertThat(context.getBeansOfType(
                 com.yogimangchi.trading.binance.markprice.BinanceMarkPriceClient.class)).isEmpty();
+        assertThat(context.getBeansOfType(
+                com.yogimangchi.trading.binance.orderbook.BinanceOrderBookClient.class)).isEmpty();
     }
 
     @Test
@@ -87,6 +89,57 @@ class ApplicationTests {
         assertThat(properties.path("tradingSymbolId").path("type").asText()).isEqualTo("integer");
         assertThat(properties.path("updatedAt").path("format").asText()).isEqualTo("date-time");
         assertThat(properties.path("status").path("enum").toString()).contains("FRESH", "STALE", "UNAVAILABLE");
+        var clock = api.path("components").path("schemas").path("StatusResponse").path("properties");
+        assertThat(clock.path("status").path("type").asText()).isEqualTo("string");
+        assertThat(clock.path("marketClockStatus").path("enum").toString()).contains("NORMAL", "WARNING", "DEGRADED", "REJECTED", "UNAVAILABLE");
+        assertThat(clock.path("clockSkewMs").path("format").asText()).isEqualTo("int64");
+        mockMvc.perform(get("/api/v1/trading/status"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.marketClockStatus").isString());
+    }
+
+    @Test
+    void generatedOpenApiDescribesPublicHistoricalMarkCandles() throws Exception {
+        String actual = mockMvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        var document = mapper.readTree(actual);
+        var operation = document.path("paths").path("/api/v1/market/candles").path("get");
+        assertThat(operation.path("security").isMissingNode() || operation.path("security").isEmpty()).isTrue();
+        var names = new HashSet<String>();
+        for (var parameter : operation.path("parameters")) {
+            String name = parameter.path("name").asText(); names.add(name);
+            assertThat(parameter.path("in").asText()).isEqualTo("query");
+            if (name.equals("interval")) {
+                assertThat(parameter.path("required").asBoolean()).isTrue();
+                assertThat((Iterable<com.fasterxml.jackson.databind.JsonNode>) parameter.path("schema").path("enum"))
+                        .extracting(com.fasterxml.jackson.databind.JsonNode::asText)
+                        .containsExactlyInAnyOrder("1m", "3m", "5m", "15m", "30m", "1h", "4h", "12h", "24h");
+            }
+            if (name.equals("limit")) {
+                assertThat(parameter.path("schema").path("type").asText()).isEqualTo("integer");
+                assertThat(parameter.path("schema").path("default").asInt()).isEqualTo(300);
+                assertThat(parameter.path("schema").path("minimum").asInt()).isEqualTo(1);
+                assertThat(parameter.path("schema").path("maximum").asInt()).isEqualTo(500);
+            }
+            if (name.equals("tradingSymbolId")) {
+                assertThat(parameter.path("schema").path("format").asText()).isEqualTo("int64");
+            }
+            if (name.equals("before")) {
+                assertThat(parameter.path("required").asBoolean()).isFalse();
+                assertThat(parameter.path("schema").path("type").asText()).isEqualTo("string");
+                assertThat(parameter.path("schema").path("format").asText()).isEqualTo("date-time");
+                assertThat(parameter.path("description").asText()).contains("Exclusive", "latest");
+            }
+        }
+        assertThat(names).containsExactlyInAnyOrder("tradingSymbolId", "interval", "limit", "before");
+        assertThat(operation.path("description").asText()).contains("before", "오름차순", "빈 배열", "진행 중");
+        assertThat(operation.at("/responses/200/content/application~1json/schema/items/$ref").asText())
+                .isEqualTo("#/components/schemas/CandleResponse");
+        var properties = document.path("components").path("schemas").path("CandleResponse").path("properties");
+        for (String price : List.of("open", "high", "low", "close")) assertThat(properties.path(price).path("type").asText()).isEqualTo("string");
+        for (String time : List.of("openTime", "closeTime")) assertThat(properties.path(time).path("format").asText()).isEqualTo("date-time");
+        for (String status : List.of("400", "404", "409", "502", "503", "504")) {
+            assertThat(operation.path("responses").path(status).path("content").has("application/problem+json")).as(status).isTrue();
+        }
     }
 
     @Test
@@ -96,15 +149,25 @@ class ApplicationTests {
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         var document = mapper.readTree(actual);
         var paths = document.path("paths");
+        assertThat(paths.path("/api/v1/trading/account/orders").path("post").path("description").asText())
+                .contains("MARKETABLE_LIMIT_NOT_ALLOWED", "strictly below", "strictly above", "limitPrice * quantity / leverage");
+        assertThat(paths.path("/api/v1/trading/account/positions/{positionId}/close-orders").path("post").path("description").asText())
+                .contains("MARKETABLE_LIMIT_NOT_ALLOWED", "LONG CLOSE (SELL)", "SHORT CLOSE (BUY)");
         var schemas = document.path("components").path("schemas");
         var guest = paths.path("/api/v1/trading/accounts/guest").path("post");
         assertThat(guest.path("security").isMissingNode() || guest.path("security").isEmpty()).isTrue();
+        assertThat(guest.path("description").asText()).contains("Explicit opt-in", "10000 USDT", "7 days", "expiresAt",
+                "cannot be recovered", "401", "never automatically", "Public market data");
         assertThat(guest.at("/responses/201/content/application~1json/schema/$ref").asText())
                 .isEqualTo("#/components/schemas/GuestAccountResponse");
         for (String endpoint : new String[]{"summary", "wallet", "positions", "orders", "orders/pending"}) {
             var operation = paths.path("/api/v1/trading/account/" + endpoint).path("get");
             assertThat(operation.path("responses").has("200")).as(endpoint).isTrue();
-            assertThat(operation.at("/security/0/guestBearer").isArray()).as(endpoint).isTrue();
+            var security=operation.path("security");
+            assertThat(security).as(endpoint).hasSize(2);
+            assertThat(security).allSatisfy(requirement -> assertThat(requirement.size()).isEqualTo(1));
+            assertThat(security).anyMatch(requirement -> requirement.path("guestBearer").isArray());
+            assertThat(security).anyMatch(requirement -> requirement.path("memberBearer").isArray());
         }
         assertThat(document.at("/components/securitySchemes/guestBearer/scheme").asText()).isEqualTo("bearer");
         assertThat(schemas.at("/AccountSummaryResponse/properties/wallet/$ref").asText())

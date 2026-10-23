@@ -2,8 +2,30 @@
 
 Yogimangchi V2의 독립 Spring Boot 애플리케이션이다. 현재 PostgreSQL/JPA 기반
 TradingSymbol 구조, 공개 거래 종목 조회 API, Binance Mark Price 수신과 정규화된 최신 가격 상태,
-Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/지정가 주문과 교차증거금 청산을 제공한다. 루트 `readme.md`,
+Redis 기반 시세 공유, Browser WebSocket, Guest 선물 계정, 시장가/지정가 주문과 격리증거금 청산을 제공한다. 루트 `readme.md`,
 루트 및 이 디렉터리의 `AGENTS.md`를 따른다.
+
+## V2 누락 기능 보완과 Isolated 전환
+
+기존 금융 엔진은 Hedge + Isolated Only를 유지한다. MARKET/LIMIT 수수료, 서버 주문 비용·비율 수량,
+체결·종료 이력과 영속 개인 거래 이벤트를 구현했다. Content Google/Kakao 인증, Trading 회원 JWT 계정 연결,
+기본 프로필·탈퇴·팔로우도 구현되어 있다. Frontend는 이 Backend 작업에서 변경하지 않는다.
+
+V1은 필요한 누락 기능의 참고 자료이며 V1의 모든 기능이나 정책을 V2에 자동 추가하지 않는다.
+2026-10-22 사용자 확정으로 이메일 추가 인증·거래 해금 퀘스트는 제외하고 투자 성과·공개 포트폴리오는 후순위다.
+현재 우선순위는 Guest 경험이다. 재도전은 기존 Guest ID를 유지하고 자금을 초기화하는 기능이며
+`POST /api/v1/trading/account/retry`로 같은 Guest의 자금을10000 USDT로 초기화할 수 있다.
+주문·포지션·예약 해제와 재도전 이력을 함께 처리하며 기존 계정이나 거래 이력을 삭제하지 않는다.
+
+- [V1/V2 기능 비교·누락·단계별 이식 기준](docs/v1-parity-audit.md)
+- [V1 Controller 전체와 Frontend API 소비 근거](docs/v1-api-inventory.md)
+- [Isolated 금융 계약 제안·데이터/Frontend 전환 게이트](docs/isolated-margin-cutover.md)
+- [V10 원장 구조 읽기 전용 사전 점검](ops/isolated-margin-preflight.sql)
+
+사전 점검은 `psql -X -v ON_ERROR_STOP=1 -f ops/isolated-margin-preflight.sql`로 실행한다.
+연결정보는 기존 환경/Secret 관리 방식을 사용하고 명령이나 문서에 비밀번호를 넣지 않는다.
+결과는 원장 합계·참조·공유 레버리지·체결 사실의 구조적 불일치 건수이며,
+시세 기반 격리 위험 검증이나 migration 승인·성공을 보장하지 않는다. 데이터 변경은 수행하지 않는다.
 
 ## 버전과 의존성
 
@@ -26,6 +48,7 @@ Java 17 이상과 Gradle 8.4 이상의 8.x를 지원하므로 기존 Wrapper를 
 | --- | --- |
 | `spring-boot-starter-web` | Spring MVC와 HTTP 서버 |
 | `spring-boot-starter-security` | 공개 경로 지정과 나머지 요청 차단 |
+| `spring-boot-starter-oauth2-resource-server` | Content 자체 JWT 공개키·issuer/audience/만료 검증. 별도 JWT 라이브러리 없이 Spring Nimbus JOSE 사용 |
 | `spring-boot-starter-data-jpa` | TradingSymbol 영속성과 트랜잭션 |
 | `spring-boot-starter-data-redis` | Lettuce 연결, 공유 Snapshot, Pub/Sub와 재생 가능한 Stream |
 | `spring-boot-starter-websocket` | Browser HTTP Upgrade, Session과 Raw JSON WebSocket 전송 |
@@ -41,12 +64,55 @@ Boot 4의 `starter-webmvc`, `starter-webmvc-test`, `starter-security-test`를 �
 Gradle `platform`으로 Boot BOM을 사용하며 별도의 dependency-management 플러그인은 없다.
 Redis는 현재 공유 가격/이벤트 기능에 사용한다. 기존 JDK WebSocket과 JPA는 Redis 프로토콜을
 제공하지 않으므로 Boot BOM이 관리하는 Spring Data Redis/Lettuce를 사용한다. 별도 버전을 고정하지 않는다.
-Validation, Lombok, JWT/OAuth2, H2 의존성은 추가하지 않았다. 트리거/주문은 기존 JPA/JDBC와 Redis 기능을 재사용한다.
+Validation, Lombok, OAuth2 Client, H2 의존성은 추가하지 않았다. 외부 로그인은 Content만 담당하며 Trading은 자체 JWT 검증만 수행한다.
+트리거/주문은 기존 JPA/JDBC와 Redis 기능을 재사용한다.
+
+## 회원 JWT와 계정 소유권
+
+외부 OAuth2는 Content의 Google/Kakao만 사용한다. Trading은 공급자 토큰이나 프론트엔드가 전달한
+회원/계정 ID를 신뢰하지 않고 Content 자체 Access JWT의 서명·issuer·audience=trading·token_use=access·만료·MEMBER/ADMIN claim을 검증한다.
+Content RSA 공개키만 로컬 파일로 읽으므로 매 요청 Content 호출이 없으며 서명 개인키를 공유하지 않는다.
+JWT의 임의 accountId claim도 계정 선택에 사용하지 않는다. 서버가 memberId로 자신의 trading_account를 찾는다.
+
+| 설정 | 계약 |
+|---|---|
+| TRADING_MEMBER_AUTH_ENABLED | 기본/local false로 기존 Guest 실행 유지, prod 기본true |
+| YOGIMANGCHI_JWT_ISSUER | Content 발급값과 일치, prod HTTPS 필수 |
+| TRADING_JWT_PUBLIC_KEY_PATH | 신뢰한 Content 키의 X509/SubjectPublicKeyInfo RSA PEM 공개키 파일.2048비트 이상 |
+
+공개키는 인증된 운영 경로로 배포한다. 임의 사용자 URL/토큰의 jku/jwk 값으로 검증 키를 선택하지 않는다.
+Content `/.well-known/jwks.json`은 공개키 확인용이며 현재 Trading은 고정 공개키 파일을 사용한다.
+키 교체는 Content/Trading 동시 배포 순서와 기존15분 Access를 고려해야 한다. 실제 Secret/개인키는 Repository에 넣지 않는다.
+
+회원은 `POST /api/v1/trading/accounts/member`를 명시적으로 호출한다. Content 자체 JWT만 허용하며
+응답은 `{accountId,memberId,status,quoteAsset,balance}`다. 신규 회원 계정은 **10,000 USDT** Wallet과1회차를 같은 Transaction에서 생성한다. 이미 존재하는 회원 계정에는 잔액만 보고 추가 지급하지 않는다.
+같은 회원의 반복/동시 요청은 동일 계정과 현재 잔액을 반환한다. 반복 생성으로 초기 자금을 지급하거나 잔액을 리셋하지 않는다.
+명시적 서비스 간 식별자인 member_id만 저장하며 Content Member와 Entity 관계/FK/직접 조회는 없다.
+V14는 member_id UNIQUE·Guest/회원 소유권 CHECK를 추가하고 회원의 Guest credential 필드를 NULL로 구분한다.
+기존 Guest의 ID·Credential·Wallet·Order/Fill/Position은 변경하지 않는다. 기존 수동 비Guest 데이터가 소유권 제약에 맞지 않으면
+임의 귀속하지 않고 migration이 실패한다. 운영 전 해당 데이터를 별도로 확인해야 한다.
+
+첫 생성에는 잠글 행이 없으므로 member별 PostgreSQL Transaction advisory lock과 DB UNIQUE를 함께 사용한다.
+잠금은2초, 업무 Transaction은5초로 제한한다. Wallet 생성도 같은 Transaction이며 반복 조회는 기존 AccountLock을 따른다.
+인증/GET은 계정이나 Wallet을 자동 생성하지 않는다. 아직 계정을 열지 않은 회원의 금융 요청은409 TRADING_ACCOUNT_REQUIRED다.
+계정 생성 이후 기존 `/account/**` 및 `/ws/trading`에 자체 JWT를 사용할 수 있다. WebSocket은 동일 첫 프레임 credential 필드로 인증하고
+JWT 만료 시 연결·대기 전송을 종료한다. 공개 시세 WS에는 금융 이벤트를 넣지 않는다.
+
+기존 Guest Bearer와10000 USDT 체험 계정은 유지한다. Guest가 회원 API로 전환되거나 금융 이력이 자동 합쳐지지 않는다.
+Guest 정리 작업은 회원을 삭제하지 않는다. 두 인증은 공통 TradingPrincipal로 수렴하지만 소유권은 독립적이다.
+기존 Guest용401 코드/응답을 유지하며 JWT 검증 실패는 INVALID_ACCESS_TOKEN이다.
+기존 private API의 Swagger security는 guestBearer 또는 memberBearer이며, 회원 계정 생성은 memberBearer 전용이다.
+회원 선물에 자금을 배정하는 Spot/이체는 Phase5 후속 기능이다. 테스트의 직접 잔액 fixture를 실제 입금 API로 간주하지 않는다.
+
+Frontend 인계: Content Access를 메모리 Bearer로 전달하고 회원 계정을 한 번 명시적으로 연다.
+Guest Account ID/토큰을 회원 계정으로 재사용하거나 합산하지 않는다. 계정 생성 전409를 온보딩으로 처리하고,
+JWT 갱신·로그아웃은 Content CSRF/Refresh 계약을 따른다. Access는15분이며 로그아웃 후 만료까지 유효할 수 있다.
+이 작업에서 Frontend 변경, 실제 사용자 DB migration, 자산 이체, Guest JWT 전환·자동 병합은 수행하지 않았다.
 
 ## PostgreSQL과 마이그레이션
 
 Content와 Trading은 공용 Database `yogimangchi`를 사용하고, 애플리케이션별 Schema와
-데이터 소유권을 분리한다. Trading은 `trading`, 향후 Content는 `content` 스키마를 사용한다.
+데이터 소유권을 분리한다. Trading은 `trading`, Content는 `content` 스키마를 사용한다.
 `trading`은 Trading Server의 Flyway/Hibernate 공통 기본 스키마다.
 
 - V1: 테이블과 PK, Unique/Check/Not-null 제약 생성
@@ -83,13 +149,18 @@ Java Mapping 검증은 정확한 Decimal 나눗셈이 불가능한 배수도 거
 | `YOGIMANGCHI_REDIS_HOST` | Trading Server의 Redis 주소; 기본 localhost |
 | `YOGIMANGCHI_REDIS_PASSWORD` | Redis 인증이 필요한 배포 환경의 비밀번호; 기본 미설정 |
 
-현재는 `application.yml` 하나를 사용하고 Profile을 분리하지 않는다. 하나의 로컬 계정으로
+기본/local 설정은 `application.yml`을 사용한다. 하나의 로컬 계정으로
 Flyway 초기화와 애플리케이션을 실행한다. JDBC URL은 `localhost`의 지정 포트와
 고정 Database 이름 `yogimangchi`로 구성하며, 기본 Schema는 `trading`이다.
 실제 비밀번호/운영 주소를 저장소에 넣지 않는다. 루트 `.env.example`은 예시이며
 **Spring Boot는 `.env`를 자동으로 읽지 않는다.** 셸/IDE/배포 환경에서 변수를 전달한다.
 루트 `.env`는 Docker Compose용이며, IntelliJ에서 Trading Server를 실행할 때는
 Run Configuration의 Environment Variables에 Spring Boot용 환경변수를 별도로 전달한다.
+
+회원 인증 도입과 함께 `application-prod.yml`을 추가한다. prod는 외부 HTTP 바인딩, Swagger/OpenAPI 차단,
+TRADING_DB_URL/USERNAME/PASSWORD 앱 계정과 TRADING_FLYWAY_USERNAME/PASSWORD migration 계정을 별도로 요구한다.
+운영 Frontend의 TRADING_HTTP_ALLOWED_ORIGINS/TRADING_WS_ALLOWED_ORIGINS도 명시해야 한다.
+Trading 기본 Schema는 두 환경 모두 trading이며 ddl-auto=validate/open-in-view=false를 유지한다.
 
 ## 로컬 실행
 
@@ -134,7 +205,7 @@ Compose 위치 또는 Volume 키 변경으로 Volume의 실제 이름이 달라�
 현재 로컬 개발에서는 운영 전용 계정이나 별도 운영 설정을 사용하지 않는다.
 운영 계정 권한과 환경 설정 분리는 실제 운영 배포가 필요해질 때 결정한다.
 Swagger/OpenAPI는 기본 설정에서 활성화하며 서버는 `127.0.0.1`에 바인딩한다.
-운영 배포 시에는 Swagger/OpenAPI가 외부에 노출되지 않도록 별도 차단 구성을 도입한다.
+prod Profile에서는 Swagger/OpenAPI를 비활성화하고 Security 공개 경로에서도 제외한다.
 운영 TLS, 비밀값 전달, 백업/복구 및 Nginx/네트워크의 포트 노출 제한은 배포 시 별도로 검증한다.
 
 ## API와 보안
@@ -151,7 +222,7 @@ Provider/Provider Symbol/status는 공개 DTO에 없다. Repository는 필요한
 Service가 읽기 전용 트랜잭션을 가진다.
 
 Symbol 목록, Guest 계정 생성, 공개 가격 WebSocket과 로컬 문서에 필요한 경로만 공개한다.
-계정 조회는 아래 Guest Bearer 인증을 요구하며 명시하지 않은 다른 업무 경로는 차단한다.
+계정 조회는 Guest Bearer 또는 Content 회원 JWT 인증을 요구하며 명시하지 않은 다른 업무 경로는 차단한다.
 기본 계정 미생성, 폼 로그인/Basic/로그아웃/요청 캐시 비활성화를 유지한다.
 거래 REST는 Stateless이며 Cookie 인증이 없으므로 `/api/v1/trading/**`만 CSRF 검사에서 제외한다.
 다른 경로에는 기존 CSRF 보호를 유지한다. REST CORS 허용 Origin은 기본 localhost/127.0.0.1의 5173이며
@@ -175,16 +246,41 @@ Guest 생성 응답은 `accountId`, `status`, `quoteAsset`, `initialBalance`, `a
 `accessToken`은 암호학적으로 무작위인 256-bit 불투명 문자열이고 `Authorization: Bearer <accessToken>`으로 보낸다.
 서버는 PostgreSQL에 SHA-256 Hash만 저장하며 원문은 생성 응답에서 한 번만 제공한다. URL·로그에 토큰을 넣지 않는다.
 이 Credential은 현재 Trading MVP의 계정 접근권이며 Content 로그인/JWT를 대신하는 영구 인증 설계는 아니다.
-토큰을 잃거나 7일이 지나면 해당 계정에 다시 접근할 수 없다. 계정/이력은 삭제되지 않으며 새 Guest를 생성한다.
+사용자가 **게스트로 모의투자 시작**을 선택했을 때만 Frontend에서 위 POST를 호출한다. 같은 POST를 별도로
+호출하면 각각 다른 Guest를 만든다. 페이지 진입·Symbol/Summary/Candle 조회·Mark/Order Book WebSocket 연결은
+Guest를 만들지 않으며 credential 없이 사용할 수 있다. Wallet·Position·주문/취소/종료·거래 이력은 계속 Bearer 인증이 필요하다.
+토큰을 잃거나 `expiresAt`(생성 후 정확히 7일)이 지나면 해당 계정에 다시 접근할 수 없다. 만료 credential은 401이며
+자동 연장·Guest 자동 재생성을 하지 않는다. Frontend는 만료 시 명시적인 시작 동작을 다시 받아야 한다.
 Frontend는 우선 메모리에 보관하고 새로고침 복구를 위한 브라우저 저장 선택에는 XSS 위험을 고려한다.
 인터넷 공개 전에는 TLS, Gateway의 Guest 생성/인증 요청 제한과 최종 Content JWT 전환을 검증해야 한다.
 계정 ID를 경로·요청에 넣어 다른 계정에 접근하는 API는 제공하지 않는다. 만료/변조/없는 Credential은 401이다.
 
-V4는 `trading_account`, `wallet`, `position`을 생성한다. 계정은 내부 ID, 상태, Credential Hash/만료,
+#### 만료 Guest 정리와 이력 보존
+
+`UnusedGuestCleanupService`는 **credential 만료 후 7일 유예**가 지난 미사용 Guest만 물리 정리한다.
+거래한 적 없는 임시 계정의 DB 증가를 제한하기 위한 예외이며, 주문·체결·Position·재무 이력은 삭제하지 않는다.
+정리 조건은 `guest_account=true`, 생성 후 재무 변경 없음, Order/Position Row 없음,
+Wallet 초기 잔액 10,000 USDT·손익/사용/예약 Margin 모두 0이다. 유효 credential, 유예 기간,
+일반 계정, 변경된 Wallet 또는 어떤 상태든 거래 이력이 있는 계정은 제외한다.
+Open Position/Pending Order가 있는 만료 Guest는 기존 Trigger/청산 감시를 유지한다.
+만료 자체를 이유로 강제 체결·취소·잔액 초기화를 하지 않으며 별도의 EXPIRED 상태도 추가하지 않는다.
+
+별도 scheduler가 시작 1분 후, 이후 1시간 간격으로 최대 100개를 처리한다.
+`TRADING_GUEST_CLEANUP_ENABLED=false`로 중지할 수 있다. V9의 미사용 Guest 만료 partial index와
+Order/Position 계정 인덱스로 대상을 제한하며 `FOR UPDATE SKIP LOCKED`로 사용 중인 계정을 건너뛴다.
+Trading과 같은 Account Row를 먼저 잠그고 Wallet → Account 순으로 한 Transaction에서 삭제한다.
+FK/DB 오류는 배치 전체를 Rollback하고 다음 실행에 재시도한다. 가격 수신/Trigger 스레드 및 Redis를 사용하지 않는다.
+
+V9는 기존 V1~V8의 Guest만 표시하며 향후 일반 계정의 DB 기본값은 `guest_account=false`다.
+금융 원장은 계속 PostgreSQL이 원본이고 Redis/Browser Storage로 이전하지 않는다. Browser에 복구용 credential을
+보관하더라도 잔액·Position·Order의 원본으로 신뢰하지 않는다.
+**거래 이력이 있는 만료 Guest의 영구 보존량까지 줄이는 정책은 이번 정리에 포함하지 않는다.**
+해당 이력을 삭제/아카이브하려면 별도의 보존 기간과 운영 정책을 먼저 결정해야 한다.
+
+V4는 `trading_account`, `wallet`, `position`을 생성했다. 계정은 내부 ID, 상태, Credential Hash/만료,
 생성 시간과 마지막 재무 변경 시각을 가진다. Wallet은 계정당 하나이며 실제 잔액, 사용/예약 Margin,
-누적 실현 PnL을 보존한다. Position은 개별 체결 Lot 단위로 독립된 LONG/SHORT 수량·진입가·Leverage·Margin,
-OPEN/CLOSED/LIQUIDATED 상태·실현 PnL·청산가·생성/종료 시각을 가진다. 같은 종목의 여러 Lot도 USDT Wallet을 공유한다.
-시장가 주문은 개별 Position Lot을 만들고 부분/전체 종료를 지원한다. 동일 종목 합산은 하지 않는다.
+누적 실현 PnL을 보존한다. V4의 개별 체결 Lot 모델은 V10에서 아래의 Hedge 통합 Position으로 전환했다.
+현재 동일 종목·방향의 추가 진입은 하나의 OPEN Position에 합산하며 개별 체결은 Order/Fill에 남긴다.
 Position의 `quantity`와 `margin`은 잔여 값이며 `realizedPnl`은 누적 실현 손익이다.
 V7은 기존 원래 수량/증거금을 `initial_quantity`/`initial_margin`에 보존하고 종료된 Lot의 잔여 값을 0으로 이관한다.
 진입가/Leverage는 유지하며 마지막 종료 가격과 시각은 Position에, 각 부분 체결은 Order/Fill에 보존한다.
@@ -209,14 +305,120 @@ status 외에는 Guest Bearer 인증이 필요하다. 주문/종료의 `Idempote
 부분 종료의 동일 Key/다른 수량은 409다. 수량은 양수·최대 소수 8자리이며 잔여량 초과는 409 `CLOSE_QUANTITY_EXCEEDED`다.
 지정가 종료도 같은 멱등성 계약을 사용하며 수량 또는 지정가가 달라지면 충돌한다. 생략한 수량은 최초 주문 시 확정한다.
 종료에는 신규 진입 최소 Notional을 적용하지 않아 작은 잔여량도 정리할 수 있다. Fill은 실제 체결 `quantity`도 반환한다.
-Client의 임의 가격은 사용하지 않는다. 계정별 Key UNIQUE, Position별 OPEN/LIQUIDATE UNIQUE,
+Client의 임의 가격은 사용하지 않는다. 계정별 Key UNIQUE, 계정·종목·방향별 활성 Position UNIQUE, Position별 LIQUIDATE UNIQUE,
 Fill의 order_id UNIQUE와 계정 Row Lock을 함께 사용한다. Position/Wallet/Order/Fill은 하나의 Transaction이다.
 Commit 이후에만 성공 로그를 남긴다. Lock timeout/교착은 전체 rollback하며 무한 재시도하지 않는다.
-신규 주문에는 ACTIVE 종목과 보유 종목 전체의 fresh 가격, 충분한 가용 Margin이 필요하다.
-종료도 전체 fresh 평가를 요구하며 유지증거금 이하의 계정은 `ACCOUNT_AT_RISK`로 차단한다.
-손실 Lot 종료로 현금이 음수가 되면 거절한다. 수익 Lot을 먼저 종료해야 하는 경우가 있다.
+신규 주문은 ACTIVE 종목과 해당 종목 fresh Mark, 충분한 free cash 및 진입 후 격리 안전성이 필요하다.
+종료에는 대상 Position의 fresh Mark를 요구하며 이미 격리 위험 상태라면 기존 오류 코드 `ACCOUNT_AT_RISK`로 차단한다.
+다른 Position의 미실현 수익/손실과 미사용 현금으로 대상 Position의 위험을 자동 보전하지 않는다.
+Legacy 전환 보류 계정의 신규 진입/종료/레버리지 변경은 `MARGIN_MIGRATION_REQUIRED`(409)다.
 가격이 새로 도착했지만 위험 처리가 끝나지 않았으면 503 `ENGINE_RECOVERING`이다. 동일 Key로 짧은 간격을 두고 재시도한다.
 단순 READY 상태도 개별 종목의 freshness 또는 주문 허용을 보장하지 않는다.
+
+### Hedge Mode 통합 Position 및 종목별 Leverage
+
+Hedge Mode만 지원한다. `(accountId, tradingSymbolId, side)`별 OPEN Position은 최대 하나이며,
+LONG/SHORT은 동시에 보유할 수 있다. 반대 방향 OPEN은 기존 노출을 상계하지 않는다.
+MARKET/LIMIT OPEN 체결은 같은 `HedgePositions` 경로에서 기존 Position ID를 유지하고 수량과 진입 원가를 더한다.
+Order/Fill은 매 체결마다 별개로 남는다. 수량이 0이 된 생애주기는 CLOSED/LIQUIDATED로 보존하고, 재진입하면 새 ID를 만든다.
+
+| Method | Path | 계약 |
+| --- | --- | --- |
+| GET | `/api/v1/trading/account/symbols/{symbolId}/leverage` | Bearer 계정의 종목 설정. 미설정이면 10배, `updatedAt=null`. 조회로 DB Row를 만들지 않음 |
+| PUT | 동일 경로 | `{"leverage":14}`. 정수 1~100. 두 방향 Position과 PENDING OPEN 예약을 원자적으로 재계산 |
+
+응답 예: `{"tradingSymbolId":1,"leverage":14,"maxLeverage":100,"marginMode":"ISOLATED","updatedAt":"2026-10-20T00:00:00Z","marginTransitionStatus":"COMPLETE"}`.
+설정은 PostgreSQL `symbol_leverage`에 저장하며 LONG/SHORT이 공유한다. ETH 등 다른 종목에는 영향을 주지 않는다.
+Frontend는 종목 선택 시 GET으로 복구하고, 변경 시 PUT 성공 후 그 값으로 OPEN을 보낸다.
+OPEN의 기존 `leverage` 입력은 유지하지만 서버 설정과 다르면 409 `LEVERAGE_MISMATCH`다.
+주문만으로 설정을 변경하지 않는다. 잘못된 범위는 `INVALID_LEVERAGE`(400), 비정수 JSON은 400이다.
+미존재/INACTIVE 종목은 `SYMBOL_NOT_AVAILABLE`(409), 미인증/만료는 401이다.
+
+레버리지 변경은 기존 Account DB Lock과 Transaction 안에서 남은 진입 원가 / 새 leverage로 두 방향 Margin을 계산한다.
+해당 종목 PENDING OPEN의 예약도 limitPrice * quantity / 새 leverage로 다시 계산한다.
+Wallet Used/Reserved의 전체 증감이 장부 현금 `balance`를 초과하면 `INSUFFICIENT_MARGIN`(409)로 전부 rollback한다.
+노출/예약이 있으면 해당 종목의 fresh Mark와 Engine Gate, 각 방향의 현재/변경 후 격리 위험을 확인한다.
+`PRICE_NOT_FRESH`/`ENGINE_RECOVERING`(503), `ACCOUNT_AT_RISK`(409)도 원자적으로 실패한다.
+동일 값 반복 PUT은 재무 변경을 반복하지 않는다. 수량·Entry·실현 PnL·CLOSE 예약은 바꾸지 않는다.
+`OrderResponse.requestedLeverage`는 최초 요청 값이고, `leverage`는 PENDING OPEN의 유효 값 또는 FILLED 시점 값이다.
+이미 완료된 Order/Fill의 기록을 현재 설정에 맞춰 다시 쓰지 않는다. CLOSE는 실제 체결 당시 Position leverage를 기록한다.
+
+Position의 `entry_notional NUMERIC(66,26)`은 남은 진입 원가다. 가격 18자리 × 수량 8자리 곱을 정확히 누적하고,
+표시용 `entryPrice`만 원가 / 현재 수량을 HALF_EVEN 18자리로 산출한다. PnL은 반올림된 표시 평균 대신 원가를 사용한다.
+부분 종료에서는 원가를 수량 비례 HALF_EVEN 26자리로 배분하고 마지막 종료에서 잔여 전부를 정산한다.
+PnL의 금융 원장 반영은 기존 HALF_EVEN 18자리다. Fill 단위의 최하위 자리 반올림은 존재하나 평균가 재사용으로 오차를 누적하지 않는다.
+`initialQuantity`는 생애주기의 누적 진입 수량, `initialMargin`은 진입 시 반영한 Margin 증가분의 누적값이다.
+현재 Margin과 비교하는 상한이 아니며 레버리지 변경 자체는 이 이력을 바꾸지 않는다. `exitPrice`는 최종 종료 Fill 가격이다.
+추가 진입은 이전 실현 PnL과 CLOSE 예약을 보존하며, 손익을 Wallet Balance에 임의 정산하지 않는다.
+각 Position 유지증거금은 Mark Notional의 0.5%이며 위험 판단에는 0.05% 청산 비용 예약도 포함한다.
+100배에서도 LONG/SHORT 담보와 위험을 상계하지 않는다. Binance 리스크 Tier, Funding, 호가 기반 매칭은 도입하지 않는다.
+
+#### 포지션별 격리 강제청산 예상가
+
+`GET /api/v1/trading/account/summary`와 `/api/v1/trading/account/positions`는 같은 Position DTO를 제공한다.
+`IsolatedMargin.risk()`의 **Position 담보 + HALF_EVEN18 gross PnL <= CEILING18 유지증거금 + CEILING18 청산 비용 예약**을
+실제 Trigger와 예상가 검증에 함께 사용한다. 유지증거금률0.5%, 청산 비용률0.05%다.
+대상 Position의 남은 exact basis/수량/담보만 사용하며 Wallet 미사용 현금·다른 종목·반대 방향 PnL은 사용하지 않는다.
+LONG/SHORT에는 각각 독립적인 예상가가 나온다. 레버리지 변경으로 담보가 바뀌면 예상가도 바뀐다.
+CLOSE 수량 예약은 담보를 변경하지 않으므로 그 자체로 예상가를 바꾸지 않는다.
+
+예: LONG20, entry1000, leverage10, collateral2000인 정상 Position 응답 일부:
+
+```json
+{
+  "marginMode": "ISOLATED",
+  "openedMarginMode": "ISOLATED",
+  "liquidationPrice": "904.977375565610859728",
+  "liquidationPriceStatus": "ESTIMATED_DOWNWARD",
+  "liquidationPriceAsOf": "2026-10-20T00:00:00Z"
+}
+```
+
+| 상태 | 가격과 의미 |
+| --- | --- |
+| ESTIMATED_DOWNWARD | LONG의 양수 decimal string 위험 경계 |
+| ESTIMATED_UPWARD | SHORT의 양수 decimal string 위험 경계 |
+| PRICE_UNAVAILABLE | null. 이 Position 종목의 fresh Mark 없음. 다른 종목 누락은 영향을 주지 않음 |
+| NO_THRESHOLD | null. 지원하는 양수 가격 구간에 경계 없음. 예: 충분히 담보된 1배 LONG |
+| UNSUPPORTED_MODEL | null. 정밀도/범위/반올림 모호성/제한된 탐색으로 경계를 증명하지 못함 |
+| ALREADY_AT_RISK | null. 대상 Position이 이미 격리 위험 상태 |
+| MARGIN_MIGRATION_REQUIRED | null. 기존 Cross 노출의 안전 전환/검토가 완료되지 않음 |
+
+`liquidationPriceAsOf`는 대상 종목의 서버 receivedAt이다. Provider eventTime이나 체결 예정 시각이 아니다.
+시세 불가/전환 보류이면 null이며 오래된 수치를 재사용하지 않는다. Summary의 금융 snapshot 시각은 `valuedAt`이다.
+가격10^-18 그리드에서 위험 조건과 바로 안전한 이웃을 실제 반올림으로 검증한다. 단조성을 가정해 미세한 반올림 구간을
+넘기지 않는다. Position당512/계정 조회당4096개 구간으로 작업량을 제한하며 증명하지 못한 숫자를 보내지 않는다.
+이는 **담보 기반 예상 임계값**이다. 가격 gap은 실제 수신 Mark로 체결하며 표시 가격의 체결을 보장하지 않는다.
+
+Frontend는 `marginMode=ISOLATED`를 수용하고 서버 price/status/asOf만 표시한다. null은 사유와 함께 `—`로 표시한다.
+현재 Frontend의 CROSS 전용 parser를 별도 Work에서 먼저 호환 배포해야 한다. Backend Work는 Frontend를 수정하지 않는다.
+
+#### V11 Isolated 전환과 보존
+
+기존 V1~V10 migration은 수정하지 않았다. V11은 과거 Position/Order/Fill의 원래 margin mode를 CROSS로 보존하고
+fee/adjustment 원장을 추가한다. 현금·담보·원가·수량·기존 손익·참조를 바꾸거나 임의 청산하지 않는다.
+기존 OPEN이 있는 계정은 PENDING으로 두고, Trigger가 모든 기존 노출의 fresh Mark와 개별 격리 안전성을 확인한 후에만
+기존 margin 금액을 그대로 활성화한다. 전환 당시 margin/Mark/시각을 Position에 영속 기록한다.
+시세가 없으면 PENDING 유지, 이미 위험하거나 담보가 부족하면 REVIEW_REQUIRED로 영속 보류한다.
+가격이 회복돼도 검토 보류를 자동 해제하지 않는다. 신규 Guest와 기존 OPEN이 없는 계정은 COMPLETE/ISOLATED다.
+읽기 API는 LEGACY_CROSS/전환 상태를 구분하며 Cross 신규 거래나 선택 기능을 제공하지 않는다.
+
+모든 구버전 writer를 중지하고 backup/restore 검증 및 Frontend 호환 release를 완료한 뒤 배포한다.
+실제 사용자 DB에는 이 작업에서 migration을 적용하지 않는다. 자세한 승인/복구 절차는 [전환 계약](docs/isolated-margin-cutover.md)을 따른다.
+
+#### V10 데이터 이관 및 배포 주의
+
+**백업 후 모든 구버전 Trading 프로세스와 Worker를 중지한 상태에서 Migration한다. 혼합 버전 실행과 무중단 Rolling 배포를 지원하지 않는다.**
+V10은 기존 Migration을 수정하지 않으며 PostgreSQL Transaction과 대상 테이블 잠금으로 원자적으로 변환한다.
+Wallet Used/Reserved와 실제 노출/예약, CLOSE 예약이 불일치하거나 합산 노출이 허용 범위를 넘으면 전체 실패한다.
+이 경우 원장 조사·명시적인 위험 축소 후 재시도해야 하며, Migration이 데이터를 임의 삭제하거나 지갑을 초기화하지 않는다.
+계정·종목의 기존 OPEN/PENDING OPEN leverage 최댓값을 공유 설정으로 선택한다. 추가 이관 자금을 요구하지 않는 정책이다.
+같은 방향 OPEN 중 가장 작은 ID를 유지하고 남은 원가·수량·실현 PnL·CLOSE 예약을 합산한다.
+다른 원본 Position은 `MERGED`와 `mergedIntoPositionId`로 연결한 과거 스냅샷으로 보존하며 활성 평가에서는 제외한다.
+기존 CLOSED/LIQUIDATED 및 완료 Order/Fill의 원래 참조는 보존한다. PENDING CLOSE만 살아남은 ID로 옮기고
+`originalPositionId`에 원래 대상을 남긴다. Wallet Used/Reserved만 새 합계로 조정하고 Balance/실현 PnL은 유지한다.
+Preference인 symbol_leverage만 계정 삭제 시 CASCADE한다. 만료 미사용 Guest 정리를 위한 것으로 금융 이력에는 CASCADE를 적용하지 않는다.
+테스트는 격리된 PostgreSQL/Redis에서 이관·rollback을 확인한다. 실제 사용자 로컬/운영 DB 이관은 자동 실행하지 않는다.
 
 ### 지정가·가격 Trigger·강제청산
 
@@ -236,18 +438,26 @@ OPEN/CLOSE 합계 계정당 최대 100개다. OPEN LONG은 새 Mark가 지정가
 지정가 **CLOSE**는 기존 Position ID를 대상으로 수량만 예약한다. CLOSE LONG은 Mark가 지정가 이상,
 CLOSE SHORT는 지정가 이하일 때 체결한다. Side/종목/Leverage는 대상 Lot에서 가져오며 신규 노출이나 증거금을 만들지 않는다.
 정확히 같은 가격을 찍을 필요가 없으며, 체결은 주문 수량 전체에 대해 수행한다(호가 유동성에 따른 분할 체결은 없다).
-현재 가격에 이미 충족되는 지정가도 PENDING으로 생성한 후 다음 유효한 이벤트에서 판정한다.
+새 지정가는 주문 Transaction에서 계정 잠금 후 fresh Mark를 기준으로 passive 여부를 검증한다.
+OPEN LONG(BUY)은 `limitPrice < Mark`, OPEN SHORT(SELL)은 `limitPrice > Mark`만 허용한다.
+CLOSE LONG(SELL)은 `limitPrice > Mark`, CLOSE SHORT(BUY)은 `limitPrice < Mark`만 허용한다.
+같은 가격도 거절하며 HTTP 409 `MARKETABLE_LIMIT_NOT_ALLOWED`를 반환한다. 오래된 Mark는 기존대로
+503 `PRICE_NOT_FRESH`다. 이미 수락한 동일 Idempotency-Key 재전송은 Mark 변화와 무관하게 기존 결과를 반환한다.
+LIMIT 필요 증거금은 계속 `limitPrice * quantity / leverage`이며 Mark 변화만으로 달라지지 않는다.
+다른 주문·Position·예약으로 사용 가능 잔액이 바뀌면 `INSUFFICIENT_MARGIN`으로 거절할 수 있다.
 체결가는 이벤트의 정규화된 Mark다. Provider 계약 수량/이름은 주문 엔진에 들어오지 않는다.
 실제 체결 시 가격·Margin·Notional·최대 Lot 수를 재검증한다. 부족하면 REJECTED와 원인을 남기고 예약을 반환한다.
 취소와 체결은 같은 계정 Row Lock으로 직렬화한다. 취소가 먼저면 CANCELED, 체결이 먼저면 취소는 409다.
 취소 재전송은 CANCELED를 그대로 반환하며, 가격/Redis 장애 중에도 취소할 수 있다.
 Position의 `reservedCloseQuantity`는 PENDING CLOSE 수량 합계이고 `freeCloseQuantity = quantity - reservedCloseQuantity`다.
-Wallet의 `reservedMargin`은 OPEN 예약 증거금이며 청산 예약 수량과 무관하다. Order 응답에도 두 예약값을 구분한다.
+Wallet/Order의 `reservedMargin`은 Pending OPEN의 **담보+예상 fee를 포함한 예약 현금**이다.
+Order의 `reservedFee`는 그 안에 포함된 fee 부분이며 추가로 합산하면 안 된다. CLOSE 예약 수량과는 무관하다.
 시장가 종료와 새 지정가 종료는 **예약되지 않은 수량만** 사용한다. 예를 들어 1 BTC 중 0.7 BTC 예약 상태에서
 시장가 0.5 BTC 종료는 409로 거절하며, 기존 지정가를 자동 축소/취소하지 않는다. 먼저 취소하거나 0.3 BTC 이하로 종료한다.
 Body/quantity 없는 전체 종료 역시 예약이 있다면 거절한다. 성공한 부분 종료 후에도 남은 예약은 잔여 수량을 넘지 않는다.
 같은 계정의 생성/취소/체결/강제청산은 DB Row Lock 후 최신 상태로 검증한다. 강제청산은 위험 검사를 먼저 수행하고
-모든 PENDING OPEN 증거금과 CLOSE 수량 예약을 반환한 뒤 **남은 수량만** 정산한다.
+위험 Position의 PENDING CLOSE 수량 예약만 반환·REJECTED 처리한 뒤 **남은 수량만** 정산한다.
+다른 Position과 무관 PENDING OPEN/CLOSE는 보존하며, 조건이 충족된 독립 OPEN은 새 lifecycle로 체결될 수 있다.
 동일 Tick에서 위험 조건이 충족되지 않은 주문은 ID 순서로 처리한다. CLOSE도 현금 잔액을 음수로 만드는 체결은
 `INSUFFICIENT_SETTLEMENT_CASH`로 거절하고 해당 수량 예약을 반환한다. 나머지 주문은 보존한다.
 V8은 수량 예약의 `0 <= reserved <= remaining` 제약과 CLOSE 대상 Position 보존 제약을 추가한다.
@@ -255,15 +465,103 @@ V8은 수량 예약의 `0 <= reserved <= remaining` 제약과 CLOSE 대상 Posit
 종목 비활성화를 실제 관리하는 API는 없다. Trigger 시 이미 INACTIVE인 신규 진입 주문은 REJECTED 처리한다.
 관리 기능 도입 전에는 OPEN Position/PENDING Order가 있는 종목을 임의 비활성화하지 않는다.
 
-유지증거금은 `sum(mark * quantity * 0.005)`다. 교차증거금의 `equity <= maintenanceMargin`이면
-계정의 모든 OPEN Lot을 같은 fresh 가격 벡터로 청산하고 모든 PENDING 예약을 반환·REJECTED 처리한다.
-청산가를 정확히 찍지 않고 건너뛰어도 `<=` 비교로 감지한다. 반대 방향/다른 종목의 PnL도 합산한다.
-청산 Position/Order/Fill과 Wallet은 계정 단위 하나의 Transaction이다. 이력 Action은 LIQUIDATE다.
-큰 가격 Gap의 손실을 0으로 잘라내지 않는다. 잔액이 0 이하면 BANKRUPT로 신규 거래를 차단하고 실제 손실을 보존한다.
-청산 후 잔액이 양수면 ACTIVE이며 새 거래가 가능하다. 자동 부채 보전/보험 기금은 제공하지 않는다.
-이것은 명시적인 모의투자 정책이며 Binance Maintenance Tier, Funding, 수수료 또는 실제 매칭 엔진의 복제가 아니다.
-현재 OPEN/CLOSE/LIQUIDATE의 Fee는 모두 0이며 기존 무수수료 정책을 유지한다. 정해지지 않은 Maker/Taker 요율을
-임의 적용하지 않는다. 실제 거래소 비용을 비교하는 수익률로 해석해서는 안 되며 Funding 역시 계산하지 않는다.
+격리 청산 조건은 위의 Position별 유지증거금과 청산 비용 예약을 사용한다. 해당 Position의 예약 정리, LIQUIDATE Order/Fill,
+Position 종료와 Wallet 정산은 기존 Account DB Lock 아래 하나의 Transaction이다. 다른 포지션은 자신의 위험 조건일 때만 청산한다.
+가격 Equality에 의존하지 않으며 Redis stream의 순서·재처리 경계를 유지한다. 같은 lifecycle은 한 번만 정산된다.
+
+자동 청산 fee는 실제 Mark * 체결 수량 * 0.0005를 CEILING18로 계산한다. actual gross PnL을 지우거나 가짜 체결가를 쓰지 않는다.
+`adjustment=max(0, fee - releasedMargin - grossPnl)`, Wallet 변화는 `grossPnl-fee+adjustment`이며 최대 담보 손실까지만 반영한다.
+예: LONG1 entry100 margin10, 실제 Mark80이면 gross=-20, fee=0.04, adjustment=10.04, Wallet 변화=-10이다.
+`FillResponse`는 gross realizedPnl/fee/settlementAdjustment/marginMode를 제공하고 Wallet에도 fee/adjustment 누적을 분리한다.
+adjustment는 모의 플랫폼의 초과 손실 보전이며 사용자 수익/입금이 아니다. 사용하지 않은 현금과 다른 담보를 자동 차감하지 않는다.
+잔액0/남은 Position 없음이면 BANKRUPT, 보호된 현금이나 다른 담보가 있으면 계정은 ACTIVE를 유지한다.
+MARKET OPEN/CLOSE는0.05%, LIMIT OPEN/CLOSE는0.03%다. 모의 주문 유형에 따른 요율이며 실제 거래소 maker 판정을 뜻하지 않는다.
+`ceil18(actual Mark * quantity * feeRate)`를 Fill에 기록하고 Wallet balance에서 한 번 차감한다.
+OPEN fee는 free cash에서, CLOSE fee는 해제 담보와 gross PnL에서 정산한다. Position/Wallet realizedPnl은 gross다.
+LIMIT OPEN은 접수 시 limitPrice 기준 담보와 fee를 예약만 하며 아직 부과하지 않는다. 취소·거절은 모두 해제한다.
+실제 체결 Mark에서 추가 담보+fee를 재검사하며 자금 부족 시 REJECTED, 새 Fill/fee 차감은 없다.
+레버리지 변경 시 담보 예약만 바뀌고 fee 요율/예상 fee는 그대로다.
+
+#### 서버 주문 비용과 비율 수량
+
+`POST /api/v1/trading/account/orders/quote`는 같은 Guest Bearer 인증을 사용하며 Idempotency-Key는 필요 없다.
+Request는 `type`, `tradingSymbolId`, `side`, LIMIT일 때 `limitPrice`, 그리고 `quantity` 또는 정수 `balancePercentage`(1~100) 중 하나다.
+서버 종목 leverage와 fresh Mark로 계산하며, Order/Position/예약을 만들지 않는다.
+Response의 `quantity`, `referencePrice`, `notional`, `margin`, `feeRate`, `estimatedFee`, `totalRequired`, `availableBalance`는 decimal string이다.
+`leverage`, `balancePercentage`, `priceEventTime`, `quotedAt`도 제공한다. MARKET referencePrice는 서버 Mark, LIMIT은 입력 limitPrice다.
+비율은 free cash에 적용하고 8자리 수량 격자에서 담보 CEILING18+fee CEILING18가 예산을 넘지 않는 최대 수량을 찾는다.
+추가 진입에는 남은 exact basis/담보와 수량·원가 상한을 반영한다. 예를 들어 1개·Mark1000·10배 MARKET 비용은 담보100+fee0.5다.
+Frontend는 반환 수량/leverage를 기존 POST orders로 보내며 새 Idempotency-Key를 사용한다. Quote는 자금 예약이나 체결 보장이 아니다.
+시세·잔액·레버리지 변경 후에는 재견적이 필요하며 실제 주문 검증에서 실패할 수 있다. 동일 상태의100% 주문은 반올림 초과로 실패하지 않는다.
+오류는 기존 ProblemDetail.code를 사용한다: 잘못된 요청400, 미인증401, 자금/위험/모드409, freshness/recovery503.
+
+V12는 `trading_order.fee_rate`를 추가한다. 과거 체결과 Pending 계약은0으로 보존하고 기존 잔액·예약을 변경하지 않는다.
+새 주문만 MARKET/LIMIT 요율을 명시적으로 저장하며 완료 이력의 요율을 재작성하지 않는다. 응답·재조회 요율 표기는 동일하다.
+과거에 접수된 소액 주문도 기존 실행 범위에서 처리한다. 새 OPEN 접수 최소10 USDT와 소액 잔여 CLOSE를 혼동하지 않는다.
+
+#### 거래 이력과 개인 이벤트
+
+모두 기존 Guest Bearer로 인증하며 요청의 accountId를 받지 않는다. Redis/현재 Mark가 없어도 과거 기록 조회는 가능하다.
+
+| Method | Path | 계약 |
+| --- | --- | --- |
+| GET | `/api/v1/trading/account/orders` | 기존 배열/`beforeId` 유지. `tradingSymbolId`, `side`, `action`, `status`, `type` 필터 추가 |
+| GET | `/api/v1/trading/account/fills` | 최신 fillId 내림차순. 마지막 fillId를 beforeId로 사용. limit1~100(default50). 종목/side/action/type/실제 체결 시각 필터 |
+| GET | `/api/v1/trading/account/positions/history` | CLOSED/LIQUIDATED 생애주기 목록과 nextCursor. closedAt 내림차순, 같은 시각은 positionId 내림차순. limit1~100(default50) |
+| GET | `/api/v1/trading/account/events` | afterId(default0) 초과의 개인 이벤트를 eventId 오름차순으로 최대100개(default50) 재조회 |
+
+Fill에는 실제 positionId와 `lifecyclePositionId`를 구분한다. V10에서 합쳐진 donor의 과거 Order/Fill ID는 그대로이며
+lifecyclePositionId만 현재 통합 생애주기를 가리킨다. 주문 목록을 종료 Position 이력으로 위장하지 않는다.
+종료 Position의 `initialQuantity`는 누적 진입 수량이다. `entryPrice`는 마지막 잔여 원가의 표시 평균,
+`exitPrice`는 마지막 Fill 가격이며 전 생애의 가중 평균 청산가가 아니다.
+`realizedPnl`은 gross, `feesPaid`는 OPEN/CLOSE/LIQUIDATE의 생애주기 전체 fee,
+`settlementAdjustment`는 격리 초과 손실 조정이며 `netRealizedPnl=gross-fee+adjustment`다.
+역사적인 `openedMarginMode`와 마지막 체결의 `closingMarginMode`도 보존한다. OPEN/MERGED Row는 종료 목록에 포함하지 않는다.
+
+시각 필터는 Fill의 `executedFrom`(포함)/`executedBefore`(제외), 종료 이력의 `closedFrom`/`closedBefore`다.
+ISO-8601 Instant, 1970년 이후·최대 마이크로초 정밀도를 사용하며 from<before여야 한다.
+종료 이력의 nextCursor는 opaque 문자열이며 같은 필터로 그대로 다시 보낸다. 잘못된 cursor/필터/limit은400이다.
+
+V13의 `trading_event`는 Order 상태 Snapshot을 금융 원장과 같은 PostgreSQL Transaction에서 저장한다.
+금융 기록이나 이벤트 저장 중 하나라도 실패하면 함께 rollback한다. 별도 트랜잭션에서 commit 전 이벤트를 읽을 수 없다.
+`(order_id,order_status)` UNIQUE로 중복 전이를 막고, commit 후 신호는 전송 지연을 줄이는 용도로만 사용한다.
+이벤트의 원본은 DB이며 신호 유실/재시작 시 조회로 복구한다. V13 이전 알림은 임의로 소급 생성하지 않는다.
+추가 인덱스는 계정별 eventId 재전송, closedAt/id 페이지, 생애주기별 Order/merged donor 비용 조회를 지원한다.
+
+개인 전달은 `/ws/trading`을 사용한다. 공개 `/ws/market`은 계속 시세만 제공한다.
+기존의 bounded WS 전송기(단일 writer·전송 큐·느린 연결 종료)를 두 채널에서 실제로 공유한다.
+Spring MVC SSE의 개별 쓰기도 blocking이므로, 현재 사용 중인 WS 전송 제어를 재사용했다.
+[Spring Framework 비동기 요청 문서](https://docs.spring.io/spring-framework/reference/6.2/web/webmvc/mvc-ann-async.html)
+
+브라우저 WS handshake에는 Authorization header를 직접 넣을 수 없으므로 연결 후5초 안에 첫 프레임으로 인증한다.
+URL/query에 credential을 넣지 않는다. 운영에서는 WSS를 사용하고, 개인 프레임 원문이나 credential을 로그에 기록하지 않는다.
+Origin은 기존 `marketdata.websocket.allowed-origins`의 명시 목록만 허용한다.
+
+```json
+{"type":"AUTHENTICATE","credential":"<guest bearer or Content access JWT>","afterEventId":"0"}
+```
+
+afterEventId는 생략 시0이며, 받았던 마지막 eventId 문자열로 재접속한다. accountId를 지정할 수 없다.
+서버 프레임은 `{"type":"...","data":{...}}` 구조다.
+
+| type | data |
+| --- | --- |
+| CONNECTED | authenticationDeadlineSeconds=5, heartbeatSeconds=20, delivery=AT_LEAST_ONCE. 개인 데이터 없음 |
+| AUTHENTICATED | 적용된 afterEventId와 credential expiresAt. 이후에만 금융 이벤트 전달 |
+| TRADING_EVENT | eventId(decimal string), type, occurredAt, order(해당 commit의 OrderResponse Snapshot) |
+| HEARTBEAT / PONG | 연결 유지 정보. Client는20초마다 `{"type":"PING"}`을 보냄 |
+
+이벤트 type은 ORDER_PENDING/ORDER_FILLED/ORDER_CANCELED/ORDER_REJECTED/POSITION_LIQUIDATED다.
+인증 전에는 금융 이벤트 DB 조회/전달을 하지 않으며 credential 만료 시 큐에서 실제 쓰기 전에도 권한을 재검사한다.
+최대256연결/계정당3연결, 수신8192bytes·초당10메시지, 큐128개·write5초·무응답60초 제한을 둔다.
+DB reader와 socket writer/closer는 분리되고 금융 Transaction에서 socket을 쓰지 않는다.
+로컬 commit 신호를250ms 주기로 확인하며, 신호가 없어도5초 주기의 DB 조회가 누락을 복구한다.
+무효 인증/프로토콜/만료1008, 과부하/느린 연결1013, 전송·재조회 실패1011로 종료한다.
+
+재접속 전달은 at-least-once다. Frontend는 eventId로 중복을 제거하고 마지막 처리 cursor를 계정별로 관리한다.
+REST 주문 결과 토스트는 유지하되 동일 orderId/상태의 WS 알림과 중복 표시하지 않는다. 이벤트 후 Wallet/Position을 서버에서 재조회한다.
+읽음/삭제·통합 알림 센터와 Content 알림은 후속 단계다. 금융 이벤트를 public market broadcast로 보내지 않는다.
+Funding, Binance Maintenance Tier, 실제 호가 잔량 매칭은 제공하지 않는다.
 
 Worker는 매 Tick 전체 주문을 읽지 않는다. 종목별 OPEN Position 인덱스와 LONG/SHORT 지정가 범위 인덱스로
 후보 계정을 100개씩 Keyset 조회하고, 계정 잠금 후 최대 100개 PENDING/OPEN 항목을 재검증한다.
@@ -297,17 +595,21 @@ Producer 유실은 경고와 DB `gap_count`로 기록한다. 복구 시 현재 f
 `TRADING_TRIGGER_ENABLED=false`는 문서 추출/격리 테스트용이며 주문 Gate를 우회하지 않는다.
 
 금액/가격은 NUMERIC(38,18), Domain 자산 수량은 NUMERIC(28,8)이다. `execution.TradingMath`에서
-금액/PnL HALF_EVEN 18자리, 최초 Margin CEILING 18자리, Leverage 1~20, 1~1,000,000 USDT Notional,
-최대 10^12 수량/100개 OPEN Lot 정책을 정의한다. JSON 금액·수량은 정밀도를 보존하는 문자열이다.
+금액/PnL HALF_EVEN 18자리, Margin/Fee CEILING 18자리, Leverage 1~100, 새 주문 10~1,000,000 USDT Notional,
+최대 10^12 현재 수량/100개 OPEN Position 정책을 정의한다. 통합된 한 방향의 남은 진입 원가도 1,000,000 USDT 이하여야 한다.
+JSON 금액·수량은 정밀도를 보존하는 문자열이다.
 LONG PnL은 `(mark-entry)*quantity`, SHORT는 그 반대다. 평가자산은 `balance + unrealizedPnl`이며
-사용 가능 금액은 `max(0, min(balance, equity) - usedMargin - reservedMargin)`이다.
-미실현 이익으로 추가 Margin을 만들지 않으며 손실은 구매력을 줄인다. Margin은 현금 지출이 아닌 사용 제한이다.
+사용 가능 금액은 `max(0, balance - usedMargin - reservedMargin)`이다. 미실현 수익도 새 담보로 사용하지 않는다.
+계정 equity는 합산 gross 정보일 뿐 개별 격리 청산의 기준이 아니다. 급격한 gap에서 초과 손실 조정 전 일시적으로
+음수 gross equity가 보일 수 있으나 실제 정산은 해당 담보 손실 한도를 보장하며 fee/adjustment를 따로 기록한다.
+미실현 손익은 free cash를 바꾸지 않는다. 실제 정산된 손익/fee만 현금을 바꾸며 Margin은 현금 지출이 아닌 사용 제한이다.
 부분 종료의 반환 Margin은 `남은 Margin * 종료 수량 / 남은 수량`을 18자리 내림한다.
 마지막 종료에서는 잔여 Margin 전부를 반환하므로 반복 부분 종료 후 증거금 잔재가 남지 않는다.
 
 계정 Snapshot은 PostgreSQL 계정 Row Lock → Wallet → Position 순서로 읽어 동시 재무 변경과 섞이지 않게 한다.
 Lock 대기는 최대 2초이며 경합 실패는 409 `TRADING_BUSY`다. 가격은 하나의 메모리 Snapshot으로 평가한다.
-하나의 보유 종목이라도 FRESH가 아니면 전체 `unrealizedPnl/equity/availableBalance`는 null이고
+하나의 보유 종목이라도 FRESH가 아니면 합산 `unrealizedPnl/equity`는 null이고,
+DB 현금과 담보로 계산되는 `availableBalance`는 알려져 있다. Legacy 전환 보류 중에는 availableBalance가 null이다.
 `valuationStatus=UNAVAILABLE`이다. 해당 Position의 Mark/PnL도 null이며 마지막 가격을 0 또는 현재 값으로 취급하지 않는다.
 Open Position이 없는 계정의 평가 금액은 DB 현금만으로 계산할 수 있다. 시장 연결 상태와 DB 잔액을 혼동하지 않는다.
 
@@ -377,12 +679,21 @@ BigDecimal의 정확한 나눗셈을 사용하며 임의 rounding이나 Symbol �
 소비자는 `find(id)`에서 가격 객체(eventTime/receivedAt 포함)와 다음 상태를 함께 받는다.
 
 - MISSING: 해당 종목의 가격 없음
-- FRESH: 현재 구독에서 정상 수신했고 eventTime과 receivedAt이 모두 5초 미만
-- STALE: 종목의 timestamp가 유효 기간을 벗어남
-- UNAVAILABLE: 연결이 끊겼거나 재구독 후 해당 종목의 새 가격을 아직 받지 못함
+- FRESH: 현재 구독에서 정상 수신했고 receivedAt 기준 5초 미만이며 허용 가능한 Provider 시각 차이
+- STALE: 수신 후 5초 이상 지남
+- UNAVAILABLE: 연결 중단/재구독 대기 또는 과도한 Clock Skew로 종목의 가격 사용 중단
 
-최대 1초의 미래 clock skew만 허용한다. 서버 시간 동기화가 필요하다.
-오래된/과도하게 미래인 메시지, 중복·역순 eventTime, 잘못된 payload는 저장값을 갱신하지 않는다.
+Mark freshness는 `receivedAt`으로 판단하고 `eventTime`은 원본 Provider 시각과 중복·역순 판단에 유지한다.
+`eventTime - receivedAt`의 절댓값이 1초 이하면 NORMAL, 1초 초과~5초는 WARNING,
+5초 초과~10초는 DEGRADED이며 최근 수신한 가격을 사용할 수 있다. 10초 초과는 REJECTED로 거부하고
+해당 종목에 UNAVAILABLE을 한 번 전달한다. 거부된 미래 timestamp는 watermark를 갱신하지 않는다.
+수신 시각 자체가 서버 now보다 1초 넘게 미래이거나 이미 5초 이상 지난 데이터는 사용할 수 없다.
+`[Market clock]`은 종목별 상태 전환과 같은 이상 상태의 30초 요약만 기록하며 Provider/내부 ID,
+eventTime/receivedAt/serverNow, signed skewMs와 각 임계값을 포함한다.
+`GET /api/v1/trading/status`의 `marketClockStatus/clockSkewMs`는 해당 수신 노드에서 최근 관찰한 가장
+심한 Clock 상태다. 데이터가 없으면 UNAVAILABLE/null이며 기존 READY/RECOVERING과 독립적인 운영 정보다.
+이 보호 장치는 NTP/AWS Amazon Time Sync를 대체하지 않는다. 운영 시 모든 앱·Redis 노드의 OS 시간 동기화가 필요하다.
+오래된/과도한 시각 차이의 메시지, 중복·역순 eventTime, 잘못된 payload는 저장값을 갱신하지 않는다.
 재연결 후에도 종목마다 새 가격을 받아야 FRESH가 되며 구독에서 빠진 종목은 제거한다.
 현재 연결 중 DB Mapping/활성 상태 변경을 즉시 감지하는 기능은 없다.
 재시작 시 Store는 비어 있으며, 이 Store는 Tick 이력이나 가격 crossing 범위를 보존하지 않는다.
@@ -398,7 +709,7 @@ Binance 수신 Thread에서는 Redis나 Browser I/O를 수행하지 않는다.
 
 | Redis Key | 내용/수명 |
 | --- | --- |
-| `trading:market:v1:snapshot:{id}` | version=1 JSON, 내부 ID/Domain Mark Price/eventTime/receivedAt. 두 timestamp 기준 남은 freshness만큼, 최대 5초 TTL |
+| `trading:market:v1:snapshot:{id}` | version=1 JSON, 내부 ID/Domain Mark Price/eventTime/receivedAt. receivedAt 기준 남은 freshness만큼, 최대 5초 TTL |
 | `trading:market:v1:watermark:{id}` | 마지막 eventTime, 24시간 TTL. Snapshot 만료 후에도 중복/역순 갱신 차단 |
 | `trading:market:v1:state:{id}` | FRESH 또는 RECONNECTING/UNAVAILABLE. 가격과 함께 원자적으로 조회하며 연결 중단 시 Snapshot 제거 |
 | `trading:market:v1:events` | 모든 수락 가격과 연결 상태의 Redis Stream, 정확히 최대 100,000건 보관 |
@@ -494,6 +805,54 @@ WebSocket은 REST가 아니므로 OpenAPI path에 중복 선언하지 않고 이
 실제 HTTP Upgrade, Redis 경유 live 전달, Origin 거절, 구독 검증/해제, stale/복구와
 느린 소켓의 비동기 격리를 외부 Binance 없이 자동 테스트한다.
 
+### 참고용 Order Book
+
+Order Book은 Binance 실제 시장의 호가를 보여주는 참고 정보다. Yogimangchi 사용자의 주문장이 아니며
+체결 가격·가능 수량·부분체결·강제청산 판단에는 사용하지 않는다. 기존 Mark Price Trigger를 유지한다.
+
+`BinanceOrderBookClient`는 DB의 ACTIVE Binance mapping을 재사용하고, 별도의 단일 Combined WebSocket에서
+`<providerSymbol 소문자>@depth20@500ms`를 구독한다. 경로는
+`wss://fstream.binance.com/public/stream?streams=...`다.
+[공식 USD-M Partial Book Depth 계약](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/public#partial-book-depth-streams)에
+따라 Bid/Ask 각각 최대 20 level의 전체 Snapshot을 교체하므로 diff 복원이나 HTTP 초기 조회가 필요 없다.
+DB mapping의 `provider_unit_multiplier`로 가격은 나누고 수량은 곱한다.
+예를 들어 multiplier=1000인 PEPE의 Provider 가격 `0.004001`, 수량 `1.25`는 Domain 가격 `0.000004001`, 수량 `1250`이다.
+Provider Symbol 문자열에서 단위를 추측하지 않는다.
+
+| Redis Key | 내용/수명 |
+| --- | --- |
+| `trading:market:v1:orderbook:<id>` | 종목별 최신 Snapshot 하나. receivedAt 기준 남은 TTL 최대 3초 |
+| `trading:market:v1:orderbook-watermark:<id>` | 마지막 Provider update ID/eventTime만 24시간 보관하여 Snapshot 만료 후에도 역순·중복 차단 |
+| `trading:market:v1:orderbook:fanout` | 갱신한 Snapshot의 Pub/Sub channel. 메시지 이력 저장 없음 |
+
+Snapshot은 `tradingSymbolId`, `bids`, `asks`, 내부 `providerUpdateId`, `eventTime`, `receivedAt`을 가진다.
+Lua로 update ID 증가와 eventTime 비퇴행을 확인하고 Snapshot 교체·TTL·Pub/Sub을 원자적으로 수행한다.
+Order Book을 Redis Stream 또는 PostgreSQL에 누적하지 않는다. watermark는 과거 호가가 아닌 최신 순서 정보다.
+수신 후 3초가 지나면 stale이며, 수신 시 이미 3초 이상 늦은 이벤트도 버린다.
+Provider eventTime이 수신 시각보다 최대 10초 빠른 경우만 허용하되 TTL은 늘리지 않는다. 앱·Redis의 시각 동기화가 필요하다.
+
+기본 수집은 활성화되어 있다. 여러 Backend node 배포 시 수집자 한 곳만 활성화하고 나머지는
+`BINANCE_ORDER_BOOK_ENABLED=false`로 실행한다. 각 노드는 Redis Pub/Sub으로 동일한 Snapshot을 전달한다.
+Leader Election은 추가하지 않는다. 재연결 시 DB mapping을 다시 읽으며 지수 backoff/jitter,
+429/418 대기, 15초 무수신 재연결, 23시간 50분 연결 교체와 종료 처리를 갖는다.
+Redis 쓰기 큐와 Pub/Sub 전달 큐는 각각 128건으로 제한하며 지연된 참고 데이터를 버린다.
+Redis 실패는 5초 후 재시도한다. Order Book 연결·큐·작업 스레드는 Mark Price 경로와 독립적이므로
+호가 장애가 Trading gate나 Mark Price/Trigger/Candle/Summary를 중단시키지 않는다.
+
+기존 `/ws/market`의 SUBSCRIBE 대상에 다음 `ORDER_BOOK` 메시지를 추가한다. fresh Redis Snapshot이 있으면
+구독 직후 즉시 전달하고 이후 선택한 종목만 갱신한다. 금융 값은 Domain 단위 decimal string이다.
+
+```json
+{"version":1,"type":"ORDER_BOOK","tradingSymbolId":11,"status":"FRESH","bids":[{"price":"0.000004001","quantity":"1250"}],"asks":[{"price":"0.000004002","quantity":"2500"}],"eventTime":"2026-10-16T00:00:00Z","receivedAt":"2026-10-16T00:00:00.100Z"}
+{"version":1,"type":"ORDER_BOOK","tradingSymbolId":11,"status":"STALE","bids":[],"asks":[],"eventTime":null,"receivedAt":null}
+```
+
+최초 Snapshot이 없으면 `UNAVAILABLE`이며 빈 배열/null 시각을 반환한다. 1초 간격 watchdog은 만료 후
+`STALE`을 보내 표시할 호가를 비운다. 새 fresh Snapshot이 오면 `FRESH`로 복구한다.
+Provider Symbol, multiplier, update ID는 Browser 계약에 노출하지 않는다. Mark의 `MARKET_STATUS`와 독립된 상태다.
+Frontend는 `ORDER_BOOK`을 처리하고 FRESH 외 상태에서 기존 호가를 비워야 한다. 호가 선택은 지정가 입력 편의이며
+최종 passive/증거금 검증은 Backend가 수행한다.
+
 ## Market Summary 조회
 
 인증 없이 `GET /api/v1/market/tickers`를 호출하면 DB의 ACTIVE 종목 전체를 Symbol 순서로 반환한다.
@@ -519,7 +878,7 @@ MGET으로 읽는다. JVM `LatestPriceStore`를 조회하거나 Ticker의 Last P
 ```
 
 금융 값은 정확한 decimal string이다. Mark freshness는 기존 5초, 통계 freshness는 10초이며
-응답 시 두 timestamp를 다시 검증한다. `FRESH`는 둘 다 최신인 경우다.
+응답 시 Mark의 수신 freshness와 Clock Skew, 통계의 timestamp를 다시 검증한다. `FRESH`는 둘 다 최신인 경우다.
 읽힌 데이터가 시각 범위를 벗어나면 `STALE`, 일부 누락/잘못된 payload/연결 상태 불가/Redis 실패는
 `UNAVAILABLE`이다. 만료된 값은 null로 숨기며 남아 있는 유효 값만 제공한다.
 TTL 만료로 snapshot 자체가 사라진 경우에는 누락이므로 `UNAVAILABLE`이다.
@@ -527,6 +886,39 @@ Redis 장애에서도 현재 ACTIVE 목록과 null 필드를 HTTP 200으로 반�
 DB 조회 자체가 실패한 경우에는 기존 전역 서버 오류 정책을 따른다.
 `updatedAt`은 반환한 유효 데이터 중 가장 오래된 Provider eventTime(ISO-8601 UTC), 유효 값이 없으면 null이다.
 한 종목의 누락/손상 때문에 다른 종목의 유효 값을 버리지 않는다.
+
+## Historical Mark Price Candle
+
+Public `GET /api/v1/market/candles?tradingSymbolId=1&interval=1m&limit=300`은 최근 Mark Price 봉을
+openTime 오름차순으로 반환한다. 지원 interval은 `1m/3m/5m/15m/30m/1h/4h/12h/24h`,
+limit은 1~500(기본 300)이다. `24h`는 Provider `1d`로 매핑하며 `10m`과 API 입력 `1d`는 지원하지 않는다.
+선택 query `before`가 없으면 기존 latest page다. `&before=2026-10-15T10:00:00Z`를 추가하면
+해당 시각보다 `openTime`이 작은 과거 봉을 반환한다. 응답의 첫 번째(가장 오래된) `openTime`을 다음
+`before`로 전달해 과거 방향으로 반복 조회하며 빈 배열이면 더 이전 데이터가 없다. 응답 배열/필드는 동일하다.
+`before`는 Epoch 이후 현재 이하의 ISO-8601 시각이며 최대 millisecond 정밀도다. 빈 값·잘못된 형식·미래는 400이다.
+Provider 내부에서는 `endTime=before-1ms`를 사용하고 응답 경계도 다시 확인한다. 과거 page는 진행 중인 봉을 제외한다.
+Source는 [공식 Binance USD-M Mark Price Kline](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data)의
+`GET https://fapi.binance.com/fapi/v1/markPriceKlines`이다. Browser는 Trading Server만 호출한다.
+DB의 ACTIVE/BINANCE Mapping과 계약 배수를 사용해 모든 OHLC를 Domain 단위로 정확히 나눈다.
+응답은 `openTime/closeTime`(ISO-8601 UTC), `open/high/low/close`(decimal string)이다.
+시간은 Provider bucket 경계를 보존하며 `closeTime`은 종료 경계의 마지막 millisecond다.
+마지막 봉은 진행 중일 수 있고 `close`는 그때까지의 값이다. Frontend는 `openTime`을 고유 키로 사용해
+`/ws/market` 가격을 같은 UTC bucket에 반영한다. 24h 봉은 UTC 자정 시작이며 빈 구간을 가짜 봉으로 채우지 않는다.
+
+Redis `trading:market:v1:candles:<id>:<interval>:<providerSymbol>:<multiplier>:latest` 또는
+동일 prefix의 `:before:<epochMillis>`에 최대 500봉을 15초 캐시하고
+limit에 맞는 최신 구간만 반환한다. Provider 대기 시간은 남은 TTL에서 제외하며 오류 응답은 캐시하지 않는다.
+서로 다른 cursor는 캐시/동시 조회를 공유하지 않고 동일 cursor의 limit만 다른 요청은 공유한다.
+종료된 과거 page도 동일한 짧은 TTL을 사용하며 빈 page도 캐시한다. 영구 Historical DB/Redis 누적 저장은 하지 않는다.
+진행 중인 마지막 봉의 cache TTL은 bucket 종료까지만 부여하고, 다음 bucket에서 해당 중간 결과를 재사용하지 않는다.
+Mapping 변경은 다른 키를 사용하고 캐시 hit에서도 현재 DB의 ACTIVE 상태를 확인한다.
+동일 노드의 동시 cache miss는 한 요청으로 합친다. 다중 노드는 Redis 캐시를 공유하며 분산 Lock은 사용하지 않는다.
+Provider 연결 2초/전체 응답 4초 timeout, 동시 Provider 호출 4개/전체 Candle 요청 32개 제한을 사용한다.
+429/418은 Retry-After 기반으로 최소 60초, 일반 Provider 실패/timeout은 2초 동안 후속 호출을 쉬며 자동 재시도하지 않는다.
+잘못된 query는 400, 없는 ID는 404, INACTIVE는 409, Provider 오류는 502, timeout은 504다.
+Mapping·Redis 불가 또는 용량/rate limit은 Candle 조회에만 503을 반환한다. 유효한 조회 결과의 캐시 쓰기만
+실패하면 해당 응답은 제공한다. 이 조회 경로는 Trading 가격·Gate·Stream·Trigger·Browser WS 상태를 변경하지 않는다.
+DB 조회 Transaction은 Redis/외부 HTTP 호출 전에 종료한다. 별도 DB 저장·새 Dependency는 없다.
 
 ## 테스트와 Runtime OpenAPI
 
@@ -551,4 +943,86 @@ OpenAPI 서버 URL은 `/`로 지정해 임시 포트/호스트가 명세에 들�
 자동 테스트는 Runtime 명세에서 기존 Trading API, 인증 경계와 Market Summary 필드/타입을 검증한다.
 루트의 기존 `docs/trading-openapi.yaml`은 과거 Snapshot이며 최신 계약 확인에는 Runtime 문서를 사용한다.
 설계/Provider Mapping은 `../docs/trading-symbols.md`를 참고한다.
-JWT/Content 인증, Admin, Funding/수수료, Competition/Ranking과 다중 노드 조정은 구현하지 않았다.
+회원 JWT 검증과 Content 탈퇴 요청 처리는 구현했다. Admin, Funding, Competition/Ranking과 다중 노드 조정은 아직 구현하지 않았다.
+자동 LIQUIDATE 수수료0.05%와 격리 gap adjustment는 구현했다. 전체 V1 동등성의 남은 항목은 기능 비교표에서 추적한다.
+
+## Guest 재도전 API
+
+`POST /api/v1/trading/account/retry`는 본인 Guest Bearer만 허용한다. 회원 JWT403, 누락/만료 자격증명401,
+누락/잘못된 Idempotency-Key400, 잠금 경합409다. 요청 Body는 필요 없으며 accountId/잔액은 입력으로 신뢰하지 않는다.
+
+```http
+POST /api/v1/trading/account/retry
+Authorization: Bearer <기존 Guest 토큰>
+Idempotency-Key: <새 재도전마다 생성하는 UUID>
+```
+
+200 응답은 `{retryId,accountId,status:"ACTIVE",quoteAsset:"USDT",balance:"10000.000000000000000000",
+canceledOrderCount,closedPositionCount,resetAt}`다. 동일 키를 재전송하면 기존 응답을 반환하고 다시 초기화하지 않는다.
+그 뒤 새 주문을 넣었더라도 오래된 재시도 요청이 새 주문/자금을 지우지 않는다. 새로운 재도전에만 새 키를 사용한다.
+
+AccountLock 안에서 모든 대기 주문을 CANCELED/GUEST_RETRY로 만들고 CLOSE 예약을 해제한다.
+열린 포지션은 CLOSED/GUEST_RETRY로 종료하며 시장 체결·exitPrice·추가 손익·수수료를 만들지 않는다.
+사용/예약 증거금이 실제 포지션/주문 합계와 일치하는지 확인한 후 해제하고 잔액을10000으로 만든다.
+불일치가 있으면 주문·포지션·Wallet·이벤트·재도전 기록을 모두 rollback한다.
+시세 장애 중에도 가능하며 BANKRUPT·이전 격리 전환 보류 계정은 잔여 노출을 정리한 뒤 ACTIVE/ISOLATED로 돌아간다.
+
+Guest 계정 ID·토큰·만료 시각·종목 레버리지 설정은 유지한다. 토큰을 갱신하거나 새 계정을 만들지 않는다.
+기존 Order/Fill/Position 이력과 누적 realizedPnl/feesPaid/settlementAdjustment는 보존한다. 초기화는 매매 수익이 아니다.
+V16의 guest_retry에 초기화 전/후 잔액과 capital_adjustment, 종료/취소 건수, 요청 키를 같은 Transaction으로 저장한다.
+잔액이10000보다 높으면 감소할 수도 있다. 재도전 이력이 있는 계정은 미사용 Guest 정리 대상에서 제외한다.
+일반 종료 포지션 조회에서는 행정 종료를 제외하며 기존 실제 체결·부분 실현 손익은 계속 이력으로 남는다.
+
+Frontend는 성공 후 Wallet/Position/Pending Order를 다시 조회한다. 취소된 주문은 기존 개인 거래 이벤트에도 기록된다.
+새 이벤트 종류·투자 성과 API·이메일 인증·퀘스트·Frontend 수정은 추가하지 않았다. 실제 사용자 DB에는 V16을 적용하지 않았다.
+
+2026-10-22 재도전/회원 경계 통합 테스트21개와 최종 clean build 전체539개 테스트 통과(실패·오류·건너뜀0).
+초기화·이력/토큰 보존·중복 요청·동시 주문·예약 불일치 rollback·파산/전환 보류·만료·타 계정/회원 차단·정리 제외·OpenAPI를 검증했다.
+
+## 회원 탈퇴 처리
+
+사용자 승인 정책에 따라 탈퇴는 시장 주문 체결과 구분한다. Content가 WITHDRAWING/PENDING으로 요청을 보존하고 전송하며, Trading 정리 커밋 확인 후 개인정보 파기·최종 Soft Delete를 수행한다.
+Trading은 `POST /internal/v1/members/{memberId}/withdrawal`에서 Content 공개키로 검증한60초 전용 JWT만 허용한다.
+audience=trading-internal, token_use=member_withdrawal, sub와 경로 memberId 일치가 필수다. 일반 회원/Guest 토큰은 거절한다.
+내부 경로는 공개 Reverse Proxy에서 노출하지 않고 신뢰한 서비스 네트워크로 제한한다. 별도 공유 Secret·의존성은 없다.
+
+동일 AccountLock 안에서 모든 PENDING 주문을 CANCELED/MEMBER_WITHDRAWAL로 바꾸고 CLOSE 수량 예약을 해제한다.
+OPEN 포지션은 CLOSED/close_reason=MEMBER_WITHDRAWAL로 종료하고 quantity/margin/entryNotional을0으로 만든다.
+exitPrice는 null이며 가짜 Fill·손익0 매매·추가 수수료를 만들지 않는다. 과거 부분 체결의 실현 손익과 모든 이력은 보존한다.
+Wallet 사용/예약 금액은 실제 포지션·주문 합계와 일치하는지 검증한 후 해제하며 balance/PnL/fee/adjustment를 변경하지 않는다.
+일반 종료 포지션 조회/집계에서는 탈퇴 종료를 제외한다. 시세 장애나 격리 전환 REVIEW_REQUIRED는 탈퇴를 막지 않는다.
+불일치가 발견되면 전체 정리를 rollback하고 Content 요청은 재시도 대상으로 남는다.
+
+계정은 WITHDRAWN/withdrawnAt으로 보존하며 기존 JWT·재생성·금융 요청을 차단한다. 최초 계정 생성과 같은 member별 잠금을
+사용하여 계정이 없는 회원도 탈퇴 tombstone을 만들고 오래된 JWT로 신규 계정을 만드는 경합을 방지한다.
+거래 중인 요청과 탈퇴는 계정 잠금 순서대로 처리되며, 탈퇴가 완료된 계정의 가격 트리거는 건너뛴다.
+Content의204 유실에 따른 재전송도 안전하다. V15 migration은 기존 정상 종료 규칙과 탈퇴 종료의 null exitPrice를 구분한다.
+로컬 실제 DB에는 migration을 적용하지 않았다. Content 전송 설정과 인증 설정은 Content README를 따른다.
+
+2026-10-22 탈퇴 추가 후 clean build 및 최종 build 성공,529개 테스트 통과(실패·오류·건너뜀0).
+시세 없는 종료·기존 부분 손익/수수료 보존·전용 인증·반복/동시 요청·원장 불일치 rollback·검토 보류 계정을 검증했다.
+
+## 회원 모의투자 회차와 다시시작 (V17)
+
+[회차·재시작·이관 및 Frontend 계약](docs/member-rounds.md)을 따른다.
+신규 회원은 정확히 한 번10,000 USDT/1회차를 받는다. 기존 회원은 자금을 자동 재지급하지 않는다.
+Content의 영속 생성 요청과 명시적인 회원 계정 생성 API는 동일한 MemberAccounts 경로를 사용한다.
+
+- `POST /api/v1/trading/account/restart`: 회원 JWT+Idempotency-Key. 관리상 정리 후 다음 회차10,000 USDT.
+- `GET /api/v1/trading/account/rounds/current`: 현재 회차, 실시간 계정 요약, 회차 손익/수수료, 재시작 가능 여부.
+- `GET /api/v1/trading/account/rounds?cursorId=&limit=20`: 본인 전체 회차(최신순), nextCursorId.
+- `GET /api/v1/trading/account/rounds/{roundId}`: 본인 회차 요약. 종료 회차는 영속 스냅샷만 사용한다.
+- `GET /api/v1/trading/account/rounds/{roundId}/orders|fills|positions`: 본인 회차 원장, ID 커서·limit1~100.
+
+재시작의24시간은 DB에 기록된 마지막 성공 시각으로부터 계산한다. 새 요청 키로 제한을 우회할 수 없으며
+429 MEMBER_RESTART_LIMITED 응답의 nextAvailableAt을 사용한다. 같은 성공 키의 재전송은 원래 결과를 반환해 새 거래를 다시 지우지 않는다.
+Guest retry의 자격·기간·자금·기존 이력 정책은 유지한다. 금융 계산은 기존 엔진을 재사용하고 신규 의존성은 추가하지 않았다.
+Order/Fill/Position/TradingEvent의 round_id는 명시적이고 불변이다. 개인 HTTP/WS 이벤트에는 roundId/roundNumber가 추가된다.
+관리상 종료는 체결이 아니며 과거 Fill/PnL/수수료를 바꾸지 않는다. 잔여 수량·원가·해제 담보는 별도 retirement 스냅샷으로 보존한다.
+
+주의: 루트 README의 과거0 USDT/Guest 우선 설명은 이번 최신 승인 정책보다 앞선 설명이다. 이번 작업에서 루트 문서는 수정하지 않았다.
+
+2026-10-23 최종 Java17 clean build 전체557개 테스트 통과(실패·오류·건너뜀0).
+마지막 이관 사전 점검 보강 후 회원 JWT/최초 지급/회차/재시작/탈퇴·이관/OpenAPI 통합30개도 재검증하고 build에 성공했다.
+동시 요청·응답 유실 재전송·24시간·원자적 rollback/lock timeout·가격 Tick/청산/취소/조회 경합·잔여 원가 스냅샷과 Guest 회귀를 검증했다.
+중단 중 발생한 임시 PostgreSQL 컨테이너 시작 실패는 정상 Docker 상태에서 전체 재실행으로 해소했다. 사용자 DB/Volume은 변경하지 않았다.

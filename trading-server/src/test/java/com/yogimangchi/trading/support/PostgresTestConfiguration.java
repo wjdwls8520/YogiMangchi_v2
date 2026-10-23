@@ -10,7 +10,10 @@ import org.testcontainers.containers.GenericContainer;
 public class PostgresTestConfiguration {
     @Bean
     org.springframework.test.context.DynamicPropertyRegistrar deterministicTrigger() {
-        return registry -> registry.add("trading.trigger.enabled", () -> "false");
+        return registry -> {
+            registry.add("trading.trigger.enabled", () -> "false");
+            registry.add("trading.guest-cleanup.enabled", () -> "false");
+        };
     }
 
     @Bean

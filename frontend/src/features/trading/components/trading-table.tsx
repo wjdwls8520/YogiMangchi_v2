@@ -11,10 +11,10 @@ export function TradingTable({ caption, columns, rows, variant }: {
   variant?: "positions";
 }) {
   return (
-    <div className="min-w-0 overflow-x-auto">
+    <div className="trading-table-scroll min-w-0">
       <table className="trading-table" data-variant={variant} role="table">
         <caption className="sr-only">{caption}</caption>
-        <thead role="rowgroup"><tr role="row">{columns.map((column) => <th key={column.key} scope="col" role="columnheader">{column.label}</th>)}</tr></thead>
+        <thead role="rowgroup"><tr role="row">{columns.map((column) => <th key={column.key} data-key={column.key} scope="col" role="columnheader">{column.label}</th>)}</tr></thead>
         <tbody role="rowgroup">
           {rows.map((row) => (
             <tr key={row.id} role="row">

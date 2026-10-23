@@ -1,5 +1,7 @@
+import { emptyOrderBook, parseOrderBook, type OrderBook } from "./order-book";
+
 export type MarketState = "CONNECTING" | "WAITING_FOR_FIRST_PRICE" | "READY" | "UNAVAILABLE" | "RECONNECTING";
-export type MarketPrice = { eventTime: number; decimal: string; value: number };
+export type MarketPrice = { eventTime: number; decimal: string; value: number; expiresAt?: number };
 type Socket = Pick<WebSocket, "readyState" | "send" | "close" | "onopen" | "onclose" | "onerror" | "onmessage">;
 type Timer = ReturnType<typeof setTimeout>;
 type Runtime = {
@@ -24,12 +26,16 @@ function timestamp(value: unknown) {
 }
 
 // Protocol v1 from MarketWebSocketHandler. No credentials are needed for this
-// public market endpoint. Each instance owns one symbol and all its resources.
+// public market endpoint. Each instance owns one subscription batch and its resources.
 export function openMarketStream(options: {
   url: string; symbolId: number;
+  subscriptionIds?: readonly number[];
+  onMarketPrice?: (symbolId: number, price: MarketPrice | null) => void;
   onState: (state: MarketState) => void;
   onPrice: (price: MarketPrice) => void;
+  onOrderBook?: (book: OrderBook) => void;
   onSymbolUnavailable?: (symbolId: number) => void;
+  onSubscriptionUnavailable?: () => void;
 }, runtime: Runtime = browserRuntime) {
   let stopped = false;
   let socket: Socket | null = null;
@@ -39,6 +45,11 @@ export function openMarketStream(options: {
   let serverOffset = 0;
   let state: MarketState | undefined;
   let freshTimer: Timer | undefined;
+  let bookTimer: Timer | undefined;
+  let lastBookEvent = -Infinity, lastBookReceipt = -Infinity;
+  const subscriptionIds = [...new Set([options.symbolId, ...(options.subscriptionIds ?? [])])];
+  const additional = new Map<number, { eventTime: number; timer?: Timer }>();
+  const clearPrice = (id: number) => { options.onMarketPrice?.(id, null); if (id === options.symbolId) emit("UNAVAILABLE"); };
   const timers = new Set<Timer>();
   const emit = (next: MarketState) => {
     if (!stopped && state !== next) { state = next; options.onState(next); }
@@ -56,6 +67,10 @@ export function openMarketStream(options: {
     for (const timer of timers) runtime.cancel(timer);
     timers.clear();
     freshTimer = undefined;
+    bookTimer = undefined;
+    additional.clear();
+    if (!stopped) subscriptionIds.forEach(id => options.onMarketPrice?.(id, null));
+    if (!stopped) options.onOrderBook?.(emptyOrderBook(options.symbolId));
     if (socket) {
       socket.onopen = socket.onclose = socket.onerror = socket.onmessage = null;
       if (socket.readyState < 2) socket.close(1000, "Chart connection closed");
@@ -70,9 +85,13 @@ export function openMarketStream(options: {
   };
   const receivePrice = (input: unknown) => {
     const price = record(input);
-    if (!price || price.tradingSymbolId !== options.symbolId) return;
+    if (!price || typeof price.tradingSymbolId !== "number" || !subscriptionIds.includes(price.tradingSymbolId)) return;
+    const id = price.tradingSymbolId;
     if (price.status !== "FRESH") {
-      if (["STALE", "UNAVAILABLE", "RECONNECTING"].includes(String(price.status))) emit(price.status === "RECONNECTING" ? "RECONNECTING" : "UNAVAILABLE");
+      if (["STALE", "UNAVAILABLE", "RECONNECTING"].includes(String(price.status))) {
+        clearPrice(id);
+        if (id === options.symbolId && price.status === "RECONNECTING") emit("RECONNECTING");
+      }
       return;
     }
     const eventTime = timestamp(price.eventTime);
@@ -81,18 +100,42 @@ export function openMarketStream(options: {
     if (typeof price.price !== "string" || !/^\d{1,40}(\.\d{1,30})?$/.test(price.price)
       || !Number.isFinite(Number(price.price)) || Number(price.price) <= 0
       || !Number.isFinite(eventTime) || !Number.isFinite(receivedAt)
-      || Math.min(eventTime, receivedAt) <= now - 5000 || Math.max(eventTime, receivedAt) > now + 1000) {
-      emit("UNAVAILABLE");
+      // Match the server time policy: receipt freshness is separate from provider clock skew.
+      || receivedAt <= now - 5000 || receivedAt > now + 1000 || Math.abs(eventTime - receivedAt) > 10_000) {
+      clearPrice(id);
+      return;
+    }
+    const parsed = { eventTime, decimal: price.price, value: Number(price.price), expiresAt: runtime.now() + receivedAt + 5000 - now };
+    if (id !== options.symbolId) {
+      const prior = additional.get(id);
+      if (eventTime <= (prior?.eventTime ?? -Infinity)) return;
+      cancel(prior?.timer);
+      additional.set(id, { eventTime, timer: later(() => clearPrice(id), Math.max(1, receivedAt + 5000 - now)) });
+      options.onMarketPrice?.(id, parsed);
       return;
     }
     if (eventTime <= lastEventTime) return;
     lastEventTime = eventTime;
     attempt = 0;
-    options.onPrice({ eventTime, decimal: price.price, value: Number(price.price) });
+    options.onPrice(parsed);
+    options.onMarketPrice?.(id, parsed);
     if (stopped) return;
     emit("READY");
     cancel(freshTimer);
-    freshTimer = later(() => emit("UNAVAILABLE"), Math.max(1, Math.min(eventTime, receivedAt) + 5000 - now));
+    freshTimer = later(() => clearPrice(id), Math.max(1, receivedAt + 5000 - now));
+  };
+  const receiveBook = (input: Record<string, unknown>) => {
+    if (input.tradingSymbolId !== options.symbolId) return;
+    const now = runtime.now() + serverOffset;
+    const book = parseOrderBook(input, options.symbolId, now);
+    if (book.status === "FRESH" && book.eventTime !== null && book.receivedAt !== null) {
+      if (book.eventTime < lastBookEvent || book.receivedAt < lastBookReceipt
+        || (book.eventTime === lastBookEvent && book.receivedAt === lastBookReceipt)) return;
+      lastBookEvent = book.eventTime; lastBookReceipt = book.receivedAt;
+    }
+    cancel(bookTimer);
+    options.onOrderBook?.(book.status === "FRESH" ? { ...book, expiresAt: runtime.now() + book.receivedAt! + 3000 - now } : book);
+    if (book.status === "FRESH") bookTimer = later(() => options.onOrderBook?.(emptyOrderBook(options.symbolId, "STALE")), Math.max(1, book.receivedAt! + 3000 - now));
   };
   function connect() {
     if (stopped) return;
@@ -130,7 +173,7 @@ export function openMarketStream(options: {
         emit("WAITING_FOR_FIRST_PRICE");
         // Estimate clock offset from the heartbeat round trip. Using only the
         // arrival time would incorrectly subtract network delay from price age.
-        if (!send({ type: "PING" }) || !send({ type: "SUBSCRIBE", tradingSymbolIds: [options.symbolId] })) return;
+        if (!send({ type: "PING" }) || !send({ type: "SUBSCRIBE", tradingSymbolIds: subscriptionIds })) return;
         later(() => { if (state === "WAITING_FOR_FIRST_PRICE") emit("UNAVAILABLE"); }, 10_000);
         const heartbeat = () => {
           if (runtime.now() - lastInbound >= 60_000) { reconnect(); return; }
@@ -147,10 +190,12 @@ export function openMarketStream(options: {
       } else if (connected && message.type === "SNAPSHOT" && Array.isArray(message.prices)) {
         message.prices.forEach(receivePrice);
       } else if (connected && message.type === "MARKET_PRICE") receivePrice(message);
-      else if (connected && message.type === "MARKET_STATUS" && Array.isArray(message.affectedTradingSymbolIds)
-        && message.affectedTradingSymbolIds.includes(options.symbolId)) {
-        if (message.status === "RECONNECTING") emit("RECONNECTING");
-        else if (message.status === "STALE" || message.status === "UNAVAILABLE") emit("UNAVAILABLE");
+      else if (connected && message.type === "ORDER_BOOK") receiveBook(message);
+      else if (connected && message.type === "MARKET_STATUS" && Array.isArray(message.affectedTradingSymbolIds)) {
+        if (["RECONNECTING","STALE","UNAVAILABLE"].includes(String(message.status))) {
+          subscriptionIds.filter(id => (message.affectedTradingSymbolIds as unknown[]).includes(id)).forEach(clearPrice);
+          if (message.status === "RECONNECTING" && message.affectedTradingSymbolIds.includes(options.symbolId)) emit("RECONNECTING");
+        }
         // RECOVERED alone is not a valid price. INFRA_STATUS is independent of
         // price freshness because the server can use its memory fallback.
       } else if (message.type === "ERROR") {
@@ -162,7 +207,10 @@ export function openMarketStream(options: {
           detach();
           emit("UNAVAILABLE");
           stopped = true;
-          if (code === "SYMBOL_NOT_AVAILABLE") options.onSymbolUnavailable?.(options.symbolId);
+          if (code === "SYMBOL_NOT_AVAILABLE") {
+            if (subscriptionIds.length>1 && options.onSubscriptionUnavailable) options.onSubscriptionUnavailable();
+            else options.onSymbolUnavailable?.(options.symbolId);
+          }
         }
       }
     };

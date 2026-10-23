@@ -4,7 +4,17 @@
 
 기존 Yogimangchi V1의 코드를 리팩터링하는 프로젝트가 아니라, V2의 목적과 구조에 맞게 **새로운 설계로 처음부터 구축한다.**
 
-기존 V1 코드는 참고하지 않는다.
+V1은 V2에서 필요한데 빠진 기능을 찾기 위한 읽기 전용 참고 자료다. V1 전체 기능·API·정책을 그대로 복원하는 것이 목표가 아니다.
+현재 V2 코드·아키텍처와 사용자 승인 제품 정책을 기준으로 기존 기능을 재사용하고 실제 필요한 누락 기능만 추가한다.
+V1 코드를 그대로 복사하거나 과거의 정산·보안 문제를 재현하지 않는다.
+
+2026-10-22 사용자 확정 우선순위:
+
+- 현재 사용자 경험은 Guest 모의투자를 중심으로 한다. 기존 Google/Kakao 회원 Backend 기반을 제거하거나 회원 자산 기능을 먼저 확장하라는 뜻은 아니다.
+- 별도 이메일 추가 인증과 거래 해금 퀘스트는 V2 요구사항에 없다. V1에 있었다는 이유로 구현하지 않는다.
+- 재도전 버튼은 동일 Guest 사용자/계정 ID를 유지하면서 모의 자금을 초기화하는 기능이다. 새 회원 MOCK 참가·포기 모델로 대체하지 않는다.
+- 현재 Guest 기본 자금은10000 USDT다. 재도전 API는 아직 없으며, 활성 주문·포지션과 기존 이력 처리 계약까지 함께 구현해야 한다.
+- 투자 성과·수익률·공개 포트폴리오는 후속 작업으로 미룬다. 현재 자금·증거금·주문 정합성에 필요한 기존 손익 계산은 유지한다.
 
 ---
 
@@ -97,6 +107,17 @@ OAuth2 로그인 성공 후 Yogimangchi 자체 JWT를 발급하고 이후 API �
 Guest 로그인 역시 자체 JWT를 발급하여 OAuth2 사용자와 동일한 인증 흐름을 사용한다.
 
 이를 통해 로그인 방식과 관계없이 Backend에서는 사용자를 동일한 방식으로 처리한다.
+
+현재 Content에는 Google/Kakao OAuth 로그인 증명, 약관·닉네임 가입, 자체 회원 JWT 발급과
+Refresh 회전·로그아웃, 본인 프로필 조회를 구현한다. 외부 OAuth2 공급자는 이 두 개로 제한한다.
+회원 Access JWT는15분이며 JSON 응답으로 제공하고 Frontend 메모리에서 Bearer로 사용한다.
+Refresh는 고정7일 HttpOnly 쿠키(운영 Secure)이며 DB에 해시만 보존한다.
+사용 시 회전하고 재사용 시 해당 로그인 세션 계열을 폐기한다. 갱신·로그아웃 등 쿠키 사용 요청에는 CSRF를 검증한다.
+로그아웃 후 이미 발급된 Access는 최대15분 유효할 수 있다. 인증 토큰을 URL에 넣지 않는다.
+Trading은 자체 회원 JWT를 공개키로 검증하고 memberId로 자신의 선물 계정을 구분한다.
+회원 계정은 명시적으로 생성하며 초기 선물 잔액은0 USDT다. 기존 Guest Bearer/체험 자산은 유지하고 Guest JWT 전환은 후속 단계다.
+Guest 금융 이력을 회원에게 자동 합치지 않는다. 실제 Frontend 변경은 Backend 작업에 포함하지 않는다.
+실행 설정과 정확한 API 계약은 [Content README](content-server/README.md), [Trading README](trading-server/README.md)를 따른다.
 
 ---
 
@@ -275,7 +296,8 @@ Trading 알림
 
 # 8. 애플리케이션 데이터 소유권
 
-현재는 공용 PostgreSQL Database `yogimangchi`를 사용하며, Trading은 `trading`, 향후 Content는 `content` Schema로 **데이터 소유권을 논리적으로 분리한다.** 현재 `content` Schema는 미리 생성하지 않는다.
+공용 PostgreSQL Database `yogimangchi`를 사용하며, Trading은 `trading`, Content는 `content` Schema로 **데이터 소유권을 논리적으로 분리한다.**
+각 서비스의 Flyway가 자신의 Schema만 관리한다. Content의 첫 migration은 실제 회원·인증 테이블을 생성하며 다른 서비스의 테이블에는 접근하지 않는다.
 
 ```text id="z9tqmv"
                 PostgreSQL
@@ -594,7 +616,7 @@ README
 API는 OpenAPI 3 기반으로 문서화한다.
 
 - Trading API 계약은 Controller/DTO에서 생성되는 개발 서버의 `/v3/api-docs`로 확인한다.
-- Content API 문서는 해당 애플리케이션 구현 시 제공한다.
+- Content API 계약도 Content 개발 서버의 `/v3/api-docs`에서 독립적으로 제공한다.
 
 개발 환경에서는 Swagger UI를 통해 API를 확인하고 테스트할 수 있다.
 운영 환경에서는 Swagger UI와 OpenAPI Docs endpoint를 외부에 노출하지 않는다.

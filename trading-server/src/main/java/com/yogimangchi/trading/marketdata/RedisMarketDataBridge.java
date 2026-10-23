@@ -40,9 +40,10 @@ public class RedisMarketDataBridge {
             if previous and tonumber(previous) >= tonumber(ARGV[1]) then return 0 end
             local time = redis.call('TIME')
             local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
-            local ttl = math.min(tonumber(ARGV[1]), tonumber(ARGV[2])) + 5000 - now
-            if ttl <= 0 or tonumber(ARGV[1]) > now + 1000 or tonumber(ARGV[2]) > now + 1000 then return -1 end
-            ttl = math.min(ttl, 5000)
+            local ttl = tonumber(ARGV[2]) + tonumber(ARGV[5]) - now
+            if ttl <= 0 or tonumber(ARGV[2]) > now + tonumber(ARGV[6])
+                or math.abs(tonumber(ARGV[1]) - tonumber(ARGV[2])) > tonumber(ARGV[7]) then return -1 end
+            ttl = math.min(ttl, tonumber(ARGV[5]))
             redis.call('SET', KEYS[1], ARGV[3], 'PX', ttl)
             redis.call('SET', KEYS[2], ARGV[1], 'EX', 86400)
             redis.call('SET', KEYS[3], 'FRESH', 'PX', ttl)
@@ -210,7 +211,9 @@ public class RedisMarketDataBridge {
             Long accepted = redis.execute(PRICE_SCRIPT, List.of(snapshotKey(price.tradingSymbolId()),
                     watermarkKey(price.tradingSymbolId()), stateKey(price.tradingSymbolId()), STREAM_KEY, CHANNEL),
                     Long.toString(price.eventTime().toEpochMilli()), Long.toString(price.receivedAt().toEpochMilli()),
-                    payload, Long.toString(STREAM_MAX_LENGTH));
+                    payload, Long.toString(STREAM_MAX_LENGTH), Long.toString(MarkPriceTimePolicy.FRESH_FOR.toMillis()),
+                    Long.toString(MarkPriceTimePolicy.MAX_RECEIPT_FUTURE.toMillis()),
+                    Long.toString(MarkPriceTimePolicy.REJECT_THRESHOLD.toMillis()));
             if (Long.valueOf(-1).equals(accepted)) {
                 gapSequence.incrementAndGet();
             }

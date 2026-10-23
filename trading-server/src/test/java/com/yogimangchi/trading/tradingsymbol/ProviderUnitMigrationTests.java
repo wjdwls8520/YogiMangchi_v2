@@ -15,7 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest(properties = "binance.mark-price.enabled=false")
+@SpringBootTest(properties = {"binance.mark-price.enabled=false", "binance.order-book.enabled=false"})
 @AutoConfigureMockMvc
 @Import(PostgresTestConfiguration.class)
 class ProviderUnitMigrationTests {

@@ -27,14 +27,16 @@ public class TradingAccountService {
     private final PositionRepository positions;
     private final AccountLock accountLock;
     private final AccountValuation valuation;
+    private final LiquidationPriceEstimator liquidationPrices;
 
     public TradingAccountService(TradingAccountRepository accounts, WalletRepository wallets,
-            PositionRepository positions, AccountLock accountLock, AccountValuation valuation) {
+            PositionRepository positions, AccountLock accountLock, AccountValuation valuation, LiquidationPriceEstimator liquidationPrices) {
         this.accounts = accounts;
         this.wallets = wallets;
         this.positions = positions;
         this.accountLock = accountLock;
         this.valuation = valuation;
+        this.liquidationPrices = liquidationPrices;
     }
 
     @Transactional
@@ -50,27 +52,49 @@ public class TradingAccountService {
 
     @Transactional
     public AccountSummaryResponse summary(Long accountId) {
+        Snapshot state = snapshot(accountId);
+        var estimates = liquidationPrices.estimate(state.open(), state.value().prices(), state.account().isIsolated());
+        return new AccountSummaryResponse(state.account().getId(), state.account().getStatus().name(), state.account().getCreatedAt(),
+                walletResponse(state.account(), state.wallet(), state.value()),
+                state.open().stream().map(position -> response(position, state.value().prices().get(position.getTradingSymbolId()),
+                        estimates.get(position.getId()), state.account().getMarginMode())).toList(), state.value().capturedAt());
+    }
+
+    @Transactional
+    public WalletResponse wallet(Long accountId) {
+        Snapshot state = snapshot(accountId);
+        return walletResponse(state.account(), state.wallet(), state.value()); // Wallet-only reads do not search liquidation boundaries.
+    }
+
+    private record Snapshot(TradingAccount account, Wallet wallet, List<Position> open, AccountValuation.Value value) { }
+
+    private Snapshot snapshot(Long accountId) {
         // Reads use the same short account lock so wallet and positions cannot span different commits.
         TradingAccount account = accountLock.lock(accountId);
         Wallet wallet = wallets.findById(accountId).orElseThrow(() -> new IllegalStateException("Account wallet missing"));
         List<Position> open = positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN);
         AccountValuation.Value value = valuation.calculate(wallet, open);
-        WalletResponse walletResponse = new WalletResponse("USDT", decimal(wallet.getBalance()), decimal(wallet.getUsedMargin()),
-                decimal(wallet.getReservedMargin()), decimal(wallet.getRealizedPnl()), decimal(value.unrealizedPnl()),
-                decimal(value.equity()), decimal(value.availableBalance()), value.fresh() ? "FRESH" : "UNAVAILABLE");
-        return new AccountSummaryResponse(account.getId(), account.getStatus().name(), account.getCreatedAt(), walletResponse,
-                open.stream().map(position -> response(position, value.prices().get(position.getTradingSymbolId()))).toList(), value.capturedAt());
+        return new Snapshot(account, wallet, open, value);
     }
 
-    private PositionResponse response(Position position, LatestPriceStore.Snapshot snapshot) {
+    private WalletResponse walletResponse(TradingAccount account, Wallet wallet, AccountValuation.Value value) {
+        return new WalletResponse("USDT", decimal(wallet.getBalance()), decimal(wallet.getUsedMargin()),
+                decimal(wallet.getReservedMargin()), decimal(wallet.getRealizedPnl()), decimal(value.unrealizedPnl()),
+                decimal(value.equity()), account.isIsolated() ? decimal(value.availableBalance()) : null,
+                value.fresh() ? "FRESH" : "UNAVAILABLE", decimal(wallet.getFeesPaid()), decimal(wallet.getSettlementAdjustment()),
+                account.getMarginMode(), account.getMarginTransitionStatus().name());
+    }
+
+    private PositionResponse response(Position position, LatestPriceStore.Snapshot snapshot, LiquidationPriceEstimator.Estimate estimate, String marginMode) {
         boolean fresh = snapshot.status() == LatestPriceStore.Status.FRESH;
         BigDecimal mark = fresh ? snapshot.latestPrice().orElseThrow().domainMarkPrice() : null;
-        BigDecimal pnl = fresh ? TradingMath.pnl(position.getSide(), position.getEntryPrice(), mark, position.getQuantity()) : null;
+        BigDecimal pnl = fresh ? position.unrealizedPnl(mark) : null;
         return new PositionResponse(position.getId(), position.getTradingSymbolId(), position.getSide().name(), decimal(position.getQuantity()),
                 decimal(position.getReservedCloseQuantity()), decimal(position.getFreeCloseQuantity()),
                 decimal(position.getEntryPrice()), position.getLeverage(), decimal(position.getMargin()), position.getStatus().name(),
                 decimal(position.getRealizedPnl()), decimal(mark), decimal(pnl), snapshot.status().name(),
-                snapshot.latestPrice().map(price -> price.eventTime()).orElse(null), position.getOpenedAt());
+                snapshot.latestPrice().map(price -> price.eventTime()).orElse(null), position.getOpenedAt(),
+                decimal(estimate.price()), estimate.status(), estimate.asOf(), marginMode, position.getOpenedMarginMode());
     }
 
     private static String decimal(BigDecimal value) { return value == null ? null : value.toPlainString(); }

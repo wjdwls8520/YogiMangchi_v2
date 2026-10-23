@@ -7,20 +7,30 @@ import java.util.Objects;
 @Entity
 @Table(name = "trading_account")
 public class TradingAccount {
-    public enum Status { ACTIVE, BANKRUPT }
+    public enum Status { ACTIVE, BANKRUPT, WITHDRAWN }
+    public enum MarginTransitionStatus { COMPLETE, PENDING, REVIEW_REQUIRED }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 16)
     private Status status;
-    @Column(nullable = false, length = 64, updatable = false)
-    private String credentialHash;
     @Column(nullable = false, updatable = false)
+    private boolean guestAccount;
+    @Column(length = 64, updatable = false)
+    private String credentialHash;
+    @Column(updatable = false)
     private Instant credentialExpiresAt;
+    @Column(updatable=false,unique=true)
+    private Long memberId;
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
     @Column(nullable = false)
     private Instant lastFinancialChangeAt;
+    @Enumerated(EnumType.STRING) @Column(nullable = false, length = 20)
+    private MarginTransitionStatus marginTransitionStatus;
+    private Instant isolatedActivatedAt;
+    private Instant withdrawnAt;
+    private Instant memberRoundStartedAt;
 
     protected TradingAccount() { }
 
@@ -29,10 +39,13 @@ public class TradingAccount {
         if (!Objects.requireNonNull(expiresAt).isAfter(Objects.requireNonNull(now))) throw new IllegalArgumentException("Credential expiry must be in the future");
         TradingAccount result = new TradingAccount();
         result.status = Status.ACTIVE;
+        result.guestAccount = true;
         result.credentialHash = credentialHash;
         result.credentialExpiresAt = expiresAt;
         result.createdAt = now;
         result.lastFinancialChangeAt = now;
+        result.marginTransitionStatus = MarginTransitionStatus.COMPLETE;
+        result.isolatedActivatedAt = now;
         return result;
     }
 
@@ -42,9 +55,51 @@ public class TradingAccount {
         lastFinancialChangeAt = priceVectorTime;
     }
 
+    public static TradingAccount member(Long memberId,Instant now) {
+        if(memberId==null || memberId<=0) throw new IllegalArgumentException("Member ID must be positive");
+        TradingAccount result=new TradingAccount(); result.memberId=memberId; result.guestAccount=false;
+        result.memberRoundStartedAt=now;result.status=Status.ACTIVE; result.createdAt=Objects.requireNonNull(now); result.lastFinancialChangeAt=now;
+        result.marginTransitionStatus=MarginTransitionStatus.COMPLETE; result.isolatedActivatedAt=now;
+        return result;
+    }
+
     public void declareBankrupt() { status = Status.BANKRUPT; }
+    public void restartGuest(Instant now) {
+        if(!guestAccount || memberId!=null) throw new IllegalStateException("Guest account required");
+        if(!credentialExpiresAt.isAfter(now)) throw new IllegalStateException("Guest credential expired");
+        status=Status.ACTIVE;
+        marginTransitionStatus=MarginTransitionStatus.COMPLETE;
+        isolatedActivatedAt=Objects.requireNonNull(now);
+        recordFinancialChange(now);
+    }
+    public void restartMember(Instant now) {
+        if(guestAccount||memberId==null||status==Status.WITHDRAWN)throw new IllegalStateException("Live member required");
+        memberRoundStartedAt=now;status=Status.ACTIVE;marginTransitionStatus=MarginTransitionStatus.COMPLETE;isolatedActivatedAt=Objects.requireNonNull(now);recordFinancialChange(now);
+    }
+    public void withdraw(Instant now) {
+        if(guestAccount) throw new IllegalStateException("Member account required");
+        if(status==Status.WITHDRAWN) return;
+        status=Status.WITHDRAWN; withdrawnAt=Objects.requireNonNull(now);
+        recordFinancialChange(now);
+    }
+    public boolean isIsolated() { return marginTransitionStatus == MarginTransitionStatus.COMPLETE; }
+    public void requireMarginReview() {
+        if (marginTransitionStatus != MarginTransitionStatus.PENDING) throw new IllegalStateException("Not awaiting margin transition");
+        marginTransitionStatus = MarginTransitionStatus.REVIEW_REQUIRED;
+    }
+    public void activateIsolated(Instant now) {
+        if (marginTransitionStatus != MarginTransitionStatus.PENDING) throw new IllegalStateException("Margin transition is not eligible");
+        marginTransitionStatus = MarginTransitionStatus.COMPLETE;
+        isolatedActivatedAt = Objects.requireNonNull(now);
+        recordFinancialChange(now);
+    }
+    public String getMarginMode() { return isIsolated() ? "ISOLATED" : "LEGACY_CROSS"; }
+    public MarginTransitionStatus getMarginTransitionStatus() { return marginTransitionStatus; }
     public Long getId() { return id; }
+    public Instant getMemberRoundStartedAt() {return memberRoundStartedAt;}
+    public Long getMemberId() { return memberId; }
     public Status getStatus() { return status; }
+    public boolean isGuestAccount() { return guestAccount; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getCredentialExpiresAt() { return credentialExpiresAt; }
     public Instant getLastFinancialChangeAt() { return lastFinancialChangeAt; }

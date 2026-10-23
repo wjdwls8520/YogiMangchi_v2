@@ -1,7 +1,7 @@
 import { TradingApiError } from "./client";
 import type { SessionSnapshot } from "./guest-session";
 import type { TradingOrder } from "./orders";
-import { validLimitPrice, validQuantity } from "./order-input";
+import { SERVER_MAX_LEVERAGE, validLimitPrice, validQuantity } from "./order-input";
 
 export type TradingCommand =
   | { kind: "open"; tradingSymbolId: number; type: "MARKET" | "LIMIT"; side: "LONG" | "SHORT"; quantity: string; leverage: number; limitPrice?: string }
@@ -15,7 +15,7 @@ export function mutationRequest(command: TradingCommand) {
   if (command.kind === "cancel") return { path: `account/orders/${command.orderId}/cancel`, body: undefined, keyed: false };
   if (command.quantity !== undefined && !validQuantity(command.quantity)) throw new TradingApiError(400, "수량은 양수이며 소수점 8자리 이내여야 합니다.");
   if (command.kind === "open") {
-    if (!validQuantity(command.quantity) || !Number.isInteger(command.leverage) || command.leverage < 1 || command.leverage > 20
+    if (!validQuantity(command.quantity) || !Number.isInteger(command.leverage) || command.leverage < 1 || command.leverage > SERVER_MAX_LEVERAGE
       || !["MARKET", "LIMIT"].includes(command.type) || !["LONG", "SHORT"].includes(command.side)) throw new TradingApiError(400, "주문 수량·유형·방향·레버리지를 확인해 주세요.");
     if (command.type === "LIMIT" && !validLimitPrice(command.limitPrice ?? "")) throw new TradingApiError(400, "양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.");
     return { path: "account/orders", body: { type: command.type, tradingSymbolId: command.tradingSymbolId, side: command.side,
@@ -50,6 +50,13 @@ export function createTradingIntent(send: (request: TradingIntent) => Promise<Tr
 }
 
 const businessMessages: Record<string, string> = {
+  MARGIN_MIGRATION_REQUIRED:"담보 전환이 완료되지 않아 거래가 제한됩니다. Guest 재도전 또는 계정 상태 확인이 필요합니다.",
+  GUEST_ACCOUNT_REQUIRED:"Guest 계정에서만 재도전할 수 있습니다.",
+  GUEST_CREDENTIAL_EXPIRED:"Guest 인증이 만료되었습니다. 새 모의투자는 직접 시작해 주세요.",
+  LEVERAGE_MISMATCH: "종목 레버리지가 변경되었습니다. 서버 설정을 다시 조회했습니다. 레버리지를 확인한 뒤 직접 주문해 주세요.",
+  INVALID_LEVERAGE: "서버가 허용하는 범위의 정수 레버리지를 선택해 주세요.",
+  POSITION_NOT_FOUND: "포지션을 찾을 수 없습니다. 최신 포지션 목록을 확인해 주세요.",
+  MARKETABLE_LIMIT_NOT_ALLOWED: "현재 가격을 즉시 교차하는 지정가는 사용할 수 없습니다. 주문 방향과 지정가를 확인해 주세요.",
   TRADING_BUSY: "계정이 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요.",
   INSUFFICIENT_MARGIN: "사용 가능한 증거금이 부족합니다.", ACCOUNT_AT_RISK: "계정 위험 처리 중입니다. 계정 상태를 확인해 주세요.",
   PRICE_NOT_FRESH: "보유 종목의 최신 시세가 필요합니다. 시세 복구 후 다시 시도해 주세요.", ENGINE_RECOVERING: "거래 서버가 복구 중입니다. 잠시 후 다시 시도해 주세요.",

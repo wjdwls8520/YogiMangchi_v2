@@ -48,7 +48,17 @@ marketdata:
   websocket:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
 
+binance:
+  order-book:
+    enabled: ${BINANCE_ORDER_BOOK_ENABLED:true}
+
 trading:
+  member-auth:
+    enabled: ${TRADING_MEMBER_AUTH_ENABLED:false}
+    issuer: ${YOGIMANGCHI_JWT_ISSUER:http://localhost:8080}
+    public-key-path: ${TRADING_JWT_PUBLIC_KEY_PATH:}
+  guest-cleanup:
+    enabled: ${TRADING_GUEST_CLEANUP_ENABLED:true}
   trigger:
     enabled: ${TRADING_TRIGGER_ENABLED:true}
   http:

@@ -11,11 +11,12 @@ public class GuestCredentialService {
     private final TradingAccountRepository accounts;
     public GuestCredentialService(TradingAccountRepository accounts) { this.accounts = accounts; }
 
-    @Transactional(readOnly = true)
-    public Optional<GuestPrincipal> authenticate(String token) {
+    @Transactional(readOnly = true, timeout = 3)
+    public Optional<TradingPrincipal> authenticate(String token) {
         if (!GuestCredentials.isValidFormat(token)) return Optional.empty();
         return accounts.findByCredentialHash(GuestCredentials.hash(token))
+                .filter(com.yogimangchi.trading.tradingaccount.entity.TradingAccount::isGuestAccount)
                 .filter(account -> account.getCredentialExpiresAt().isAfter(Instant.now()))
-                .map(account -> new GuestPrincipal(account.getId()));
+                .map(account -> new TradingPrincipal(account.getId(),account.getCredentialExpiresAt()));
     }
 }
