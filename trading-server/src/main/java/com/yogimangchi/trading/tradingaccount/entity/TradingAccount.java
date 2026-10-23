@@ -30,6 +30,7 @@ public class TradingAccount {
     private MarginTransitionStatus marginTransitionStatus;
     private Instant isolatedActivatedAt;
     private Instant withdrawnAt;
+    private Instant memberRoundStartedAt;
 
     protected TradingAccount() { }
 
@@ -57,7 +58,7 @@ public class TradingAccount {
     public static TradingAccount member(Long memberId,Instant now) {
         if(memberId==null || memberId<=0) throw new IllegalArgumentException("Member ID must be positive");
         TradingAccount result=new TradingAccount(); result.memberId=memberId; result.guestAccount=false;
-        result.status=Status.ACTIVE; result.createdAt=Objects.requireNonNull(now); result.lastFinancialChangeAt=now;
+        result.memberRoundStartedAt=now;result.status=Status.ACTIVE; result.createdAt=Objects.requireNonNull(now); result.lastFinancialChangeAt=now;
         result.marginTransitionStatus=MarginTransitionStatus.COMPLETE; result.isolatedActivatedAt=now;
         return result;
     }
@@ -70,6 +71,10 @@ public class TradingAccount {
         marginTransitionStatus=MarginTransitionStatus.COMPLETE;
         isolatedActivatedAt=Objects.requireNonNull(now);
         recordFinancialChange(now);
+    }
+    public void restartMember(Instant now) {
+        if(guestAccount||memberId==null||status==Status.WITHDRAWN)throw new IllegalStateException("Live member required");
+        memberRoundStartedAt=now;status=Status.ACTIVE;marginTransitionStatus=MarginTransitionStatus.COMPLETE;isolatedActivatedAt=Objects.requireNonNull(now);recordFinancialChange(now);
     }
     public void withdraw(Instant now) {
         if(guestAccount) throw new IllegalStateException("Member account required");
@@ -91,6 +96,7 @@ public class TradingAccount {
     public String getMarginMode() { return isIsolated() ? "ISOLATED" : "LEGACY_CROSS"; }
     public MarginTransitionStatus getMarginTransitionStatus() { return marginTransitionStatus; }
     public Long getId() { return id; }
+    public Instant getMemberRoundStartedAt() {return memberRoundStartedAt;}
     public Long getMemberId() { return memberId; }
     public Status getStatus() { return status; }
     public boolean isGuestAccount() { return guestAccount; }

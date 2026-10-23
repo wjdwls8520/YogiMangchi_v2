@@ -149,6 +149,7 @@ public class Position {
     public BigDecimal closeForGuestRetry(Instant now) {
         return closeAdministratively(now,"GUEST_RETRY");
     }
+    public BigDecimal closeForMemberRestart(Instant now) {return closeAdministratively(now,"MEMBER_RESTART");}
     private BigDecimal closeAdministratively(Instant now,String reason) {
         if(status!=Status.OPEN || reservedCloseQuantity.signum()!=0 || now.isBefore(openedAt))
             throw new IllegalStateException("Administrative closure requires an unreserved open position");

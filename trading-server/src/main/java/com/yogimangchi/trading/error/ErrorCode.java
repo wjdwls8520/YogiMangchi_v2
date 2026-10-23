@@ -3,6 +3,10 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    TRADING_ACCOUNT_REQUIRED(HttpStatus.CONFLICT,"Explicit member Trading account opening required"),
+    MEMBER_ACCOUNT_REQUIRED(HttpStatus.FORBIDDEN,"Member simulation account required"),
+    ROUND_NOT_FOUND(HttpStatus.NOT_FOUND,"Own trading round not found"),
+    MEMBER_RESTART_LIMITED(HttpStatus.TOO_MANY_REQUESTS,"Restart available24 hours after last successful restart"),
     GUEST_ACCOUNT_REQUIRED(HttpStatus.FORBIDDEN, "Retry is available only to an authenticated Guest account"),
     GUEST_CREDENTIAL_EXPIRED(HttpStatus.UNAUTHORIZED, "Guest credential expired before retry acquired the account lock"),
     WITHDRAWAL_SUBJECT_MISMATCH(HttpStatus.FORBIDDEN, "Withdrawal credential does not identify the requested member"),

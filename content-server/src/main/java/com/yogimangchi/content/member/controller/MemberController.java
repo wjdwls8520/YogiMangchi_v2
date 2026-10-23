@@ -27,14 +27,22 @@ public class MemberController {
     public MemberController(MemberQueries members,MemberProfiles profiles,MemberWithdrawals withdrawals,@Value("${content.auth.secure-cookies}") boolean secureCookies) { this.members=members; this.profiles=profiles; this.withdrawals=withdrawals; this.secureCookies=secureCookies; }
     @PostMapping("/me/withdrawal")
     @SecurityRequirement(name="memberBearer")
-    @Operation(summary="Withdraw own membership",description="Bearer only. Soft-deletes membership, revokes refresh sessions and durably requests Trading cleanup. Returns202 PENDING until Trading acknowledges;200 COMPLETED on a later repeat. Repeats are idempotent. Trading cancels pending orders and administratively closes positions without market fills, new PnL or fees. No Guest history merge. Existing Access may remain valid in Trading until delivery, at most its15-minute expiry.")
-    public ResponseEntity<MemberWithdrawals.Result> withdraw(@AuthenticationPrincipal Jwt jwt,HttpServletRequest request) {
-        var result=withdrawals.request(Long.valueOf(jwt.getSubject()));
+    @Operation(summary="Request own irreversible withdrawal",description="Bearer + fresh same-member Google/Kakao proof session + CSRF. Body acknowledged=true, confirmation=탈퇴합니다, policyVersion=ym-withdrawal-v1. Returns202 PENDING while Trading cleanup is unconfirmed. Only after Trading commits its account lock/cleanup does Content erase OAuth identity, profile and refresh data and return COMPLETED. Pending users cannot use Content member functions. Repeat with the same valid confirmation is safe; GET status does not require proof/CSRF. No-body requests400. No recovery/old history merge on re-signup.")
+    public ResponseEntity<MemberWithdrawals.Result> withdraw(@AuthenticationPrincipal Jwt jwt,HttpServletRequest request,@RequestBody com.yogimangchi.content.member.dto.WithdrawalRequest body) {
+        var session=request.getSession(false);
+        var proof=session!=null && session.getAttribute(com.yogimangchi.content.auth.oauth.VerifiedIdentity.SESSION_KEY) instanceof com.yogimangchi.content.auth.oauth.VerifiedIdentity p ? p : null;
+        var result=withdrawals.request(Long.valueOf(jwt.getSubject()),body,proof);
         if(request.getSession(false)!=null) request.getSession(false).invalidate();
         var expired=ResponseCookie.from(AuthController.REFRESH_COOKIE,"").path("/api/v1/auth").httpOnly(true)
                 .secure(secureCookies).sameSite("Lax").maxAge(0).build();
         return ResponseEntity.status(result.status().equals("COMPLETED") ? 200 : 202).header(HttpHeaders.SET_COOKIE,expired.toString())
                 .cacheControl(CacheControl.noStore()).body(result);
+    }
+    @GetMapping("/me/withdrawal")
+    @SecurityRequirement(name="memberBearer")
+    @Operation(summary="Read own durable withdrawal progress",description="Existing unexpired member JWT accepted solely for own PENDING/COMPLETED status; no profile/financial access is granted.")
+    public ResponseEntity<MemberWithdrawals.Result> withdrawalStatus(@AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(withdrawals.status(Long.valueOf(jwt.getSubject())));
     }
     @GetMapping("/me")
     @SecurityRequirement(name="memberBearer")

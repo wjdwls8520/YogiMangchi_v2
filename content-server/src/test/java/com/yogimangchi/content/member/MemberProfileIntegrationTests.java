@@ -41,7 +41,7 @@ class MemberProfileIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.role").doesNotExist()).andExpect(jsonPath("$.providerSubject").doesNotExist());
         mvc.perform(get("/api/v1/members/me")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/members/0")).andExpect(status().isNotFound());
-        jdbc.update("update content.member set status='WITHDRAWN',withdrawn_at=now() where id=?",own.access().memberId());
+        jdbc.update("update content.member set status='WITHDRAWN',withdrawn_at=now(),nickname=NULL,profile_message='' where id=?",own.access().memberId());
         mvc.perform(get("/api/v1/members/"+own.access().memberId())).andExpect(status().isNotFound());
         mvc.perform(patch("/api/v1/members/me/profile").header("Authorization",bearer()).contentType("application/json").content("{\"profileMessage\":\"blocked\"}"))
                 .andExpect(status().isUnauthorized());
@@ -111,7 +111,7 @@ class MemberProfileIntegrationTests extends TestEnvironment {
 
     private AuthService.Issued member() {
         var id=new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"profile@example.test",Instant.now().plusSeconds(300));
-        return auth.signup(id,new SignupRequest(nickname(),true,true,"original"));
+        return auth.signup(id,new SignupRequest(nickname(),true,true,"original","ym-terms-v1","ym-privacy-v1"));
     }
     private String bearer() { return "Bearer "+own.access().accessToken(); }
     private static String nickname() { return UUID.randomUUID().toString().replace("-","").substring(0,8); }

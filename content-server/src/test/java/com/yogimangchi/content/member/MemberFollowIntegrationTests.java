@@ -82,7 +82,7 @@ class MemberFollowIntegrationTests extends TestEnvironment {
     @Test void withdrawalDeactivatesBothDirectionsAndRemovesCountsAndPublicVisibility() throws Exception {
         follows.change(a.access().memberId(),b.access().memberId(),true);
         follows.change(b.access().memberId(),a.access().memberId(),true);
-        withdrawals.request(a.access().memberId());
+        withdraw(a.access().memberId());
         assertThat(rows(true)).isZero(); assertThat(rows(false)).isEqualTo(1);
         assertThat(follows.summary(b.access().memberId(),null).followerCount()).isZero();
         assertThat(follows.summary(b.access().memberId(),null).followingCount()).isZero();
@@ -104,7 +104,7 @@ class MemberFollowIntegrationTests extends TestEnvironment {
         var start=new CountDownLatch(1); var pool=Executors.newFixedThreadPool(2);
         try {
             var follow=pool.submit(() -> { start.await(); try { follows.change(a.access().memberId(),b.access().memberId(),true); } catch(AuthFailure expected) { assertThat(expected.code()).isEqualTo("MEMBER_NOT_FOUND"); } return null; });
-            var withdrawal=pool.submit(() -> { start.await(); withdrawals.request(b.access().memberId()); return null; });
+            var withdrawal=pool.submit(() -> { start.await(); withdraw(b.access().memberId()); return null; });
             start.countDown(); follow.get(10,TimeUnit.SECONDS); withdrawal.get(10,TimeUnit.SECONDS);
             assertThat(rows(true)).isZero();
         } finally { start.countDown(); pool.shutdownNow(); }
@@ -118,9 +118,13 @@ class MemberFollowIntegrationTests extends TestEnvironment {
         for(String method:List.of("PUT","DELETE")) mvc.perform(options(url(b)).header("Origin","https://app.test").header("Access-Control-Request-Method",method).header("Access-Control-Request-Headers","Authorization"))
                 .andExpect(status().isOk()).andExpect(header().string("Access-Control-Allow-Origin","https://app.test"));
     }
+    private void withdraw(Long id) {
+        var subject=jdbc.queryForObject("select provider_subject from content.oauth_identity where member_id=?",String.class,id);
+        withdrawals.request(id,new com.yogimangchi.content.member.dto.WithdrawalRequest(true,"탈퇴합니다","ym-withdrawal-v1"),new VerifiedIdentity(Provider.GOOGLE,subject,"follow@example.test",Instant.now().plusSeconds(300)));
+    }
     private long rows(boolean active) { return jdbc.queryForObject("select count(*) from content.member_follow where follower_id=? and following_id=? and active=?",Long.class,a.access().memberId(),b.access().memberId(),active); }
     private static String url(AuthService.Issued member) { return "/api/v1/members/"+member.access().memberId()+"/follows"; }
     private AuthService.Issued member() {
-        return auth.signup(new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"follow@example.test",Instant.now().plusSeconds(300)),new SignupRequest(UUID.randomUUID().toString().replace("-","").substring(0,8),true,true,"follow profile"));
+        return auth.signup(new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"follow@example.test",Instant.now().plusSeconds(300)),new SignupRequest(UUID.randomUUID().toString().replace("-","").substring(0,8),true,true,"follow profile","ym-terms-v1","ym-privacy-v1"));
     }
 }

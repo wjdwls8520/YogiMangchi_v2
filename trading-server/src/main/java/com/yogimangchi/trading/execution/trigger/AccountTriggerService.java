@@ -75,6 +75,7 @@ public class AccountTriggerService {
         for (Position position : List.copyOf(open)) {
             var snapshot = snapshots.get(position.getTradingSymbolId());
             if (snapshot.status() == LatestPriceStore.Status.FRESH
+                    && (account.isGuestAccount() || !account.getMemberRoundStartedAt().isAfter(snapshot.latestPrice().orElseThrow().receivedAt()))
                     && isolated.risk(position, snapshot.latestPrice().orElseThrow().domainMarkPrice()).atRisk()) {
                 liquidate(account, wallet, position, pending, snapshot.latestPrice().orElseThrow(), now);
                 // Hibernate inserts IDENTITY rows before dirty updates. Release the OPEN unique key

@@ -128,6 +128,10 @@ public class Wallet {
         balance=TradingMath.amount(TradingMath.INITIAL_BALANCE);
         // Lifetime Fill totals stay intact; the separate retry record explains the cash adjustment.
     }
+    public void restartMember() {
+        if(usedMargin.signum()!=0||reservedMargin.signum()!=0)throw new IllegalStateException("Member restart requires no exposure");
+        balance=TradingMath.amount(TradingMath.INITIAL_BALANCE);
+    }
     public BigDecimal getBalance() { return balance; }
     public BigDecimal getUsedMargin() { return usedMargin; }
     public BigDecimal getReservedMargin() { return reservedMargin; }

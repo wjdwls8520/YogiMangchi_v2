@@ -13,7 +13,13 @@ import org.springframework.web.bind.annotation.*;
 @ConditionalOnProperty(name="trading.member-auth.enabled",havingValue="true")
 public class MemberWithdrawalController {
     private final MemberWithdrawal withdrawal;
-    public MemberWithdrawalController(MemberWithdrawal withdrawal) { this.withdrawal=withdrawal; }
+    private final com.yogimangchi.trading.tradingaccount.service.MemberAccounts accounts;
+    public MemberWithdrawalController(MemberWithdrawal withdrawal,com.yogimangchi.trading.tradingaccount.service.MemberAccounts accounts) { this.withdrawal=withdrawal;this.accounts=accounts; }
+    @PostMapping("/internal/v1/members/{memberId:[0-9]+}/trading-account")
+    public ResponseEntity<Void> provision(@PathVariable Long memberId,@AuthenticationPrincipal Jwt jwt) {
+        if(!memberId.toString().equals(jwt.getSubject()))throw new BusinessException(ErrorCode.WITHDRAWAL_SUBJECT_MISMATCH);
+        accounts.open(memberId);return ResponseEntity.noContent().build();
+    }
     @PostMapping("/internal/v1/members/{memberId:[0-9]+}/withdrawal")
     public ResponseEntity<Void> withdraw(@PathVariable Long memberId,@AuthenticationPrincipal Jwt jwt) {
         if(!memberId.toString().equals(jwt.getSubject())) throw new BusinessException(ErrorCode.WITHDRAWAL_SUBJECT_MISMATCH);

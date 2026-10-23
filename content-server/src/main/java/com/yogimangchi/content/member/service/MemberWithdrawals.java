@@ -19,16 +19,29 @@ public class MemberWithdrawals {
         this.members=members; this.refresh=refresh; this.jdbc=jdbc;
     }
     @Transactional(timeout=5)
-    public Result request(Long memberId) {
+    public Result request(Long memberId,com.yogimangchi.content.member.dto.WithdrawalRequest body,com.yogimangchi.content.auth.oauth.VerifiedIdentity proof) {
+        if(body==null) throw new AuthFailure("WITHDRAWAL_CONFIRMATION_REQUIRED",org.springframework.http.HttpStatus.BAD_REQUEST);
+        body.validate();
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
         var member=members.lockById(memberId).orElseThrow(AuthFailure::unauthorized);
         Instant now=Instant.now();
-        member.withdraw(now);
+        if(member.getStatus()==com.yogimangchi.content.member.entity.Member.Status.ACTIVE) {
+            if(proof==null) throw AuthFailure.unauthorized();
+            proof.requireFresh();
+            if(!Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from content.oauth_identity where member_id=? and provider=? and provider_subject=?)",Boolean.class,memberId,proof.provider().name(),proof.subject()))) throw AuthFailure.unauthorized();
+            member.beginWithdrawal();
+        }
         jdbc.update("update content.member_follow set active=false,deactivated_at=now() where active and (follower_id=? or following_id=?)",memberId,memberId);
         refresh.revokeMember(memberId,now);
-        jdbc.update("insert into content.member_withdrawal(member_id,status,requested_at,next_attempt_at) values (?,'PENDING',?,?) on conflict(member_id) do nothing",
-                memberId,java.sql.Timestamp.from(now),java.sql.Timestamp.from(now));
+        jdbc.update("update content.member_trading_provision set status='CANCELED' where member_id=? and status='PENDING'",memberId);
+        jdbc.update("insert into content.member_withdrawal(member_id,status,requested_at,next_attempt_at,confirmation_version,confirmed_at) values (?,'PENDING',?,?,?,?) on conflict(member_id) do nothing",
+                memberId,java.sql.Timestamp.from(now),java.sql.Timestamp.from(now),body.policyVersion(),java.sql.Timestamp.from(now));
         return new Result(jdbc.queryForObject("select status from content.member_withdrawal where member_id=?",String.class,memberId));
+    }
+    @Transactional(readOnly=true,timeout=3)
+    public Result status(Long memberId) {
+        var rows=jdbc.queryForList("select status from content.member_withdrawal where member_id=?",String.class,memberId);
+        return new Result(rows.isEmpty()?"NOT_REQUESTED":rows.get(0));
     }
     @Transactional(readOnly=true,timeout=3)
     public List<Long> pending() {
@@ -36,6 +49,13 @@ public class MemberWithdrawals {
     }
     @Transactional(timeout=3)
     public void delivered(Long memberId) {
+        var member=members.lockById(memberId).orElseThrow();
+        if(jdbc.queryForObject("select count(*) from content.member_withdrawal where member_id=?",Long.class,memberId)==0) return;
+        // Privacy/security destruction only; business IDs and financial histories remain intact.
+        jdbc.update("delete from content.oauth_identity where member_id=?",memberId);
+        jdbc.update("delete from content.refresh_session where member_id=?",memberId);
+        jdbc.update("delete from content.member_consent_history where member_id=?",memberId);
+        member.withdraw(Instant.now());
         jdbc.update("update content.member_withdrawal set status='COMPLETED',completed_at=now() where member_id=? and status='PENDING'",memberId);
     }
     @Transactional(timeout=3)

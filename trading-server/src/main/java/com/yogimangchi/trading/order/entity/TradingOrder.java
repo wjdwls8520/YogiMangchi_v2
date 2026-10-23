@@ -126,6 +126,7 @@ public class TradingOrder {
     public void cancel(Instant now) { requirePending(); finish(Status.CANCELED, "CLIENT_CANCEL", now); }
     public void cancelForWithdrawal(Instant now) { requirePending(); finish(Status.CANCELED,"MEMBER_WITHDRAWAL",now); }
     public void cancelForGuestRetry(Instant now) { requirePending(); finish(Status.CANCELED,"GUEST_RETRY",now); }
+    public void cancelForMemberRestart(Instant now) {requirePending();finish(Status.CANCELED,"MEMBER_RESTART",now);}
     public void reject(String reason, Instant now) { requirePending(); finish(Status.REJECTED, reason, now); }
     private void requirePending() { if (status != Status.PENDING) throw new IllegalStateException("Order is not pending"); }
     private void finish(Status status, String reason, Instant now) {

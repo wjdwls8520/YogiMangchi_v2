@@ -28,11 +28,11 @@ public class AuthController {
     public ResponseEntity<Map<String,String>> csrf(CsrfToken token) { return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(Map.of("headerName",token.getHeaderName(),"token",token.getToken())); }
     @GetMapping("/flow")
     @Operation(summary="Read the short-lived verified Google/Kakao login flow",
-            description="After OAuth redirects to the fixed Frontend callback without tokens, read this using the temporary session cookie. Returns SIGNUP_REQUIRED or LOGIN_READY. 401 absent/expired proof; 400 provider email unavailable. Does not issue tokens or create a member.")
+            description="After OAuth redirects to the fixed Frontend callback without tokens, read this using the temporary session cookie. Returns SIGNUP_REQUIRED, LOGIN_READY or WITHDRAWAL_PENDING. 401 absent/expired proof; 400 provider email unavailable. Does not issue tokens or create a member.")
     public ResponseEntity<AuthService.Flow> flow(HttpServletRequest request) { return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(auth.flow(identity(request))); }
     @PostMapping("/signup")
-    @Operation(summary="Complete OAuth signup with nickname and both required consents",
-            description="Verified server session + CSRF required. No caller-provided provider subject, role, memberId or signup token is trusted. Returns 15-minute Access JWT JSON and sets a fixed-lifetime 7-day HttpOnly Refresh cookie. 400 validation, 401 proof, 409 identity/nickname conflict.")
+    @Operation(summary="Complete OAuth signup with nickname and both versioned required consents",
+            description="Verified server session + CSRF required. No caller-provided provider subject, role, memberId or signup token is trusted. Returns 15-minute Access JWT JSON and sets a fixed-lifetime 7-day HttpOnly Refresh cookie. 400 validation/missing versions, 401 proof, 409 identity/nickname/policy-version conflict. termsVersion/privacyVersion must match GET /api/v1/policies/current; consent history and provisioning outbox commit atomically.")
     public ResponseEntity<AccessResponse> signup(HttpServletRequest request,@Valid @RequestBody SignupRequest body) {
         return useProof(request,identity -> auth.signup(identity,body));
     }
