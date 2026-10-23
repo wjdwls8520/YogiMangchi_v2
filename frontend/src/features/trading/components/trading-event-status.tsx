@@ -18,7 +18,7 @@ export function TradingEventStatus() {
       if (refresh !== undefined) return;
       refresh = setTimeout(() => {
         refresh = undefined;
-        void client.invalidateQueries({ queryKey: tradingKeys.account(snapshot) }, { cancelRefetch: false });
+        void client.invalidateQueries({ queryKey: tradingKeys.account(snapshot), refetchType: snapshot.mode === "member" && document.visibilityState === "hidden" ? "none" : "active" }, { cancelRefetch: false });
       }, 100);
     };
     const stop = session.watchEvents(snapshot, event => {

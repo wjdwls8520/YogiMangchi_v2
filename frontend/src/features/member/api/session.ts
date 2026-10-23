@@ -1,5 +1,6 @@
 import { ContentApiError, contentJson } from "./client";
 import { parseAccess, parseCsrf, parseWithdrawal, type MemberAccess } from "./contracts";
+import { memberTabVisible } from "./activity";
 
 export type MemberSnapshot = { phase: "loading" | "anonymous" | "authenticating" | "ready" | "ending" | "withdrawing" | "error";
   memberId: number | null; nickname: string; expiresAt: string | null; generation: number; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
@@ -13,14 +14,16 @@ export function browserCookieLock(origin: string): CookieLock {
 }
 
 // Access exists only in this closure. Snapshots, cache keys, browser storage and errors contain no tokens.
-export function createMemberSession(origin: string, transport: typeof fetch = fetch, now = Date.now, lock = browserCookieLock(origin)) {
+export function createMemberSession(origin: string, transport: typeof fetch = fetch, now = Date.now, lock = browserCookieLock(origin), visible = memberTabVisible) {
   let snapshot = initialMember, access: MemberAccess | null = null;
   let refreshFlight: Promise<void> | null = null, authFlight: Promise<void> | null = null, logoutFlight: Promise<void> | null = null;
   let withdrawalAccess: MemberAccess | null = null, withdrawalFlight: Promise<ReturnType<typeof parseWithdrawal>> | null = null;
+  let refreshRequired = false;
   const listeners = new Set<() => void>(), accessListeners = new Set<(value: Readonly<MemberAccess> | null) => void>();
   const emit = () => { listeners.forEach(fn => fn()); accessListeners.forEach(fn => fn(access)); };
   function clear(phase: MemberSnapshot["phase"]) {
     access = null;
+    refreshRequired = false;
     snapshot = { ...initialMember, phase, generation: snapshot.generation + 1 }; emit();
   }
   function accept(value: unknown, generation: number) {
@@ -39,13 +42,19 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
   function refresh() {
     if (refreshFlight) return refreshFlight;
     if (logoutFlight || snapshot.phase === "ending" || snapshot.phase === "withdrawing") return Promise.reject(new ContentApiError(401));
+    const requireVisible = () => {
+      if (!visible()) { refreshRequired = true; throw new DOMException("Refresh deferred until visible", "AbortError"); }
+    };
+    try { requireVisible(); } catch (error) { return Promise.reject(error); }
     if (!access && snapshot.phase !== "loading") clear("loading");
     const generation = snapshot.generation;
     refreshFlight = lock(async () => {
       if (snapshot.generation !== generation) throw new DOMException("Session changed", "AbortError");
+      requireVisible();
       accept(await cookie("/auth/refresh"), generation);
+      refreshRequired = false;
     }).catch(error => {
-      if (snapshot.generation === generation) clear(error instanceof ContentApiError && error.status === 401 ? "anonymous" : "error");
+      if (snapshot.generation === generation && !(error instanceof DOMException && error.name === "AbortError")) clear(error instanceof ContentApiError && error.status === 401 ? "anonymous" : "error");
       throw error;
     }).finally(() => { refreshFlight = null; });
     return refreshFlight;
@@ -75,7 +84,7 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
       return result;
     } catch (error) {
       if (error instanceof ContentApiError && error.status === 401 && valid()) {
-        await refresh();
+        if (access === current) await refresh();
         if (retryRead && valid() && access) {
           try {
             const result = await operation(access);
@@ -99,7 +108,7 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
       if (snapshot.phase !== "ready" || snapshot.memberId !== memberId || snapshot.generation !== generation || snapshot.consentStatus === status) return;
       snapshot = { ...snapshot, consentStatus: status }; emit();
     },
-    async restore() { if (access && Date.parse(access.expiresAt) - now() >= 30_000) return; await refresh(); },
+    async restore() { if (access && !refreshRequired && Date.parse(access.expiresAt) - now() >= 30_000) return; await refresh(); },
     refresh,
     complete: () => authenticate("/auth/login/complete"),
     signup: (body: { nickname: string; profileMessage: string; termAgree: boolean; privateAgree: boolean; termsVersion: string; privacyVersion: string }) => authenticate("/auth/signup", body),

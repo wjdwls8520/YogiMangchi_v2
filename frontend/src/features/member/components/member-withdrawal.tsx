@@ -23,7 +23,7 @@ export function MemberWithdrawal() {
   }, [session, announce]);
   useEffect(() => {
     if (snapshot.phase !== "withdrawing") return;
-    const timer = setInterval(() => { if (failures.current < 3) void status(true); }, 5000);
+    const timer = setInterval(() => { if (document.visibilityState !== "hidden" && failures.current < 3) void status(true); }, 5000);
     return () => clearInterval(timer);
   }, [snapshot.phase, status]);
   async function withdraw(event: React.FormEvent<HTMLFormElement>) {
