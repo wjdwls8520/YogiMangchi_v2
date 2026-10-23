@@ -208,4 +208,18 @@ class MemberLifecycleIntegrationTests extends TestEnvironment {
         }finally{server.stop(0);}
     }
 
+    @Test void uncommittedIdentityErasureCannotMixOldMembershipWithConcurrentSignup() throws Exception {
+        var proof=proof(Provider.GOOGLE);var own=auth.signup(proof,signup());long id=own.access().memberId();
+        withdrawals.request(id,CONFIRM,proof);
+        var erased=new CountDownLatch(1);var release=new CountDownLatch(1);var pool=Executors.newSingleThreadExecutor();
+        try{
+            var delivery=pool.submit(()->new TransactionTemplate(transactions).execute(status->{withdrawals.delivered(id);erased.countDown();try{if(!release.await(8,TimeUnit.SECONDS))throw new IllegalStateException("test commit not released");}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException(e);}return null;}));
+            assertThat(erased.await(5,TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(()->auth.signup(proof,signup())).isInstanceOf(AuthFailure.class);
+            release.countDown();delivery.get(5,TimeUnit.SECONDS);
+            var rejoined=auth.signup(proof,new SignupRequest(own.access().nickname(),true,true,"","ym-terms-v1","ym-privacy-v1"));
+            assertThat(rejoined.access().memberId()).isNotEqualTo(id);assertThat(auth.completeLogin(proof).access().memberId()).isEqualTo(rejoined.access().memberId());
+        }finally{release.countDown();pool.shutdownNow();}
+    }
+
 }

@@ -172,7 +172,7 @@ HTTP503 재시도 대기/새 worker 재개/전용 JWT 서명·계약/204 완료 
 [Spring OAuth2 Login](https://docs.spring.io/spring-security/reference/6.5/servlet/oauth2/login/advanced.html),
 [Spring CSRF](https://docs.spring.io/spring-security/reference/6.5/servlet/exploits/csrf.html).
 
-2026-10-23 회원 생애주기 보강 후 Java17 clean build 성공,96개 테스트 통과(실패·오류·건너뜀0).
+2026-10-23 회원 생애주기 보강 후 Java17 clean build 성공,97개 테스트 통과(실패·오류·건너뜀0).
 버전 동의/가입/outbox 원자성, 기존 미상 동의와 재동의 append, 문서 해시·불변성, 탈퇴 확인/실제 CSRF/본인 OAuth,
 Google·Kakao 재가입의 새 ID/닉네임 재사용, 개인정보·Refresh 파기, 동시 signup/refresh·탈퇴, HTTP 생성 전달 재시도와 V3→V4 이관을 검증했다.
 실제 외부 OAuth 및 Frontend/Content/Trading 전체 사용자 시나리오는 별도 검증 단계다.
