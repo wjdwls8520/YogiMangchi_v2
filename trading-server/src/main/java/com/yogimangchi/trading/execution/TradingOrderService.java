@@ -80,7 +80,7 @@ public class TradingOrderService {
         OrderResponse previous = existing(accountId, key, hash);
         if (previous != null) return previous;
         requireActive(account);
-        if (request.leverage() != leverage.current(accountId, request.tradingSymbolId())) throw new BusinessException(ErrorCode.LEVERAGE_MISMATCH);
+        if (request.leverage() != leverage.current(accountId, request.tradingSymbolId(), request.side())) throw new BusinessException(ErrorCode.LEVERAGE_MISMATCH);
         if (symbols.findById(request.tradingSymbolId()).filter(s -> s.getStatus() == TradingSymbolStatus.ACTIVE).isEmpty())
             throw new BusinessException(ErrorCode.SYMBOL_NOT_AVAILABLE);
         Wallet wallet = wallet(accountId);

@@ -96,7 +96,7 @@ class TradeHistoryIntegrationTests {
 
     @Test void committedEventSnapshotsAreImmutableAndDuplicateTriggersDoNotCreateAnotherEvent() {
         var pending=orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,n("1"),10,n("990")));
-        leverage.change(guest.accountId(),btc,20);
+        leverage.change(guest.accountId(),btc,Position.Side.LONG,20);
         var tick=mark("980"); trigger.process(guest.accountId(),tick,Map.of(btc,tick));
         trigger.process(guest.accountId(),tick,Map.of(btc,tick));
         var retained=events.after(guest.accountId(),0,100);
@@ -113,7 +113,7 @@ class TradeHistoryIntegrationTests {
     @Test void cancellationAndLiquidationRetainPreciselyTheirOwnTransitionsAndNetLoss() {
         var canceled=orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,n("1"),10,n("990")));
         orders.cancel(guest.accountId(),canceled.orderId()); orders.cancel(guest.accountId(),canceled.orderId());
-        leverage.change(guest.accountId(),btc,100); var opened=open("10");
+        leverage.change(guest.accountId(),btc,Position.Side.LONG,100); var opened=open("10");
         orders.createLimitClose(guest.accountId(),opened.positionId(),key(),new LimitCloseRequest(n("5"),n("1100")));
         var risk=mark("800"); trigger.process(guest.accountId(),risk,Map.of(btc,risk));
         trigger.process(guest.accountId(),risk,Map.of(btc,risk));
@@ -213,7 +213,7 @@ class TradeHistoryIntegrationTests {
     private List<com.yogimangchi.trading.tradehistory.dto.FillHistoryResponse> fills(Long before,int limit) {
         return history.fills(guest.accountId(),before,limit,null,null,null,null,null,null);
     }
-    private OrderResponse open(String quantity) { return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n(quantity),leverage.current(guest.accountId(),btc),null)); }
+    private OrderResponse open(String quantity) { return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n(quantity),leverage.current(guest.accountId(),btc,Position.Side.LONG),null)); }
     private LatestMarkPrice mark(String amount) {
         Instant now=Instant.now();
         Instant event=prices.find(btc).latestPrice().map(LatestMarkPrice::eventTime).filter(p -> !p.isBefore(now)).map(p -> p.plusNanos(1)).orElse(now);
