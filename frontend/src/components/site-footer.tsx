@@ -1,3 +1,4 @@
+import Link from "next/link";
 export function SiteFooter() {
   return <footer className="site-footer" aria-label="사이트 안내">
     <div className="site-footer-content">
@@ -10,8 +11,8 @@ export function SiteFooter() {
         <ul><li>서비스 소개</li><li>공지사항</li><li>고객지원</li></ul>
       </div>
       <div className="site-footer-info">
-        <p className="site-footer-heading">이용 정책 <span>준비 중</span></p>
-        <ul><li>이용약관</li><li>개인정보처리방침</li></ul>
+        <p className="site-footer-heading">이용 정책 <span>초안</span></p>
+        <ul><li><Link href="/terms">이용약관</Link></li><li><Link href="/privacy">개인정보처리방침</Link></li></ul>
       </div>
       <p className="site-footer-copyright">© YOGIMANGCHI. All rights reserved.</p>
     </div>

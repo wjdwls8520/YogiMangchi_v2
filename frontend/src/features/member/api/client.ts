@@ -3,7 +3,7 @@ export class ContentApiError extends Error {
     super("회원 요청을 처리하지 못했습니다."); this.name = "ContentApiError";
   }
 }
-const codes = new Set(["NICKNAME_ALREADY_EXISTS", "NICKNAME_UNAVAILABLE", "MEMBER_BUSY", "INVALID_REQUEST", "INVALID_PROFILE", "INVALID_NICKNAME", "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED"]);
+const codes = new Set(["NICKNAME_ALREADY_EXISTS", "NICKNAME_UNAVAILABLE", "MEMBER_BUSY", "INVALID_REQUEST", "INVALID_PROFILE", "INVALID_NICKNAME", "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "POLICY_VERSION_OR_CONSENT_INVALID", "MEMBER_NOT_ACTIVE", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS"]);
 export function contentOrigin(value: string) {
   try {
     const url = new URL(value);
@@ -18,7 +18,7 @@ export function oauthUrl(origin: string, provider: "google" | "kakao") {
 export async function contentJson(origin: string, path: string, options: {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; access?: string; csrf?: string; body?: object; signal?: AbortSignal;
 } = {}, transport: typeof fetch = fetch): Promise<unknown> {
-  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout)|members(?:\/[^?#]*)?)(?:\?[^#]*)?$/.test(path)
+  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout)|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?)(?:\?[^#]*)?$/.test(path)
     || path.includes("..") || path.includes("\\")) throw new ContentApiError(400);
   const cookie = path.startsWith("/auth/") || path === "/members/me/withdrawal";
   try {
@@ -48,6 +48,8 @@ export async function contentJson(origin: string, path: string, options: {
 }
 export function contentMessage(error: unknown) {
   if (!(error instanceof ContentApiError)) return "요청을 처리하지 못했습니다. 다시 확인해 주세요.";
+  if (error.code === "POLICY_VERSION_OR_CONSENT_INVALID") return "정책 버전이 변경되었거나 필수 동의가 누락되었습니다. 최신 원문을 확인하고 다시 동의해 주세요.";
+  if (error.code === "WITHDRAWAL_CONFIRMATION_REQUIRED") return "안내 확인과 ‘탈퇴합니다’ 문구를 정확하게 입력해 주세요.";
   if (error.status === 401) return "로그인 상태가 만료되었습니다. 다시 로그인해 주세요.";
   if (error.status === 403) return "요청 권한 또는 로그인 설정을 확인해 주세요.";
   if (error.status === 404) return "회원을 찾을 수 없습니다.";

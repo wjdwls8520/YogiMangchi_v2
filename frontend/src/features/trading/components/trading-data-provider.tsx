@@ -7,6 +7,7 @@ import { createGuestSession, initialSession, type GuestSession } from "../api/gu
 import { TradingNoticeProvider } from "./trading-notices";
 import { GuestAccessProvider } from "./guest-access";
 import { useMember } from "../../member/components/member-provider";
+import { MemberRoundMonitor } from "./member-simulation";
 
 const SessionContext = createContext<GuestSession | null>(null);
 let browserSession: GuestSession | undefined;
@@ -38,9 +39,9 @@ export function TradingDataProvider({ children }: { children: ReactNode }) {
     const unsubscribe = bindGuestCache(client, session);
     const identity = memberSession.observeAccess(access => {
       const phase = memberSession.getSnapshot().phase;
-      if (access && phase === "ready") {
+      if (access && phase === "ready" && memberSession.getSnapshot().consentStatus === "accepted") {
         void session.enterMember(access, () => { void memberSession.refresh().catch(() => {}); });
-      } else if (phase === "loading" || phase === "authenticating" || phase === "ending") session.pauseMemberCheck();
+      } else if (["loading", "authenticating", "ending", "withdrawing", "ready"].includes(phase)) session.pauseMemberCheck();
       else { session.leaveMember(); void session.restore(); }
     });
     const restore = () => {
@@ -58,7 +59,7 @@ export function TradingDataProvider({ children }: { children: ReactNode }) {
     };
   }, [client, session, memberSession]);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => initialSession);
-  return <QueryClientProvider client={client}><SessionContext.Provider value={session}><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`}><GuestAccessProvider session={session}>{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
+  return <QueryClientProvider client={client}><SessionContext.Provider value={session}><MemberRoundMonitor /><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`}><GuestAccessProvider session={session}>{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
 }
 
 export function useGuestSession() {

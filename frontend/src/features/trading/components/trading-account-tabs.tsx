@@ -12,6 +12,7 @@ import { useGuestSession } from "./trading-data-provider";
 import { WalletOverview } from "./wallet-overview";
 import { TradingEventStatus } from "./trading-event-status";
 import { emptyHistoryFilters, HistoryFilters } from "./history-filters";
+import { MemberSimulation } from "./member-simulation";
 
 export type AccountView = "positions" | "orders" | "history" | "fills" | "closed" | "portfolio";
 function HistoryMore({ hasMore, busy, error, onMore }: { hasMore: boolean; busy: boolean; error: boolean; onMore: () => void }) {
@@ -85,6 +86,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
         <AccountQueryState loading={query.loading} error={query.error} onRetry={query.retry} busy={query.busy} />
         {query.data && <WalletOverview wallet={query.data.wallet} layout="grid" />}
         <PortfolioAllocationChart positions={portfolioPositions(positions,symbols)} view={query.error ? "unavailable" : query.loading ? "loading" : "data"} />
+        {snapshot.mode === "member" && activeTab === "portfolio" && <MemberSimulation />}
       </section>
     </>}
     </div>

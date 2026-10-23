@@ -91,6 +91,39 @@
   .member-message[role="alert"] { @apply text-loss; }
   .member-withdrawal-dialog { @apply overflow-y-auto; }
   .member-withdrawal-policy { @apply my-4 list-disc space-y-3 pl-5 text-sm leading-relaxed text-terminal-secondary; }
+  .policy-content { @apply min-w-0 text-sm leading-7 text-terminal-secondary; overflow-wrap: anywhere; }
+  .policy-content h2 { @apply mb-4 mt-6 text-base font-semibold text-terminal-text; }
+  .policy-original h3 { @apply mb-2 mt-6 text-sm font-semibold text-terminal-text; }
+  .policy-original p { @apply mb-4 whitespace-pre-wrap; }
+  .policy-original ul { @apply mb-4 list-disc space-y-2 pl-5; }
+  .policy-publication { @apply my-4 grid gap-2 border-y border-terminal-line py-3 text-xs; }
+  .policy-publication > div { @apply grid gap-1 sm:grid-cols-[8rem_1fr]; }
+  .policy-publication dt { @apply text-terminal-muted; }
+  .policy-content details { @apply my-5 border-t border-terminal-line pt-4; }
+  .policy-content summary { @apply cursor-pointer font-semibold text-terminal-text; }
+  .policy-consent-fields { @apply flex flex-col gap-4; }
+  .member-check > input { @apply shrink-0; }
+  .member-check > span { @apply min-w-0 flex-1; }
+  .position-close-dialog.policy-dialog { @apply max-w-3xl overflow-hidden p-0; }
+  .policy-dialog[open] { @apply flex flex-col; }
+  .policy-dialog .policy-content { @apply min-h-0 flex-1 overflow-y-auto px-5 py-4; scrollbar-width: thin; scrollbar-color: #45474f transparent; }
+  .policy-dialog-header, .policy-dialog-actions { @apply flex shrink-0 flex-wrap items-center justify-between gap-3 bg-terminal-panel px-5 py-4; }
+  .policy-dialog-header { @apply border-b border-terminal-line; }
+  .policy-dialog-header h2 { @apply m-0; }
+  .policy-dialog-actions { @apply border-t border-terminal-line; }
+  .policy-dialog-actions p { @apply basis-full text-xs text-terminal-muted; }
+  .member-consent-banner { @apply border-b border-brand-100 bg-brand-50 px-4 py-3 text-sm leading-relaxed; }
+  .member-consent-banner a { @apply ml-3 text-brand-700 underline; }
+  .member-simulation { @apply mt-8 min-w-0 border-t border-terminal-line pt-6; }
+  .member-round-summary { @apply my-4 grid grid-cols-2 gap-4; }
+  .member-round-summary dt { @apply mb-1 text-xs text-terminal-muted; }
+  .member-round-summary dd { @apply text-sm font-semibold tabular-nums; overflow-wrap: anywhere; }
+  .member-round-select { @apply my-4 flex flex-wrap items-center gap-3; }
+  .member-round-select select { @apply min-h-11 min-w-0 max-w-full rounded-sm border border-terminal-line bg-terminal-raised px-3; }
+  .member-round-ledger { @apply my-4 max-w-full overflow-x-auto; scrollbar-width: thin; }
+  .member-round-ledger table { @apply w-full whitespace-nowrap text-xs; }
+  .member-round-ledger th { @apply border-b border-terminal-line bg-terminal-raised px-3 py-3 text-left font-medium text-terminal-muted; }
+  .member-round-ledger td { @apply border-b border-terminal-line px-3 py-3 tabular-nums; }
   .member-profile-message { @apply my-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-terminal-secondary; }
   .member-search { @apply my-4 flex min-w-0 gap-2; }
   .member-follow-list { @apply divide-y divide-terminal-line; }

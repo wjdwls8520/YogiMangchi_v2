@@ -6,8 +6,9 @@ import type { QuoteRequest } from "./quote";
 import { parseOrder } from "./orders";
 import { parseGuestRetry } from "./guest-retry";
 import { openTradingEvents, type EventState, type TradingEvent } from "./trading-events";
+import { parseRestart } from "./member-rounds";
 
-export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean; mode?: "member" | "checking" };
+export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean; mode?: "member" | "checking"; roundId?: number };
 export const initialSession: SessionSnapshot = { phase: "loading", accountId: null, generation: 0 };
 type StorageAccess = () => Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type MemberCredential = { memberId: number; accessToken: string; expiresAt: string };
@@ -23,11 +24,14 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   let mode: "guest" | "member" | "checking" = "guest";
   let member: MemberCredential | null = null;
   let memberRequest: { owner: MemberCredential; generation: number } | null = null;
+  let memberRoundId: number | undefined;
+  let restartIntent: { key: string; memberId: number; credential: GuestCredential; roundId: number } | null = null;
+  let memberRestartFlight: Promise<ReturnType<typeof parseRestart>> | null = null;
   let memberRefresh: (() => void) | undefined;
   const eventReconnects = new Set<() => void>();
   const listeners = new Set<() => void>();
   function publish(phase: SessionSnapshot["phase"]) {
-    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}), ...(mode !== "guest" ? { mode } : {}) };
+    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}), ...(mode !== "guest" ? { mode } : {}), ...(mode === "member" && memberRoundId ? { roundId: memberRoundId } : {}) };
     listeners.forEach((listener) => listener());
   }
   const usable = (value: GuestCredential) => Date.parse(value.expiresAt) > now();
@@ -77,6 +81,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   }
   async function loadMember(open: boolean) {
     const owner = member;
+    if (restartIntent) return;
     if (mode !== "member" || !owner || Date.parse(owner.expiresAt) <= now()) return;
     if (memberRequest?.owner === owner) return;
     credential = null; publish(open ? "creating" : "loading");
@@ -87,6 +92,10 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
       if (open && (id(row.memberId) !== owner.memberId || row.status !== "ACTIVE" || row.quoteAsset !== "USDT")) throw new TradingApiError(422);
       if (open) decimal(row.balance);
+      const round = record(record(await tradingJson(origin, "account/rounds/current", { token: owner.accessToken }, transport)).round);
+      if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
+      if (round.currentRound !== true || round.status !== "ACTIVE") throw new TradingApiError(422);
+      memberRoundId = id(round.roundId);
       credential = { accountId: id(row.accountId), accessToken: owner.accessToken, expiresAt: owner.expiresAt }; publish("ready");
     } catch (error) {
       if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
@@ -99,12 +108,17 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     pauseMemberCheck(error = false) {
       if (mode === "checking" && snapshot.phase === (error ? "error" : "loading")) return;
-      mode = "checking"; member = null; credential = null; publish(error ? "error" : "loading");
+      mode = "checking"; member = null; credential = null; memberRoundId = undefined; restartIntent = null; publish(error ? "error" : "loading");
     },
     async enterMember(value: { memberId: number; accessToken: string; expiresAt: string }, refresh: () => void) {
       memberRefresh = refresh;
       if (mode === "member" && member?.memberId === value.memberId) {
         member.accessToken = value.accessToken; member.expiresAt = value.expiresAt;
+        if (restartIntent) {
+          restartIntent.credential.accessToken = value.accessToken;
+          restartIntent.credential.expiresAt = value.expiresAt;
+          return;
+        }
         if (credential && snapshot.phase === "ready") {
           const changed = credential.accessToken !== value.accessToken;
           credential.accessToken = value.accessToken; credential.expiresAt = value.expiresAt;
@@ -113,12 +127,12 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         }
         if (memberRequest?.owner === member) return;
         if (snapshot.phase === "anonymous") return;
-      } else { mode = "member"; member = { ...value }; }
+      } else { mode = "member"; member = { ...value }; memberRoundId = undefined; restartIntent = null; }
       await loadMember(false);
     },
     leaveMember() {
       if (mode === "guest") return;
-      mode = "guest"; member = null; memberRefresh = undefined; credential = null; publish("loading");
+      mode = "guest"; member = null; memberRefresh = undefined; credential = null; memberRoundId = undefined; restartIntent = null; publish("loading");
     },
     createMember() { return run(() => loadMember(true)); },
     restore() {
@@ -153,7 +167,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { if (mode === "guest" && snapshot.generation === generation) { credential = null; publish("anonymous"); } }
       });
     },
-    async read(path: "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | "account/orders/quote" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
+    async read(path: "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
       const current = credential;
       if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
       if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
@@ -166,6 +180,48 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         if (error instanceof TradingApiError && error.status === 401) invalidate(current);
         throw error;
       }
+    },
+    observeMemberRound(roundId: number, expected: SessionSnapshot) {
+      if (mode !== "member" || snapshot.phase !== "ready" || snapshot.generation !== expected.generation || snapshot.accountId !== expected.accountId) return;
+      if (memberRoundId !== id(roundId)) { memberRoundId = roundId; publish("ready"); }
+    },
+    restartMember(expected: SessionSnapshot, key: string) {
+      if (mode !== "member" || !member) return Promise.reject(new TradingApiError(403, undefined, "MEMBER_ACCOUNT_REQUIRED"));
+      if (memberRestartFlight) return memberRestartFlight;
+      if (!/^[A-Za-z0-9_-]{8,100}$/.test(key)) return Promise.reject(new TradingApiError(400, undefined, "INVALID_IDEMPOTENCY_KEY"));
+      const previous = restartIntent;
+      if (previous && (previous.key !== key || previous.memberId !== member.memberId)) return Promise.reject(new TradingApiError(409, undefined, "IDEMPOTENCY_CONFLICT"));
+      const current = previous?.credential ?? credential;
+      if (!current || !usable(current) || !previous && (snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation || !memberRoundId)) return Promise.reject(new TradingApiError(401));
+      if (writes || retrying) return Promise.reject(new TradingApiError(409, undefined, "TRADING_BUSY"));
+      const ownerId = member.memberId;
+      const intent = restartIntent = previous ?? { key, memberId: ownerId, credential: current, roundId: memberRoundId! };
+      credential = current; retrying = true; publish("ready");
+      memberRestartFlight = (async () => {
+        let accepted = false;
+        try {
+          const result = parseRestart(await tradingJson(origin, "account/restart", { method: "POST", token: member!.accessToken, idempotencyKey: key }, transport));
+          accepted = true;
+          if (mode !== "member" || member?.memberId !== ownerId || restartIntent !== intent) throw new DOMException("Session changed", "AbortError");
+          const actual = record(record(await tradingJson(origin, "account/rounds/current", { token: member.accessToken }, transport)).round);
+          if (mode !== "member" || member?.memberId !== ownerId || restartIntent !== intent) throw new DOMException("Session changed", "AbortError");
+          if (actual.currentRound !== true || actual.status !== "ACTIVE") throw new TradingApiError(422);
+          memberRoundId = id(actual.roundId); restartIntent = null;
+          return result;
+        } catch (error) {
+          if (mode === "member" && member?.memberId === ownerId && restartIntent === intent) {
+            const uncertain = accepted || !(error instanceof TradingApiError) || [0, 422, 500, 502, 503, 504].includes(error.status);
+            if (uncertain) { credential = null; memberRoundId = undefined; }
+            else { restartIntent = null; memberRoundId = intent.roundId; if (error.status === 401) invalidate(current); }
+          }
+          if (accepted && !(error instanceof DOMException && error.name === "AbortError")) throw new TradingApiError(0);
+          throw error;
+        } finally {
+          memberRestartFlight = null; retrying = false;
+          if (mode === "member" && member?.memberId === ownerId) publish(credential ? "ready" : "error");
+        }
+      })();
+      return memberRestartFlight;
     },
     watchEvents(expected: SessionSnapshot, onEvent: (event: TradingEvent) => void, onState: (state: EventState) => void, onReady: () => void) {
       const current = credential;

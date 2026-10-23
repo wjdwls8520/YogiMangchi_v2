@@ -26,9 +26,9 @@ export function parseCsrf(value: unknown) {
 }
 export function parseFlow(value: unknown) {
   const data = row(value);
-  if (!["SIGNUP_REQUIRED", "LOGIN_READY"].includes(String(data.status)) || !["GOOGLE", "KAKAO"].includes(String(data.provider))) return invalid();
+  if (!["SIGNUP_REQUIRED", "LOGIN_READY", "WITHDRAWAL_PENDING"].includes(String(data.status)) || !["GOOGLE", "KAKAO"].includes(String(data.provider))) return invalid();
   const email = text(data.email, 320), separator = email.lastIndexOf("@");
-  return { status: data.status as "SIGNUP_REQUIRED" | "LOGIN_READY", provider: data.provider as "GOOGLE" | "KAKAO",
+  return { status: data.status as "SIGNUP_REQUIRED" | "LOGIN_READY" | "WITHDRAWAL_PENDING", provider: data.provider as "GOOGLE" | "KAKAO",
     accountHint: separator > 0 ? `${email[0]}***${email.slice(separator)}` : "확인된 소셜 계정" };
 }
 export function parseProfile(value: unknown) {
@@ -63,7 +63,7 @@ export function parseFollowPage(value: unknown) {
 }
 export function parseWithdrawal(value: unknown) {
   const data = row(value);
-  return data.status === "PENDING" || data.status === "COMPLETED" ? data.status : invalid();
+  return data.status === "PENDING" || data.status === "COMPLETED" || data.status === "NOT_REQUESTED" ? data.status : invalid();
 }
 export function parseNicknameAvailability(value: unknown) { return boolean(row(value).available); }
 export function parseFollowChange(value: unknown, memberId: number) {
