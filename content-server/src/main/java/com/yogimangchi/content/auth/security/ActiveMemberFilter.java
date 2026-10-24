@@ -16,7 +16,12 @@ public class ActiveMemberFilter extends OncePerRequestFilter {
         var auth=SecurityContextHolder.getContext().getAuthentication();
         String path=request.getRequestURI().substring(request.getContextPath().length());
         if(auth!=null && auth.getPrincipal() instanceof Jwt jwt && !path.equals("/api/v1/members/me/withdrawal")) {
-            if(!Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from content.member where id=? and status='ACTIVE')",Boolean.class,Long.valueOf(jwt.getSubject())))) {
+            Boolean active;
+            try { active=jdbc.queryForObject("select exists(select 1 from content.member where id=? and status='ACTIVE')",Boolean.class,Long.valueOf(jwt.getSubject())); }
+            catch(org.springframework.dao.DataAccessResourceFailureException failure) {
+                ApiErrors.write(response,503,"SERVICE_TEMPORARILY_UNAVAILABLE");return;
+            }
+            if(!Boolean.TRUE.equals(active)) {
                 ApiErrors.write(response,401,"MEMBER_NOT_ACTIVE");return;
             }
         }

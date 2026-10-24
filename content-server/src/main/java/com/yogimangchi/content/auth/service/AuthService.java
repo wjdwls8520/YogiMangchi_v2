@@ -42,11 +42,12 @@ public class AuthService {
     @Transactional(timeout=5)
     public Issued signup(VerifiedIdentity identity,SignupRequest request) {
         identity.requireFresh();
-        if(request==null || !request.termAgree() || !request.privateAgree() || !NicknamePolicy.isValid(request.nickname())
-                || request.profileMessage()!=null && (request.profileMessage().length()>255 || request.profileMessage().indexOf('\0')>=0)) throw new AuthFailure("INVALID_REQUEST",HttpStatus.BAD_REQUEST);
-        if(identities.findByProviderAndProviderSubject(identity.provider(),identity.subject()).isPresent() || members.existsByNickname(request.nickname()))
-            throw new AuthFailure("MEMBER_ALREADY_EXISTS",HttpStatus.CONFLICT);
+        if(request==null || request.profileMessage()!=null && (request.profileMessage().length()>255 || request.profileMessage().indexOf('\0')>=0)) throw new AuthFailure("INVALID_REQUEST",HttpStatus.BAD_REQUEST);
+        if(!NicknamePolicy.isValid(request.nickname())) throw new AuthFailure("INVALID_NICKNAME",HttpStatus.BAD_REQUEST);
         consents.validate(new com.yogimangchi.content.consent.PolicyConsents.Acceptance(request.termAgree(),request.privateAgree(),request.termsVersion(),request.privacyVersion()));
+        if(identities.findByProviderAndProviderSubject(identity.provider(),identity.subject()).isPresent())
+            throw new AuthFailure("MEMBER_ALREADY_EXISTS",HttpStatus.CONFLICT);
+        if(members.existsByNickname(request.nickname())) throw new AuthFailure("NICKNAME_UNAVAILABLE",HttpStatus.CONFLICT);
         Instant now=now();
         var member=members.save(Member.signup(request.nickname(),request.profileMessage()==null ? "" : request.profileMessage(),now));
         consents.record(member.getId(),new com.yogimangchi.content.consent.PolicyConsents.Acceptance(request.termAgree(),request.privateAgree(),request.termsVersion(),request.privacyVersion()),now);

@@ -23,7 +23,7 @@ public class MemberProfiles {
     }
     @Transactional(readOnly=true,timeout=3)
     public boolean nicknameAvailable(String nickname) {
-        if(!NicknamePolicy.isValid(nickname)) throw invalid();
+        if(!NicknamePolicy.isValid(nickname)) throw new AuthFailure("INVALID_NICKNAME",HttpStatus.BAD_REQUEST);
         return !members.existsByNickname(nickname); // Includes retained names until an actual withdrawal renames them.
     }
     @Transactional(timeout=5)

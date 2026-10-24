@@ -63,7 +63,28 @@ class OAuthFlowIntegrationTests extends TestEnvironment {
     @Test void mismatchedStateCannotCreateVerifiedProofOrCallProvider() throws Exception {
         var start=mvc.perform(get("/oauth2/authorization/kakao")).andExpect(status().is3xxRedirection()).andReturn();
         mvc.perform(get("/login/oauth2/code/kakao").session((MockHttpSession)start.getRequest().getSession(false)).param("code","forged-code").param("state","wrong-state"))
-                .andExpect(status().is3xxRedirection()).andExpect(redirectedUrl("https://app.test/auth/callback?error=oauth_failed"));
+                .andExpect(status().is3xxRedirection()).andExpect(redirectedUrl("https://app.test/auth/callback?error=oauth_session_expired"));
         verifyNoInteractions(tokens,users);
+    }
+    @Test void providerCancellationAndTemporaryFailureUseOnlyFixedSafeCodes() throws Exception {
+        for(var entry:Map.of("access_denied","oauth_cancelled","temporarily_unavailable","oauth_temporarily_unavailable","untrusted_provider_error","oauth_failed").entrySet()) {
+            var start=mvc.perform(get("/oauth2/authorization/kakao")).andReturn();
+            var session=(MockHttpSession)start.getRequest().getSession(false);
+            String state=java.net.URLDecoder.decode(UriComponentsBuilder.fromUriString(start.getResponse().getRedirectedUrl()).build().getQueryParams().getFirst("state"),java.nio.charset.StandardCharsets.UTF_8);
+            mvc.perform(get("/login/oauth2/code/kakao").session(session).param("state",state).param("error",entry.getKey())
+                    .param("error_description","private@example.test provider secret"))
+                    .andExpect(status().is3xxRedirection()).andExpect(header().string("Cache-Control","no-store"))
+                    .andExpect(redirectedUrl("https://app.test/auth/callback?error="+entry.getValue()));
+            assertThat(session.isInvalid()).isTrue();
+        }
+        verifyNoInteractions(tokens,users);
+    }
+    @Test void unverifiedKakaoEmailGetsSpecificErrorWithoutIdentityInRedirect() throws Exception {
+        when(users.loadUser(any())).thenReturn(new DefaultOAuth2User(List.of(new SimpleGrantedAuthority("ROLE_USER")),
+                Map.of("id",123L,"kakao_account",Map.of("email","private@example.test","is_email_valid",true,"is_email_verified",false)),"id"));
+        var start=mvc.perform(get("/oauth2/authorization/kakao")).andReturn();
+        String state=java.net.URLDecoder.decode(UriComponentsBuilder.fromUriString(start.getResponse().getRedirectedUrl()).build().getQueryParams().getFirst("state"),java.nio.charset.StandardCharsets.UTF_8);
+        mvc.perform(get("/login/oauth2/code/kakao").session((MockHttpSession)start.getRequest().getSession(false)).param("state",state).param("code","test-code"))
+                .andExpect(redirectedUrl("https://app.test/auth/callback?error=verified_email_required"));
     }
 }

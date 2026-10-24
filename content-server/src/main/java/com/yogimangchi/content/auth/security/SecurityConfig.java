@@ -16,7 +16,8 @@ import org.springframework.web.cors.*;
 @Configuration(proxyBeanMethods=false)
 public class SecurityConfig {
     @Bean @Order(2)
-    SecurityFilterChain apiChain(HttpSecurity http,CorsConfigurationSource cors,@Value("${springdoc.api-docs.enabled}") boolean docs,org.springframework.jdbc.core.JdbcTemplate jdbc) throws Exception {
+    SecurityFilterChain apiChain(HttpSecurity http,CorsConfigurationSource cors,@Value("${springdoc.api-docs.enabled}") boolean docs,org.springframework.jdbc.core.JdbcTemplate jdbc,
+            @Value("${content.auth.nickname-lookups-per-minute:300}") int nicknameLookups) throws Exception {
         http.authorizeHttpRequests(a -> {
             a.requestMatchers(HttpMethod.GET,"/.well-known/jwks.json","/api/v1/auth/csrf","/api/v1/auth/flow","/api/v1/policies/current","/api/v1/policies/{type:TERMS|PRIVACY}/{version}").permitAll();
             a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout").permitAll();
@@ -36,15 +37,22 @@ public class SecurityConfig {
                                 && !Set.of("GET","HEAD","OPTIONS","TRACE").contains(r.getMethod())))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .securityContext(c -> c.securityContextRepository(new NullSecurityContextRepository()))
-                .oauth2ResourceServer(o -> o.jwt(j -> { })
+                .oauth2ResourceServer(o -> o.bearerTokenResolver(request -> {
+                    // Auth endpoints use proof/refresh cookies, never Bearer authentication. Resource
+                    // Server's automatic CSRF exemption must not exempt these cookie operations.
+                    String path=request.getRequestURI().substring(request.getContextPath().length());
+                    return path.startsWith("/api/v1/auth/") ? null : new org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver().resolve(request);
+                }).jwt(j -> { })
                         .authenticationEntryPoint((request,response,e) -> ApiErrors.write(response,401,"INVALID_ACCESS_TOKEN")))
                 .formLogin(c -> c.disable()).httpBasic(c -> c.disable()).logout(c -> c.disable()).requestCache(c -> c.disable())
                 .exceptionHandling(e -> e.authenticationEntryPoint((request,response,failure) -> ApiErrors.write(response,401,"AUTHENTICATION_REQUIRED"))
-                        .accessDeniedHandler((request,response,failure) -> ApiErrors.write(response,403,"ACCESS_DENIED")));
+                        .accessDeniedHandler((request,response,failure) -> ApiErrors.write(response,403,
+                                failure instanceof org.springframework.security.web.csrf.CsrfException ? "CSRF_INVALID" : "ACCESS_DENIED")));
         // Keep the existing auth CSRF protection. Add protection for the OAuth-cookie/Bearer
         // withdrawal flow, because Resource Server's default Bearer exemption would skip it.
         http.addFilterBefore(new WithdrawalCsrfFilter(),org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
         http.addFilterAfter(new ActiveMemberFilter(jdbc),org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
+        http.addFilterAfter(new NicknameLookupLimit(nicknameLookups),org.springframework.security.web.authentication.logout.LogoutFilter.class);
         return http.build();
     }
     @Bean CorsConfigurationSource cors(@Value("${content.auth.allowed-origins}") String value) {
@@ -52,6 +60,7 @@ public class SecurityConfig {
         if(origins.isEmpty() || origins.stream().anyMatch(v -> v.contains("*"))) throw new IllegalArgumentException("Explicit Content origins required");
         var config=new CorsConfiguration(); config.setAllowedOrigins(origins); config.setAllowCredentials(true);
         config.setAllowedMethods(List.of("GET","POST","PUT","DELETE","PATCH","OPTIONS")); config.setAllowedHeaders(List.of("Authorization","Content-Type","X-CSRF-TOKEN"));
+        config.setExposedHeaders(List.of("Retry-After"));
         config.setMaxAge(600L);
         var source=new UrlBasedCorsConfigurationSource(); source.registerCorsConfiguration("/api/**",config); return source;
     }

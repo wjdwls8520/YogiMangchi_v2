@@ -208,6 +208,28 @@ class MemberLifecycleIntegrationTests extends TestEnvironment {
         }finally{server.stop(0);}
     }
 
+    @Test void successfulRemoteProvisionIsRedeliveredAfterLocalAcknowledgementRollback() throws Exception {
+        var own=auth.signup(proof(Provider.GOOGLE),signup());long id=own.access().memberId();
+        jdbc.update("update content.member_trading_provision set next_attempt_at=now()+interval '1 hour' where member_id<>?",id);
+        var deliveries=new java.util.concurrent.atomic.AtomicInteger();
+        var server=com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/internal/v1/members/"+id+"/trading-account",exchange->{deliveries.incrementAndGet();exchange.sendResponseHeaders(204,-1);exchange.close();});server.start();
+        try {
+            var failing=org.mockito.Mockito.mock(MemberProvisioning.class,org.mockito.AdditionalAnswers.delegatesTo(provisioning));
+            var tx=new TransactionTemplate(transactions);
+            org.mockito.Mockito.doAnswer(call->{tx.executeWithoutResult(s->{provisioning.acknowledged(id);throw new IllegalStateException("test-only commit failure");});return null;}).when(failing).acknowledged(id);
+            String base="http://127.0.0.1:"+server.getAddress().getPort();
+            new MemberProvisioningDelivery(failing,encoder,"https://content.test","content-1",base).deliverPending();
+            assertThat(deliveries.get()).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select status from content.member_trading_provision where member_id=?",String.class,id)).isEqualTo("PENDING");
+            assertThat(jdbc.queryForObject("select attempts from content.member_trading_provision where member_id=?",Integer.class,id)).isEqualTo(1);
+            jdbc.update("update content.member_trading_provision set next_attempt_at=now() where member_id=?",id);
+            new MemberProvisioningDelivery(provisioning,encoder,"https://content.test","content-1",base).deliverPending();
+            assertThat(deliveries.get()).isEqualTo(2);
+            assertThat(jdbc.queryForObject("select status from content.member_trading_provision where member_id=?",String.class,id)).isEqualTo("COMPLETED");
+        } finally {server.stop(0);}
+    }
+
     @Test void uncommittedIdentityErasureCannotMixOldMembershipWithConcurrentSignup() throws Exception {
         var proof=proof(Provider.GOOGLE);var own=auth.signup(proof,signup());long id=own.access().memberId();
         withdrawals.request(id,CONFIRM,proof);

@@ -29,11 +29,14 @@ public class PolicyConsents {
     }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
     public void validate(Acceptance body) {
+        if(body==null || !body.termAgree() || !body.privateAgree()) throw new AuthFailure("REQUIRED_CONSENT_MISSING",HttpStatus.BAD_REQUEST);
+        if(body.termsVersion()==null || body.privacyVersion()==null || body.termsVersion().isBlank() || body.privacyVersion().isBlank())
+            throw new AuthFailure("POLICY_VERSION_REQUIRED",HttpStatus.BAD_REQUEST);
         // Keep policy activation from racing signup/reconsent. Policy versions are append-only.
         var current=jdbc.queryForList("select policy_type,version,required from content.policy_version where current order by policy_type for share");
-        if(body==null || !body.termAgree() || !body.privateAgree() || current.size()!=2
+        if(current.size()!=2
             || current.stream().anyMatch(p->!p.get("version").equals(p.get("policy_type").equals("TERMS")?body.termsVersion():body.privacyVersion())))
-            throw new AuthFailure("POLICY_VERSION_OR_CONSENT_INVALID",HttpStatus.CONFLICT);
+            throw new AuthFailure("POLICY_VERSION_CHANGED",HttpStatus.CONFLICT);
     }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
     public void record(Long memberId,Acceptance body,Instant now) {
