@@ -30,12 +30,17 @@ public final class TradingMath {
         return result;
     }
 
+    public static final class LimitExceeded extends IllegalArgumentException {
+        public LimitExceeded(){super("Supported order/position notional limit exceeded");}
+    }
+
     public static void validateOrder(BigDecimal quantity, int leverage, BigDecimal price) {
         validateQuantity(quantity);
         validateLeverage(leverage);
         validatePrice(price);
         BigDecimal notional = quantity.multiply(price);
-        if (notional.compareTo(MIN_NOTIONAL) < 0 || notional.compareTo(MAX_NOTIONAL) > 0) {
+        if(notional.compareTo(MAX_NOTIONAL)>0)throw new LimitExceeded();
+        if (notional.compareTo(MIN_NOTIONAL) < 0) {
             throw new IllegalArgumentException("Execution notional must be between 1 and 1000000 USDT");
         }
     }

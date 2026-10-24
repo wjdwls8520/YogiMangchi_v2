@@ -21,7 +21,11 @@ public class TradingEngineGate {
     private volatile Map<Long, LatestMarkPrice> processed = Map.of();
     private volatile boolean ready;
     private volatile long gapSequence = -1;
-    public TradingEngineGate(RedisMarketDataBridge bridge) { this.bridge = bridge; }
+    private final com.yogimangchi.trading.execution.recovery.RiskAdmission risk;
+    public TradingEngineGate(RedisMarketDataBridge bridge) {this.bridge=bridge;this.risk=null;}
+    @org.springframework.beans.factory.annotation.Autowired
+    public TradingEngineGate(RedisMarketDataBridge bridge,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {this.bridge=bridge;this.risk=risk;}
+    public void requireAccountClear(Long accountId) {if(risk!=null)risk.requireClear(accountId);}
 
     /** Acquired before the account DB lock; held through commit so a tick cannot miss an uncommitted new position. */
     public void enterTradingTransaction() {
@@ -34,6 +38,7 @@ public class TradingEngineGate {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCompletion(int status) { ordering.readLock().unlock(); }
         });
+        if(risk!=null)risk.enterTransaction();
     }
 
     AutoCloseable enterPriceEvent() throws InterruptedException {
@@ -47,7 +52,7 @@ public class TradingEngineGate {
     }
     public String status() {
         var health = bridge.health();
-        return ready && health.state() == RedisMarketDataBridge.State.HEALTHY && health.gapSequence() == gapSequence
+        return ready && (risk==null||risk.healthy()) && health.state() == RedisMarketDataBridge.State.HEALTHY && health.gapSequence() == gapSequence
                 ? "READY" : "RECOVERING";
     }
     public void requireCaughtUp(Map<Long, LatestPriceStore.Snapshot> current) {

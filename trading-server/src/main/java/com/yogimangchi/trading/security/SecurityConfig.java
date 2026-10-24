@@ -46,6 +46,7 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/orders", "/api/v1/trading/account/orders/pending").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/fills", "/api/v1/trading/account/positions/history").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/performance/symbols").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/recovery").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/events").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/symbols/{symbolId}/leverage").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.PUT, "/api/v1/trading/account/symbols/{symbolId}/leverage").hasRole("TRADER");

@@ -26,6 +26,7 @@ public class MemberRounds {
     public record Page(List<Round> content,Long nextCursorId) { }
     public record Summary(Round round,AccountSummaryResponse currentAccount,boolean restartAvailable,Instant nextAvailableAt,String realizedPnl,String feesPaid,String settlementAdjustment) { }
     public record Restart(Long roundId,int roundNumber,String balance,Instant restartedAt,Instant nextAvailableAt,int canceledOrderCount,int closedPositionCount) { }
+    private final com.yogimangchi.trading.execution.recovery.RiskAdmission risk;
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
     private final AccountLock locks;
@@ -35,7 +36,8 @@ public class MemberRounds {
     private final TradingOrderRepository orders;
     private final TradingEvents events;
     private final EntityManager entities;
-    public MemberRounds(JdbcTemplate jdbc,ObjectMapper mapper,AccountLock locks,TradingAccountService summaries,WalletRepository wallets,PositionRepository positions,TradingOrderRepository orders,TradingEvents events,EntityManager entities) {
+    public MemberRounds(JdbcTemplate jdbc,ObjectMapper mapper,AccountLock locks,TradingAccountService summaries,WalletRepository wallets,PositionRepository positions,TradingOrderRepository orders,TradingEvents events,EntityManager entities,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {
+        this.risk=risk;
         this.jdbc=jdbc;this.mapper=mapper;this.locks=locks;this.summaries=summaries;this.wallets=wallets;this.positions=positions;this.orders=orders;this.events=events;this.entities=entities;
     }
     @Transactional(propagation=Propagation.MANDATORY)
@@ -56,10 +58,12 @@ public class MemberRounds {
     }
     @Transactional(timeout=10)
     public Restart restart(Long accountId,String key) {
+        risk.enterTransaction();
         if(key==null||!key.matches("[A-Za-z0-9_-]{8,100}")) throw new BusinessException(ErrorCode.INVALID_IDEMPOTENCY_KEY);
         var account=member(accountId);
         var previous=jdbc.query("select s.*,r.round_number from trading.member_restart s join trading.member_trading_round r on r.id=s.new_round_id where s.account_id=? and s.request_key=?",(r,n)->new Restart(r.getLong("new_round_id"),r.getInt("round_number"),"10000.000000000000000000",r.getTimestamp("restarted_at").toInstant(),r.getTimestamp("restarted_at").toInstant().plusSeconds(86400),r.getInt("canceled_order_count"),r.getInt("closed_position_count")),accountId,key);
         if(!previous.isEmpty()) return previous.get(0);
+        risk.requireClear(accountId);
         Instant now=dbNow(),next=next(accountId);
         if(next!=null&&now.isBefore(next)) throw new RestartLimited(next);
         var old=currentRow(accountId);

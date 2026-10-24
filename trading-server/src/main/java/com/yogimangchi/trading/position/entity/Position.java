@@ -71,7 +71,7 @@ public class Position {
         BigDecimal newQuantity = quantity.add(fillingQuantity);
         TradingMath.validateQuantity(newQuantity);
         BigDecimal newBasis = entryNotional.add(price.multiply(fillingQuantity));
-        if (newBasis.compareTo(TradingMath.MAX_NOTIONAL) > 0) throw new IllegalArgumentException("Position notional limit exceeded");
+        if (newBasis.compareTo(TradingMath.MAX_NOTIONAL) > 0) throw new TradingMath.LimitExceeded();
         BigDecimal newMargin = TradingMath.basisMargin(newBasis, leverage);
         BigDecimal additional = newMargin.subtract(margin);
         quantity = newQuantity.setScale(TradingMath.QUANTITY_SCALE);
