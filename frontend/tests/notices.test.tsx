@@ -11,12 +11,12 @@ test("notices stack in arrival order and expire individually after 1500ms, with 
   const store=createNoticeStore((callback,delay)=>{const timer={callback,delay,canceled:false};timers.push(timer);return()=>{timer.canceled=true;};});
   const one=store.push({kind:"success",title:"first",message:"done"},"account-1");
   const two=store.push({kind:"error",title:"second",message:"failed"},"account-1");
-  assert.equal(NOTICE_LIFETIME,1500);assert.deepEqual(timers.map(timer=>timer.delay),[1500,1500]);
+  assert.equal(NOTICE_LIFETIME,1500);assert.deepEqual(timers.map(timer=>timer.delay),[1500]);
   assert.deepEqual(store.getSnapshot().map(notice=>notice.id),[one,two]);
   timers[0].callback();assert.deepEqual(store.getSnapshot().map(notice=>notice.id),[two]);
-  store.dismiss(two);assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers[1].canceled,true);
+  store.dismiss(two);assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers.length,1);
   store.push({kind:"warning",title:"third",message:"unknown"},"account-2");
-  store.clear();assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers[2].canceled,true);
+  store.clear();assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers.length,1);
 });
 
 test("accepted LIMIT is not described as filled, and uncertain results are never described as failed",()=>{

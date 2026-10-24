@@ -1,3 +1,4 @@
+import { orderReason } from "./order-reason";
 import { mutationMessage, uncertainMutation, type TradingCommand } from "./mutation-request";
 import type { TradingOrder } from "./orders";
 
@@ -5,7 +6,7 @@ export type TradingNotice = { kind: "success" | "error" | "warning"; title: stri
 export const NOTICE_LIFETIME = 1500;
 
 export function orderNotice(order: TradingOrder, command: TradingCommand): TradingNotice {
-  if (order.status === "REJECTED") return { kind: "error", title: "주문이 거절되었습니다", message: "주문 내역에서 처리 결과를 확인해 주세요." };
+  if (order.status === "REJECTED") return { kind: "error", title: "주문이 거절되었습니다", message: `${orderReason(order.reason)} 주문 #${order.orderId} 내역에서 확인해 주세요.` };
   if (order.status === "CANCELED") return { kind: "success", title: "주문이 취소되었습니다", message: `주문 #${order.orderId} 취소 완료` };
   const pending = order.status === "PENDING";
   return { kind: "success", title: pending ? "지정가 주문이 접수되었습니다" : command.kind === "open" ? "주문이 완료되었습니다" : "청산이 완료되었습니다",
@@ -34,7 +35,7 @@ export function createNoticeStore(schedule: (callback: () => void, delay: number
     push(notice: TradingNotice, identity: string) {
       const id = ++nextId;
       entries = [...entries, { ...notice, identity, id }];
-      timers.set(id, schedule(() => dismiss(id), NOTICE_LIFETIME)); emit();
+      if (notice.kind === "success") timers.set(id, schedule(() => dismiss(id), NOTICE_LIFETIME)); emit();
       return id;
     },
     dismiss,

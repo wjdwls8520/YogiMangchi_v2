@@ -1,3 +1,4 @@
+import { orderReason } from "./order-reason";
 import { instant, invalidContract, list, record } from "./contracts";
 import { parseOrder } from "./orders";
 import { retryTradingQuery, TradingApiError } from "./client";
@@ -123,6 +124,6 @@ export function tradingEventNotice(event: TradingEvent): TradingNotice | null {
   if (event.type === "POSITION_LIQUIDATED") return { kind: "error", title: "포지션이 강제청산되었습니다", message: `${order.side} · 주문 #${order.orderId} · 체결 내역을 확인해 주세요.` };
   if (order.type !== "LIMIT") return null;
   if (event.type === "ORDER_FILLED") return { kind: "success", title: "지정가 주문이 체결되었습니다", message: `${order.side} · ${order.action} · 주문 #${order.orderId} · 수량 ${order.quantity}` };
-  if (event.type === "ORDER_REJECTED") return { kind: "error", title: "지정가 주문이 거절되었습니다", message: `주문 #${order.orderId} · 주문 내역을 확인해 주세요.` };
+  if (event.type === "ORDER_REJECTED") return { kind: "error", title: "지정가 주문이 거절되었습니다", message: `${orderReason(order.reason)} 주문 #${order.orderId} · 주문 내역을 확인해 주세요.` };
   return null;
 }
