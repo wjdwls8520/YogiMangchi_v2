@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class GuestRetryService {
+    private final com.yogimangchi.trading.execution.recovery.RiskAdmission risk;
     private final AccountLock locks;
     private final WalletRepository wallets;
     private final PositionRepository positions;
@@ -28,11 +29,13 @@ public class GuestRetryService {
     private final TradingEvents events;
     private final JdbcTemplate jdbc;
     public GuestRetryService(AccountLock locks,WalletRepository wallets,PositionRepository positions,
-            TradingOrderRepository orders,TradingEvents events,JdbcTemplate jdbc) {
+            TradingOrderRepository orders,TradingEvents events,JdbcTemplate jdbc,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {
+        this.risk=risk;
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders; this.events=events; this.jdbc=jdbc;
     }
     @Transactional(timeout=10)
     public GuestRetryResponse retry(Long accountId,String key) {
+        risk.enterTransaction();
         if(key==null || !key.matches("[A-Za-z0-9_-]{8,100}")) throw new BusinessException(ErrorCode.INVALID_IDEMPOTENCY_KEY);
         var account=locks.lock(accountId);
         if(!account.isGuestAccount() || account.getMemberId()!=null) throw new BusinessException(ErrorCode.GUEST_ACCOUNT_REQUIRED);
@@ -41,6 +44,7 @@ public class GuestRetryService {
         var previous=jdbc.query("select id,balance_after,canceled_order_count,closed_position_count,reset_at from trading.guest_retry where account_id=? and request_key=?",
                 (r,n) -> response(r.getLong("id"),accountId,r.getBigDecimal("balance_after"),r.getInt("canceled_order_count"),r.getInt("closed_position_count"),r.getTimestamp("reset_at").toInstant()),accountId,key);
         if(!previous.isEmpty()) return previous.get(0);
+        risk.requireClear(accountId);
         var wallet=wallets.findById(accountId).orElseThrow();
         BigDecimal before=wallet.getBalance(),released=BigDecimal.ZERO,reserved=BigDecimal.ZERO;
         var open=positions.findByAccountIdAndStatusOrderByIdAsc(accountId,Position.Status.OPEN);

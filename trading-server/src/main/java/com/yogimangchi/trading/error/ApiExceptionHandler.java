@@ -20,6 +20,9 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         log.info("Business request rejected code={}", exception.getCode());
         var problem=businessProblem(exception.getCode());
         if(exception instanceof com.yogimangchi.trading.tradinground.RestartLimited limited) problem.setProperty("nextAvailableAt",limited.nextAvailableAt());
+        if(exception instanceof com.yogimangchi.trading.execution.recovery.RecoveryBlocked held) {
+            problem.setProperty("riskEventId",held.eventId());problem.setProperty("referenceTime",held.referenceTime());problem.setProperty("outcome","NOT_ACCEPTED");
+        }
         return problem;
     }
 
@@ -31,6 +34,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     private ProblemDetail businessProblem(ErrorCode code) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(code.status(), code.message());
         problem.setProperty("code", code.name());
+        problem.setProperty("outcome", "NOT_ACCEPTED");
         return problem;
     }
 
@@ -38,7 +42,8 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ProblemDetail handleUnexpectedException(Exception exception) {
         log.error("Unexpected API failure", exception);
-        return ProblemDetail.forStatusAndDetail(
-                HttpStatus.INTERNAL_SERVER_ERROR, "요청을 처리하는 중 서버 오류가 발생했습니다.");
+        var problem=ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR,"요청을 처리하는 중 서버 오류가 발생했습니다.");
+        problem.setProperty("code","INTERNAL_ERROR");problem.setProperty("outcome","UNKNOWN");
+        return problem;
     }
 }

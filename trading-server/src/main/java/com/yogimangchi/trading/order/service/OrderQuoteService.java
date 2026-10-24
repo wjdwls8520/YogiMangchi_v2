@@ -48,6 +48,7 @@ public class OrderQuoteService {
             throw new BusinessException(ErrorCode.INVALID_ORDER);
         gate.enterTradingTransaction();
         var account=locks.lock(accountId);
+        gate.requireAccountClear(accountId);
         if (account.getStatus() != TradingAccount.Status.ACTIVE) throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         if (!account.isIsolated()) throw new BusinessException(ErrorCode.MARGIN_MIGRATION_REQUIRED);
         if (symbols.findById(request.tradingSymbolId()).filter(s -> s.getStatus()==TradingSymbolStatus.ACTIVE).isEmpty())
@@ -88,7 +89,7 @@ public class OrderQuoteService {
             if (target!=null) {
                 TradingMath.validateQuantity(target.getQuantity().add(quantity));
                 if (target.getEntryNotional().add(price.multiply(quantity)).compareTo(TradingMath.MAX_NOTIONAL)>0)
-                    throw new IllegalArgumentException("Position notional limit exceeded");
+                    throw new TradingMath.LimitExceeded();
             }
             BigDecimal allocated=margin.apply(quantity), fee=TradingFees.fee(price,quantity,rate);
             if (allocated.add(fee).compareTo(value.availableBalance())>0) throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
@@ -98,7 +99,7 @@ public class OrderQuoteService {
                     quantity.setScale(TradingMath.QUANTITY_SCALE).toPlainString(),price.toPlainString(),price.multiply(quantity).toPlainString(),
                     allocated.toPlainString(),rate.toPlainString(),fee.toPlainString(),allocated.add(fee).toPlainString(),
                     value.availableBalance().toPlainString(),request.balancePercentage(),mark.eventTime(),value.capturedAt());
-        } catch (IllegalArgumentException | ArithmeticException e) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
+        } catch (TradingMath.LimitExceeded limit) { throw new BusinessException(ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED); } catch (IllegalArgumentException | ArithmeticException e) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
     }
 
     /** Integer quantity grid and exact ledger costs; at most 67 iterations for the supported quantity range. */

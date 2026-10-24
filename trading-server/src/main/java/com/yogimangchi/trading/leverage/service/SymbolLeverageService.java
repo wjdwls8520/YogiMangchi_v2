@@ -63,6 +63,7 @@ public class SymbolLeverageService {
         if (leverage == null || leverage < 1 || leverage > TradingMath.MAX_LEVERAGE) throw new BusinessException(ErrorCode.INVALID_LEVERAGE);
         gate.enterTradingTransaction();
         TradingAccount account = locks.lock(accountId);
+        gate.requireAccountClear(accountId);
         requireSymbol(symbolId); requireSide(side);
         if (account.getStatus() != TradingAccount.Status.ACTIVE) throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         if (!account.isIsolated()) throw new BusinessException(ErrorCode.MARGIN_MIGRATION_REQUIRED);

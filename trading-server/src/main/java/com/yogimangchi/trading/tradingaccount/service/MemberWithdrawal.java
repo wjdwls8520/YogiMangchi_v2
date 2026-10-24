@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class MemberWithdrawal {
+    private final com.yogimangchi.trading.execution.recovery.RiskAdmission risk;
     private final EntityManager entities;
     private final TradingAccountRepository accounts;
     private final WalletRepository wallets;
@@ -27,12 +28,14 @@ public class MemberWithdrawal {
     private final TradingEvents events;
     private final com.yogimangchi.trading.tradinground.MemberRounds rounds;
     public MemberWithdrawal(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,
-            PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events,com.yogimangchi.trading.tradinground.MemberRounds rounds) {
+            PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events,com.yogimangchi.trading.tradinground.MemberRounds rounds,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {
+        this.risk=risk;
         this.entities=entities; this.accounts=accounts; this.wallets=wallets; this.positions=positions;
         this.orders=orders; this.locks=locks; this.events=events;this.rounds=rounds;
     }
     @Transactional(timeout=10)
     public void withdraw(Long memberId) {
+        risk.enterTransaction();
         if(memberId==null || memberId<=0) throw new IllegalArgumentException("Positive member ID required");
         entities.createNativeQuery("SET LOCAL lock_timeout = '2s'").executeUpdate();
         // Same provisioning lock prevents a still-valid Access JWT from creating an account after withdrawal.
@@ -63,5 +66,6 @@ public class MemberWithdrawal {
             throw new IllegalStateException("Withdrawal found inconsistent reservations");
         rounds.finish(id,wallet,"MEMBER_WITHDRAWAL",now);
         account.withdraw(now);
+        risk.retireWithdrawal(id);
     }
 }

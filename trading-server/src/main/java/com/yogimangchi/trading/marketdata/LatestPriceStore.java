@@ -30,6 +30,7 @@ public class LatestPriceStore {
     private final Map<Long, Instant> clockLoggedAt = new HashMap<>();
     private Set<Long> subscribed = Set.of();
     private boolean accepting;
+    private final Object ingressOrder = new Object();
 
     public enum Status { MISSING, FRESH, STALE, UNAVAILABLE }
 
@@ -55,51 +56,48 @@ public class LatestPriceStore {
         this.events = events;
     }
 
-    public synchronized void beginSubscription(Set<Long> tradingSymbolIds) {
-        Set<Long> affected = new HashSet<>(subscribed);
-        affected.addAll(tradingSymbolIds);
-        subscribed = Set.copyOf(tradingSymbolIds);
-        prices.keySet().retainAll(subscribed);
-        clockRejected.clear();
-        clockObservations.keySet().retainAll(subscribed);
-        clockLoggedAt.keySet().retainAll(subscribed);
-        available.clear();
-        accepting = true;
-        events.publishEvent(MarketDataEvent.state(MarketDataEvent.Type.RECONNECTING, affected, clock.instant()));
-    }
-
-    public synchronized void markUnavailable() {
-        accepting = false;
-        available.clear();
-        events.publishEvent(MarketDataEvent.state(MarketDataEvent.Type.UNAVAILABLE, subscribed, clock.instant()));
-    }
-
-    public synchronized boolean update(LatestMarkPrice price) {
-        Instant now = clock.instant();
-        if (!accepting || !subscribed.contains(price.tradingSymbolId()) || !MarkPriceTimePolicy.receivedRecently(price, now)) {
-            return false;
-        }
-        LatestMarkPrice previous = prices.get(price.tradingSymbolId());
-        // Replayed/out-of-order events must not move prices backwards or make old data look fresh.
-        if (previous != null && !price.eventTime().isAfter(previous.eventTime())) {
-            return false;
-        }
-        var clockStatus = observeClock(price, now);
-        if (clockStatus == MarkPriceTimePolicy.ClockStatus.REJECTED) {
-            available.remove(price.tradingSymbolId());
-            // One unavailable event per rejection episode, including when no valid price was stored yet.
-            if (clockRejected.add(price.tradingSymbolId())) {
-                events.publishEvent(MarketDataEvent.state(MarketDataEvent.Type.UNAVAILABLE,
-                        Set.of(price.tradingSymbolId()), now));
+    public void beginSubscription(Set<Long> tradingSymbolIds) {
+        synchronized(ingressOrder) {
+            Set<Long> affected;
+            synchronized(this) {
+                affected=new HashSet<>(subscribed);affected.addAll(tradingSymbolIds);
+                subscribed=Set.copyOf(tradingSymbolIds);prices.keySet().retainAll(subscribed);
+                clockRejected.clear();clockObservations.keySet().retainAll(subscribed);clockLoggedAt.keySet().retainAll(subscribed);
+                available.clear();accepting=true;
             }
-            return false;
+            events.publishEvent(MarketDataEvent.state(MarketDataEvent.Type.RECONNECTING,affected,clock.instant()));
         }
-        prices.put(price.tradingSymbolId(), price);
-        available.add(price.tradingSymbolId());
-        clockRejected.remove(price.tradingSymbolId());
-        // Listeners only enqueue: external I/O must never run under this short local-cache lock.
-        events.publishEvent(MarketDataEvent.price(price));
-        return true;
+    }
+
+    public void markUnavailable() {
+        synchronized(ingressOrder) {
+            Set<Long> affected;
+            synchronized(this) {accepting=false;available.clear();affected=subscribed;}
+            events.publishEvent(MarketDataEvent.state(MarketDataEvent.Type.UNAVAILABLE,affected,clock.instant()));
+        }
+    }
+
+    public boolean update(LatestMarkPrice price) {
+        synchronized(ingressOrder) {
+            MarketDataEvent event;
+            boolean accepted;
+            synchronized(this) {
+                Instant now=clock.instant();
+                if(!accepting||!subscribed.contains(price.tradingSymbolId())||!MarkPriceTimePolicy.receivedRecently(price,now))return false;
+                var previous=prices.get(price.tradingSymbolId());
+                if(previous!=null&&!price.eventTime().isAfter(previous.eventTime()))return false;
+                if(observeClock(price,now)==MarkPriceTimePolicy.ClockStatus.REJECTED) {
+                    available.remove(price.tradingSymbolId());
+                    if(!clockRejected.add(price.tradingSymbolId()))return false;
+                    event=MarketDataEvent.state(MarketDataEvent.Type.UNAVAILABLE,Set.of(price.tradingSymbolId()),now);accepted=false;
+                } else {
+                    prices.put(price.tradingSymbolId(),price);available.add(price.tradingSymbolId());clockRejected.remove(price.tradingSymbolId());
+                    event=MarketDataEvent.price(price);accepted=true;
+                }
+            }
+            events.publishEvent(event);
+            return accepted;
+        }
     }
 
     public synchronized Snapshot find(Long tradingSymbolId) {

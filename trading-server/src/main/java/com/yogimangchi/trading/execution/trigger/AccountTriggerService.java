@@ -59,6 +59,16 @@ public class AccountTriggerService {
     /** No Redis I/O here. Replay and live execution share the same account lock and atomic financial transaction. */
     @Transactional
     public void process(Long accountId, LatestMarkPrice tick, Map<Long, LatestMarkPrice> book) {
+        processAccount(accountId,tick,book,false);
+    }
+    /** Only the durable job transaction may authorize an expired-but-validly-received tick. */
+    @Transactional
+    public void processRecorded(com.yogimangchi.trading.execution.recovery.RiskReplayPermit permit) {
+        if(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Recorded processing requires durable work transaction");
+        processAccount(permit.accountId(),permit.price(),Map.of(permit.price().tradingSymbolId(),permit.price()),true);
+    }
+    private void processAccount(Long accountId,LatestMarkPrice tick,Map<Long,LatestMarkPrice> book,boolean recorded) {
         TradingAccount account = locks.lockIncludingWithdrawn(accountId);
         if (account.getStatus() != TradingAccount.Status.ACTIVE) return;
         Wallet wallet = wallets.findById(accountId).orElseThrow();
@@ -70,6 +80,19 @@ public class AccountTriggerService {
         open.forEach(p -> required.add(p.getTradingSymbolId()));
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
         var snapshots = snapshots(required, book, now);
+        if(recorded) {
+            if(!account.isIsolated()) {
+                var live=livePrices.findAll(required);
+                var current=live.get(tick.tradingSymbolId());
+                if(!LatestPriceStore.isFreshAt(tick,now)||current.status()!=LatestPriceStore.Status.FRESH
+                        || !current.latestPrice().orElseThrow().eventTime().equals(tick.eventTime())
+                        || !cutover.activateIfSafe(account,wallet,open,live,now))
+                    throw new com.yogimangchi.trading.error.BusinessException(com.yogimangchi.trading.error.ErrorCode.MARGIN_MIGRATION_REQUIRED);
+            }
+            // Only this journal event's symbol; never apply a stale multi-symbol price vector to current exposure.
+            snapshots=new HashMap<>(snapshots);
+            snapshots.put(tick.tradingSymbolId(),new LatestPriceStore.Snapshot(LatestPriceStore.Status.FRESH,Optional.of(tick)));
+        }
         if (!cutover.activateIfSafe(account, wallet, open, snapshots, now)) return;
         // Each position needs only its own fresh Mark. An unavailable unrelated symbol cannot mask liquidation.
         for (Position position : List.copyOf(open)) {
@@ -91,7 +114,7 @@ public class AccountTriggerService {
         for (TradingOrder order : pending) {
             if (order.getStatus() != TradingOrder.Status.PENDING
                     || !order.getTradingSymbolId().equals(tick.tradingSymbolId()) || !order.crosses(tick.domainMarkPrice())
-                    || order.getCreatedAt().isAfter(tick.receivedAt())) continue;
+                    || !recorded && order.getCreatedAt().isAfter(tick.receivedAt())) continue;
             if (order.getAction() == TradingOrder.Action.CLOSE) {
                 close(order, byId, open, wallet, tick, now);
                 account.recordFinancialChange(now);
@@ -106,10 +129,11 @@ public class AccountTriggerService {
                 margin = hedge.additionalMargin(open, order.getTradingSymbolId(), order.getSide(), order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage);
                 fee = TradingFees.fee(tick.domainMarkPrice(), order.getQuantity(), order.getFeeRate());
             }
-            catch (IllegalArgumentException exception) { rejection = "UNSUPPORTED_EXECUTION_NOTIONAL"; }
+            catch (TradingMath.LimitExceeded limit) { rejection = "ORDER_SIZE_LIMIT_EXCEEDED"; }
+            catch (IllegalArgumentException exception) { rejection = "INVALID_ORDER"; }
             if (symbols.findById(order.getTradingSymbolId()).filter(s -> s.getStatus()==TradingSymbolStatus.ACTIVE).isEmpty())
-                rejection = "SYMBOL_NOT_ACTIVE";
-            if (open.size() >= TradingMath.MAX_OPEN_POSITIONS && hedge.existing(open, order.getTradingSymbolId(), order.getSide()) == null) rejection = "POSITION_LIMIT";
+                rejection = "SYMBOL_NOT_AVAILABLE";
+            if (open.size() >= TradingMath.MAX_OPEN_POSITIONS && hedge.existing(open, order.getTradingSymbolId(), order.getSide()) == null) rejection = "POSITION_LIMIT_REACHED";
             wallet.releaseReservation(order.getReservedMargin());
             BigDecimal available = TradingMath.available(wallet.getBalance(), wallet.getUsedMargin(), wallet.getReservedMargin());
             if (margin != null && fee != null && margin.add(fee).compareTo(available) > 0) rejection = "INSUFFICIENT_MARGIN";
@@ -141,7 +165,7 @@ public class AccountTriggerService {
         BigDecimal pnl = target.closingPnl(order.getQuantity(), price.domainMarkPrice());
         BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), order.getQuantity(), order.getFeeRate());
         if (wallet.getBalance().add(pnl).subtract(fee).signum() < 0) {
-            order.reject("INSUFFICIENT_SETTLEMENT_CASH", now);
+            order.reject("INSUFFICIENT_MARGIN", now);
             committed("close-rejected", order, null);
             return;
         }
