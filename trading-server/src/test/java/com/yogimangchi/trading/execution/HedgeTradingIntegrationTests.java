@@ -103,7 +103,7 @@ class HedgeTradingIntegrationTests {
 
     @ParameterizedTest @ValueSource(ints={1,20,21,100})
     void supportedLeverageExecutesAtTheActualServerSetting(int leverage) {
-        leverages.change(guest.accountId(),btc,leverage);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,leverage);
         var order=market(btc,Position.Side.LONG,"1");
         assertThat(order.leverage()).isEqualTo(leverage);
         assertThat(order.requestedLeverage()).isEqualTo(leverage);
@@ -111,38 +111,54 @@ class HedgeTradingIntegrationTests {
     }
 
     @Test void invalidAndMismatchedLeverageNeverImplicitlyChangesSetting() {
-        for(Integer leverage:Arrays.asList(null,0,-1,101)) rejects(() -> leverages.change(guest.accountId(),btc,leverage),ErrorCode.INVALID_LEVERAGE);
+        for(Integer leverage:Arrays.asList(null,0,-1,101)) rejects(() -> leverages.change(guest.accountId(),btc,Position.Side.LONG,leverage),ErrorCode.INVALID_LEVERAGE);
         rejects(() -> orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,14,null)),ErrorCode.LEVERAGE_MISMATCH);
-        assertThat(leverages.get(guest.accountId(),btc).leverage()).isEqualTo(10);
+        assertThat(leverages.get(guest.accountId(),btc,Position.Side.LONG).leverage()).isEqualTo(10);
         assertThat(openCount()).isZero(); wallet("used_margin","0");
     }
 
-    @Test void sharedLeverageReleasesBothDirectionsMarginWithoutChangingFinancialHistory() {
+    @Test void longLeverageLeavesShortAndOtherSymbolsUnchangedWithoutRewritingHistory() {
         var longOrder=market(btc,Position.Side.LONG,"2");
         market(btc,Position.Side.SHORT,"1"); market(eth,Position.Side.LONG,"1");
         orders.close(guest.accountId(),longOrder.positionId(),key(),new ClosePositionRequest(new BigDecimal("0.5")));
         var positionsBefore=jdbc.queryForList("select id,quantity,entry_price,entry_notional,realized_pnl,reserved_close_quantity from trading.position where account_id=? order by id",guest.accountId());
         var historyBefore=orders.history(guest.accountId(),null,100);
-        var changed=leverages.change(guest.accountId(),btc,14);
-        BigDecimal expected=TradingMath.basisMargin(new BigDecimal("1500"),14).add(TradingMath.basisMargin(new BigDecimal("1000"),14)).add(new BigDecimal("10"));
+        var changed=leverages.change(guest.accountId(),btc,Position.Side.LONG,14);
+        BigDecimal expected=TradingMath.basisMargin(new BigDecimal("1500"),14).add(new BigDecimal("100")).add(new BigDecimal("10"));
         wallet("used_margin",expected.toPlainString());
         assertThat(jdbc.queryForList("select id,quantity,entry_price,entry_notional,realized_pnl,reserved_close_quantity from trading.position where account_id=? order by id",guest.accountId())).isEqualTo(positionsBefore);
         assertThat(orders.history(guest.accountId(),null,100)).isEqualTo(historyBefore);
-        assertThat(leverages.change(guest.accountId(),btc,14)).isEqualTo(changed);
-        assertThat(leverages.get(guest.accountId(),eth).leverage()).isEqualTo(10);
-        assertThat(accounts.summary(guest.accountId()).positions().stream().filter(p -> p.tradingSymbolId()==btc))
+        assertThat(leverages.change(guest.accountId(),btc,Position.Side.LONG,14)).isEqualTo(changed);
+        assertThat(leverages.get(guest.accountId(),eth,Position.Side.LONG).leverage()).isEqualTo(10);
+        assertThat(accounts.summary(guest.accountId()).positions().stream().filter(p -> p.tradingSymbolId()==btc && p.side().equals("LONG")))
                 .allMatch(p -> p.leverage()==14);
         assertThat(new BigDecimal(accounts.summary(guest.accountId()).wallet().availableBalance())).isEqualByComparingTo(new BigDecimal("9998.2").subtract(expected));
     }
 
+    @Test void changingLongKeepsShortCollateralLiquidationAndPnlUnchanged() {
+        market(btc,Position.Side.LONG,"1");
+        var shortOrder=market(btc,Position.Side.SHORT,"1");
+        mark(btc,"1001");
+        var before=accounts.summary(guest.accountId());
+        var shortBefore=before.positions().stream().filter(p -> p.id().equals(shortOrder.positionId())).findFirst().orElseThrow();
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,20);
+        var after=accounts.summary(guest.accountId());
+        var shortAfter=after.positions().stream().filter(p -> p.id().equals(shortOrder.positionId())).findFirst().orElseThrow();
+        assertThat(shortAfter).isEqualTo(shortBefore);
+        assertThat(after.wallet().unrealizedPnl()).isEqualTo(before.wallet().unrealizedPnl());
+        assertThat(leverages.get(guest.accountId(),btc,Position.Side.SHORT).leverage()).isEqualTo(10);
+        assertThat(after.positions().stream().filter(p -> p.side().equals("LONG")).findFirst().orElseThrow().liquidationPrice())
+                .isNotEqualTo(before.positions().stream().filter(p -> p.side().equals("LONG")).findFirst().orElseThrow().liquidationPrice());
+    }
+
     @Test void leverageDecreaseRollsBackPositionsOrdersWalletAndSettingTogether() {
-        leverages.change(guest.accountId(),btc,100);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100);
         market(btc,Position.Side.LONG,"500");
-        limit(Position.Side.SHORT,"100","1010");
+        limit(Position.Side.SHORT,"1","1010");
         var before=financialSnapshot();
-        rejects(() -> leverages.change(guest.accountId(),btc,1),ErrorCode.INSUFFICIENT_MARGIN);
+        rejects(() -> leverages.change(guest.accountId(),btc,Position.Side.LONG,1),ErrorCode.INSUFFICIENT_MARGIN);
         assertThat(financialSnapshot()).isEqualTo(before);
-        assertThat(leverages.get(guest.accountId(),btc).leverage()).isEqualTo(100);
+        assertThat(leverages.get(guest.accountId(),btc,Position.Side.LONG).leverage()).isEqualTo(100);
     }
 
     @Test void pendingOpenRepricingPreservesRequestedLeverageAndCloseReservations() {
@@ -150,16 +166,16 @@ class HedgeTradingIntegrationTests {
         var close=orders.createLimitClose(guest.accountId(),opened.positionId(),key(),new LimitCloseRequest(new BigDecimal("0.2"),new BigDecimal("1100")));
         var buy=limit(Position.Side.LONG,"1","990");
         var sell=limit(Position.Side.SHORT,"1","1010");
-        leverages.change(guest.accountId(),btc,20);
-        wallet("used_margin","50"); wallet("reserved_margin","100");
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,20);
+        wallet("used_margin","50"); wallet("reserved_margin","150.5");
         position(opened.positionId(),"reserved_close_quantity","0.2");
         assertThat(orders.pending(guest.accountId()).stream().filter(o -> o.action().equals("OPEN")))
-                .allMatch(o -> o.leverage()==20 && o.requestedLeverage()==10);
+                .allMatch(o -> o.leverage()==(o.side().equals("LONG")?20:10) && o.requestedLeverage()==10);
         process("980"); process("1020");
         var history=orders.history(guest.accountId(),null,100);
         assertThat(history.stream().filter(o -> Set.of(buy.orderId(),sell.orderId()).contains(o.orderId())))
-                .allMatch(o -> o.leverage()==20 && o.requestedLeverage()==10 && o.status().equals("FILLED"));
-        assertThat(openCount()).isEqualTo(2); wallet("reserved_margin","0"); wallet("used_margin","150");
+                .allMatch(o -> o.leverage()==(o.side().equals("LONG")?20:10) && o.requestedLeverage()==10 && o.status().equals("FILLED"));
+        assertThat(openCount()).isEqualTo(2); wallet("reserved_margin","0"); wallet("used_margin","201");
         position(opened.positionId(),"quantity","2"); position(opened.positionId(),"reserved_close_quantity","0.2");
         orders.cancel(guest.accountId(),close.orderId()); position(opened.positionId(),"reserved_close_quantity","0");
     }
@@ -205,7 +221,7 @@ class HedgeTradingIntegrationTests {
         String key=key();
         var request=new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,new BigDecimal("1"),10,null);
         var first=orders.create(guest.accountId(),key,request);
-        leverages.change(guest.accountId(),btc,20); prices.markUnavailable();
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,20); prices.markUnavailable();
         assertThat(orders.create(guest.accountId(),key,request)).isEqualTo(first);
         position(first.positionId(),"quantity","1"); assertThat(fillCount()).isEqualTo(1);
     }
@@ -224,7 +240,7 @@ class HedgeTradingIntegrationTests {
 
     @Test void leverageAndLimitFillRaceLeavesConsistentEffectiveMargin() throws Exception {
         limit(Position.Side.LONG,"1","990"); var tick=mark(btc,"980");
-        race(() -> leverages.change(guest.accountId(),btc,20),() -> trigger.process(guest.accountId(),tick,Map.copyOf(book)));
+        race(() -> leverages.change(guest.accountId(),btc,Position.Side.LONG,20),() -> trigger.process(guest.accountId(),tick,Map.copyOf(book)));
         wallet("used_margin","49"); wallet("reserved_margin","0");
         assertThat(accounts.summary(guest.accountId()).positions().get(0).leverage()).isEqualTo(20);
         assertThat(fillCount()).isEqualTo(1);
@@ -253,7 +269,8 @@ class HedgeTradingIntegrationTests {
 
     @Test void hundredTimesLeverageLiquidatesOnlyTheRiskySideAndAllowsAnIndependentPendingEntryLifecycle() {
         fundOpeningFees("500");
-        leverages.change(guest.accountId(),btc,100);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100);
+        leverages.change(guest.accountId(),btc,Position.Side.SHORT,100);
         var longOrder=market(btc,Position.Side.LONG,"590");
         market(btc,Position.Side.SHORT,"390");
         limit(Position.Side.LONG,"0.1","990");
@@ -269,9 +286,9 @@ class HedgeTradingIntegrationTests {
     }
 
     @Test void leverageChangeAndLiquidationRaceCannotDuplicateOrResurrectExposure() throws Exception {
-        leverages.change(guest.accountId(),btc,100); market(btc,Position.Side.LONG,"900");
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100); market(btc,Position.Side.LONG,"900");
         var tick=mark(btc,"990");
-        race(() -> { try { leverages.change(guest.accountId(),btc,50); } catch(BusinessException e) { assertThat(e.getCode()).isIn(ErrorCode.ACCOUNT_AT_RISK,ErrorCode.ACCOUNT_NOT_ACTIVE); } },
+        race(() -> { try { leverages.change(guest.accountId(),btc,Position.Side.LONG,50); } catch(BusinessException e) { assertThat(e.getCode()).isIn(ErrorCode.ACCOUNT_AT_RISK,ErrorCode.ACCOUNT_NOT_ACTIVE); } },
                 () -> trigger.process(guest.accountId(),tick,Map.copyOf(book)));
         assertThat(openCount()).isZero(); wallet("used_margin","0"); assertThat(fillCount()).isEqualTo(2);
     }
@@ -279,7 +296,7 @@ class HedgeTradingIntegrationTests {
     @Test void staleMarksPreventLeverageChangesAndLimitFill() {
         var first=market(btc,Position.Side.LONG,"1"); limit(Position.Side.LONG,"1","990");
         var before=financialSnapshot(); prices.markUnavailable();
-        rejects(() -> leverages.change(guest.accountId(),btc,20),ErrorCode.PRICE_NOT_FRESH);
+        rejects(() -> leverages.change(guest.accountId(),btc,Position.Side.LONG,20),ErrorCode.PRICE_NOT_FRESH);
         Instant old=Instant.now().minusSeconds(10); var tick=new LatestMarkPrice(btc,new BigDecimal("980"),old,old);
         trigger.process(guest.accountId(),tick,Map.of(btc,tick));
         assertThat(financialSnapshot()).isEqualTo(before); position(first.positionId(),"quantity","1");
@@ -288,14 +305,14 @@ class HedgeTradingIntegrationTests {
     @Test void unrelatedMissingPriceDoesNotBlockIsolatedTargetLeverageChange() {
         market(btc,Position.Side.LONG,"1"); market(eth,Position.Side.LONG,"1");
         prices.beginSubscription(Set.of(btc,eth)); mark(btc,"1000");
-        leverages.change(guest.accountId(),btc,20);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,20);
         wallet("used_margin","60");
-        assertThat(leverages.get(guest.accountId(),eth).leverage()).isEqualTo(10);
+        assertThat(leverages.get(guest.accountId(),eth,Position.Side.LONG).leverage()).isEqualTo(10);
     }
 
     @Test void positionNotionalLimitRejectsOnlyOverLimitPendingFillAndReleasesItsMargin() {
         fundOpeningFees("500");
-        leverages.change(guest.accountId(),btc,100);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100);
         var profit=market(btc,Position.Side.LONG,"1"); mark(btc,"1100");
         orders.close(guest.accountId(),profit.positionId(),key()); mark(btc,"1000");
         market(btc,Position.Side.LONG,"999");
@@ -307,30 +324,50 @@ class HedgeTradingIntegrationTests {
     }
 
     @Test void symbolSettingsAreRemovedWithOnlyAnExpiredUnusedGuest() {
-        leverages.change(guest.accountId(),btc,20);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,20);
         jdbc.update("update trading.trading_account set credential_expires_at=now()-interval '8 days' where id=?",guest.accountId());
         cleanup.cleanupBatch();
         assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,guest.accountId())).isZero();
     }
 
     @Test void authenticatedApiPersistsSettingsAndRejectsFractionalLeverageAndUnknownSymbols() throws Exception {
-        String path="/api/v1/trading/account/symbols/"+btc+"/leverage";
+        String path="/api/v1/trading/account/symbols/"+btc+"/leverage?side=LONG";
         mvc.perform(get(path)).andExpect(status().isUnauthorized());
-        mvc.perform(put(path).contentType("application/json").content("{\"leverage\":14}")).andExpect(status().isUnauthorized());
+        mvc.perform(put(path).contentType("application/json").content("{\"side\":\"LONG\",\"leverage\":14}")).andExpect(status().isUnauthorized());
         mvc.perform(get(path).header("Authorization",bearer())).andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(10));
         assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,guest.accountId())).isZero();
-        mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"leverage\":14}"))
+        mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"side\":\"LONG\",\"leverage\":14}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.marginMode").value("ISOLATED")).andExpect(jsonPath("$.maxLeverage").value(100));
         mvc.perform(get(path).header("Authorization",bearer())).andExpect(jsonPath("$.leverage").value(14));
         for(String invalid:List.of("101","0","14.5","\"14\"","null"))
-            mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"leverage\":"+invalid+"}"))
+            mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"side\":\"LONG\",\"leverage\":"+invalid+"}"))
                     .andExpect(status().isBadRequest());
         var other=accounts.createGuest();
         mvc.perform(get(path).header("Authorization","Bearer "+other.accessToken())).andExpect(jsonPath("$.leverage").value(10));
-        mvc.perform(get("/api/v1/trading/account/symbols/999999/leverage").header("Authorization",bearer()))
+        mvc.perform(get("/api/v1/trading/account/symbols/999999/leverage?side=LONG").header("Authorization",bearer()))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SYMBOL_NOT_AVAILABLE"));
         jdbc.update("update trading.trading_account set credential_expires_at=now()-interval '1 day' where id=?",guest.accountId());
         mvc.perform(get(path).header("Authorization",bearer())).andExpect(status().isUnauthorized());
+    }
+
+    @Test void missingDirectionNeverFallsBackToSharedConfiguration() throws Exception {
+        String path="/api/v1/trading/account/symbols/"+btc+"/leverage";
+        mvc.perform(get(path).header("Authorization",bearer())).andExpect(status().isBadRequest());
+        mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"leverage\":20}"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,guest.accountId())).isZero();
+    }
+
+    @Test void simultaneousDirectionChangesAndQuotesUseEachOwnConfiguration() throws Exception {
+        market(btc,Position.Side.LONG,"1"); market(btc,Position.Side.SHORT,"1");
+        race(() -> leverages.change(guest.accountId(),btc,Position.Side.LONG,20),
+                () -> leverages.change(guest.accountId(),btc,Position.Side.SHORT,5));
+        wallet("used_margin","250");
+        for(var side:Position.Side.values()) {
+            mvc.perform(post("/api/v1/trading/account/orders/quote").header("Authorization",bearer()).contentType("application/json")
+                    .content("{\"type\":\"MARKET\",\"tradingSymbolId\":"+btc+",\"side\":\""+side+"\",\"quantity\":\"1\"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(side==Position.Side.LONG?20:5));
+        }
     }
 
     @Test void runtimeOpenApiExplainsLeverageAndIntegratedPositionContracts() throws Exception {
@@ -343,10 +380,10 @@ class HedgeTradingIntegrationTests {
     }
 
     private OrderResponse market(long symbol,Position.Side side,String quantity) {
-        return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,new BigDecimal(quantity),leverages.current(guest.accountId(),symbol),null));
+        return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,new BigDecimal(quantity),leverages.current(guest.accountId(),symbol,side),null));
     }
     private OrderResponse limit(Position.Side side,String quantity,String limit) {
-        return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,side,new BigDecimal(quantity),leverages.current(guest.accountId(),btc),new BigDecimal(limit)));
+        return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,side,new BigDecimal(quantity),leverages.current(guest.accountId(),btc,side),new BigDecimal(limit)));
     }
     private LatestMarkPrice mark(long symbol,String value) {
         Instant now=Instant.now();

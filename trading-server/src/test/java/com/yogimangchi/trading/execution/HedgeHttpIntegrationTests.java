@@ -39,14 +39,15 @@ class HedgeHttpIntegrationTests {
             var created=send("POST","/api/v1/trading/accounts/guest","",null);
             assertThat(created.statusCode()).isEqualTo(201);
             var guest=json.readTree(created.body()); String token=guest.path("accessToken").asText();
-            String leveragePath="/api/v1/trading/account/symbols/"+symbol+"/leverage";
-            assertThat(send("PUT",leveragePath,"{\"leverage\":100}",token).statusCode()).isEqualTo(200);
+            String leveragePath="/api/v1/trading/account/symbols/"+symbol+"/leverage?side=LONG";
+            assertThat(send("PUT",leveragePath,"{\"side\":\"LONG\",\"leverage\":100}",token).statusCode()).isEqualTo(200);
+            assertThat(send("PUT",leveragePath,"{\"side\":\"SHORT\",\"leverage\":100}",token).statusCode()).isEqualTo(200);
             var first=open(symbol,"LONG",token); var second=open(symbol,"LONG",token); var shortOrder=open(symbol,"SHORT",token);
             assertThat(first.path("positionId")).isEqualTo(second.path("positionId")).isNotEqualTo(shortOrder.path("positionId"));
             var summary=json.readTree(send("GET","/api/v1/trading/account/summary",null,token).body());
             assertThat(summary.path("positions").size()).isEqualTo(2);
             assertThat(summary.path("wallet").path("usedMargin").asText()).isEqualTo("30.000000000000000000");
-            assertThat(jdbc.queryForObject("select leverage from trading.symbol_leverage where account_id=? and trading_symbol_id=?",Integer.class,guest.path("accountId").asLong(),symbol)).isEqualTo(100);
+            assertThat(jdbc.queryForObject("select leverage from trading.symbol_leverage where account_id=? and trading_symbol_id=? and side='LONG'",Integer.class,guest.path("accountId").asLong(),symbol)).isEqualTo(100);
             var document=json.readTree(send("GET","/v3/api-docs",null,null).body());
             assertThat(document.path("paths").has("/api/v1/trading/account/symbols/{symbolId}/leverage")).isTrue();
             assertThat(send("GET",leveragePath,null,null).statusCode()).isEqualTo(401);

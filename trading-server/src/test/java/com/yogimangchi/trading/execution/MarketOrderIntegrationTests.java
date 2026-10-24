@@ -63,7 +63,7 @@ class MarketOrderIntegrationTests {
         OrderResponse longOrder = create("2", Position.Side.LONG, 10, key());
         OrderResponse shortOrder = create("1", Position.Side.SHORT, 5, key());
         assertThat(longOrder.fill().price()).isEqualTo("1000.000000000000000000");
-        amount("used_margin", "600"); // Both Hedge directions share the newly selected 5x setting.
+        amount("used_margin", "400"); // LONG remains 10x while SHORT independently uses 5x.
         price("1100");
         assertThat(accounts.summary(guest.accountId()).wallet().unrealizedPnl()).isEqualTo("100.000000000000000000");
         service.close(guest.accountId(), longOrder.positionId(), key());
@@ -153,7 +153,7 @@ class MarketOrderIntegrationTests {
     }
 
     @Test void apiRequiresCredentialAndHidesOtherAccountsAndProviderData() throws Exception {
-        leverages.change(guest.accountId(), symbol, 2);
+        leverages.change(guest.accountId(), symbol,Position.Side.LONG, 2);
         String body = "{\"type\":\"MARKET\",\"tradingSymbolId\":" + symbol + ",\"side\":\"LONG\",\"quantity\":\"1\",\"leverage\":2,\"price\":1}";
         mvc.perform(post("/api/v1/trading/account/orders").header("Idempotency-Key", key()).contentType("application/json").content(body))
                 .andExpect(status().isUnauthorized());
@@ -170,7 +170,7 @@ class MarketOrderIntegrationTests {
     }
 
     private OrderResponse create(String quantity, Position.Side side, int leverage, String key) {
-        if (leverages.current(guest.accountId(), symbol) != leverage) leverages.change(guest.accountId(), symbol, leverage);
+        if (leverages.current(guest.accountId(), symbol,side) != leverage) leverages.change(guest.accountId(), symbol,side, leverage);
         return service.create(guest.accountId(), key, new CreateOrderRequest(TradingOrder.Type.MARKET, symbol, side, new BigDecimal(quantity), leverage, null));
     }
 
@@ -198,7 +198,7 @@ class MarketOrderIntegrationTests {
     }
 
     @Test void fixedLimitMarginSurvivesMarkMovesButOtherReservationsCanExhaustBalance() {
-        leverages.change(guest.accountId(), symbol, 1);
+        leverages.change(guest.accountId(), symbol,Position.Side.LONG, 1);
         var request = new CreateOrderRequest(TradingOrder.Type.LIMIT, symbol, Position.Side.LONG,
                 new BigDecimal("5"), 1, new BigDecimal("900"));
         service.create(guest.accountId(), key(), request);

@@ -67,7 +67,7 @@ public class OrderQuoteService {
                 ? price.compareTo(mark.domainMarkPrice())>=0 : price.compareTo(mark.domainMarkPrice())<=0))
             throw new BusinessException(ErrorCode.MARKETABLE_LIMIT_NOT_ALLOWED);
         if (target!=null && isolated.risk(target,mark.domainMarkPrice()).atRisk()) throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
-        int leverage=leverages.current(accountId,request.tradingSymbolId());
+        int leverage=leverages.current(accountId,request.tradingSymbolId(),request.side());
         BigDecimal rate=TradingFees.rate(request.type());
         Function<BigDecimal,BigDecimal> margin=q -> request.type()==TradingOrder.Type.LIMIT
                 ? TradingMath.margin(price,q,leverage)

@@ -44,34 +44,35 @@ public class SymbolLeverageService {
     }
 
     /** Used under AccountLock. No implicit setting changes from an OPEN order. */
-    public int current(Long accountId, Long symbolId) {
-        return settings.findByAccountIdAndTradingSymbolId(accountId, symbolId)
+    public int current(Long accountId, Long symbolId, Position.Side side) {
+        requireSide(side);
+        return settings.findByAccountIdAndTradingSymbolIdAndSide(accountId, symbolId, side)
                 .map(SymbolLeverage::getLeverage).orElse(TradingMath.DEFAULT_LEVERAGE);
     }
 
     @Transactional
-    public LeverageResponse get(Long accountId, Long symbolId) {
-        TradingAccount account = locks.lock(accountId); requireSymbol(symbolId);
-        return settings.findByAccountIdAndTradingSymbolId(accountId, symbolId)
-                .map(s -> response(account, symbolId, s.getLeverage(), s.getUpdatedAt()))
-                .orElseGet(() -> response(account, symbolId, TradingMath.DEFAULT_LEVERAGE, null));
+    public LeverageResponse get(Long accountId, Long symbolId, Position.Side side) {
+        TradingAccount account = locks.lock(accountId); requireSymbol(symbolId); requireSide(side);
+        return settings.findByAccountIdAndTradingSymbolIdAndSide(accountId, symbolId, side)
+                .map(s -> response(account, symbolId, side, s.getLeverage(), s.getUpdatedAt()))
+                .orElseGet(() -> response(account, symbolId, side, TradingMath.DEFAULT_LEVERAGE, null));
     }
 
     @Transactional
-    public LeverageResponse change(Long accountId, Long symbolId, Integer leverage) {
+    public LeverageResponse change(Long accountId, Long symbolId, Position.Side side, Integer leverage) {
         if (leverage == null || leverage < 1 || leverage > TradingMath.MAX_LEVERAGE) throw new BusinessException(ErrorCode.INVALID_LEVERAGE);
         gate.enterTradingTransaction();
         TradingAccount account = locks.lock(accountId);
-        requireSymbol(symbolId);
+        requireSymbol(symbolId); requireSide(side);
         if (account.getStatus() != TradingAccount.Status.ACTIVE) throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         if (!account.isIsolated()) throw new BusinessException(ErrorCode.MARGIN_MIGRATION_REQUIRED);
-        var previous = settings.findByAccountIdAndTradingSymbolId(accountId, symbolId);
-        if (previous.isPresent() && previous.get().getLeverage() == leverage) return response(account, symbolId, leverage, previous.get().getUpdatedAt());
+        var previous = settings.findByAccountIdAndTradingSymbolIdAndSide(accountId, symbolId, side);
+        if (previous.isPresent() && previous.get().getLeverage() == leverage) return response(account, symbolId, side, leverage, previous.get().getUpdatedAt());
         var wallet = wallets.findById(accountId).orElseThrow();
         var open = positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN);
-        var affected = open.stream().filter(p -> p.getTradingSymbolId().equals(symbolId)).toList();
+        var affected = open.stream().filter(p -> p.getTradingSymbolId().equals(symbolId) && p.getSide() == side).toList();
         var pending = orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING).stream()
-                .filter(o -> o.getTradingSymbolId().equals(symbolId) && o.getAction() == TradingOrder.Action.OPEN).toList();
+                .filter(o -> o.getTradingSymbolId().equals(symbolId) && o.getSide() == side && o.getAction() == TradingOrder.Action.OPEN).toList();
         BigDecimal usedDelta = affected.stream().map(p -> p.marginAtLeverage(leverage).subtract(p.getMargin())).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal reservedDelta = pending.stream().map(o -> TradingFees.reservation(o.getLimitPrice(), o.getQuantity(), leverage, o.getFeeRate())
                 .subtract(o.getReservedMargin())).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -91,20 +92,24 @@ public class SymbolLeverageService {
         affected.forEach(p -> p.changeLeverage(leverage));
         pending.forEach(o -> o.repricePendingOpen(leverage));
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-        var setting = previous.orElseGet(() -> SymbolLeverage.configure(accountId, symbolId, leverage, now));
+        var setting = previous.orElseGet(() -> SymbolLeverage.configure(accountId, symbolId, side, leverage, now));
         setting.change(leverage, now);
         settings.save(setting);
         // A preference-only change does not turn an otherwise unused Guest into permanent financial history.
         if (!affected.isEmpty() || !pending.isEmpty()) account.recordFinancialChange(now);
-        return response(account, symbolId, leverage, now);
+        return response(account, symbolId, side, leverage, now);
+    }
+
+    private static void requireSide(Position.Side side) {
+        if (side == null) throw new BusinessException(ErrorCode.INVALID_ORDER);
     }
 
     private void requireSymbol(Long symbolId) {
         if (symbolId == null || symbolId <= 0 || symbols.findById(symbolId).filter(s -> s.getStatus() == TradingSymbolStatus.ACTIVE).isEmpty())
             throw new BusinessException(ErrorCode.SYMBOL_NOT_AVAILABLE);
     }
-    private static LeverageResponse response(TradingAccount account, Long symbolId, int leverage, Instant updated) {
-        return new LeverageResponse(symbolId, leverage, TradingMath.MAX_LEVERAGE, account.getMarginMode(), updated,
+    private static LeverageResponse response(TradingAccount account, Long symbolId, Position.Side side, int leverage, Instant updated) {
+        return new LeverageResponse(symbolId, side, leverage, TradingMath.MAX_LEVERAGE, account.getMarginMode(), updated,
                 account.getMarginTransitionStatus().name());
     }
 }

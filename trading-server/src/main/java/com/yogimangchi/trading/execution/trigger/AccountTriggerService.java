@@ -100,7 +100,7 @@ public class AccountTriggerService {
             String rejection = null;
             BigDecimal margin = null;
             BigDecimal fee = null;
-            int effectiveLeverage = leverage.current(accountId, order.getTradingSymbolId());
+            int effectiveLeverage = leverage.current(accountId, order.getTradingSymbolId(), order.getSide());
             if (order.getLeverage() != effectiveLeverage) throw new IllegalStateException("Pending reservation leverage differs from symbol setting");
             try {
                 margin = hedge.additionalMargin(open, order.getTradingSymbolId(), order.getSide(), order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage);
