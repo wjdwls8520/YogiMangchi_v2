@@ -7,6 +7,9 @@ Trading 금융 원장·Frontend를 직접 수정하지 않는다. 회원 JWT의 
 
 ## 로그인과 토큰 계약
 
+Frontend 연동 전에는 [인증 오류·쿠키·실제 검증 및 재실행 계약](docs/auth-integration.md)을 확인한다.
+신규 오류 코드, 응답 유실 복구, 닉네임 조회429, same-site 지원 조건과 실제 OAuth/브라우저 미검증 범위를 구분한다.
+
 외부 OAuth2는 **Google과 Kakao만** 지원한다. Google은 OIDC sub, Kakao는 사용자 정보 id로 식별한다.
 검증된 이메일을 요구하지만 이메일 자체로 계정을 연결하지 않는다. 같은 이메일이라도 다른 공급자 계정은 별개다.
 현재 가입 요청은 일반 MEMBER만 생성한다. ID/Password 로그인·추가 공급자·자동 계정 연결을 제공하지 않는다.
@@ -176,3 +179,9 @@ HTTP503 재시도 대기/새 worker 재개/전용 JWT 서명·계약/204 완료 
 버전 동의/가입/outbox 원자성, 기존 미상 동의와 재동의 append, 문서 해시·불변성, 탈퇴 확인/실제 CSRF/본인 OAuth,
 Google·Kakao 재가입의 새 ID/닉네임 재사용, 개인정보·Refresh 파기, 동시 signup/refresh·탈퇴, HTTP 생성 전달 재시도와 V3→V4 이관을 검증했다.
 실제 외부 OAuth 및 Frontend/Content/Trading 전체 사용자 시나리오는 별도 검증 단계다.
+
+2026-10-24 인증 계약 보강 후 Java17 `clean build` 성공,133개 테스트 통과(실패·오류·건너뜀0).
+실제 임시 포트 Tomcat과 로컬 공급자 HTTP/JWK로 Google OIDC 서명·state·nonce·issuer·audience·만료,
+가입→갱신→로그아웃→재로그인과 CSRF/쿠키 경로를 검증했다. 안전한 오류 code, 동시 로그인 증명 소비,
+닉네임 조회429/Retry-After, DB 장애503, Bearer를 덧붙인 쿠키 요청의 CSRF와 전송204 후 상태 저장 rollback/재전송도 검증했다.
+실제 Google/Kakao 계정·브라우저 SameSite/다중 탭·양 서비스 실제 통합은 미검증이며 [연동 확인표](docs/auth-integration.md)를 따른다.

@@ -7,7 +7,8 @@
 1. `GET /api/v1/policies/current`의 각 `documentUrl`을 조회해 text/version/sha256을 표시한다. 현재 문서는 DEVELOPMENT_DRAFT다.
 2. 기존 OAuth 가입 흐름에서 nickname,termAgree=true,privateAgree=true,termsVersion=ym-terms-v1,privacyVersion=ym-privacy-v1을 보낸다.
    profileMessage는 선택이다. 세션 쿠키+CSRF가 필요하다. 버전 누락400, 오래된 버전409. 동시/재전송 가입은 중복 계정을 만들지 않는다.
-   가입 응답 유실 후에는 OAuth flow를 다시 확인하여 LOGIN_READY로 로그인한다. 이력/자금을 새로 합치지 않는다.
+   가입 응답 유실 후 메모리에 남은 Access가 있으면 본인 상태를 확인한다. 없으면 소셜 인증을 새로 수행한 뒤 OAuth flow를 확인하여 LOGIN_READY로 로그인한다.
+   성공한 가입의 증명은 이미 소비되므로 같은 세션의 flow는401 LOGIN_PROOF_REQUIRED일 수 있다. 가입을 무조건 재전송하거나 이력/자금을 새로 합치지 않는다.
 3. 로그인 후 `GET /api/v1/members/me/consents`(Bearer)를 읽는다. policies의 required/accepted/lastAcceptedVersion/lastAgreedAt과 reconsentRequired를 사용한다.
 4. `POST` 같은 경로에 termAgree/privateAgree와 현재 두 버전을 보낸다. 서버 시각으로 append하며 같은 버전 동의는 중복 저장·시각 갱신하지 않는다.
    현재는 재동의 필요 상태/제출을 제공하며 모든 업무를 일괄 차단하는 새로운 서비스 정책은 도입하지 않았다.

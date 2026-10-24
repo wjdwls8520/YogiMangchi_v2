@@ -45,6 +45,7 @@ content:
     delivery-enabled: ${CONTENT_WITHDRAWAL_DELIVERY_ENABLED:false}
     trading-base-url: ${CONTENT_TRADING_BASE_URL:http://localhost:8081}
   auth:
+    nickname-lookups-per-minute: ${CONTENT_NICKNAME_LOOKUPS_PER_MINUTE:300}
     issuer: ${YOGIMANGCHI_JWT_ISSUER:http://localhost:8080}
     private-key-path: ${CONTENT_JWT_PRIVATE_KEY_PATH}
     key-id: ${CONTENT_JWT_KEY_ID:content-1}

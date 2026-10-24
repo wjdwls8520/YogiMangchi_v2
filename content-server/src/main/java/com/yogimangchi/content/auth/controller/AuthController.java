@@ -59,7 +59,7 @@ public class AuthController {
     }
     private VerifiedIdentity identity(HttpServletRequest request) {
         HttpSession session=request.getSession(false);
-        if(session==null || !(session.getAttribute(VerifiedIdentity.SESSION_KEY) instanceof VerifiedIdentity identity)) throw AuthFailure.unauthorized();
+        if(session==null || !(session.getAttribute(VerifiedIdentity.SESSION_KEY) instanceof VerifiedIdentity identity)) throw new AuthFailure("LOGIN_PROOF_REQUIRED",HttpStatus.UNAUTHORIZED);
         identity.requireFresh(); return identity;
     }
     private void clearProof(HttpServletRequest request) {
@@ -68,7 +68,7 @@ public class AuthController {
     }
     private ResponseEntity<AccessResponse> useProof(HttpServletRequest request,java.util.function.Function<VerifiedIdentity,AuthService.Issued> action) {
         var session=request.getSession(false);
-        if(session==null) throw AuthFailure.unauthorized();
+        if(session==null) throw new AuthFailure("LOGIN_PROOF_REQUIRED",HttpStatus.UNAUTHORIZED);
         // The current single Content instance uses servlet sessions for the temporary login flow.
         synchronized(session) {
             var tokens=action.apply(identity(request)); clearProof(request); return issued(tokens);

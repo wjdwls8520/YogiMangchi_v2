@@ -19,12 +19,28 @@ public class ApiErrors {
     private static final Logger log=LoggerFactory.getLogger(ApiErrors.class);
     @ExceptionHandler(AuthFailure.class)
     ResponseEntity<ProblemDetail> auth(AuthFailure e) { return problem(e.status(),e.code()); }
-    @ExceptionHandler({MethodArgumentNotValidException.class,HttpMessageNotReadableException.class,MethodArgumentTypeMismatchException.class,org.springframework.web.bind.ServletRequestBindingException.class})
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    ResponseEntity<ProblemDetail> fields(MethodArgumentNotValidException e) {
+        var errors=e.getBindingResult();
+        // Inspect fixed field names only; rejected values and validator messages never enter responses.
+        String code=errors.hasFieldErrors("nickname") ? "INVALID_NICKNAME"
+                : errors.hasFieldErrors("termAgree") || errors.hasFieldErrors("privateAgree") ? "REQUIRED_CONSENT_MISSING"
+                : errors.hasFieldErrors("termsVersion") || errors.hasFieldErrors("privacyVersion") ? "POLICY_VERSION_REQUIRED" : "INVALID_REQUEST";
+        return problem(HttpStatus.BAD_REQUEST,code);
+    }
+    @ExceptionHandler({HttpMessageNotReadableException.class,MethodArgumentTypeMismatchException.class,org.springframework.web.bind.ServletRequestBindingException.class})
     ResponseEntity<ProblemDetail> validation(Exception e) { return problem(HttpStatus.BAD_REQUEST,"INVALID_REQUEST"); }
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ProblemDetail> conflict(DataIntegrityViolationException e) {
-        if(e.getMostSpecificCause() instanceof java.sql.SQLException sql && "23505".equals(sql.getSQLState()))
+        if(e.getMostSpecificCause() instanceof java.sql.SQLException sql && "23505".equals(sql.getSQLState())) {
+            for(Throwable cause=e;cause!=null;cause=cause.getCause()) {
+                if(cause instanceof org.hibernate.exception.ConstraintViolationException constraint) {
+                    if("member_nickname_key".equals(constraint.getConstraintName())) return problem(HttpStatus.CONFLICT,"NICKNAME_UNAVAILABLE");
+                    if("oauth_identity_provider_provider_subject_key".equals(constraint.getConstraintName())) return problem(HttpStatus.CONFLICT,"MEMBER_ALREADY_EXISTS");
+                }
+            }
             return problem(HttpStatus.CONFLICT,"RESOURCE_ALREADY_EXISTS");
+        }
         return unexpected(e);
     }
     @ExceptionHandler({HttpMediaTypeNotSupportedException.class,HttpRequestMethodNotSupportedException.class})
@@ -33,6 +49,8 @@ public class ApiErrors {
     }
     @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
     ResponseEntity<ProblemDetail> busy(Exception e) { return problem(HttpStatus.CONFLICT,"MEMBER_BUSY"); }
+    @ExceptionHandler({org.springframework.dao.DataAccessResourceFailureException.class,org.springframework.transaction.CannotCreateTransactionException.class})
+    ResponseEntity<ProblemDetail> unavailable(Exception e) { return problem(HttpStatus.SERVICE_UNAVAILABLE,"SERVICE_TEMPORARILY_UNAVAILABLE"); }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ProblemDetail> unexpected(Exception e) {
         // SQL/provider response messages may contain personal data; do not dump request/token objects.
