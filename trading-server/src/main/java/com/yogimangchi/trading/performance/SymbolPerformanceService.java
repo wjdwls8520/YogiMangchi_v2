@@ -65,6 +65,7 @@ public class SymbolPerformanceService {
         long count=0;
         for(var a:aggregates) {turnover=turnover.add(a.turnover());gross=gross.add(a.gross());fees=fees.add(a.fee());adjustment=adjustment.add(a.adjustment());count+=a.count();}
         var marks=prices.findAll(open.stream().map(Position::getTradingSymbolId).collect(java.util.stream.Collectors.toSet()));
+        Instant valuedAt=Instant.now();
         List<Symbol> result=new ArrayList<>();
         for(var a:bySymbol.values()) {
             var exposure=open.stream().filter(p -> p.getTradingSymbolId().equals(a.id())).toList();
@@ -74,11 +75,11 @@ public class SymbolPerformanceService {
             var mark=snapshot==null?Optional.<LatestMarkPrice>empty():snapshot.latestPrice();
             result.add(new Symbol(a.id(),a.symbol(),a.quote(),a.count(),text(a.turnover()),text(turnover.signum()==0?BigDecimal.ZERO:a.turnover().multiply(BigDecimal.valueOf(100)).divide(turnover,8,RoundingMode.HALF_EVEN)),
                 text(a.gross()),text(a.fee()),text(a.adjustment()),text(a.gross().subtract(a.fee())),text(a.gross().subtract(a.fee()).add(a.adjustment())),text(unrealized),
-                exposure.isEmpty()?"NO_OPEN_EXPOSURE":snapshot.status().name(),mark.map(LatestMarkPrice::eventTime).orElse(null),mark.map(LatestMarkPrice::receivedAt).orElse(null),now));
+                exposure.isEmpty()?"NO_OPEN_EXPOSURE":snapshot.status().name(),mark.map(LatestMarkPrice::eventTime).orElse(null),mark.map(LatestMarkPrice::receivedAt).orElse(null),valuedAt));
         }
         BigDecimal capital=capital(accountId,start,end,roundId);
         RoundReturn returns=null;
-        if(round!=null&&from==null&&before==null&&symbolId==null) returns=roundReturn(round,accountId,open,marks,now);
+        if(round!=null&&from==null&&before==null&&symbolId==null) returns=roundReturn(round,accountId,open,marks,valuedAt);
         return new SymbolPerformanceResponse(new Scope(start,end,roundId,symbolId,"OPEN+CLOSE+LIQUIDATE actual Fill price*quantity; each leg once","CURRENT_OPEN_EXPOSURE; historical period does not filter current valuation"),
             new Totals(count,text(turnover),text(gross),text(fees),text(adjustment),text(gross.subtract(fees)),text(gross.subtract(fees).add(adjustment))),List.copyOf(result),text(capital),returns,now);
     }
