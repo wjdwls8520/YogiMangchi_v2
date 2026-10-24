@@ -26,8 +26,8 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
   const [warning,setWarning]=useState<string|null>(null),[result,setResult]=useState<string|null>(null);
   const action=useTradingMutation();
   const notices=useTradingNotices();
-  const locked=snapshot.retrying||action.pending||action.unconfirmed||snapshot.phase!=="ready";
-  const ready=isolatedReady(summary.data?.wallet)&&position.marginMode==="ISOLATED"&&snapshot.phase==="ready"&&summary.data?.status==="ACTIVE";
+  const locked=action.blocked||snapshot.retrying||action.pending||action.unconfirmed||snapshot.phase!=="ready";
+  const ready=!action.blocked&&isolatedReady(summary.data?.wallet)&&position.marginMode==="ISOLATED"&&snapshot.phase==="ready"&&summary.data?.status==="ACTIVE";
   const mark=positionPrices[position.tradingSymbolId],valuation=positionValuation(position,mark);
   const scope=layout==="row" ? "partial" : "available";
   const fullAvailable=comparePrices(position.freeCloseQuantity,position.quantity)===0;
@@ -52,7 +52,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
     dialog.current?.close();partialDialog.current?.close();
   }
   async function execute(full=false) {
-    if(action.pending||snapshot.phase!=="ready")return;
+    if(action.blocked||action.pending||snapshot.phase!=="ready")return;
     if(action.unconfirmed) {complete(await action.retry());return;}
     const command=positionCloseCommand(position,full ? "MARKET" : type,full ? position.quantity : quantity.trim(),limitPrice.trim(),mark,ready,full ? "full" : scope);
     if(command.command===null) {setWarning(command.issue);notices.push({kind:"error",title:"청산을 제출할 수 없습니다",message:command.issue});return;}
@@ -90,7 +90,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
       <p>보유 수량 {formatQuantity(position.quantity)}을 시장가로 청산합니다. 실제 체결 가격과 손익은 서버가 결정합니다.</p>
       <p>현재 Mark {formatMarketPrice(valuation.mark)} · 미실현 손익 {formatDecimal(valuation.pnl)} USDT</p>
       {(warning??action.error??fullIssue) && <p role="alert" className="order-warning">{warning??action.error??fullIssue}</p>}
-      <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>dialog.current?.close()}>취소</button><button className="guest-start-button" type="button" disabled={action.pending||(!action.unconfirmed&&!!fullIssue)} onClick={()=>void execute(true)}>{action.pending ? "처리 중…" : action.unconfirmed ? "같은 청산 결과 확인" : "전체 청산 확인"}</button></div>
+      <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>dialog.current?.close()}>취소</button><button className="guest-start-button" type="button" disabled={action.blocked||action.pending||(!action.unconfirmed&&!!fullIssue)} onClick={()=>void execute(true)}>{action.pending ? "처리 중…" : action.unconfirmed ? "같은 청산 결과 확인" : "전체 청산 확인"}</button></div>
     </dialog>
   </div>;
 }

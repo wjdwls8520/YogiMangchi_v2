@@ -27,7 +27,7 @@ test("isolated liquidation contracts preserve server precision and never fabrica
 test("legacy and incomplete margin transitions cannot enable trading even with valid 100x leverage",()=>{
   for(const mode of ["ISOLATED","LEGACY_CROSS"]){
     for(const status of ["COMPLETE","PENDING","REVIEW_REQUIRED"]){
-      const value=parseLeverage({tradingSymbolId:2,leverage:100,maxLeverage:100,marginMode:mode,marginTransitionStatus:status,updatedAt:null},2);
+      const value=parseLeverage({tradingSymbolId:2,side:"LONG",leverage:100,maxLeverage:100,marginMode:mode,marginTransitionStatus:status,updatedAt:null},2);
       assert.equal(isolatedReady(value),mode==="ISOLATED"&&status==="COMPLETE");
     }
   }

@@ -51,7 +51,7 @@ test("known business rejection permits a new intent without GET-style automatic 
   const intent = createTradingIntent(async () => { calls++; throw new TradingApiError(409, undefined, "INSUFFICIENT_MARGIN"); }, () => `order-key-${++keys}`);
   await assert.rejects(intent.execute(command, snapshot)); assert.equal(calls, 1);
   await assert.rejects(intent.execute(command, snapshot)); assert.equal(keys, 2);
-  assert.equal(mutationMessage(new TradingApiError(409, "never use this server message", "INSUFFICIENT_MARGIN")), "사용 가능한 증거금이 부족합니다.");
+  assert.equal(mutationMessage(new TradingApiError(409, "never use this server message", "INSUFFICIENT_MARGIN")), "증거금과 수수료를 위한 잔액이 부족합니다.");
 });
 test("authenticated writes keep Bearer private, send decimal strings and never recreate/replay on 401", async () => {
   const store = new Map<string, string>(); let creates = 0; let writes = 0;

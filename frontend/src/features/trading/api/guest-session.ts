@@ -1,6 +1,6 @@
 import { tradingJson, tradingOrigin, TradingApiError } from "./client";
 import { decimal, id, parseCredential, parseGuest, record, type GuestCredential } from "./contracts";
-import { mutationRequest, type TradingCommand } from "./mutation-request";
+import { mutationRequest, uncertainMutation, type TradingCommand } from "./mutation-request";
 import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
 import type { QuoteRequest } from "./quote";
 import { parseOrder } from "./orders";
@@ -167,7 +167,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { if (mode === "guest" && snapshot.generation === generation) { credential = null; publish("anonymous"); } }
       });
     },
-    async read(path: "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
+    async read(path: "account/recovery" | `account/performance/symbols?${string}` | "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage?side=${"LONG" | "SHORT"}`,  expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
       const current = credential;
       if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
       if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
@@ -210,9 +210,9 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           return result;
         } catch (error) {
           if (mode === "member" && member?.memberId === ownerId && restartIntent === intent) {
-            const uncertain = accepted || !(error instanceof TradingApiError) || [0, 422, 500, 502, 503, 504].includes(error.status);
+            const uncertain = accepted || uncertainMutation(error);
             if (uncertain) { credential = null; memberRoundId = undefined; }
-            else { restartIntent = null; memberRoundId = intent.roundId; if (error.status === 401) invalidate(current); }
+            else { restartIntent = null; memberRoundId = intent.roundId; if (error instanceof TradingApiError && error.status === 401) invalidate(current); }
           }
           if (accepted && !(error instanceof DOMException && error.name === "AbortError")) throw new TradingApiError(0);
           throw error;
@@ -250,19 +250,19 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       eventReconnects.add(stream.reconnect);
       return () => { eventReconnects.delete(stream.reconnect); stream(); };
     },
-    async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot) {
+    async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot, side: "LONG" | "SHORT" = "LONG") {
       if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");
-      const path = leveragePath(symbolId);
+      const path = leveragePath(symbolId, side).split("?")[0];
       if (!validLeverage(leverage)) throw new TradingApiError(400, "레버리지는 1~100배 정수로 설정해 주세요.");
       const current = credential;
       if (current && !usable(current)) invalidate(current);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
       writes++;
       try {
-        const value = await tradingJson(origin, path, { token: current.accessToken, method: "PUT", body: { leverage } }, transport);
+        const value = await tradingJson(origin, path, { token: current.accessToken, method: "PUT", body: { side, leverage } }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
-        return parseLeverage(value, symbolId);
+        return parseLeverage(value, symbolId, side);
       } catch (error) {
         if (error instanceof TradingApiError && error.status === 401) invalidate(current);
         throw error;
