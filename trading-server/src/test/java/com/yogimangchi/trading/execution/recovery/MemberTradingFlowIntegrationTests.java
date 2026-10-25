@@ -153,6 +153,45 @@ class MemberTradingFlowIntegrationTests {
         assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'",Long.class,actor.id)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from trading.position where account_id=? and status='OPEN'",Long.class,actor.id)).isZero();assertThat(ledger.check(actor.id).status()).isEqualTo("MATCHED");restarted.close();
     }
+    @Test void memberCloseReservationAndMarketCloseRaceCannotExitMoreThanThePosition()throws Exception{
+        long position=open("LONG","1",10,null).path("positionId").asLong();
+        var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);
+        try{
+            var reserve=pool.submit(()->{start.await();return raw(post("/api/v1/trading/account/positions/"+position+"/close-orders"),"{\"quantity\":\"0.7\",\"limitPrice\":\"1100\"}");});
+            var close=pool.submit(()->{start.await();return raw(post("/api/v1/trading/account/positions/"+position+"/close"),"{\"quantity\":\"0.5\"}");});start.countDown();
+            var responses=List.of(reserve.get(),close.get());assertThat(responses.stream().filter(r->r.status()==200).count()).isEqualTo(1);
+            assertThat(responses.stream().filter(r->r.status()==409&&r.body().path("code").asText().equals("CLOSE_QUANTITY_EXCEEDED")).count()).isEqualTo(1);
+        }finally{pool.shutdownNow();}
+        assertThat(jdbc.queryForObject("select quantity-reserved_close_quantity from trading.position where id=?",BigDecimal.class,position)).isNotNegative();
+        assertThat(ledger.check(actor.id).status()).isEqualTo("MATCHED");
+    }
+    @Test void memberLimitCancelAndCrossingRaceHaveOneConsistentTerminalResult()throws Exception{
+        var order=open("LONG","1",10,"990");var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);
+        try{
+            var cancel=pool.submit(()->{start.await();return raw(post("/api/v1/trading/account/orders/"+order.path("orderId").asLong()+"/cancel"),null);});
+            var crossing=pool.submit(()->{start.await();mark("980");return true;});start.countDown();var response=cancel.get();crossing.get();
+            assertThat(response.status()==200||response.status()==503&&response.body().path("code").asText().equals("ACCOUNT_RISK_PENDING")).isTrue();
+        }finally{pool.shutdownNow();}
+        String terminal=jdbc.queryForObject("select status from trading.trading_order where id=?",String.class,order.path("orderId").asLong());assertThat(terminal).isIn("CANCELED","FILLED");
+        assertThat(jdbc.queryForObject("select count(*) from trading.fill where order_id=?",Long.class,order.path("orderId").asLong())).isEqualTo(terminal.equals("FILLED")?1L:0L);
+        assertThat(ledger.check(actor.id).status()).isEqualTo("MATCHED");
+    }
+    @Test void memberPartialCloseAndLiquidationRaceSettleEachUnitOnce()throws Exception{
+        leverage("LONG",15);long position=open("LONG","1",15,null).path("positionId").asLong();
+        var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);
+        try{
+            var close=pool.submit(()->{start.await();return raw(post("/api/v1/trading/account/positions/"+position+"/close"),"{\"quantity\":\"0.4\"}");});
+            var crossing=pool.submit(()->{start.await();mark("900");return true;});start.countDown();var response=close.get();crossing.get();
+            assertThat(response.status()==200||Set.of("ACCOUNT_RISK_PENDING","ACCOUNT_AT_RISK","POSITION_NOT_OPEN").contains(response.body().path("code").asText())).isTrue();
+        }finally{pool.shutdownNow();}
+        assertThat(jdbc.queryForObject("select coalesce(sum(f.quantity),0) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.position_id=? and o.action in ('CLOSE','LIQUIDATE')",BigDecimal.class,position)).isEqualByComparingTo("1");
+        assertThat(jdbc.queryForObject("select quantity+margin+reserved_close_quantity from trading.position where id=?",BigDecimal.class,position)).isZero();assertThat(ledger.check(actor.id).status()).isEqualTo("MATCHED");
+    }
+    private record Reply(int status,JsonNode body) { }
+    private Reply raw(MockHttpServletRequestBuilder request,String body)throws Exception{
+        request.header("Authorization","Bearer "+actor.token()).header("Idempotency-Key",key());if(body!=null)request.contentType("application/json").content(body);
+        var response=mvc.perform(request).andReturn().getResponse();return new Reply(response.getStatus(),json.readTree(response.getContentAsString()));
+    }
     private JsonNode rawOrder(String body)throws Exception{return json.readTree(mvc.perform(post("/api/v1/trading/account/orders").header("Authorization","Bearer "+actor.token()).header("Idempotency-Key",key()).contentType("application/json").content(body)).andReturn().getResponse().getContentAsString());}
     private void mark(String value)throws Exception{Instant now=Instant.now();assertThat(prices.update(new LatestMarkPrice(btc,new BigDecimal(value),now,now))).isTrue();for(int i=0;i<100;i++){worker.runOnce();if(jdbc.queryForObject("select count(*) from trading.risk_account_work w where status='PENDING' and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id))",Long.class)==0)return;}throw new AssertionError("risk work not drained");}
     private void leverage(String side,int value)throws Exception{call(put("/api/v1/trading/account/symbols/"+btc+"/leverage"),"{\"side\":\""+side+"\",\"leverage\":"+value+"}",null,200);}
