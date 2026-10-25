@@ -68,10 +68,14 @@ class MemberTradingSoakTests {
         for(int i=0;i<6;i++){
             var actor=actor(80_000_000L+i,btc);held.add(actor);
             var opened=call(actor,"POST","/api/v1/trading/account/orders",openBody(actor,"LONG"),200,true);
-            assertThat(opened.path("status").asText()).isEqualTo("FILLED");
+            assertThat(opened.path("status").asText()).isEqualTo("FILLED");actor.anchorPosition=opened.path("positionId").asLong();
             jdbc.update("insert into trading.risk_hold(account_id,reason,evidence) values(?,'SOAK_REVIEW_FIXTURE','{\"fixture\":true}')",actor.id);
         }
-        paused.set(true);worker.measurements();seedHistory();paused.set(false);
+        paused.set(true);worker.measurements();
+        prices.beginSubscription(Set.copyOf(jdbc.queryForList("select id from trading.trading_symbol where status='ACTIVE'",Long.class)));
+        Instant afterAllEntries=Instant.now();
+        await().atMost(Duration.ofSeconds(15)).until(()->fresh(btc)&&prices.findAll(Set.of(btc)).get(btc).latestPrice().orElseThrow().receivedAt().isAfter(afterAllEntries));
+        seedHistory();enableOneFixtureReplay();paused.set(false);
         for(int i=0;i<8;i++){var actor=actor(81_000_000L+i,i%2==0?btc:eth);normal.add(actor);connect(actor);}
         for(int i=0;i<2;i++){
             var actor=actor(82_000_000L+i,i==0?btc:eth);steady.add(actor);connect(actor);
@@ -99,6 +103,11 @@ class MemberTradingSoakTests {
             }catch(Throwable failure){failures.add("client:"+actor.id+":"+failure.getClass().getSimpleName()+":"+failure.getMessage());}
         }));
         for(var task:tasks)task.get(seconds+90L,TimeUnit.SECONDS);
+        var replayed=held.get(held.size()-1);
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id=? and status in ('PENDING','HELD')",Long.class,replayed.id)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id=? and resolved_at is null",Long.class,replayed.id)).isZero();
+        call(replayed,"POST","/api/v1/trading/account/positions/"+replayed.anchorPosition+"/close",null,200,true);
+        assertThat(ledger.check(replayed.id).status()).isEqualTo("MATCHED");
         for(var actor:steady){refreshSocket(actor);measured(actor,"POST","/api/v1/trading/account/positions/"+actor.anchorPosition+"/close",null,"FILLED");}
         paused.set(false);
         await().atMost(Duration.ofSeconds(20)).until(()->pendingNormal()==0);
@@ -179,6 +188,13 @@ class MemberTradingSoakTests {
         // Fixture-only history precedes every normal account. No active normal work is skipped.
         jdbc.update("update trading.risk_dispatch_cursor set event_id=(select max(id) from trading.risk_price_event) where id=1");
     }
+    void enableOneFixtureReplay(){
+        // Five accounts retain 100k manual-held rows. One account replays its 20k accepted fixture
+        // rows alongside normal member traffic; these synthetic rows are not counted as provider ingress.
+        var replayed=held.get(held.size()-1);
+        jdbc.update("update trading.risk_hold set resolved_at=clock_timestamp(),resolution_reference='SOAK_FIXTURE_AUTO_REPLAY' where account_id=? and reason='SOAK_REVIEW_FIXTURE' and resolved_at is null",replayed.id);
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id=? and reason='PROVIDER_CONTINUITY_UNKNOWN' and resolved_at is null",Long.class,replayed.id)).isEqualTo(1);
+    }
     void providerGap(){
         try{prices.markUnavailable();prices.beginSubscription(Set.copyOf(jdbc.queryForList("select id from trading.trading_symbol where status='ACTIVE'",Long.class)));}
         catch(Exception failure){failures.add("provider-gap:"+failure.getClass().getSimpleName());}
@@ -192,7 +208,7 @@ class MemberTradingSoakTests {
     }
     void writeResult(String status,long newJournal)throws Exception{
         var result=new LinkedHashMap<String,Object>();result.put("status",status);result.put("branch",System.getenv("TRADING_VERIFICATION_BRANCH"));result.put("commit",System.getenv("TRADING_VERIFICATION_COMMIT"));result.put("port",port);
-        result.put("actualProvider",true);result.put("workerDelayMs",50);result.put("controlledAvailabilityGaps",2);result.put("autoRecoveredHolds",jdbc.queryForObject("select count(*) from trading.risk_hold where account_id in ("+slots(normal.size()+steady.size())+") and resolution_reference like 'AUTO_OBSERVED_MARK_V1:%'",Long.class,ids()));result.put("elapsedSeconds",TimeUnit.NANOSECONDS.toSeconds(System.nanoTime()-started));result.put("normalMembers",normal.size()+steady.size());result.put("cyclingMembers",normal.size());result.put("steadyMembers",steady.size());result.put("heldMembers",held.size());result.put("fixturePending",120000);result.put("newProviderEvents",newJournal);result.put("completedCycles",completedCycles.get());result.put("mutations",submittedOrders.get());result.put("receivedTransitions",transitions.get());
+        result.put("actualProvider",true);result.put("workerDelayMs",50);result.put("controlledAvailabilityGaps",2);result.put("autoRecoveredHolds",jdbc.queryForObject("select count(*) from trading.risk_hold where account_id in ("+slots(normal.size()+steady.size())+") and resolution_reference like 'AUTO_OBSERVED_MARK_V1:%'",Long.class,ids()));result.put("elapsedSeconds",TimeUnit.NANOSECONDS.toSeconds(System.nanoTime()-started));result.put("normalMembers",normal.size()+steady.size());result.put("cyclingMembers",normal.size());result.put("steadyMembers",steady.size());result.put("heldMembers",held.size()-1);result.put("automaticReplayMembers",1);result.put("fixturePending",120000);result.put("manualHeldFixtureWork",100000);result.put("automaticReplayFixtureWork",20000);result.put("newProviderEvents",newJournal);result.put("completedCycles",completedCycles.get());result.put("mutations",submittedOrders.get());result.put("receivedTransitions",transitions.get());
         result.put("responseMs",response.summary());result.put("logicalMutationMs",logical.summary());result.put("executionMs",execution.summary());result.put("privateWsMs",delivery.summary());result.put("rejections",rejections);result.put("worker",worker.measurements());result.put("failures",failures);result.put("progress",progress);
         Files.writeString(Path.of(".gradle/member-soak-result.json"),json.writerWithDefaultPrettyPrinter().writeValueAsString(result));
     }

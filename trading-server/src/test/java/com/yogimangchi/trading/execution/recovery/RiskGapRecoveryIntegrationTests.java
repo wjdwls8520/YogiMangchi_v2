@@ -29,6 +29,7 @@ class RiskGapRecoveryIntegrationTests {
     @Autowired TradingOrderService orders;
     @Autowired LatestPriceStore prices;
     @Autowired DurableRiskWorker worker;
+    @Autowired RiskWorkRunner runner;
     @Autowired JdbcTemplate jdbc;
     @Autowired RedisMarketDataBridge bridge;
     @MockitoSpyBean FillRepository fills;
@@ -101,6 +102,41 @@ class RiskGapRecoveryIntegrationTests {
         assertThat(jdbc.queryForObject("select status from trading.position where id=?",String.class,opened.positionId())).isEqualTo("LIQUIDATED");
         assertThat(activeHolds()).isPositive();tick(eth,"102");drain();assertThat(activeHolds()).isZero();
         assertThat(ledger.check(account).status()).isEqualTo("MATCHED");
+    }
+    @Test void secondFillFailureRollsBackTheWholeOrderedBatch()throws Exception {
+        var buy=limit(btc);var other=limit(eth);gap();tick(btc,"98");tick(eth,"98");
+        var before=jdbc.queryForMap("select * from trading.wallet where account_id=?",account);
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(inv->{com.yogimangchi.trading.fill.entity.Fill fill=inv.getArgument(0);
+            long owner=jdbc.queryForObject("select account_id from trading.trading_order where id=?",Long.class,fill.getOrderId());
+            if(owner==account&&calls.incrementAndGet()==2)throw new IllegalStateException("test second Fill rollback");
+            return inv.callRealMethod();}).when(fills).save(org.mockito.ArgumentMatchers.any());
+        worker.runOnce();assertThat(status(buy)).isEqualTo("PENDING");assertThat(status(other)).isEqualTo("PENDING");
+        assertThat(fillCount()).isZero();assertThat(jdbc.queryForMap("select * from trading.wallet where account_id=?",account)).isEqualTo(before);
+        reset(fills);jdbc.update("update trading.risk_account_work set next_attempt_at=clock_timestamp() where account_id=?",account);drain();
+        assertThat(status(buy)).isEqualTo("FILLED");assertThat(status(other)).isEqualTo("FILLED");assertThat(fillCount()).isEqualTo(2);
+        assertThat(activeHolds()).isZero();assertThat(ledger.check(account).status()).isEqualTo("MATCHED");
+    }
+    @Test void batchCannotOvertakeHeldOrFutureRetryAndDuplicateHeadCannotConsumeLaterWork()throws Exception {
+        limit(btc);tick(btc,"100");tick(btc,"101");tick(btc,"102");
+        var ids=jdbc.queryForList("select event_id from trading.risk_account_work where account_id=? and status='PENDING' order by event_id",Long.class,account);
+        jdbc.update("update trading.risk_account_work set status='HELD' where account_id=? and event_id=?",account,ids.get(1));
+        assertThat(runner.processBatch(account,ids.get(0))).isEqualTo(1);
+        assertThat(runner.process(account,ids.get(0))).isFalse();
+        assertThat(runner.processBatch(account,ids.get(2))).isZero();
+        jdbc.update("update trading.risk_account_work set status='PENDING',next_attempt_at=clock_timestamp()+interval '60 seconds' where account_id=? and event_id=?",account,ids.get(1));
+        assertThat(runner.processBatch(account,ids.get(1))).isZero();assertThat(fillCount()).isZero();
+    }
+    @Test void batchSharesExposureQueriesButProcessesEveryReceivedEvent()throws Exception {
+        limit(btc);for(int i=0;i<24;i++)tick(btc,"100");
+        var ids=jdbc.queryForList("select event_id from trading.risk_account_work where account_id=? and status='PENDING' order by event_id",Long.class,account);
+        long batchQueries,singleQueries;
+        try(var count=RiskSqlCounter.start()){assertThat(runner.processBatch(account,ids.get(0))).isEqualTo(8);batchQueries=count.selectCount();}
+        try(var count=RiskSqlCounter.start()){for(int i=8;i<16;i++)assertThat(runner.process(account,ids.get(i))).isTrue();singleQueries=count.selectCount();}
+        assertThat(batchQueries).isLessThan(singleQueries);
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id=? and status='DONE'",Long.class,account)).isEqualTo(16);
+        assertThat(fillCount()).isZero();System.out.println("RISK_BATCH_QUERIES events=8 batch="+batchQueries+" single="+singleQueries);
+        drain();assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id=? and status='DONE'",Long.class,account)).isEqualTo(24);
     }
     void gap(){prices.markUnavailable();prices.beginSubscription(Set.of(btc,eth));}
     void tick(long symbol,String amount){var now=Instant.now();assertThat(prices.update(new LatestMarkPrice(symbol,new BigDecimal(amount),now,now))).isTrue();}

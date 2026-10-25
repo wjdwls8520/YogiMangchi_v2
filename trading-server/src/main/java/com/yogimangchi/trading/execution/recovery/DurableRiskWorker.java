@@ -83,9 +83,10 @@ public class DurableRiskWorker {
             for(var job:jobs) {
                 long account=((Number)job.get("account_id")).longValue(),event=((Number)job.get("event_id")).longValue();
                 try {
-                    if(runner.process(account,event)) {
+                    int processed=runner.processBatch(account,event);
+                    if(processed>0) {
                         // The transactional proxy has returned: the financial transaction and DONE are committed.
-                        var committed=java.time.Instant.now();committedWork++;progressed=true;
+                        var committed=java.time.Instant.now();committedWork+=processed;progressed=true;
                         maxReceiveCommitMs=Math.max(maxReceiveCommitMs,java.time.Duration.between(((java.sql.Timestamp)job.get("occurred_at")).toInstant(),committed).toMillis());
                         maxWorkDelayMs=Math.max(maxWorkDelayMs,java.time.Duration.between(((java.sql.Timestamp)job.get("recorded_at")).toInstant(),committed).toMillis());
                     }
