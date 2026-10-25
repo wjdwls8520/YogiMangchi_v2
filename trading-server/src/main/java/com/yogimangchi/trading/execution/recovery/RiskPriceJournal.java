@@ -16,6 +16,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Component
 @ConditionalOnProperty(name="trading.risk-journal.enabled",havingValue="true",matchIfMissing=true)
 public class RiskPriceJournal {
+    private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(RiskPriceJournal.class);
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final RiskAdmission admission;private final TransactionTemplate tx;
     private boolean broken;
     private final Set<Long> unrecordedSymbols=new HashSet<>();
@@ -59,7 +60,7 @@ public class RiskPriceJournal {
         } catch(RuntimeException failure) {
             broken=true;unrecordedSymbols.addAll(event.tradingSymbolIds());
             if(lostSince==null||event.occurredAt().isBefore(lostSince))lostSince=event.occurredAt();
-            admission.failedIngress();throw failure;
+            admission.failedIngress();log.warn("[Risk journal] ingress failed type={} cause={} sqlState={}",event.type(),failure.getClass().getSimpleName(),RiskAdmission.sqlState(failure));throw failure;
         }
     }
     private void recordGap(MarketDataEvent event,String kind,String reason) {

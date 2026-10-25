@@ -59,23 +59,28 @@ public class AccountTriggerService {
     /** No Redis I/O here. Replay and live execution share the same account lock and atomic financial transaction. */
     @Transactional
     public void process(Long accountId, LatestMarkPrice tick, Map<Long, LatestMarkPrice> book) {
-        processAccount(accountId,tick,book,false);
+        processAccount(load(accountId),tick,book,false);
     }
     /** Only the durable job transaction may authorize an expired-but-validly-received tick. */
     @Transactional
     public void processRecorded(com.yogimangchi.trading.execution.recovery.RiskReplayPermit permit) {
         if(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("Recorded processing requires durable work transaction");
-        processAccount(permit.accountId(),permit.price(),Map.of(permit.price().tradingSymbolId(),permit.price()),true);
+        var state=load(permit.accountId());
+        for(var tick:permit.prices())processAccount(state,tick,Map.of(tick.tradingSymbolId(),tick),true);
     }
-    private void processAccount(Long accountId,LatestMarkPrice tick,Map<Long,LatestMarkPrice> book,boolean recorded) {
-        TradingAccount account = locks.lockIncludingWithdrawn(accountId);
-        if (account.getStatus() != TradingAccount.Status.ACTIVE) return;
-        Wallet wallet = wallets.findById(accountId).orElseThrow();
-        List<Position> open = new ArrayList<>(positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN));
-        Map<Long, Position> byId = new HashMap<>();
-        open.forEach(position -> byId.put(position.getId(), position));
-        List<TradingOrder> pending = orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING);
+    private record Exposure(TradingAccount account,Wallet wallet,List<Position> open,Map<Long,Position> byId,List<TradingOrder> pending) { }
+    private Exposure load(Long accountId) {
+        var account=locks.lockIncludingWithdrawn(accountId);
+        if(account.getStatus()!=TradingAccount.Status.ACTIVE)return new Exposure(account,null,List.of(),Map.of(),List.of());
+        var open=new ArrayList<>(positions.findByAccountIdAndStatusOrderByIdAsc(accountId,Position.Status.OPEN));
+        var byId=new HashMap<Long,Position>();open.forEach(p->byId.put(p.getId(),p));
+        return new Exposure(account,wallets.findById(accountId).orElseThrow(),open,byId,orders.findByAccountIdAndStatusOrderByIdAsc(accountId,TradingOrder.Status.PENDING));
+    }
+    private void processAccount(Exposure state,LatestMarkPrice tick,Map<Long,LatestMarkPrice> book,boolean recorded) {
+        var account=state.account();
+        if(account.getStatus()!=TradingAccount.Status.ACTIVE)return;
+        Long accountId=account.getId();var wallet=state.wallet();var open=state.open();var byId=state.byId();var pending=state.pending();
         Set<Long> required = new HashSet<>(Set.of(tick.tradingSymbolId()));
         open.forEach(p -> required.add(p.getTradingSymbolId()));
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
