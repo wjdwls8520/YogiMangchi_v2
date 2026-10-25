@@ -43,5 +43,15 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform { excludeTags 'soak' }
+}
+
+// Explicit long-running verification; regular regressions remain in test/clean build.
+tasks.register('soakTest', Test) {
+    description = 'Runs the real-stream member trading soak against disposable PostgreSQL/Redis.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'soak' }
+    shouldRunAfter tasks.test
 }
