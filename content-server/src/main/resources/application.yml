@@ -5,6 +5,9 @@ spring:
     url: jdbc:postgresql://localhost:${YOGIMANGCHI_DB_PORT:5432}/yogimangchi
     username: ${YOGIMANGCHI_DB_USERNAME}
     password: ${YOGIMANGCHI_DB_PASSWORD}
+    hikari:
+      # Fail before the Frontend's10s auth timeout; a transaction timeout does not bound pool acquisition.
+      connection-timeout: 3000
   jpa:
     open-in-view: false
     hibernate:

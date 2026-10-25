@@ -13,32 +13,50 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class RiskWorkRunner {
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final AccountLock locks;
-    private final AccountTriggerService trigger;private final RiskAdmission admission;
-    public RiskWorkRunner(JdbcTemplate jdbc,ObjectMapper json,AccountLock locks,AccountTriggerService trigger,RiskAdmission admission) {
-        this.jdbc=jdbc;this.json=json;this.locks=locks;this.trigger=trigger;this.admission=admission;
+    private final AccountTriggerService trigger;private final RiskAdmission admission;private final RiskGapRecovery gaps;
+    public RiskWorkRunner(JdbcTemplate jdbc,ObjectMapper json,AccountLock locks,AccountTriggerService trigger,RiskAdmission admission,RiskGapRecovery gaps) {
+        this.jdbc=jdbc;this.json=json;this.locks=locks;this.trigger=trigger;this.admission=admission;this.gaps=gaps;
     }
     @Transactional(timeout=5)
-    public boolean process(long accountId,long eventId) {
+    public boolean process(long accountId,long eventId) {return processPrefix(accountId,eventId,1)>0;}
+    /** A bounded prefix shares loaded exposure and one commit; no price or work row is discarded. */
+    @Transactional(timeout=5)
+    public int processBatch(long accountId,long eventId) {return processPrefix(accountId,eventId,8);}
+    private int processPrefix(long accountId,long eventId,int limit) {
         admission.enterTransaction();var account=locks.lockIncludingWithdrawn(accountId);
-        var jobs=jdbc.queryForList("select w.*,e.payload from trading.risk_account_work w join trading.risk_price_event e on e.id=w.event_id where w.account_id=? and w.event_id=? for update of w",accountId,eventId);
-        if(jobs.isEmpty()||!"PENDING".equals(jobs.get(0).get("status")))return false;
-        var job=jobs.get(0);
-        if(account.getStatus()==TradingAccount.Status.WITHDRAWN) {complete(accountId,eventId,"RETIRED","MEMBER_WITHDRAWAL");return true;}
+        var jobs=jdbc.queryForList("""
+            select w.*,e.payload,w.next_attempt_at<=clock_timestamp() due
+            from trading.risk_account_work w join trading.risk_price_event e on e.id=w.event_id
+            where w.account_id=? and w.event_id>=? and w.status in ('PENDING','HELD')
+            order by w.event_id limit ? for update of w
+            """,accountId,eventId,limit);
+        if(jobs.isEmpty()||((Number)jobs.get(0).get("event_id")).longValue()!=eventId)return 0;
+        boolean earlier=Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.risk_account_work where account_id=? and event_id<? and status in ('PENDING','HELD'))",Boolean.class,accountId,eventId));
+        if(earlier)return 0;
         Long activeRound=jdbc.queryForObject("select max(id) from trading.member_trading_round where account_id=? and status='ACTIVE'",Long.class,accountId);
         Long generation=jdbc.queryForObject("select max(id) from trading.guest_retry where account_id=?",Long.class,accountId);
-        if(!Objects.equals(activeRound,job.get("round_id"))||!Objects.equals(generation,job.get("guest_generation"))) {
-            complete(accountId,eventId,"RETIRED","LIFECYCLE_CHANGED");return true;
+        var prices=new ArrayList<com.yogimangchi.trading.marketdata.LatestMarkPrice>();
+        var completed=new ArrayList<Object[]>();int retired=0;boolean continuity=false;
+        for(var job:jobs) {
+            if(!"PENDING".equals(job.get("status"))||!Boolean.TRUE.equals(job.get("due")))break;
+            long id=((Number)job.get("event_id")).longValue();
+            if(account.getStatus()==TradingAccount.Status.WITHDRAWN) {complete(accountId,id,"RETIRED","MEMBER_WITHDRAWAL");retired++;continue;}
+            if(!Objects.equals(activeRound,job.get("round_id"))||!Objects.equals(generation,job.get("guest_generation"))) {
+                complete(accountId,id,"RETIRED","LIFECYCLE_CHANGED");retired++;continue;
+            }
+            var recovery=gaps.beforeReplay(accountId,id);
+            if(!recovery.allowed())break;
+            continuity|=recovery.continuity();
+            try {prices.add(json.readValue(job.get("payload").toString(),MarketDataEvent.class).price());}
+            catch(com.fasterxml.jackson.core.JsonProcessingException failure){throw new IllegalStateException("Invalid recorded risk event",failure);}
+            completed.add(new Object[]{accountId,id});
         }
-        boolean blocked=Boolean.TRUE.equals(jdbc.queryForObject("""
-            select exists(select 1 from trading.risk_account_work where account_id=? and event_id<? and status in ('PENDING','HELD'))
-                or exists(select 1 from trading.risk_hold where account_id=? and resolved_at is null and (event_id is null or event_id<=?))
-            """,Boolean.class,accountId,eventId,accountId,eventId));
-        if(blocked)return false;
-        try {
-            var event=json.readValue(job.get("payload").toString(),MarketDataEvent.class);
-            trigger.processRecorded(new RiskReplayPermit(accountId,event.price()));
-        } catch(com.fasterxml.jackson.core.JsonProcessingException failure){throw new IllegalStateException("Invalid recorded risk event",failure);}
-        complete(accountId,eventId,"DONE","PROCESSED");return true;
+        if(!prices.isEmpty()) {
+            trigger.processRecorded(new RiskReplayPermit(accountId,prices));
+            jdbc.batchUpdate("update trading.risk_account_work set status='DONE',completed_at=clock_timestamp(),completion_reason='PROCESSED' where account_id=? and event_id=?",completed);
+        }
+        if(continuity)gaps.finishIfDrained(accountId);
+        return retired+completed.size();
     }
     private void complete(long account,long event,String status,String reason) {
         jdbc.update("update trading.risk_account_work set status=?,completed_at=clock_timestamp(),completion_reason=? where account_id=? and event_id=?",status,reason,account,event);

@@ -18,13 +18,29 @@ public class RiskAdmission {
         if(!enabled)return;
         if(!TransactionSynchronizationManager.isActualTransactionActive())throw new IllegalStateException("Financial ingress fence requires transaction");
         jdbc.execute("SET LOCAL lock_timeout='250ms'");
-        jdbc.queryForList("select pg_advisory_xact_lock_shared(?)",INGRESS_LOCK);
+        try {jdbc.queryForList("select pg_advisory_xact_lock_shared(?)",INGRESS_LOCK);}
+        catch(org.springframework.dao.DataAccessException failure) {
+            // PostgreSQL advisory-lock timeouts can be UncategorizedSQLException, not a Spring lock exception.
+            if("55P03".equals(sqlState(failure)))throw new IngressBusy();
+            throw failure;
+        }
+    }
+    static final class IngressBusy extends BusinessException {
+        IngressBusy(){super(ErrorCode.TRADING_BUSY);}
+    }
+    static String sqlState(Throwable failure) {
+        for(Throwable cause=failure;cause!=null;cause=cause.getCause())
+            if(cause instanceof java.sql.SQLException sql&&sql.getSQLState()!=null)return sql.getSQLState();
+        return null;
     }
     public void requireClear(Long accountId) {
         if(!enabled)return;
         if(!ingressHealthy)throw new BusinessException(ErrorCode.ENGINE_RECOVERING);
-        boolean held=Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.risk_hold where account_id=? and resolved_at is null)",Boolean.class,accountId));
-        if(held)throw blocked(accountId,ErrorCode.ACCOUNT_RECOVERY_HELD);
+        var holds=jdbc.queryForList("select reason,trading_symbol_id,event_id from trading.risk_hold where account_id=? and resolved_at is null",accountId);
+        if(!holds.isEmpty()) {
+            boolean automatic=holds.stream().allMatch(h->RiskGapRecovery.automatic((String)h.get("reason"),(Long)h.get("trading_symbol_id"),(Long)h.get("event_id")));
+            throw blocked(accountId,automatic?ErrorCode.ACCOUNT_RISK_PENDING:ErrorCode.ACCOUNT_RECOVERY_HELD);
+        }
         boolean pending=Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.risk_account_work where account_id=? and status in ('PENDING','HELD'))",Boolean.class,accountId));
         if(pending)throw blocked(accountId,ErrorCode.ACCOUNT_RISK_PENDING);
     }

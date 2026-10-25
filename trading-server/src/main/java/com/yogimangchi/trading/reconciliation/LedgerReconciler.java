@@ -54,6 +54,12 @@ public class LedgerReconciler {
 
     @Transactional(propagation=Propagation.REQUIRES_NEW,timeout=5)
     public Result check(long accountId) {
+        return checkInTransaction(accountId);
+    }
+
+    /** Recovery already owns the account lock; never suspend it for another transaction. */
+    @Transactional(propagation=Propagation.MANDATORY)
+    public Result checkInTransaction(long accountId) {
         locks.lockIncludingWithdrawn(accountId);
         jdbc.execute("SET LOCAL statement_timeout='1s'");
         Map<String,Object> evidence=new LinkedHashMap<>(jdbc.queryForMap(SNAPSHOT,accountId));

@@ -115,13 +115,13 @@ class DurableRiskIntegrationTests {
         rejects(()->market(guest.accountId()),ErrorCode.ACCOUNT_RECOVERY_HELD);
         assertThat(market(other.accountId()).status()).isEqualTo("FILLED");
     }
-    @Test void providerGapPersistsScopedReviewAndFreshPricesNeverSilentlyClearIt() throws Exception {
+    @Test void providerGapReplaysObservedCrossingAndResumesWithAuditEvidence() throws Exception {
         limit(guest.accountId());prices.beginSubscription(Set.of(btc));tick("98");worker.runOnce();
-        rejects(()->market(guest.accountId()),ErrorCode.ACCOUNT_RECOVERY_HELD);
         mvc.perform(get("/api/v1/trading/account/recovery").header("Authorization","Bearer "+guest.accessToken()))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REVIEW_REQUIRED")).andExpect(jsonPath("$.holds[0].tradingSymbolId").value(btc));
-        var unaffected=accounts.createGuest();market(unaffected.accountId());
-        assertThat(fillCount(guest.accountId())).isZero();
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CLEAR"));
+        assertThat(fillCount(guest.accountId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id=? and resolved_at is not null and resolution_reference like 'AUTO_OBSERVED_MARK_V1:%'",Long.class,guest.accountId())).isEqualTo(1);
+        market(guest.accountId());
     }
     @Test void oneAccountCanExpireWallClockWithoutSuppressingTheNextAccountsSameValidTick() throws Exception {
         var other=accounts.createGuest();limit(guest.accountId());var pending=limit(other.accountId());
@@ -154,7 +154,8 @@ class DurableRiskIntegrationTests {
         var plan=jdbc.queryForObject("explain(analyze,buffers,format json) select w.account_id,w.event_id from trading.risk_account_work w where w.status='PENDING' and w.next_attempt_at<=clock_timestamp() and not exists(select 1 from trading.risk_account_work p where p.account_id=w.account_id and p.event_id<w.event_id and p.status in ('PENDING','HELD')) order by w.event_id,w.account_id limit 64",String.class);
         System.out.println("RISK_MEASUREMENT accounts=20 expectedFills=20 duplicate=0 missing=0 jdbcStatements="+statements+" readQueries="+readQueries+" beforeCommitMarkers="+lag+" committedMeasurements="+measuredWorker.measurements()+" plan="+plan);
         assertThat(statements).isPositive();assertThat(plan).contains("Actual Rows","Shared Hit Blocks");
-        assertThat(measuredWorker.measurements().committedWork()).isEqualTo(20);
+        assertThat(measuredWorker.measurements().committedWork()).isGreaterThanOrEqualTo(20);
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id in ("+slots+") and status='DONE'",Long.class,ids.toArray())).isEqualTo(20);
         assertThat(measuredWorker.measurements().lockTimeouts()).isZero();
         measuredWorker.close();
     }
@@ -171,7 +172,7 @@ class DurableRiskIntegrationTests {
         reset(jdbc);now=Instant.now();prices.update(new LatestMarkPrice(eth,n("101"),now,now));worker.runOnce();
         assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id=? and trading_symbol_id=? and reason='POSTGRES_INGRESS_INTERRUPTED' and resolved_at is null",Long.class,guest.accountId(),btc)).isEqualTo(1);
         assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id=? and resolved_at is null",Long.class,other.accountId())).isZero();
-        rejects(()->market(guest.accountId()),ErrorCode.ACCOUNT_RECOVERY_HELD);
+        rejects(()->market(guest.accountId()),ErrorCode.ACCOUNT_RISK_PENDING);
     }
 
     @Test void finalWithdrawalStillCleansAllExposureAndRetiresQueuedWorkWithoutFakeFills() throws Exception {
@@ -186,11 +187,10 @@ class DurableRiskIntegrationTests {
     }
 
     private void drain() throws Exception {
-        for(int i=0;i<100;i++) {
-            worker.runOnce();long pending=jdbc.queryForObject("select count(*) from trading.risk_account_work w where w.status='PENDING' and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id))",Long.class);
-            if(pending==0)return;
-        }
-        throw new AssertionError("Durable work did not drain");
+        await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofMillis(25)).until(()->{
+            worker.runOnce();
+            return jdbc.queryForObject("select count(*) from trading.risk_account_work w where w.status='PENDING' and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id) and not ("+RiskGapRecovery.AUTOMATIC_HOLD+"))",Long.class)==0;
+        });
     }
     private OrderResponse limit(long account){return orders.create(account,key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,n("1"),10,n("99")));}
     private OrderResponse market(long account){return orders.create(account,key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n("1"),10,null));}

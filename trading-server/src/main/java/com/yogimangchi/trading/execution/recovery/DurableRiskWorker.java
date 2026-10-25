@@ -19,6 +19,22 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(name="trading.risk-journal.enabled",havingValue="true",matchIfMissing=true)
 public class DurableRiskWorker {
+    // LATERAL LIMIT is per account, before status/due/hold filtering. A later job must never
+    // overtake an earlier retry or HELD job. Materialization prevents a return to the full work scan.
+    static final String READY_WORK="""
+        with heads as materialized (
+          select a.id account_id,w.event_id,w.status,w.next_attempt_at
+          from trading.trading_account a cross join lateral (
+            select event_id,status,next_attempt_at from trading.risk_account_work
+            where account_id=a.id and status in ('PENDING','HELD') order by event_id limit 1
+          ) w
+        )
+        select w.account_id,w.event_id,e.occurred_at,e.recorded_at
+        from heads w join trading.risk_price_event e on e.id=w.event_id
+        where w.status='PENDING' and w.next_attempt_at<=clock_timestamp()
+          and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id) and not (%s))
+        order by w.event_id,w.account_id limit 64
+        """.formatted(RiskGapRecovery.AUTOMATIC_HOLD);
     private static final Logger log=LoggerFactory.getLogger(DurableRiskWorker.class);
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final RiskWorkRunner runner;
     private final TradingEngineGate gate;private final RedisMarketDataBridge bridge;private final boolean enabled;
@@ -26,8 +42,9 @@ public class DurableRiskWorker {
     private boolean closed;
     private int failures;private long retryAfter;
     private long committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts;
-    public record Measurements(long committedWork,long maxReceiveCommitMs,long maxWorkDelayMs,long failedWork,long lockTimeouts) { }
-    public synchronized Measurements measurements(){return new Measurements(committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts);}
+    private long readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork,admissionDeferrals;
+    public record Measurements(long committedWork,long maxReceiveCommitMs,long maxWorkDelayMs,long failedWork,long lockTimeouts,long readyQueries,long readyQueryNanos,long maxReadyQueryNanos,long selectedWork,long admissionDeferrals) { }
+    public synchronized Measurements measurements(){return new Measurements(committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts,readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork,admissionDeferrals);}
     public DurableRiskWorker(JdbcTemplate jdbc,ObjectMapper json,RiskWorkRunner runner,TradingEngineGate gate,RedisMarketDataBridge bridge,@Value("${trading.trigger.enabled:true}")boolean enabled) {
         this.jdbc=jdbc;this.json=json;this.runner=runner;this.gate=gate;this.bridge=bridge;this.enabled=enabled;
     }
@@ -55,30 +72,37 @@ public class DurableRiskWorker {
         }
         jdbc.update("update trading.risk_dispatch_cursor set event_id=?,price_book=?::jsonb where id=1",cursor,json.writeValueAsString(book));
         gate.processed(book,bridge.health().gapSequence());
-        var jobs=jdbc.queryForList("""
-            select w.account_id,w.event_id,e.occurred_at,e.recorded_at from trading.risk_account_work w join trading.risk_price_event e on e.id=w.event_id
-            where w.status='PENDING' and w.next_attempt_at<=clock_timestamp()
-              and not exists(select 1 from trading.risk_account_work p where p.account_id=w.account_id and p.event_id<w.event_id and p.status in ('PENDING','HELD'))
-              and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id))
-            order by w.event_id,w.account_id limit 64
-            """);
         long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(250);
-        for(var job:jobs) {
-            long account=((Number)job.get("account_id")).longValue(),event=((Number)job.get("event_id")).longValue();
-            try {
-                if(runner.process(account,event)) {
-                    // The transactional proxy has returned: the financial transaction and DONE are committed.
-                    var committed=java.time.Instant.now();committedWork++;
-                    maxReceiveCommitMs=Math.max(maxReceiveCommitMs,java.time.Duration.between(((java.sql.Timestamp)job.get("occurred_at")).toInstant(),committed).toMillis());
-                    maxWorkDelayMs=Math.max(maxWorkDelayMs,java.time.Duration.between(((java.sql.Timestamp)job.get("recorded_at")).toInstant(),committed).toMillis());
+        boolean progressed;
+        do {
+            long queryStarted=System.nanoTime();
+            var jobs=jdbc.queryForList(READY_WORK);
+            long queryNanos=System.nanoTime()-queryStarted;
+            readyQueries++;readyQueryNanos+=queryNanos;maxReadyQueryNanos=Math.max(maxReadyQueryNanos,queryNanos);selectedWork+=jobs.size();
+            progressed=false;
+            for(var job:jobs) {
+                long account=((Number)job.get("account_id")).longValue(),event=((Number)job.get("event_id")).longValue();
+                try {
+                    int processed=runner.processBatch(account,event);
+                    if(processed>0) {
+                        // The transactional proxy has returned: the financial transaction and DONE are committed.
+                        var committed=java.time.Instant.now();committedWork+=processed;progressed=true;
+                        maxReceiveCommitMs=Math.max(maxReceiveCommitMs,java.time.Duration.between(((java.sql.Timestamp)job.get("occurred_at")).toInstant(),committed).toMillis());
+                        maxWorkDelayMs=Math.max(maxWorkDelayMs,java.time.Duration.between(((java.sql.Timestamp)job.get("recorded_at")).toInstant(),committed).toMillis());
+                    }
+                } catch(Exception failure) {
+                    if(failure instanceof RiskAdmission.IngressBusy) {
+                        // No financial work began. Keep the durable head pending; this is global contention,
+                        // not evidence that this account is poisoned. The scheduler retries after its delay.
+                        admissionDeferrals++;gate.recovering();return;
+                    }
+                    progressed=true;failedWork++;if(failure instanceof org.springframework.dao.PessimisticLockingFailureException)lockTimeouts++;
+                    String code=failure instanceof com.yogimangchi.trading.error.BusinessException b?b.getCode().name():failure instanceof org.springframework.dao.PessimisticLockingFailureException?"ACCOUNT_LOCK_TIMEOUT":"PROCESSING_FAILURE";
+                    runner.failed(account,event,code);log.warn("[Risk worker] account={} event={} code={}",account,event,code);
                 }
-            } catch(Exception failure) {
-                failedWork++;if(failure instanceof org.springframework.dao.PessimisticLockingFailureException)lockTimeouts++;
-                String code=failure instanceof com.yogimangchi.trading.error.BusinessException b?b.getCode().name():failure instanceof org.springframework.dao.PessimisticLockingFailureException?"ACCOUNT_LOCK_TIMEOUT":"PROCESSING_FAILURE";
-                runner.failed(account,event,code);log.warn("[Risk worker] account={} event={} code={}",account,event,code);
+                if(System.nanoTime()>=deadline)break;
             }
-            if(System.nanoTime()>=deadline)break;
-        }
+        } while(progressed&&System.nanoTime()<deadline);
     }
     @PreDestroy public synchronized void close(){closed=true;gate.recovering();executor.shutdownNow();}
 }
