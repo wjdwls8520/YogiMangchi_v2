@@ -139,7 +139,7 @@ public class BinanceMarkPriceClient {
             }
             if (targets.isEmpty()) {
                 latestPrices.beginSubscription(java.util.Set.of());
-                latestPrices.markUnavailable();
+                publishUnavailable();
                 state = State.DISCONNECTED;
                 log.info("[Binance WS] No ACTIVE Binance symbols; checking again in 30s");
                 retry = executor.schedule(this::attemptConnection, 30, TimeUnit.SECONDS);
@@ -181,7 +181,7 @@ public class BinanceMarkPriceClient {
             return;
         }
         current = null;
-        latestPrices.markUnavailable();
+        publishUnavailable();
         if (session != null) {
             session.abort();
         }
@@ -195,6 +195,15 @@ public class BinanceMarkPriceClient {
                 reason, retryAttempt, delay);
         state = State.RECONNECTING;
         retry = executor.schedule(this::attemptConnection, delay, TimeUnit.MILLISECONDS);
+    }
+
+    private void publishUnavailable() {
+        try {latestPrices.markUnavailable();}
+        catch(RuntimeException failure) {
+            // The store is already unavailable and the journal has retained its failure/gap signal.
+            // A failing downstream listener must not orphan the socket or cancel this recovery task.
+            log.warn("[Binance WS] unavailable notification failed cause={}",failure.getClass().getSimpleName());
+        }
     }
 
     private void checkHealth() {
@@ -296,7 +305,7 @@ public class BinanceMarkPriceClient {
         CompletableFuture<Void> closed = new CompletableFuture<>();
         try {
             executor.execute(() -> {
-                latestPrices.markUnavailable();
+                publishUnavailable();
                 if (retry != null) {
                     retry.cancel(false);
                 }
@@ -335,7 +344,7 @@ public class BinanceMarkPriceClient {
             }
             log.warn("[Binance WS] shutdown timeout/error; connection aborted");
         } finally {
-            latestPrices.markUnavailable();
+            publishUnavailable();
             executor.shutdownNow();
         }
     }
@@ -389,8 +398,11 @@ public class BinanceMarkPriceClient {
                 }
                 text.append(fragment);
                 if (last) {
-                    received(this, text.toString());
-                    text.setLength(0);
+                    try {received(this, text.toString());}
+                    catch(RuntimeException failure) {
+                        failed(this,"price delivery error="+failure.getClass().getSimpleName());
+                        return;
+                    } finally {text.setLength(0);}
                 }
                 webSocket.request(1);
             }, webSocket);
