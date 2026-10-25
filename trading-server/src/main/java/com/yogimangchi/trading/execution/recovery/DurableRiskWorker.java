@@ -42,9 +42,9 @@ public class DurableRiskWorker {
     private boolean closed;
     private int failures;private long retryAfter;
     private long committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts;
-    private long readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork;
-    public record Measurements(long committedWork,long maxReceiveCommitMs,long maxWorkDelayMs,long failedWork,long lockTimeouts,long readyQueries,long readyQueryNanos,long maxReadyQueryNanos,long selectedWork) { }
-    public synchronized Measurements measurements(){return new Measurements(committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts,readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork);}
+    private long readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork,admissionDeferrals;
+    public record Measurements(long committedWork,long maxReceiveCommitMs,long maxWorkDelayMs,long failedWork,long lockTimeouts,long readyQueries,long readyQueryNanos,long maxReadyQueryNanos,long selectedWork,long admissionDeferrals) { }
+    public synchronized Measurements measurements(){return new Measurements(committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts,readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork,admissionDeferrals);}
     public DurableRiskWorker(JdbcTemplate jdbc,ObjectMapper json,RiskWorkRunner runner,TradingEngineGate gate,RedisMarketDataBridge bridge,@Value("${trading.trigger.enabled:true}")boolean enabled) {
         this.jdbc=jdbc;this.json=json;this.runner=runner;this.gate=gate;this.bridge=bridge;this.enabled=enabled;
     }
@@ -91,6 +91,11 @@ public class DurableRiskWorker {
                         maxWorkDelayMs=Math.max(maxWorkDelayMs,java.time.Duration.between(((java.sql.Timestamp)job.get("recorded_at")).toInstant(),committed).toMillis());
                     }
                 } catch(Exception failure) {
+                    if(failure instanceof RiskAdmission.IngressBusy) {
+                        // No financial work began. Keep the durable head pending; this is global contention,
+                        // not evidence that this account is poisoned. The scheduler retries after its delay.
+                        admissionDeferrals++;gate.recovering();return;
+                    }
                     progressed=true;failedWork++;if(failure instanceof org.springframework.dao.PessimisticLockingFailureException)lockTimeouts++;
                     String code=failure instanceof com.yogimangchi.trading.error.BusinessException b?b.getCode().name():failure instanceof org.springframework.dao.PessimisticLockingFailureException?"ACCOUNT_LOCK_TIMEOUT":"PROCESSING_FAILURE";
                     runner.failed(account,event,code);log.warn("[Risk worker] account={} event={} code={}",account,event,code);

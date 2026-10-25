@@ -57,7 +57,7 @@ class MemberTradingSoakTests {
     final Map<String,LongAdder> rejections=new ConcurrentHashMap<>();
     final List<Map<String,Object>> progress=new CopyOnWriteArrayList<>();
     final AtomicLong completedCycles=new AtomicLong(),submittedOrders=new AtomicLong(),transitions=new AtomicLong();
-    long started,btc,eth;
+    long started,btc,eth;boolean completed;
 
     @Test void thirtyMinutesOfRealPricesWithHeldHistoryAndMemberTrades()throws Exception{
         int seconds=Integer.parseInt(System.getenv().getOrDefault("TRADING_SOAK_SECONDS","1800"));
@@ -103,11 +103,13 @@ class MemberTradingSoakTests {
             }catch(Throwable failure){failures.add("client:"+actor.id+":"+failure.getClass().getSimpleName()+":"+failure.getMessage());}
         }));
         for(var task:tasks)task.get(seconds+90L,TimeUnit.SECONDS);
+        assertThat(failures).isEmpty();
         var replayed=held.get(held.size()-1);
         assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id=? and status in ('PENDING','HELD')",Long.class,replayed.id)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id=? and resolved_at is null",Long.class,replayed.id)).isZero();
         call(replayed,"POST","/api/v1/trading/account/positions/"+replayed.anchorPosition+"/close",null,200,true);
         assertThat(ledger.check(replayed.id).status()).isEqualTo("MATCHED");
+        assertThat(failures).isEmpty();
         for(var actor:steady){refreshSocket(actor);measured(actor,"POST","/api/v1/trading/account/positions/"+actor.anchorPosition+"/close",null,"FILLED");}
         paused.set(false);
         await().atMost(Duration.ofSeconds(20)).until(()->pendingNormal()==0);
@@ -127,7 +129,7 @@ class MemberTradingSoakTests {
         assertThat(jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id in ("+slots(normal.size()+steady.size())+")",Long.class,ids())).isEqualTo(jdbc.queryForObject("select count(*) from trading.trading_order where status='FILLED' and account_id in ("+slots(normal.size()+steady.size())+")",Long.class,ids()));
         long duplicates=jdbc.queryForObject("select count(*) from (select f.order_id from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id in ("+slots(normal.size()+steady.size())+") group by f.order_id having count(*)<>1) bad",Long.class,ids());
         assertThat(duplicates).isZero();
-        sample();writeResult("complete",newJournal);System.out.println("MEMBER_SOAK_COMPLETE "+Files.readString(Path.of(".gradle/member-soak-result.json")));
+        sample();writeResult("complete",newJournal);completed=true;System.out.println("MEMBER_SOAK_COMPLETE "+Files.readString(Path.of(".gradle/member-soak-result.json")));
     }
     void cycle(Actor actor,long number)throws Exception{
         refreshSocket(actor);
@@ -236,7 +238,7 @@ class MemberTradingSoakTests {
     }
     @AfterEach void stop()throws Exception{
         background.shutdownNow();clients.shutdownNow();for(var actor:all())if(actor.socket!=null)actor.socket.abort();
-        if(started!=0&&!Files.exists(Path.of(".gradle/member-soak-result.json")))writeResult("incomplete",0);
+        if(started!=0&&!completed)writeResult("incomplete",0);
     }
     static final class Metric{
         final ConcurrentLinkedQueue<Long> values=new ConcurrentLinkedQueue<>();void add(long nanos){values.add(Math.max(0,nanos));}

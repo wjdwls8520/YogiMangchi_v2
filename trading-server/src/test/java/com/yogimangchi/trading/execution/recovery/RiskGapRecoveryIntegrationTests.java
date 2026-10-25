@@ -30,6 +30,7 @@ class RiskGapRecoveryIntegrationTests {
     @Autowired LatestPriceStore prices;
     @Autowired DurableRiskWorker worker;
     @Autowired RiskWorkRunner runner;
+    @Autowired javax.sql.DataSource dataSource;
     @Autowired JdbcTemplate jdbc;
     @Autowired RedisMarketDataBridge bridge;
     @MockitoSpyBean FillRepository fills;
@@ -137,6 +138,22 @@ class RiskGapRecoveryIntegrationTests {
         assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id=? and status='DONE'",Long.class,account)).isEqualTo(16);
         assertThat(fillCount()).isZero();System.out.println("RISK_BATCH_QUERIES events=8 batch="+batchQueries+" single="+singleQueries);
         drain();assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id=? and status='DONE'",Long.class,account)).isEqualTo(24);
+    }
+    @Test void realPostgresIngressFenceTimeoutIsRetryableWithoutPoisoningAnAccount()throws Exception {
+        limit(btc);tick(btc,"100");long deferred=worker.measurements().admissionDeferrals();
+        try(var connection=dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try(var statement=connection.createStatement()){statement.execute("select pg_advisory_xact_lock("+RiskAdmission.INGRESS_LOCK+")");}
+            var error=catchThrowable(()->market(btc));assertThat(error).isInstanceOf(RiskAdmission.IngressBusy.class);
+            var response=new ApiExceptionHandler().handleBusinessException((BusinessException)error);
+            assertThat(response.getStatus()).isEqualTo(409);assertThat(response.getProperties()).containsEntry("code","TRADING_BUSY").containsEntry("outcome","NOT_ACCEPTED");
+            worker.runOnce();assertThat(worker.measurements().admissionDeferrals()).isEqualTo(deferred+1);
+            assertThat(jdbc.queryForObject("select count(*) from trading.risk_work_attempt where account_id=?",Long.class,account)).isZero();
+            assertThat(fillCount()).isZero();connection.rollback();
+        }
+        tick(btc,"101");drain();assertThat(market(btc).status()).isEqualTo("FILLED");
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id=? and reason='RISK_PROCESSING_FAILED'",Long.class,account)).isZero();
+        assertThat(ledger.check(account).status()).isEqualTo("MATCHED");
     }
     void gap(){prices.markUnavailable();prices.beginSubscription(Set.of(btc,eth));}
     void tick(long symbol,String amount){var now=Instant.now();assertThat(prices.update(new LatestMarkPrice(symbol,new BigDecimal(amount),now,now))).isTrue();}
