@@ -47,11 +47,12 @@ public class RiskPriceJournal {
                         insert into trading.risk_account_work(event_id,account_id,round_id,guest_generation)
                         select ?,a.id,r.id,(select max(g.id) from trading.guest_retry g where g.account_id=a.id)
                         from trading.trading_account a left join trading.member_trading_round r on r.account_id=a.id and r.status='ACTIVE'
-                        where a.status='ACTIVE' and a.id in (
+                        where a.status in ('ACTIVE','BANKRUPT') and a.id in (
                           select account_id from trading.position where status='OPEN' and trading_symbol_id=?
-                          union select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?)
+                          union select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?
+                          union select account_id from trading.risk_hold h where resolved_at is null and trading_symbol_id=? and (%s))
                         on conflict do nothing
-                        """,id,tick.tradingSymbolId(),tick.tradingSymbolId());
+                        """.formatted(RiskGapRecovery.AUTOMATIC_HOLD),id,tick.tradingSymbolId(),tick.tradingSymbolId(),tick.tradingSymbolId());
                 } else recordGap(event,event.type().name(),"PROVIDER_CONTINUITY_UNKNOWN");
             });
             broken=false;unrecordedSymbols.clear();lostSince=null;admission.recordedIngress();
@@ -65,12 +66,14 @@ public class RiskPriceJournal {
         long id=insert(event,kind,event.eventId()+":"+kind);
         for(long symbol:event.tradingSymbolIds())jdbc.update("""
             insert into trading.risk_hold(account_id,trading_symbol_id,event_id,reason,evidence)
-            select a.id,?,?,?,jsonb_build_object('eventId',?,'occurredAt',?::text,'policy','REVIEW_BEFORE_RESUME')
+            select a.id,?,?,?,jsonb_build_object('eventId',?,'occurredAt',?::text,'policy','OBSERVED_MARK_ONLY_V1','latestGapEventId',?::bigint)
             from trading.trading_account a where a.status='ACTIVE' and a.id in (
               select account_id from trading.position where status='OPEN' and trading_symbol_id=?
               union select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?)
-            on conflict do nothing
-            """,symbol,id,reason,id,event.occurredAt().toString(),symbol,symbol);
+            on conflict(account_id,(coalesce(trading_symbol_id,0)),reason) where resolved_at is null
+            do update set evidence=risk_hold.evidence||jsonb_build_object(
+              'latestGapEventId',excluded.event_id,'latestGapAt',excluded.evidence->>'occurredAt')
+            """,symbol,id,reason,id,event.occurredAt().toString(),id,symbol,symbol);
     }
     private long insert(MarketDataEvent event,String kind,String key) {
         try {return jdbc.queryForObject("insert into trading.risk_price_event(event_key,kind,payload,occurred_at) values(?,?,?::jsonb,?) on conflict(event_key) do update set event_key=excluded.event_key returning id",Long.class,key,kind,json.writeValueAsString(event),at(event.occurredAt()));}

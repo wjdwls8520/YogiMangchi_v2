@@ -32,9 +32,9 @@ public class DurableRiskWorker {
         select w.account_id,w.event_id,e.occurred_at,e.recorded_at
         from heads w join trading.risk_price_event e on e.id=w.event_id
         where w.status='PENDING' and w.next_attempt_at<=clock_timestamp()
-          and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id))
+          and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id) and not (%s))
         order by w.event_id,w.account_id limit 64
-        """;
+        """.formatted(RiskGapRecovery.AUTOMATIC_HOLD);
     private static final Logger log=LoggerFactory.getLogger(DurableRiskWorker.class);
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final RiskWorkRunner runner;
     private final TradingEngineGate gate;private final RedisMarketDataBridge bridge;private final boolean enabled;

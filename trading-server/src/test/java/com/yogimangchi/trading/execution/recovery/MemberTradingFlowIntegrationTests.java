@@ -143,13 +143,13 @@ class MemberTradingFlowIntegrationTests {
         var rejected=call(post("/api/v1/trading/account/orders"),body("LONG","1",15,null),key(),503);
         assertThat(rejected.path("code").asText()).isEqualTo("PRICE_NOT_FRESH");assertThat(ledger.check(actor.id).status()).isEqualTo("MATCHED");
     }
-    @Test void reconnectAndWorkerRecreationPreserveMemberHoldUntilFinalWithdrawal()throws Exception{
+    @Test void reconnectResumesMemberAndFinalWithdrawalStillRetiresAllExposure()throws Exception{
         open("LONG","1",10,null);open("LONG","1",10,"990");
         prices.markUnavailable();prices.beginSubscription(Set.of(btc));mark("1020");
-        var state=call(get("/api/v1/trading/account/recovery"),null,null,200);assertThat(state.path("status").asText()).isEqualTo("REVIEW_REQUIRED");assertThat(state.path("holds").toString()).contains("PROVIDER_CONTINUITY_UNKNOWN");
+        var state=call(get("/api/v1/trading/account/recovery"),null,null,200);assertThat(state.path("status").asText()).isEqualTo("CLEAR");assertThat(state.path("holds").size()).isZero();
         var restarted=new DurableRiskWorker(jdbc,json,runner,gate,bridge,false);restarted.runOnce();
-        var rejected=call(post("/api/v1/trading/account/orders"),body("LONG","1",10,null),key(),503);assertThat(rejected.path("code").asText()).isEqualTo("ACCOUNT_RECOVERY_HELD");
-        assertThat(jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?",Long.class,actor.id)).isEqualTo(1);
+        var resumed=call(post("/api/v1/trading/account/orders"),body("LONG","1",10,null),key(),200);assertThat(resumed.path("status").asText()).isEqualTo("FILLED");
+        assertThat(jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?",Long.class,actor.id)).isEqualTo(2);
         withdrawal.withdraw(actor.member);withdrawal.withdraw(actor.member);restarted.runOnce();
         assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id=? and status in ('PENDING','HELD')",Long.class,actor.id)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'",Long.class,actor.id)).isZero();
@@ -195,7 +195,13 @@ class MemberTradingFlowIntegrationTests {
         var response=mvc.perform(request).andReturn().getResponse();return new Reply(response.getStatus(),json.readTree(response.getContentAsString()));
     }
     private JsonNode rawOrder(String body)throws Exception{return json.readTree(mvc.perform(post("/api/v1/trading/account/orders").header("Authorization","Bearer "+actor.token()).header("Idempotency-Key",key()).contentType("application/json").content(body)).andReturn().getResponse().getContentAsString());}
-    private void mark(String value)throws Exception{Instant now=Instant.now();assertThat(prices.update(new LatestMarkPrice(btc,new BigDecimal(value),now,now))).isTrue();for(int i=0;i<100;i++){worker.runOnce();if(jdbc.queryForObject("select count(*) from trading.risk_account_work w where status='PENDING' and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id))",Long.class)==0)return;}throw new AssertionError("risk work not drained");}
+    private void mark(String value)throws Exception{
+        Instant now=Instant.now();assertThat(prices.update(new LatestMarkPrice(btc,new BigDecimal(value),now,now))).isTrue();
+        await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofMillis(25)).until(()->{
+            worker.runOnce();
+            return jdbc.queryForObject("select count(*) from trading.risk_account_work w where status='PENDING' and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id) and not ("+RiskGapRecovery.AUTOMATIC_HOLD+"))",Long.class)==0;
+        });
+    }
     private void leverage(String side,int value)throws Exception{call(put("/api/v1/trading/account/symbols/"+btc+"/leverage"),"{\"side\":\""+side+"\",\"leverage\":"+value+"}",null,200);}
     private JsonNode open(String side,String qty,int leverage,String limit)throws Exception{return call(post("/api/v1/trading/account/orders"),body(side,qty,leverage,limit),key(),200);}
     private String body(String side,String qty,int leverage,String limit)throws Exception{var data=new LinkedHashMap<String,Object>();data.put("type",limit==null?"MARKET":"LIMIT");data.put("tradingSymbolId",btc);data.put("side",side);data.put("quantity",qty);data.put("leverage",leverage);if(limit!=null)data.put("limitPrice",limit);return json.writeValueAsString(data);}

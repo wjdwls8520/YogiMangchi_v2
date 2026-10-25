@@ -13,9 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class RiskWorkRunner {
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final AccountLock locks;
-    private final AccountTriggerService trigger;private final RiskAdmission admission;
-    public RiskWorkRunner(JdbcTemplate jdbc,ObjectMapper json,AccountLock locks,AccountTriggerService trigger,RiskAdmission admission) {
-        this.jdbc=jdbc;this.json=json;this.locks=locks;this.trigger=trigger;this.admission=admission;
+    private final AccountTriggerService trigger;private final RiskAdmission admission;private final RiskGapRecovery gaps;
+    public RiskWorkRunner(JdbcTemplate jdbc,ObjectMapper json,AccountLock locks,AccountTriggerService trigger,RiskAdmission admission,RiskGapRecovery gaps) {
+        this.jdbc=jdbc;this.json=json;this.locks=locks;this.trigger=trigger;this.admission=admission;this.gaps=gaps;
     }
     @Transactional(timeout=5)
     public boolean process(long accountId,long eventId) {
@@ -29,16 +29,17 @@ public class RiskWorkRunner {
         if(!Objects.equals(activeRound,job.get("round_id"))||!Objects.equals(generation,job.get("guest_generation"))) {
             complete(accountId,eventId,"RETIRED","LIFECYCLE_CHANGED");return true;
         }
-        boolean blocked=Boolean.TRUE.equals(jdbc.queryForObject("""
-            select exists(select 1 from trading.risk_account_work where account_id=? and event_id<? and status in ('PENDING','HELD'))
-                or exists(select 1 from trading.risk_hold where account_id=? and resolved_at is null and (event_id is null or event_id<=?))
-            """,Boolean.class,accountId,eventId,accountId,eventId));
-        if(blocked)return false;
+        boolean earlier=Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.risk_account_work where account_id=? and event_id<? and status in ('PENDING','HELD'))",Boolean.class,accountId,eventId));
+        if(earlier)return false;
+        var recovery=gaps.beforeReplay(accountId,eventId);
+        if(!recovery.allowed())return false;
         try {
             var event=json.readValue(job.get("payload").toString(),MarketDataEvent.class);
             trigger.processRecorded(new RiskReplayPermit(accountId,event.price()));
         } catch(com.fasterxml.jackson.core.JsonProcessingException failure){throw new IllegalStateException("Invalid recorded risk event",failure);}
-        complete(accountId,eventId,"DONE","PROCESSED");return true;
+        complete(accountId,eventId,"DONE","PROCESSED");
+        if(recovery.continuity())gaps.finishIfDrained(accountId);
+        return true;
     }
     private void complete(long account,long event,String status,String reason) {
         jdbc.update("update trading.risk_account_work set status=?,completed_at=clock_timestamp(),completion_reason=? where account_id=? and event_id=?",status,reason,account,event);

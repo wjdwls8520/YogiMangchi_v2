@@ -63,7 +63,7 @@ class MemberTradingSoakTests {
         int seconds=Integer.parseInt(System.getenv().getOrDefault("TRADING_SOAK_SECONDS","1800"));
         assertThat(seconds).as("Minimum continuous verification duration").isGreaterThanOrEqualTo(1800);
         btc=symbol("BTC");eth=symbol("ETH");
-        background.scheduleWithFixedDelay(()->{if(!paused.get())try{worker.runOnce();}catch(Exception failure){failures.add("worker:"+failure.getClass().getSimpleName());}},0,25,TimeUnit.MILLISECONDS);
+        background.scheduleWithFixedDelay(()->{if(!paused.get())try{worker.runOnce();}catch(Exception failure){failures.add("worker:"+failure.getClass().getSimpleName());}},0,50,TimeUnit.MILLISECONDS);
         await().atMost(Duration.ofSeconds(60)).until(()->fresh(btc)&&fresh(eth)&&gate.status().equals("READY"));
         for(int i=0;i<6;i++){
             var actor=actor(80_000_000L+i,btc);held.add(actor);
@@ -85,6 +85,8 @@ class MemberTradingSoakTests {
         background.schedule(()->{try{sample();}catch(Exception error){failures.add("pause-sample");}finally{paused.set(false);}},63,TimeUnit.SECONDS);
         background.schedule(()->paused.set(true),seconds/2,TimeUnit.SECONDS);
         background.schedule(()->{try{sample();}catch(Exception error){failures.add("pause-sample");}finally{paused.set(false);}},seconds/2+3,TimeUnit.SECONDS);
+        background.schedule(this::providerGap,seconds/3,TimeUnit.SECONDS);
+        background.schedule(this::providerGap,seconds*2/3,TimeUnit.SECONDS);
         var tasks=new ArrayList<Future<?>>();
         for(var actor:normal)tasks.add(clients.submit(()->{
             long cycle=0;
@@ -111,6 +113,8 @@ class MemberTradingSoakTests {
         assertThat(progress.stream().mapToLong(x->((Number)x.get("pending")).longValue()).max().orElse(0)).as("Finite pause really creates measurable healthy backlog").isGreaterThanOrEqualTo(4);
         assertThat(failures).isEmpty();assertThat(pendingNormal()).isZero();
         assertThat(worker.measurements().lockTimeouts()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id in ("+slots(normal.size()+steady.size())+") and resolved_at is null",Long.class,ids())).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from trading.risk_hold where account_id in ("+slots(normal.size()+steady.size())+") and resolution_reference like 'AUTO_OBSERVED_MARK_V1:%'",Long.class,ids())).isGreaterThanOrEqualTo(4);
         assertThat(jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id in ("+slots(normal.size()+steady.size())+")",Long.class,ids())).isEqualTo(jdbc.queryForObject("select count(*) from trading.trading_order where status='FILLED' and account_id in ("+slots(normal.size()+steady.size())+")",Long.class,ids()));
         long duplicates=jdbc.queryForObject("select count(*) from (select f.order_id from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id in ("+slots(normal.size()+steady.size())+") group by f.order_id having count(*)<>1) bad",Long.class,ids());
         assertThat(duplicates).isZero();
@@ -163,7 +167,7 @@ class MemberTradingSoakTests {
             var node=result.body().isBlank()?json.createObjectNode():json.readTree(result.body());
             if(result.statusCode()==expected)return node;
             String code=node.path("code").asText(Integer.toString(result.statusCode()));rejections.computeIfAbsent(code,k->new LongAdder()).increment();
-            if(retry&&List.of("ACCOUNT_RISK_PENDING","ENGINE_RECOVERING","TRADING_BUSY").contains(code)){Thread.sleep(75);continue;}
+            if(retry&&List.of("ACCOUNT_RISK_PENDING","ENGINE_RECOVERING","TRADING_BUSY","PRICE_NOT_FRESH").contains(code)){Thread.sleep(75);continue;}
             throw new AssertionError(method+" "+path+" status="+result.statusCode()+" code="+code);
         }
         throw new AssertionError("persistent admission rejection: "+path);
@@ -175,6 +179,10 @@ class MemberTradingSoakTests {
         // Fixture-only history precedes every normal account. No active normal work is skipped.
         jdbc.update("update trading.risk_dispatch_cursor set event_id=(select max(id) from trading.risk_price_event) where id=1");
     }
+    void providerGap(){
+        try{prices.markUnavailable();prices.beginSubscription(Set.copyOf(jdbc.queryForList("select id from trading.trading_symbol where status='ACTIVE'",Long.class)));}
+        catch(Exception failure){failures.add("provider-gap:"+failure.getClass().getSimpleName());}
+    }
     void sample()throws Exception{
         var snapshot=new LinkedHashMap<String,Object>();snapshot.put("elapsedSeconds",TimeUnit.NANOSECONDS.toSeconds(System.nanoTime()-started));
         var backlog=jdbc.queryForMap("select count(*) pending,coalesce(max(extract(epoch from(clock_timestamp()-e.recorded_at))),0) oldest_seconds from trading.risk_account_work w join trading.risk_price_event e on e.id=w.event_id where w.status='PENDING' and w.account_id in ("+slots(normal.size()+steady.size())+")",ids());
@@ -184,7 +192,7 @@ class MemberTradingSoakTests {
     }
     void writeResult(String status,long newJournal)throws Exception{
         var result=new LinkedHashMap<String,Object>();result.put("status",status);result.put("branch",System.getenv("TRADING_VERIFICATION_BRANCH"));result.put("commit",System.getenv("TRADING_VERIFICATION_COMMIT"));result.put("port",port);
-        result.put("actualProvider",true);result.put("elapsedSeconds",TimeUnit.NANOSECONDS.toSeconds(System.nanoTime()-started));result.put("normalMembers",normal.size()+steady.size());result.put("cyclingMembers",normal.size());result.put("steadyMembers",steady.size());result.put("heldMembers",held.size());result.put("fixturePending",120000);result.put("newProviderEvents",newJournal);result.put("completedCycles",completedCycles.get());result.put("mutations",submittedOrders.get());result.put("receivedTransitions",transitions.get());
+        result.put("actualProvider",true);result.put("workerDelayMs",50);result.put("controlledAvailabilityGaps",2);result.put("autoRecoveredHolds",jdbc.queryForObject("select count(*) from trading.risk_hold where account_id in ("+slots(normal.size()+steady.size())+") and resolution_reference like 'AUTO_OBSERVED_MARK_V1:%'",Long.class,ids()));result.put("elapsedSeconds",TimeUnit.NANOSECONDS.toSeconds(System.nanoTime()-started));result.put("normalMembers",normal.size()+steady.size());result.put("cyclingMembers",normal.size());result.put("steadyMembers",steady.size());result.put("heldMembers",held.size());result.put("fixturePending",120000);result.put("newProviderEvents",newJournal);result.put("completedCycles",completedCycles.get());result.put("mutations",submittedOrders.get());result.put("receivedTransitions",transitions.get());
         result.put("responseMs",response.summary());result.put("logicalMutationMs",logical.summary());result.put("executionMs",execution.summary());result.put("privateWsMs",delivery.summary());result.put("rejections",rejections);result.put("worker",worker.measurements());result.put("failures",failures);result.put("progress",progress);
         Files.writeString(Path.of(".gradle/member-soak-result.json"),json.writerWithDefaultPrettyPrinter().writeValueAsString(result));
     }
