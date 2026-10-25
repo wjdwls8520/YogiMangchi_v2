@@ -66,6 +66,8 @@ class MemberTradingFlowIntegrationTests {
         assertThat(jdbc.queryForObject("select leverage from trading.trading_order where id=?",Integer.class,pending.path("orderId").asLong())).isEqualTo(20);
         assertThat(jdbc.queryForObject("select leverage from trading.trading_order where id=?",Integer.class,shortPending.path("orderId").asLong())).isEqualTo(7);
         var api=call(get("/v3/api-docs"),null,null,200);assertThat(api.path("paths").path("/api/v1/trading/account/symbols/{symbolId}/leverage").path("get").path("parameters").toString()).contains("side","required");
+        assertThat(api.path("paths").path("/api/v1/trading/account/symbols/{symbolId}/leverage").path("get").path("description").asText()).contains("member Access JWT");
+        assertThat(api.path("paths").path("/api/v1/trading/account/symbols/{symbolId}/leverage").path("put").path("description").asText()).contains("ACCOUNT_RISK_PENDING","ACCOUNT_RECOVERY_HELD");
         call(get("/api/v1/trading/account/symbols/"+btc+"/leverage"),null,null,400);
         assertThat(ledger.check(actor.id).status()).isEqualTo("MATCHED");
     }
