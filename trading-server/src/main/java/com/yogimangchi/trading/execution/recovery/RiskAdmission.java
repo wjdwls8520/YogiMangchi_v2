@@ -23,8 +23,11 @@ public class RiskAdmission {
     public void requireClear(Long accountId) {
         if(!enabled)return;
         if(!ingressHealthy)throw new BusinessException(ErrorCode.ENGINE_RECOVERING);
-        boolean held=Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.risk_hold where account_id=? and resolved_at is null)",Boolean.class,accountId));
-        if(held)throw blocked(accountId,ErrorCode.ACCOUNT_RECOVERY_HELD);
+        var holds=jdbc.queryForList("select reason,trading_symbol_id,event_id from trading.risk_hold where account_id=? and resolved_at is null",accountId);
+        if(!holds.isEmpty()) {
+            boolean automatic=holds.stream().allMatch(h->RiskGapRecovery.automatic((String)h.get("reason"),(Long)h.get("trading_symbol_id"),(Long)h.get("event_id")));
+            throw blocked(accountId,automatic?ErrorCode.ACCOUNT_RISK_PENDING:ErrorCode.ACCOUNT_RECOVERY_HELD);
+        }
         boolean pending=Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.risk_account_work where account_id=? and status in ('PENDING','HELD'))",Boolean.class,accountId));
         if(pending)throw blocked(accountId,ErrorCode.ACCOUNT_RISK_PENDING);
     }

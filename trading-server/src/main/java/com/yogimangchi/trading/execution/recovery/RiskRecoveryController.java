@@ -22,7 +22,7 @@ public class RiskRecoveryController {
     public RiskRecoveryController(JdbcTemplate jdbc,AccountLock locks){this.jdbc=jdbc;this.locks=locks;}
     @GetMapping @Transactional(timeout=5)
     @Operation(summary="Read this account's persistent risk recovery state",
-        description="CLEAR, PENDING or REVIEW_REQUIRED. Holds describe account/symbol scope, missing-price continuity or bounded processing failure; fresh prices alone do not clear a review hold. Pending received prices are replayed in account order. No balances are corrected here. No accountId input or release endpoint. 401 credential; 409 inactive/busy account. Public trading/status is global readiness, not this account's admission state.")
+        description="CLEAR, PENDING or REVIEW_REQUIRED. Holds describe account/symbol scope, missing-price continuity or bounded processing failure; Continuity-only holds automatically replay received prices and resume after fresh committed prices and MATCHED ledger reconciliation; unreceived crossings are not reconstructed. Processing/ledger holds require review. PENDING includes automatic recovery waiting for provider data. Pending received prices are replayed in account order. No balances are corrected here. No accountId input or release endpoint. 401 credential; 409 inactive/busy account. Public trading/status is global readiness, not this account's admission state.")
     public ResponseEntity<Status> get(@AuthenticationPrincipal TradingPrincipal principal) {
         long id=principal.accountId();locks.lock(id);
         var work=jdbc.queryForMap("select count(*) filter(where status='PENDING') pending,count(*) filter(where status='HELD') held,min(event_id) filter(where status in ('PENDING','HELD')) oldest from trading.risk_account_work where account_id=? and status in ('PENDING','HELD')",id);
@@ -30,6 +30,7 @@ public class RiskRecoveryController {
         long pending=((Number)work.get("pending")).longValue(),held=((Number)work.get("held")).longValue();
         Long oldest=work.get("oldest")==null?null:((Number)work.get("oldest")).longValue();
         Instant received=oldest==null?null:jdbc.queryForObject("select occurred_at from trading.risk_price_event where id=?",java.sql.Timestamp.class,oldest).toInstant();
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new Status(!holds.isEmpty()||held>0?"REVIEW_REQUIRED":pending>0?"PENDING":"CLEAR",pending,held,oldest,received,holds,Instant.now()));
+        boolean review=held>0||holds.stream().anyMatch(h->!RiskGapRecovery.automatic(h.reason(),h.tradingSymbolId(),h.riskEventId()));
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new Status(review?"REVIEW_REQUIRED":pending>0||!holds.isEmpty()?"PENDING":"CLEAR",pending,held,oldest,received,holds,Instant.now()));
     }
 }
