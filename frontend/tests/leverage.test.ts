@@ -8,7 +8,7 @@ import { positionValuation } from "../src/features/trading/api/position-display"
 import { parsePosition } from "../src/features/trading/api/account";
 import { mutationMessage } from "../src/features/trading/api/mutation-request";
 
-const setting = { tradingSymbolId: 1, leverage: 10, maxLeverage: 100, marginMode: "ISOLATED", marginTransitionStatus:"COMPLETE", updatedAt: null };
+const setting = { side: "LONG", tradingSymbolId: 1, leverage: 10, maxLeverage: 100, marginMode: "ISOLATED", marginTransitionStatus:"COMPLETE", updatedAt: null };
 const epoch = Date.parse("2026-10-19T00:00:00Z"), origin = "http://trade.example";
 function setup(transport: typeof fetch) {
   const values = new Map([[`yogimangchi.guest.v1:${origin}`, JSON.stringify({ accountId: 1,
@@ -36,7 +36,7 @@ test("authenticated leverage GET/PUT uses exact contract without order keys, and
   await session.restore(); const identity=session.getSnapshot();
   assert.equal(parseLeverage(await session.read(leveragePath(1),identity,new AbortController().signal),1).leverage,10);
   assert.equal((await session.changeLeverage(1,100,identity)).leverage,100);
-  assert.deepEqual(calls.map(c=>[c.method,c.body]),[["GET",null],["PUT",{leverage:100}]]);
+  assert.deepEqual(calls.map(c=>[c.method,c.body]),[["GET",null],["PUT",{side:"LONG",leverage:100}]]);
   assert.equal(calls[1].url,`${origin}/api/v1/trading/account/symbols/1/leverage`);
   await assert.rejects(session.changeLeverage(1,101,identity)); assert.equal(calls.length,2);
   assert.notDeepEqual(tradingKeys.leverage(identity,1),tradingKeys.leverage(identity,2));
@@ -74,4 +74,22 @@ test("updated server margin changes ROE while leverage alone never changes absol
   assert.equal(positionValuation(position,mark,epoch).roe,"100");
   const after=positionValuation({...position,leverage:100,margin:"2"},mark,epoch);
   assert.equal(after.pnl,"20"); assert.equal(after.roe,"1000");
+});
+
+
+test("LONG/SHORT settings use separate paths, bodies and caches without overwriting each other", async () => {
+  const settings = {LONG:10,SHORT:25};
+  const {session} = setup(async (url, init) => {
+    const body = init?.body ? JSON.parse(String(init.body)) : null;
+    const side: "LONG" | "SHORT" = body?.side ?? new URL(String(url)).searchParams.get("side");
+    assert.ok(side === "LONG" || side === "SHORT");
+    if (body) settings[side] = body.leverage;
+    return Response.json({...setting,side,leverage:settings[side]});
+  });
+  await session.restore(); const identity=session.getSnapshot();
+  await session.changeLeverage(1,100,identity,"LONG");
+  assert.equal(settings.SHORT,25);
+  assert.equal(parseLeverage(await session.read(leveragePath(1,"SHORT"),identity,new AbortController().signal),1,"SHORT").leverage,25);
+  assert.notDeepEqual(tradingKeys.leverage(identity,1,"LONG"),tradingKeys.leverage(identity,1,"SHORT"));
+  assert.throws(()=>parseLeverage({...setting,side:"SHORT"},1,"LONG"));
 });

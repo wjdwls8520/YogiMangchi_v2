@@ -1,3 +1,4 @@
+import { orderReason } from "./order-reason";
 import { TradingApiError } from "./client";
 import type { SessionSnapshot } from "./guest-session";
 import type { TradingOrder } from "./orders";
@@ -26,6 +27,8 @@ export function mutationRequest(command: TradingCommand) {
     body: { ...(command.quantity === undefined ? {} : { quantity: command.quantity }), ...(command.kind === "limitClose" ? { limitPrice: command.limitPrice } : {}) }, keyed: true };
 }
 export function uncertainMutation(error: unknown) {
+  if (error instanceof TradingApiError && error.outcome === "NOT_ACCEPTED" && error.status === 503
+    && ["ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ENGINE_RECOVERING"].includes(error.code ?? "")) return false;
   return !(error instanceof TradingApiError) || error.status === 0 || error.status === 422 || error.status >= 500;
 }
 export type TradingIntent = { command: TradingCommand; session: SessionSnapshot; key: string };
@@ -58,7 +61,7 @@ const businessMessages: Record<string, string> = {
   POSITION_NOT_FOUND: "포지션을 찾을 수 없습니다. 최신 포지션 목록을 확인해 주세요.",
   MARKETABLE_LIMIT_NOT_ALLOWED: "현재 가격을 즉시 교차하는 지정가는 사용할 수 없습니다. 주문 방향과 지정가를 확인해 주세요.",
   TRADING_BUSY: "계정이 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요.",
-  INSUFFICIENT_MARGIN: "사용 가능한 증거금이 부족합니다.", ACCOUNT_AT_RISK: "계정 위험 처리 중입니다. 계정 상태를 확인해 주세요.",
+  INSUFFICIENT_MARGIN: "증거금과 수수료를 위한 잔액이 부족합니다.", ACCOUNT_AT_RISK: "계정 위험 처리 중입니다. 계정 상태를 확인해 주세요.",
   PRICE_NOT_FRESH: "보유 종목의 최신 시세가 필요합니다. 시세 복구 후 다시 시도해 주세요.", ENGINE_RECOVERING: "거래 서버가 복구 중입니다. 잠시 후 다시 시도해 주세요.",
   IDEMPOTENCY_CONFLICT: "이전 요청과 내용이 일치하지 않습니다. 주문 내역을 확인해 주세요.",
   POSITION_NOT_OPEN: "이미 종료된 포지션입니다.", CLOSE_QUANTITY_EXCEEDED: "예약된 청산 수량이 있습니다. 미체결 청산 주문을 취소하거나 청산 가능 수량을 줄여 주세요.",
@@ -67,6 +70,7 @@ const businessMessages: Record<string, string> = {
 };
 export function mutationMessage(error: unknown) {
   if (!(error instanceof TradingApiError)) return "요청 결과를 확인할 수 없습니다. 같은 요청으로 결과 확인을 다시 시도해 주세요.";
+  if (error.code && ["ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ORDER_SIZE_LIMIT_EXCEEDED", "POSITION_LIMIT_REACHED", "PENDING_LIMIT_REACHED", "POSITION_LIQUIDATION"].includes(error.code)) return orderReason(error.code);
   if (error.code && businessMessages[error.code]) return businessMessages[error.code];
   if (error.status === 401 || error.status === 403) return "계정 인증을 확인할 수 없습니다. 계정 조회를 새로고침해 주세요. 주문은 새 계정으로 재전송하지 않습니다.";
   if (uncertainMutation(error)) return "요청 결과를 확인할 수 없습니다. 같은 요청으로 결과 확인을 다시 시도해 주세요.";

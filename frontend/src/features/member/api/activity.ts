@@ -9,7 +9,7 @@ export function bindMemberActivity(session: MemberSession, page: Pick<Document, 
   browser: Pick<Window, "addEventListener" | "removeEventListener">, callback: boolean) {
   let requested = !callback, stopped = false;
   const resume = () => {
-    if (stopped || callback || page.visibilityState === "hidden" || !requested && session.getSnapshot().phase !== "ready") return;
+    if (stopped || callback || page.visibilityState === "hidden" || !requested && !["ready", "recovering"].includes(session.getSnapshot().phase)) return;
     requested = false;
     void session.restore().catch(error => {
       if (!stopped && error instanceof DOMException && error.name === "AbortError") requested = true;

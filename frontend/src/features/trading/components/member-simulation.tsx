@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useGuestSession } from "./trading-data-provider";
 import { tradingKeys } from "../api/query-keys";
@@ -10,6 +10,9 @@ import { formatDecimal, formatQuantity } from "../api/account";
 import { TradingApiError } from "../api/client";
 import { mutationMessage, uncertainMutation } from "../api/mutation-request";
 import { RestartConfirmation, SimulationSection } from "./member-simulation-views";
+import { reportAdmissionRejection } from "../api/admission-rejection";
+import { useTradingAdmission } from "../api/recovery";
+import { SymbolPerformance } from "./symbol-performance";
 import { useMember } from "../../member/components/member-provider";
 
 function useCurrentRound() {
@@ -52,20 +55,21 @@ export function MemberSimulation() {
   return <MemberSimulationContent key={snapshot.memberId ?? "anonymous"} />;
 }
 function MemberSimulationContent() {
+  const admission = useTradingAdmission(), client = useQueryClient();
   const { session, snapshot } = useGuestSession(), current = useCurrentRound();
   const [selected, setSelected] = useState<number | null>(null), [kind, setKind] = useState<RoundLedgerKind>("orders");
   const [pending, setPending] = useState(false), [error, setError] = useState<string | null>(null), [message, setMessage] = useState<string | null>(null);
   const [intent, setIntent] = useState<{ accountId: number; key: string } | null>(null), [acknowledged, setAcknowledged] = useState(false), [limitedAt, setLimitedAt] = useState<string | null>(null);
   const active = useRef(false), dialog = useRef<HTMLDialogElement>(null);
   const enabled = snapshot.mode === "member" && snapshot.phase === "ready" && !snapshot.retrying;
-  const canRestart = enabled && !current.isError && !current.isFetching && current.data?.round.roundId === snapshot.roundId && !!current.data?.restartAvailable;
+  const canRestart = admission.trade && enabled && !current.isError && !current.isFetching && current.data?.round.roundId === snapshot.roundId && !!current.data?.restartAvailable;
   const rounds = useInfiniteQuery({ queryKey: [...tradingKeys.account(snapshot), "member-round-list"], enabled, initialPageParam: undefined as number | undefined,
     queryFn: async ({ signal, pageParam }) => roundPage(await session.read(`account/rounds?limit=20${pageParam ? `&cursorId=${pageParam}` : ""}`, snapshot, signal), parseRound, round => round.roundId, pageParam), getNextPageParam: page => page.nextCursorId ?? undefined });
   const selectedId = selected ?? current.data?.round.roundId;
   const detail = useQuery({ queryKey: [...tradingKeys.account(snapshot), "member-round-detail", selectedId], enabled: enabled && !!selectedId,
     queryFn: async ({ signal }) => parseRoundSummary(await session.read(`account/rounds/${selectedId}`, snapshot, signal), snapshot.accountId!, selectedId) });
   async function restart() {
-    if (active.current || !acknowledged || !intent && !canRestart) return;
+    if (!admission.trade || active.current || !acknowledged || !intent && !canRestart) return;
     active.current = true; setPending(true); setError(null);
     const request = intent ?? { accountId: snapshot.accountId!, key: crypto.randomUUID() };
     try {
@@ -73,6 +77,7 @@ function MemberSimulationContent() {
       setIntent(null); setSelected(null); setLimitedAt(result.nextAvailableAt); dialog.current?.close();
       setMessage(`요청은 ${result.roundNumber}회차 생성으로 처리되었습니다. 미체결 ${result.canceledOrderCount}건 취소 · 포지션 ${result.closedPositionCount}건 관리상 종료. 현재 회차와 잔액은 서버 조회값으로 표시합니다.`);
     } catch (error) {
+      reportAdmissionRejection(client,snapshot,error);
       const uncertain = uncertainMutation(error);
       setIntent(uncertain ? request : null);
       if (error instanceof TradingApiError && error.nextAvailableAt) setLimitedAt(error.nextAvailableAt);
@@ -88,6 +93,7 @@ function MemberSimulationContent() {
       <label className="member-round-select">모의투자 회차<select aria-label="모의투자 회차 선택" value={selectedId ?? ""} disabled={!rounds.data || rounds.isError} onChange={event => setSelected(Number(event.currentTarget.value))}>
         {!rounds.data && <option value="">회차 확인 중</option>}{summary && !rounds.data?.pages.some(page => page.content.some(round => round.roundId === summary.round.roundId)) && <option value={summary.round.roundId}>{summary.round.roundNumber}회차 · {summary.round.currentRound ? "진행 중" : "종료 · 읽기 전용"}</option>}{rounds.data?.pages.flatMap(page => page.content).map(round => <option key={round.roundId} value={round.roundId}>{round.roundNumber}회차 · {round.currentRound ? "진행 중" : "종료 · 읽기 전용"}</option>)}</select></label>
       {rounds.hasNextPage && <button className="member-secondary" disabled={rounds.isFetching} onClick={() => void rounds.fetchNextPage()}>이전 회차 더 불러오기</button>}
+      {selectedId && <SymbolPerformance roundId={selectedId} />}
       {summary && <><dl className="member-round-summary">{[
         ["상태", summary.round.currentRound ? "진행 중" : "종료 · 읽기 전용"], ["시작 가상 자금", summary.round.initialBalance === null ? "기존 회차 · 초기 자금 확인되지 않음" : `${formatDecimal(summary.round.initialBalance)} USDT`],
         ["시작 시각", new Date(summary.round.startedAt).toLocaleString("ko-KR")], ["종료 시각", summary.round.endedAt ? new Date(summary.round.endedAt).toLocaleString("ko-KR") : "—"],

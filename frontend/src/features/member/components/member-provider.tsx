@@ -5,12 +5,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Link from "next/link";
 import { ContentApiError, contentMessage, contentOrigin } from "../api/client";
 import { createMemberSession, initialMember, type MemberSession } from "../api/session";
+import { MemberRecoveryStatus } from "./member-recovery-status";
 import { MemberConsentGate } from "./member-consents";
 import { bindMemberActivity } from "../api/activity";
 
 const origin = () => contentOrigin(process.env.NEXT_PUBLIC_CONTENT_SERVER_URL || "http://localhost:8080");
 let browserSession: MemberSession | undefined;
-const Context = createContext<{ session: MemberSession; origin: string; announce: (type: "changed" | "ended") => void } | null>(null);
+const Context = createContext<{ session: MemberSession; origin: string; announce: (type: "changed" | "ended") => void; retryConsents: () => void } | null>(null);
 export function MemberProvider({ children }: { children: ReactNode }) {
   const [session] = useState(() => typeof window === "undefined" ? createMemberSession(origin()) : browserSession ??= createMemberSession(origin()));
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, gcTime: typeof window === "undefined" ? Infinity : 60_000,
@@ -18,7 +19,7 @@ export function MemberProvider({ children }: { children: ReactNode }) {
     retry: (count, error) => count < 2 && error instanceof ContentApiError && [0, 500, 502, 503, 504].includes(error.status),
   }, mutations: { retry: false } } }));
   const channel = useRef<BroadcastChannel | null>(null);
-  const context = useMemo(() => ({ session, origin: origin(), announce: (type: "changed" | "ended") => channel.current?.postMessage({ type }) }), [session]);
+  const context = useMemo(() => ({ session, origin: origin(), retryConsents: () => { void client.invalidateQueries({queryKey:["member","consents"]}); }, announce: (type: "changed" | "ended") => channel.current?.postMessage({ type }) }), [session, client]);
   useEffect(() => {
     let previous = session.getSnapshot();
     const unsubscribe = session.subscribe(() => {
@@ -39,7 +40,7 @@ export function MemberProvider({ children }: { children: ReactNode }) {
     }
     return () => { unsubscribe(); activity.stop(); channel.current?.close(); channel.current = null; };
   }, [session, client]);
-  return <QueryClientProvider client={client}><Context.Provider value={context}><MemberConsentGate>{children}</MemberConsentGate></Context.Provider></QueryClientProvider>;
+  return <QueryClientProvider client={client}><Context.Provider value={context}><MemberRecoveryStatus /><MemberConsentGate>{children}</MemberConsentGate></Context.Provider></QueryClientProvider>;
 }
 export function useMember() {
   const context = useContext(Context);
@@ -49,7 +50,7 @@ export function useMember() {
 }
 export function MemberHeaderAction() {
   const { snapshot } = useMember();
-  return <div className="member-session-action"><Link href={snapshot.phase === "ready" ? "/account" : "/login"}>{snapshot.phase === "ready" ? "내 계정" : "로그인"}</Link></div>;
+  return <div className="member-session-action"><Link href={snapshot.memberId !== null ? "/account" : "/login"}>{snapshot.memberId !== null ? "내 계정" : "로그인"}</Link></div>;
 }
 export function MemberLogout() {
   const { session, snapshot, announce } = useMember();

@@ -44,10 +44,10 @@ test("money and percentages round to two decimals while quantities keep exact pr
 });
 
 
-test("Hedge summary accepts opposite sides and fails closed on duplicate side, ID or inconsistent leverage", () => {
-  const short={...positionFixture,id:18,side:"SHORT"};
+test("Hedge summary accepts opposite sides and fails closed on duplicate side, ID or invalid leverage", () => {
+  const short={...positionFixture,id:18,side:"SHORT",leverage:14};
   assert.equal(parseSummary({...summary,positions:[positionFixture,short]},3).positions.length,2);
-  for (const other of [{...positionFixture,id:18}, {...short,id:17}, {...short,leverage:14}])
+  for (const other of [{...positionFixture,id:18}, {...short,id:17}, {...short,leverage:101}])
     assert.throws(()=>parseSummary({...summary,positions:[positionFixture,other]},3));
   const added={...positionFixture,quantity:"0.75",entryPrice:"66666.666666666666666667",leverage:100,margin:"500"};
   assert.deepEqual(parseSummary({...summary,positions:[added]},3).positions[0],parsePosition(added));

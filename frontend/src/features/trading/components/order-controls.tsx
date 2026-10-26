@@ -3,13 +3,13 @@ import { MAX_INPUT_LEVERAGE, SERVER_MAX_LEVERAGE } from "../api/order-input";
 
 type Choice = { value: string; label: string };
 
-export function OrderLeverage({ value, max = MAX_INPUT_LEVERAGE, disabled, onChange }: { value?: number; max?: number; disabled: boolean; onChange: (value: number) => void }) {
-  return <div className="order-leverage"><label htmlFor="symbol-leverage" className="field-label">공통 레버리지 · Isolated</label>
+export function OrderLeverage({ side = "LONG", value, max = MAX_INPUT_LEVERAGE, disabled, onChange }: { side?: "LONG" | "SHORT"; value?: number; max?: number; disabled: boolean; onChange: (value: number) => void }) {
+  return <div className="order-leverage" data-side={side}><label htmlFor="symbol-leverage" className="field-label">{side === "LONG" ? "Long" : "Short"} 레버리지 · Isolated</label>
     <select id="symbol-leverage" value={value ?? ""} disabled={disabled} onChange={event => onChange(Number(event.target.value))} className="order-leverage-input">
       {value === undefined && <option value="">서버 설정 확인 중</option>}
       {Array.from({length:Math.min(max, SERVER_MAX_LEVERAGE)},(_,i)=>i+1).map(value=><option key={value} value={value}>{value}×</option>)}
     </select>
-    <p className="order-input-hint">선택 종목의 Long · Short에 함께 적용됩니다.</p>
+    <p className="order-input-hint">선택 종목의 {side === "LONG" ? "Long" : "Short"}에만 적용됩니다. 반대 방향 설정은 유지됩니다.</p>
   </div>;
 }
 

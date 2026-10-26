@@ -37,8 +37,8 @@ export function PortfolioAllocationChart({ positions, view: requestedView }: { p
   return (
     <section aria-labelledby="portfolio-heading" aria-describedby="portfolio-description" className="portfolio-allocation">
       <header className="portfolio-heading">
-        <h3 id="portfolio-heading" className="section-title">Portfolio Allocation</h3>
-        <p id="portfolio-description" className="text-trade-meta text-terminal-muted">종목별 사용 증거금 비중 · 조회한 보유 포지션 기준</p>
+        <h3 id="portfolio-heading" className="section-title">현재 종목별 증거금 비중</h3>
+        <p id="portfolio-description" className="text-trade-meta text-terminal-muted">현재 OPEN 포지션 · 같은 종목 LONG/SHORT 합산 · 거래 성과와 별개</p>
       </header>
       <div data-portfolio-frame data-view={view} aria-busy={view === "loading"} className="portfolio-frame">
         <figure aria-labelledby="portfolio-caption" aria-hidden={view !== "data"} className={`portfolio-figure ${view !== "data" ? "invisible" : ""}`}>

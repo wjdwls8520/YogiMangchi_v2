@@ -76,7 +76,7 @@ test("network failure is explicit and refresh expiry stays anonymous without foc
       refreshes++; if (status === 0) throw new TypeError("private network detail"); return json({}, 401);
     }, () => epoch, unlocked);
     const activity = bindMemberActivity(session, page, browser, false); await settle();
-    assert.equal(session.getSnapshot().phase, status === 0 ? "error" : "anonymous");
+    assert.equal(session.getSnapshot().phase, status === 0 ? "recovering" : "anonymous");
     for (let i = 0; i < 5; i++) browser.dispatchEvent(new Event("focus"));
     await settle(); assert.equal(refreshes, 1); activity.stop();
   }

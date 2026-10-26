@@ -1,6 +1,6 @@
 import { tradingJson, tradingOrigin, TradingApiError } from "./client";
 import { decimal, id, parseCredential, parseGuest, record, type GuestCredential } from "./contracts";
-import { mutationRequest, type TradingCommand } from "./mutation-request";
+import { mutationRequest, uncertainMutation, type TradingCommand } from "./mutation-request";
 import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
 import type { QuoteRequest } from "./quote";
 import { parseOrder } from "./orders";
@@ -27,6 +27,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   let memberRoundId: number | undefined;
   let restartIntent: { key: string; memberId: number; credential: GuestCredential; roundId: number } | null = null;
   let memberRestartFlight: Promise<ReturnType<typeof parseRestart>> | null = null;
+  let memberAuthRejected = false;
   let memberRefresh: (() => void) | undefined;
   const eventReconnects = new Set<() => void>();
   const listeners = new Set<() => void>();
@@ -63,10 +64,14 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     credential = value;
     publish(value ? "ready" : "anonymous");
   }
-  function invalidate(failed: GuestCredential) {
-    if (credential !== failed) return;
+  function invalidate(failed: GuestCredential, sentToken = failed.accessToken) {
+    if (credential !== failed || credential.accessToken !== sentToken) return;
+    if (mode === "member") {
+      memberAuthRejected = true;
+      snapshot = {...snapshot,phase:"loading"}; listeners.forEach(listener=>listener());
+      memberRefresh?.(); return;
+    }
     credential = null;
-    if (mode === "member") { publish("loading"); memberRefresh?.(); return; }
     try {
       const saved = storage().getItem(storageKey), value = saved === null ? null : stored(saved);
       // A late response from this tab must not erase another tab's new Guest.
@@ -99,16 +104,24 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       credential = { accountId: id(row.accountId), accessToken: owner.accessToken, expiresAt: owner.expiresAt }; publish("ready");
     } catch (error) {
       if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
-      publish(error instanceof TradingApiError && error.status === 404 ? "anonymous" : "error");
+      publish(error instanceof TradingApiError && error.status === 409 && error.code === "TRADING_ACCOUNT_REQUIRED" ? "anonymous" : "error");
     } finally { if (memberRequest === request) memberRequest = null; }
   }
   return {
     storageKey,
     getSnapshot: () => snapshot,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    suspendMember(memberId: number | null) {
+      if (mode !== "member" || !member || member.memberId !== memberId || !credential || snapshot.accountId !== credential.accountId) return false;
+      if (snapshot.phase !== "loading") {
+        // The owner is unchanged. Pause access, but retain the intent/cache epoch for same-key confirmation.
+        snapshot = { ...snapshot, phase: "loading" }; listeners.forEach(listener => listener());
+      }
+      return true;
+    },
     pauseMemberCheck(error = false) {
       if (mode === "checking" && snapshot.phase === (error ? "error" : "loading")) return;
-      mode = "checking"; member = null; credential = null; memberRoundId = undefined; restartIntent = null; publish(error ? "error" : "loading");
+      mode = "checking"; memberAuthRejected = false; member = null; credential = null; memberRoundId = undefined; restartIntent = null; publish(error ? "error" : "loading");
     },
     async enterMember(value: { memberId: number; accessToken: string; expiresAt: string }, refresh: () => void) {
       memberRefresh = refresh;
@@ -119,20 +132,23 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           restartIntent.credential.expiresAt = value.expiresAt;
           return;
         }
-        if (credential && snapshot.phase === "ready") {
+        if (credential && (snapshot.phase === "ready" || snapshot.phase === "loading" && snapshot.accountId === credential.accountId)) {
           const changed = credential.accessToken !== value.accessToken;
+          if (memberAuthRejected && !changed) return;
+          memberAuthRejected = false;
           credential.accessToken = value.accessToken; credential.expiresAt = value.expiresAt;
+          if (snapshot.phase !== "ready") { snapshot = {...snapshot,phase:"ready"}; listeners.forEach(listener=>listener()); }
           if (changed) eventReconnects.forEach(reconnect => reconnect());
           return;
         }
         if (memberRequest?.owner === member) return;
         if (snapshot.phase === "anonymous") return;
-      } else { mode = "member"; member = { ...value }; memberRoundId = undefined; restartIntent = null; }
+      } else { mode = "member"; memberAuthRejected = false; member = { ...value }; memberRoundId = undefined; restartIntent = null; }
       await loadMember(false);
     },
     leaveMember() {
       if (mode === "guest") return;
-      mode = "guest"; member = null; memberRefresh = undefined; credential = null; memberRoundId = undefined; restartIntent = null; publish("loading");
+      mode = "guest"; memberAuthRejected = false; member = null; memberRefresh = undefined; credential = null; memberRoundId = undefined; restartIntent = null; publish("loading");
     },
     createMember() { return run(() => loadMember(true)); },
     restore() {
@@ -167,17 +183,18 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { if (mode === "guest" && snapshot.generation === generation) { credential = null; publish("anonymous"); } }
       });
     },
-    async read(path: "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
+    async read(path: "account/recovery" | `account/performance/symbols?${string}` | "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage?side=${"LONG" | "SHORT"}`,  expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
       const current = credential;
+      const sentToken = current?.accessToken;
       if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
-      if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
+      if (!usable(current)) { invalidate(current, sentToken); throw new TradingApiError(401); }
       try {
-        const value = await tradingJson(origin, path, { token: current.accessToken, signal, ...(path === "account/orders/quote" ? {method:"POST" as const,body:quote} : {}) }, transport);
+        const value = await tradingJson(origin, path, { token: sentToken, signal, ...(path === "account/orders/quote" ? {method:"POST" as const,body:quote} : {}) }, transport);
         if (current !== credential || signal.aborted || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
-        if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
+        if (!usable(current)) { invalidate(current, sentToken); throw new TradingApiError(401); }
         return value;
       } catch (error) {
-        if (error instanceof TradingApiError && error.status === 401) invalidate(current);
+        if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       }
     },
@@ -210,9 +227,9 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           return result;
         } catch (error) {
           if (mode === "member" && member?.memberId === ownerId && restartIntent === intent) {
-            const uncertain = accepted || !(error instanceof TradingApiError) || [0, 422, 500, 502, 503, 504].includes(error.status);
+            const uncertain = accepted || uncertainMutation(error);
             if (uncertain) { credential = null; memberRoundId = undefined; }
-            else { restartIntent = null; memberRoundId = intent.roundId; if (error.status === 401) invalidate(current); }
+            else { restartIntent = null; memberRoundId = intent.roundId; if (error instanceof TradingApiError && error.status === 401) invalidate(current); }
           }
           if (accepted && !(error instanceof DOMException && error.name === "AbortError")) throw new TradingApiError(0);
           throw error;
@@ -237,12 +254,13 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         },
         read: async (cursor, signal) => {
           if (!active()) throw new DOMException("Session changed", "AbortError");
+          const sentToken = current.accessToken;
           try {
-            const value = await tradingJson(origin, `account/events?afterId=${cursor}&limit=100`, { token: current.accessToken, signal }, transport);
+            const value = await tradingJson(origin, `account/events?afterId=${cursor}&limit=100`, { token: sentToken, signal }, transport);
             if (!active()) throw new DOMException("Session changed", "AbortError");
             return value;
           } catch (error) {
-            if (error instanceof TradingApiError && error.status === 401) invalidate(current);
+            if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
             throw error;
           }
         },
@@ -250,38 +268,40 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       eventReconnects.add(stream.reconnect);
       return () => { eventReconnects.delete(stream.reconnect); stream(); };
     },
-    async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot) {
+    async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot, side: "LONG" | "SHORT" = "LONG") {
       if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");
-      const path = leveragePath(symbolId);
+      const path = leveragePath(symbolId, side).split("?")[0];
       if (!validLeverage(leverage)) throw new TradingApiError(400, "레버리지는 1~100배 정수로 설정해 주세요.");
       const current = credential;
-      if (current && !usable(current)) invalidate(current);
+      const sentToken = current?.accessToken;
+      if (current && !usable(current)) invalidate(current, sentToken);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
       writes++;
       try {
-        const value = await tradingJson(origin, path, { token: current.accessToken, method: "PUT", body: { leverage } }, transport);
+        const value = await tradingJson(origin, path, { token: sentToken, method: "PUT", body: { side, leverage } }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
-        if (!usable(current)) { invalidate(current); throw new TradingApiError(401); }
-        return parseLeverage(value, symbolId);
+        if (!usable(current)) { invalidate(current, sentToken); throw new TradingApiError(401); }
+        return parseLeverage(value, symbolId, side);
       } catch (error) {
-        if (error instanceof TradingApiError && error.status === 401) invalidate(current);
+        if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       } finally {writes--;}
     },
     async write(command: TradingCommand, expected: SessionSnapshot, key: string) {
       if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");
       const current = credential;
-      if (current && !usable(current)) invalidate(current);
+      const sentToken = current?.accessToken;
+      if (current && !usable(current)) invalidate(current, sentToken);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
       const request = mutationRequest(command);
       writes++;
       try {
-        const value = await tradingJson(origin, request.path, { token: current.accessToken, method: "POST", body: request.body,
+        const value = await tradingJson(origin, request.path, { token: sentToken, method: "POST", body: request.body,
           idempotencyKey: request.keyed ? key : undefined }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         return parseOrder(value);
       } catch (error) {
-        if (error instanceof TradingApiError && error.status === 401) invalidate(current);
+        if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       } finally {writes--;}
     },

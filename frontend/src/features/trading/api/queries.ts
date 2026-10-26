@@ -19,7 +19,8 @@ export function useTradingSummary() {
   });
   const error = snapshot.phase === "error" || query.isError;
   return {
-    data: !error && snapshot.phase === "ready" ? query.data : undefined,
+    data: snapshot.phase === "ready" ? query.data : undefined,
+    stale: query.isError && query.data !== undefined,
     loading: !error && (snapshot.phase === "loading" || snapshot.phase === "creating" || (snapshot.phase === "ready" && query.isPending)), error,
     busy: snapshot.phase === "loading" || snapshot.phase === "creating" || query.isFetching,
     retry: () => { if (snapshot.phase === "error") void session.restore(); else if (snapshot.phase === "ready") void query.refetch({ cancelRefetch: false }); },
@@ -35,7 +36,8 @@ export function useTradingOrders(kind: "pending" | "history") {
   });
   const error = snapshot.phase === "error" || query.isError;
   return {
-    data: !error && snapshot.phase === "ready" ? query.data : undefined,
+    data: snapshot.phase === "ready" ? query.data : undefined,
+    stale: query.isError && query.data !== undefined,
     loading: !error && (snapshot.phase === "loading" || snapshot.phase === "creating" || (snapshot.phase === "ready" && query.isPending)), error,
     busy: snapshot.phase === "loading" || snapshot.phase === "creating" || query.isFetching,
     retry: () => { if (snapshot.phase === "error") void session.restore(); else if (snapshot.phase === "ready") void query.refetch({ cancelRefetch: false }); },

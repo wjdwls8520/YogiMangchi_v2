@@ -68,7 +68,7 @@ test("Long and Short use the same server leverage for sizing and outgoing payloa
     assert.ok(body && "leverage" in body);assert.equal(body.leverage,14);
   }
   const html=renderToStaticMarkup(<OrderLeverage value={14} disabled={false} onChange={()=>{}}/>);
-  assert.match(html,/공통 레버리지/); assert.match(html,/value="14" selected/);
+  assert.match(html,/Long 레버리지/); assert.match(html,/value="14" selected/);
 });
 
 test("every LIMIT ratio yields zero without a valid price, then sizes on the next selection",()=>{

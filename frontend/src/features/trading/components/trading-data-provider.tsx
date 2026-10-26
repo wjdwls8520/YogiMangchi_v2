@@ -18,8 +18,11 @@ function getSession() {
 }
 
 export function bindGuestCache(client: QueryClient, session: GuestSession) {
+  let previous = session.getSnapshot();
   return session.subscribe(() => {
     const current = session.getSnapshot();
+    if (current.accountId === previous.accountId && current.generation === previous.generation) return;
+    previous = current;
     const filters = { predicate: (query: { queryKey: readonly unknown[] }) => query.queryKey[0] === "trading-account"
       && (query.queryKey[1] !== current.accountId || query.queryKey[2] !== current.generation) };
     void client.cancelQueries(filters);
@@ -41,7 +44,9 @@ export function TradingDataProvider({ children }: { children: ReactNode }) {
       const phase = memberSession.getSnapshot().phase;
       if (access && phase === "ready" && memberSession.getSnapshot().consentStatus === "accepted") {
         void session.enterMember(access, () => { void memberSession.refresh().catch(() => {}); });
-      } else if (["loading", "authenticating", "ending", "withdrawing", "ready"].includes(phase)) session.pauseMemberCheck();
+      } else if (phase === "recovering" && session.suspendMember(memberSession.getSnapshot().memberId)) {
+        // Retain same-owner unresolved intents while requests/WS are suspended.
+      } else if (["loading", "authenticating", "ending", "withdrawing", "recovering", "ready"].includes(phase)) session.pauseMemberCheck();
       else { session.leaveMember(); void session.restore(); }
     });
     const restore = () => {
