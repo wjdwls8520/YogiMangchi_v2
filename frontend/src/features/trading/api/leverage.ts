@@ -17,7 +17,7 @@ export function useSymbolLeverage(symbolId: number | null, side: "LONG" | "SHORT
   const admission = useTradingAdmission();
   const query = useQuery<ReturnType<typeof parseLeverage>>({
     queryKey: tradingKeys.leverage(snapshot, symbolId, side), enabled: !snapshot.retrying && snapshot.phase === "ready" && symbolId !== null,
-    staleTime: 0, refetchOnWindowFocus: false,
+    staleTime: 15_000, refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => parseLeverage(await session.read(leveragePath(symbolId!, side), snapshot, signal), symbolId!, side),
   });
   const mutation = useMutation({ retry: false,
@@ -44,7 +44,7 @@ export function useSymbolLeverage(symbolId: number | null, side: "LONG" | "SHORT
   const current = mutation.variables?.identity.accountId === snapshot.accountId
     && mutation.variables?.identity.generation === snapshot.generation && mutation.variables?.symbolId === symbolId && mutation.variables?.side === side;
   const data = snapshot.phase === "ready" && !query.isError ? query.data : undefined;
-  const blocked = () => !admission.trade || snapshot.retrying || active.current || query.isFetching || !isolatedReady(data) || !data;
+  const blocked = () => !admission.trade || snapshot.retrying || active.current || (query.isFetching && !data) || !isolatedReady(data) || !data;
   async function change(leverage: number) {
     if (blocked() || symbolId === null || !data || !validLeverage(leverage, data.maxLeverage) || leverage === data.leverage) return;
     active.current = true;
@@ -53,7 +53,7 @@ export function useSymbolLeverage(symbolId: number | null, side: "LONG" | "SHORT
     finally { active.current = false; }
   }
   return { data, pending: mutation.isPending, blocked, change,
-    ready: admission.trade && !!data && isolatedReady(data) && !query.isFetching && !mutation.isPending,
+    ready: admission.trade && !!data && isolatedReady(data) && !mutation.isPending,
     error: current && mutation.error ? (uncertainMutation(mutation.error) ? "레버리지 변경 결과를 확인할 수 없습니다. 서버 설정을 다시 조회해 주세요. 주문은 자동 제출하지 않습니다." : mutationMessage(mutation.error)) : query.isError ? "레버리지 설정을 조회하지 못했습니다. 다시 조회해 주세요." : null,
     refresh: () => { if (!mutation.isPending) mutation.reset(); return query.refetch({ cancelRefetch: false }); },
   };

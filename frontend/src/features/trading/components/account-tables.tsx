@@ -7,7 +7,7 @@ import { TradingTable } from "./trading-table";
 import { CancelOrderButton } from "./account-actions";
 import { PositionCloseEntry } from "./position-close-entry";
 import { formatMarketPrice } from "../market/price-format";
-import { useSelectedMarket } from "./selected-market-provider";
+import { usePositionMarkets } from "./selected-market-provider";
 import { positionValuation } from "../api/position-display";
 import type { ClosedPositionHistory, FillHistory } from "../api/history";
 
@@ -16,7 +16,7 @@ function price(value: string | null | undefined, symbolId: number, symbols: read
 }
 
 export function PositionTable({ positions, symbols }: { positions: readonly Position[]; symbols: readonly TradingSymbol[] }) {
-  const {positionPrices}=useSelectedMarket();
+  const positionPrices=usePositionMarkets();
   return <TradingTable caption="보유 포지션" variant="positions" columns={[
     { key: "symbol", label: "Symbol" }, { key: "side", label: "Side" },
     { key: "leverage", label: "Leverage" }, { key: "mode", label: "Margin Mode" },

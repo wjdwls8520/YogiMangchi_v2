@@ -4,13 +4,13 @@ import { useState } from "react";
 import { useTradingSummary } from "../api/queries";
 import { formatQuantity, symbolLabel } from "../api/account";
 import { useGuestSession } from "./trading-data-provider";
-import { useSelectedMarket } from "./selected-market-provider";
+import { useMarketDetails } from "./selected-market-provider";
 import { GuestStartPrompt } from "./guest-access";
 import { AccountQueryState } from "./account-query-state";
 import { PositionCloseEntry } from "./position-close-entry";
 
 export function CloseOrderPanel({active}:{active:boolean}) {
-  const query=useTradingSummary(),{snapshot}=useGuestSession(),{symbols,symbol}=useSelectedMarket();
+  const query=useTradingSummary(),{snapshot}=useGuestSession(),{symbols,symbol}=useMarketDetails();
   const [chosen,setChosen]=useState<number|null>(null);
   const positions=query.data?.positions??[];
   const selected=positions.find(position=>position.id===chosen)??positions.find(position=>position.tradingSymbolId===symbol?.id)??positions[0];

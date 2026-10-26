@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { useMember } from "../../member/components/member-provider";
+import { MemberTradingPrompt } from "./member-trading-prompt";
 import { initialSession, type GuestSession, type SessionSnapshot } from "../api/guest-session";
 
 const GuestAccessContext = createContext<{ snapshot: SessionSnapshot; open: () => void } | null>(null);
@@ -53,7 +55,8 @@ export function GuestHeaderAction() {
 
 export function GuestStartPrompt() {
   const { snapshot, open } = useGuestAccess();
-  if (snapshot.mode === "checking") return <div className="guest-entry-prompt"><p role="status">회원 로그인 상태를 확인하는 중입니다.</p></div>;
+  const member = useMember();
+  if (snapshot.mode === "checking" || (member.snapshot.phase === "recovering" || member.snapshot.recovery)) return <MemberTradingPrompt member={member.snapshot} retry={() => void member.session.restore().catch(() => {})} retryConsents={member.retryConsents} />;
   if (snapshot.mode === "member") return <div className="guest-entry-prompt"><p>{snapshot.phase === "loading" || snapshot.phase === "creating" ? "회원 선물 계정과 현재 회차를 확인하는 중입니다." : snapshot.phase === "error" ? "회원 선물 계정을 확인하지 못했습니다. 서버 연결과 회원 인증 설정을 확인해 주세요." : "회원 계정 준비 상태를 확인해 주세요. 신규 계정은 서버가 1회차를 10,000 USDT로 시작하며 Guest 자금과 분리됩니다."}</p><button type="button" className="guest-start-button" disabled={snapshot.phase === "loading" || snapshot.phase === "creating"} onClick={open}>회원 선물 계정 확인</button></div>;
   return <GuestEntryPrompt onStart={open} busy={snapshot.phase === "loading" || snapshot.phase === "creating"} storageError={snapshot.phase === "error"} />;
 }

@@ -22,7 +22,7 @@ export function MemberConsentGate({ children }: { children: ReactNode }) {
   return <>{snapshot.phase === "ready" && (query.isError || query.data?.reconsentRequired) && <aside className="member-consent-banner" aria-label="필수 정책 확인"><span>{query.isError ? "정책 동의 상태를 확인하지 못했습니다. 회원 모의투자를 사용하기 전에 다시 확인해 주세요." : "새로운 필수 동의가 필요합니다. 원문과 이전 동의 버전을 확인해 주세요."}</span><Link href="/account#policy-consents">정책 확인</Link></aside>}{children}</>;
 }
 export function MemberConsents() {
-  const { session } = useMember(), client = useQueryClient(), mine = useOwnConsents(), policies = usePolicies();
+  const { session, snapshot } = useMember(), client = useQueryClient(), mine = useOwnConsents(), policies = usePolicies();
   const [selection, setSelection] = useState<ConsentSelection>({}), [pending, setPending] = useState(false), [error, setError] = useState<string | null>(null);
   const active = useRef(false);
   async function accept() {
@@ -33,6 +33,10 @@ export function MemberConsents() {
       active.current = true; setPending(true);
       const state = parsePolicyState(await session.request("/members/me/consents", { method: "POST", body }));
       if (state.reconsentRequired) throw new Error();
+      const current = session.getSnapshot();
+      if (current.memberId !== snapshot.memberId || current.generation !== snapshot.generation) return;
+      client.setQueryData(["member","consents",snapshot.memberId,snapshot.generation], state);
+      session.setConsentStatus("accepted", snapshot.memberId!, snapshot.generation);
       await client.invalidateQueries({ queryKey: ["member", "consents"] });
     } catch (error) { setError(contentMessage(error)); void policies.refetch(); }
     finally { active.current = false; setPending(false); }

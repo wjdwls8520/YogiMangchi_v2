@@ -38,7 +38,7 @@ export function OrderPanel() {
     {snapshot.phase === "ready" && <RecoveryStatus />}
     <div id="order-open-panel" role="tabpanel" aria-labelledby="order-open-tab" hidden={intent!=="open"}><OpenOrderPanel active={intent==="open"}/></div>
     <div id="order-close-panel" role="tabpanel" aria-labelledby="order-close-tab" hidden={intent!=="close"}><CloseOrderPanel active={intent==="close"}/></div>
-    {snapshot.phase === "ready" && account.data && <WalletOverview wallet={account.data.wallet} />}
+    {snapshot.phase === "ready" && account.data && <WalletOverview wallet={account.data.wallet} stale={account.stale} />}
     <GuestRetry />
   </section>;
 }
@@ -72,8 +72,9 @@ function OpenOrderPanel({active}:{active:boolean}) {
     setServerWarning({ side: command.side, issue });
   });
   const mark = freshMarkPrice(market);
-  const ready = isolatedReady(account.data?.wallet) && leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
-  const locked = action.blocked || snapshot.retrying || preparing || action.pending || action.unconfirmed || longLeverage.pending || shortLeverage.pending || snapshot.phase !== "ready";
+  const ready = !account.error && isolatedReady(account.data?.wallet) && leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
+  const locked = snapshot.retrying || preparing || action.pending || action.unconfirmed || snapshot.phase !== "ready";
+  const submitLocked = locked || action.blocked || longLeverage.pending || shortLeverage.pending;
   if (bookSelection !== seenBookSelection) {
     setSeenBookSelection(bookSelection);
     const next = bookSelection && bookSelection.identity === identity && active && !locked ? formForBookPrice(form,bookSelection.symbolId,bookSelection.price) : null;
@@ -119,7 +120,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   async function submit(side: "LONG" | "SHORT") {
     const leverageState = side === "LONG" ? longLeverage : shortLeverage;
     const leverage = leverageState.data?.leverage ?? 10;
-    if (locked || leverageState.blocked() || submitting.current || sizingRequest.current) return;
+    if (submitLocked || leverageState.blocked() || submitting.current || sizingRequest.current) return;
     update({ side });
     const commandForm = formForSide(form,side,leverage);
     const issue = preflightOrder(commandForm, side, ready, freshMarkPrice(market)?.decimal, account.data?.wallet.availableBalance);
@@ -153,7 +154,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
           <OrderChoices legend="주문 유형" name="order-type" selected={form.type} disabled={locked} onChange={(value) => { if (value === "MARKET" || value === "LIMIT") update({ type: value, ratio: 0 }); }} choices={[{ value: "MARKET", label: "시장가" }, { value: "LIMIT", label: "지정가" }]} />
           <OrderChoices legend="포지션 방향" name="position-side" selected={form.side} disabled={locked} onChange={(value) => { if (value === "LONG" || value === "SHORT") update({ side: value, ratio: 0 }); }} choices={[{ value: "LONG", label: "↗ Long" }, { value: "SHORT", label: "↘ Short" }]} />
           <OrderLeverage side={form.side} value={leverageState.data?.leverage} max={leverageState.data?.maxLeverage} disabled={locked || !leverageState.ready} onChange={value => { update({ratio:0}); void leverageState.change(value); }} />
-          {leverageState.pending && <p role="status" className="order-input-hint">레버리지 변경 및 계정 갱신 중…</p>}
+          {(longLeverage.pending || shortLeverage.pending) && <p role="status" className="order-input-hint">{[longLeverage.pending ? "Long" : null, shortLeverage.pending ? "Short" : null].filter(Boolean).join(" · ")} 레버리지 변경 및 계정 갱신 중…</p>}
           {leverageState.error && <div><p role="alert" className="order-warning">{leverageState.error}</p><button type="button" className="account-refresh" disabled={leverageState.pending} onClick={()=>void leverageState.refresh()}>레버리지 다시 조회</button></div>}
           {form.type === "LIMIT" && <OrderInput id="limit-price" label="지정가" unit="USDT" placeholder="가격 입력" value={form.limitPrice} disabled={locked} onChange={(value) => update({ limitPrice: value, ratio: 0 })} hint="양수 · 소수점 최대 18자리" />}
           <OrderInput id="order-quantity" label="주문 수량" unit={symbol?.symbol ?? "—"} placeholder="0.000" value={form.quantity} disabled={locked || !symbol} onChange={(value) => update({ quantity: value, ratio: 0 })} hint="양수 · 소수점 최대 8자리" />
@@ -175,7 +176,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
       {!ready && <p role="status" className="order-input-hint">거래할 계정과 선택 종목의 최신 시세를 확인하는 중입니다.</p>}
       <div className="order-actions" role="group" aria-label="포지션 진입">
         {(["LONG", "SHORT"] as const).map((side) => <div key={side}>
-          <button type="button" disabled={!ready || !valid || locked || !(side === "LONG" ? longLeverage : shortLeverage).ready || sizingPending} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{leverageState.data ? `${(side === "LONG" ? longLeverage : shortLeverage).data?.leverage}×` : "—"} · {action.pending || preparing ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
+          <button type="button" disabled={!ready || !valid || submitLocked || !(side === "LONG" ? longLeverage : shortLeverage).ready || sizingPending} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{(side === "LONG" ? longLeverage : shortLeverage).data ? `${(side === "LONG" ? longLeverage : shortLeverage).data!.leverage}×` : "설정 확인 중"} · {action.pending || preparing ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
           {warning(side) && <p role="alert" className="order-warning" data-warning-side={side}>{warning(side)?.message}</p>}
         </div>)}
       </div>

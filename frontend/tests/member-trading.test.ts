@@ -1,3 +1,6 @@
+import { QueryClient } from "@tanstack/react-query";
+import { bindGuestCache } from "../src/features/trading/components/trading-data-provider";
+import { tradingKeys } from "../src/features/trading/api/query-keys";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGuestSession } from "../src/features/trading/api/guest-session";
@@ -16,7 +19,7 @@ test("member account is never implicitly created and Guest remains recoverable a
   const session = createGuestSession(origin, () => storage, async (url, options) => {
     const path = new URL(String(url)).pathname; calls.push(`${options?.method} ${path}`);
     assert.equal(new Headers(options?.headers).get("Authorization"), `Bearer ${member.accessToken}`);
-    return path.endsWith("rounds/current") ? response(round) : path.endsWith("accounts/member") ? response({ accountId: 21, memberId: 1, status: "ACTIVE", quoteAsset: "USDT", balance: "10000" }) : response({}, 404);
+    return path.endsWith("rounds/current") ? response(round) : path.endsWith("accounts/member") ? response({ accountId: 21, memberId: 1, status: "ACTIVE", quoteAsset: "USDT", balance: "10000" }) : response({code:"TRADING_ACCOUNT_REQUIRED"}, 409);
   }, () => epoch);
   await session.restore(); const guestSnapshot = session.getSnapshot(); assert.equal(guestSnapshot.accountId, 20);
   session.pauseMemberCheck();
@@ -64,7 +67,7 @@ test("JWT rotation during explicit account creation keeps one request and accept
   const session = createGuestSession(origin, memory, async (_url, options) => {
     if (String(_url).endsWith("rounds/current")) return response(round);
     if (options?.method === "POST") { creates++; return new Promise(done => { finish = done; }); }
-    reads++; return response({}, 404);
+    reads++; return response({code:"TRADING_ACCOUNT_REQUIRED"}, 409);
   }, () => epoch);
   await session.enterMember(member, () => {});
   const creating = session.createMember();
@@ -84,4 +87,64 @@ test("a Guest creation response arriving after member selection is never persist
   await session.enterMember(member, () => {}); finish(response(guest)); await creating;
   assert.equal(session.getSnapshot().accountId, 21);
   assert.equal(storage.getItem(session.storageKey), null);
+});
+
+
+test("only explicit account-required contract offers creation; generic lookup failures never create", async () => {
+  for (const status of [404,409,500,503]) {
+    let posts=0;
+    const session=createGuestSession(origin,memory,async (_url,options)=>{if(options?.method==="POST")posts++;return response({},status);},()=>epoch);
+    await session.enterMember(member,()=>{});
+    assert.equal(session.getSnapshot().phase,"error");assert.equal(posts,0);
+  }
+});
+
+
+test("temporary same-member suspension preserves intent epoch and rejects protected reads until restored",async()=>{
+ const session=createGuestSession(origin,memory,async url=>String(url).endsWith("rounds/current")?response(round):response({accountId:21}),()=>epoch);
+ await session.enterMember(member,()=>{});const before=session.getSnapshot();
+ assert.equal(session.suspendMember(member.memberId),true);assert.equal(session.getSnapshot().accountId,before.accountId);
+ assert.equal(session.getSnapshot().generation,before.generation);assert.equal(session.getSnapshot().phase,"loading");
+ await assert.rejects(session.read("account/summary",before,new AbortController().signal),{name:"AbortError"});
+ await session.enterMember({...member,accessToken:"header.payload.rotated"},()=>{});
+ assert.equal(session.getSnapshot().phase,"ready");assert.equal(session.getSnapshot().generation,before.generation);
+ assert.equal(session.suspendMember(999),false);
+ session.leaveMember();await session.restore();assert.notEqual(session.getSnapshot().generation,before.generation);
+});
+
+test("late old-token401 cannot invalidate an already rotated member Trading credential",async()=>{
+ let rejectOld!:(value:Response)=>void;
+ const session=createGuestSession(origin,memory,async (url,options)=>{
+  if(String(url).endsWith("rounds/current"))return response(round);
+  if(new Headers(options?.headers).get("Authorization")==="Bearer header.payload.member"&&String(url).endsWith("orders/pending"))return new Promise(resolve=>{rejectOld=resolve;});
+  return response({accountId:21});
+ },()=>epoch);
+ await session.enterMember(member,()=>{});const before=session.getSnapshot();
+ const old=session.read("account/orders/pending",before,new AbortController().signal);
+ await session.enterMember({...member,accessToken:"header.payload.rotated"},()=>{});rejectOld(response({},401));
+ await assert.rejects(old);assert.equal(session.getSnapshot().phase,"ready");assert.equal(session.getSnapshot().generation,before.generation);
+});
+
+
+test("current member401 suspends the same intent epoch and only a rotated token can resume it",async()=>{
+ let deny=false,refreshes=0;
+ const session=createGuestSession(origin,memory,async url=>String(url).endsWith("rounds/current")?response(round):deny?response({},401):response({accountId:21}),()=>epoch);
+ await session.enterMember(member,()=>{refreshes++;});const before=session.getSnapshot();deny=true;
+ await assert.rejects(session.read("account/summary",before,new AbortController().signal));
+ assert.equal(refreshes,1);assert.equal(session.getSnapshot().phase,"loading");assert.equal(session.getSnapshot().generation,before.generation);
+ await session.enterMember(member,()=>{});assert.equal(session.getSnapshot().phase,"loading");
+ await session.enterMember({...member,accessToken:"header.payload.rotated"},()=>{});
+ assert.equal(session.getSnapshot().phase,"ready");assert.equal(session.getSnapshot().generation,before.generation);
+});
+
+
+test("same-owner recovery retains query/intent cache while logout removes the old financial boundary",async()=>{
+ const session=createGuestSession(origin,memory,async url=>String(url).endsWith("rounds/current")?response(round):response({accountId:21}),()=>epoch);
+ await session.enterMember(member,()=>{});const client=new QueryClient(),unsubscribe=bindGuestCache(client,session),key=tradingKeys.summary(session.getSnapshot());
+ try{
+  client.setQueryData(key,{owner:21});await client.getMutationCache().build(client,{mutationFn:async()=>"intent"}).execute(undefined);
+  session.suspendMember(1);assert.deepEqual(client.getQueryData(key),{owner:21});assert.equal(client.getMutationCache().getAll().length,1);
+  await session.enterMember({...member,accessToken:"header.payload.rotated"},()=>{});assert.deepEqual(client.getQueryData(key),{owner:21});
+  session.leaveMember();assert.equal(client.getQueryData(key),undefined);assert.equal(client.getMutationCache().getAll().length,0);
+ }finally{unsubscribe();client.clear();}
 });

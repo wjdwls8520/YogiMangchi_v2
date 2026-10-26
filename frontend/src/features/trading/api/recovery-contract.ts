@@ -13,6 +13,7 @@ const reasons: Record<string, string> = {
   PROVIDER_CONTINUITY_UNKNOWN: "시세 공급자 연결이 끊긴 구간의 검토가 필요합니다.",
   POSTGRES_INGRESS_INTERRUPTED: "시세 기록이 중단된 구간의 검토가 필요합니다.",
   UNOBSERVED_PRICE_INTERVAL: "관측하지 못한 가격 구간의 검토가 필요합니다.",
+  LEDGER_MISMATCH: "금융 원장 불일치 검토가 필요합니다. 운영 확인 전에는 거래할 수 없습니다.",
   PRICE_GAP: "시세 연속성을 확인할 수 없는 구간이 있습니다.",
   RISK_PROCESSING_FAILED: "위험 처리 결과를 검토 중입니다.",
 };

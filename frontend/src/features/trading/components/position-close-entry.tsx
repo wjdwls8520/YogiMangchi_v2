@@ -11,14 +11,14 @@ import { validLimitPrice, validQuantity } from "../api/order-input";
 import { comparePrices, formatMarketPrice } from "../market/price-format";
 import { CloseOrderFields } from "./close-order-fields";
 import { useGuestSession } from "./trading-data-provider";
-import { useSelectedMarket } from "./selected-market-provider";
+import { useMarketDetails, usePositionMarkets } from "./selected-market-provider";
 import type { TradingOrder } from "../api/orders";
 
 export function PositionCloseEntry({position,symbol,layout="panel",active=true}:{position:Position;symbol:string;layout?:"panel"|"row";active?:boolean}) {
   const prefix=useId(),dialog=useRef<HTMLDialogElement>(null),fullTrigger=useRef<HTMLButtonElement>(null);
   const partialDialog=useRef<HTMLDialogElement>(null),partialTrigger=useRef<HTMLButtonElement>(null);
   const {snapshot}=useGuestSession(),summary=useTradingSummary();
-  const {positionPrices,bookSelection}=useSelectedMarket();
+  const {bookSelection}=useMarketDetails(), positionPrices=usePositionMarkets();
   const [seenBookSelection,setSeenBookSelection]=useState(bookSelection);
   const [partialOpen,setPartialOpen]=useState(false);
   const [type,setType]=useState<"MARKET"|"LIMIT">("MARKET");
@@ -26,8 +26,8 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
   const [warning,setWarning]=useState<string|null>(null),[result,setResult]=useState<string|null>(null);
   const action=useTradingMutation();
   const notices=useTradingNotices();
-  const locked=action.blocked||snapshot.retrying||action.pending||action.unconfirmed||snapshot.phase!=="ready";
-  const ready=!action.blocked&&isolatedReady(summary.data?.wallet)&&position.marginMode==="ISOLATED"&&snapshot.phase==="ready"&&summary.data?.status==="ACTIVE";
+  const locked=snapshot.retrying||action.pending||action.unconfirmed||snapshot.phase!=="ready";
+  const ready=!summary.error&&!action.blocked&&isolatedReady(summary.data?.wallet)&&position.marginMode==="ISOLATED"&&snapshot.phase==="ready"&&summary.data?.status==="ACTIVE";
   const mark=positionPrices[position.tradingSymbolId],valuation=positionValuation(position,mark);
   const scope=layout==="row" ? "partial" : "available";
   const fullAvailable=comparePrices(position.freeCloseQuantity,position.quantity)===0;
@@ -61,7 +61,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
   const issue=quantity ? positionCloseCommand(position,type,quantity.trim(),limitPrice.trim(),mark,ready,scope).issue : null;
   const fullIssue=positionCloseCommand(position,"MARKET",position.quantity,"",mark,ready,"full").issue;
   const confirmation=action.unconfirmed && <div><p role="alert" className="order-warning">{action.error} 입력을 유지하고 같은 청산 결과를 확인해 주세요.</p><button type="button" className="account-refresh" disabled={action.pending} onClick={()=>void execute()}>같은 청산 결과 확인</button></div>;
-  const submit=<button className="close-submit" disabled={locked||!validQuantity(quantity.trim())} type="submit">{action.pending ? "처리 중…" : type==="MARKET" ? "시장가 청산" : "지정가 청산 예약"}</button>;
+  const submit=<button className="close-submit" disabled={locked||action.blocked||!ready||!validQuantity(quantity.trim())} type="submit">{action.pending ? "처리 중…" : type==="MARKET" ? "시장가 청산" : "지정가 청산 예약"}</button>;
   const editor=<form id={`${prefix}-editor`} aria-label={`${symbol} ${position.side} 청산 주문`} onSubmit={event=>{event.preventDefault();void execute();}}>
       {layout==="panel" && <p className="close-position-label"><strong>{symbol}</strong> <span data-side={position.side}>{position.side} {position.leverage}×</span></p>}
       <dl className="close-availability"><div><dt>보유 수량</dt><dd>{formatQuantity(position.quantity)}</dd></div><div><dt>청산 가능</dt><dd>{formatQuantity(position.freeCloseQuantity)}</dd></div><div><dt>예약 수량</dt><dd>{formatQuantity(position.reservedCloseQuantity)}</dd></div></dl>

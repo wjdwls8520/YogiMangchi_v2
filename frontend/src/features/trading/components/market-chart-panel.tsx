@@ -9,7 +9,7 @@ import { TradingChart } from "./trading-chart";
 import { MarketHeader } from "./market-header";
 import { TradingAccountTabs, type AccountView } from "./trading-account-tabs";
 import { TradingNavigation } from "./trading-navigation";
-import { SelectedMarketProvider, useMarketFeed, type BookSelection } from "./selected-market-provider";
+import { LiveMarketProvider, useSelectedMarket, useSelectedBook, type BookSelection } from "./selected-market-provider";
 import type { CandleInterval } from "../market/candles";
 import { OrderBookPanel } from "./order-book-panel";
 import { freshMarkPrice } from "../market/selected-market";
@@ -18,7 +18,6 @@ import { useGuestSession } from "./trading-data-provider";
 export function MarketChartPanel({ children }: { children: ReactNode }) {
   const account = useTradingSummary();
   const {snapshot:guest} = useGuestSession();
-  const tickerQuery = useMarketTickers();
   const [mainView, setMainView] = useState<"chart" | "order" | "portfolio">("chart");
   const [analysisView, setAnalysisView] = useState<"chart" | "book">("chart");
   const [bookSelection, setBookSelection] = useState<BookSelection>();
@@ -70,8 +69,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   }, [catalogRevision]);
   const selected = catalog.symbols.find((entry) => entry.id === selectedId)
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
-  const positionIds = JSON.stringify([...new Set((account.data?.positions??[]).map(position=>position.tradingSymbolId).filter(id=>catalog.symbols.some(symbol=>symbol.id===id)))].sort((a,b)=>a-b));
-  const { market, orderBook, positionPrices } = useMarketFeed(selected?.id ?? null, catalog.socket, refreshAfterSymbolError,positionIds,`${guest.accountId}:${guest.generation}`,refreshSubscriptionCatalog);
+  const positionIds = JSON.stringify([...new Set((account.data?.positions??[]).map(position=>position.tradingSymbolId).filter(id=>id!==selected?.id && catalog.symbols.some(symbol=>symbol.id===id)))].sort((a,b)=>a-b));
   function openSheet() {
     if (!sheet.current || sheet.current.open) return;
     sheet.current.showModal();
@@ -92,7 +90,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     if (id === "chart" || id === "order" || id === "portfolio") setMainView(id);
   }
   return (
-    <SelectedMarketProvider symbol={selected} symbols={catalog.allSymbols} market={market} orderBook={orderBook} positionPrices={positionPrices} bookSelection={bookSelection}><div className="trading-grid" data-main-view={mainView}>
+    <LiveMarketProvider symbol={selected} symbols={catalog.allSymbols} socketUrl={catalog.socket} onSymbolUnavailable={refreshAfterSymbolError} positionIds={positionIds} identity={`${guest.accountId}:${guest.generation}`} onSubscriptionUnavailable={refreshSubscriptionCatalog} bookSelection={bookSelection}><div className="trading-grid" data-main-view={mainView}>
       <div className="market-overview"><header className="market-contract-header">
         <button ref={sheetTrigger} type="button" onClick={openSheet} aria-haspopup="dialog" aria-controls="market-symbol-sheet" aria-expanded={sheetOpen} className="market-sheet-trigger">
           <span className="market-coin-mark" aria-hidden="true">{selected?.symbol.charAt(0) ?? "·"}</span>
@@ -101,7 +99,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         </button>
         <span className="preview-label">무기한 선물</span>
       </header>
-        <MarketHeader symbol={selected} market={market} ticker={tickerQuery.tickers.find((ticker) => ticker.tradingSymbolId === selected?.id && ticker.symbol === selected.symbol && ticker.quoteAsset === selected.quoteAsset)} />
+        <LiveHeader />
       </div>
       <TradingNavigation label="모바일 거래 화면" prefix="main" activeId={mainView} onSelect={selectMainView} className="main-navigation" tabs={[
         { id: "chart", label: "차트·호가", controls: "chart-view" },
@@ -111,8 +109,8 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
       <section id="chart-view" role="tabpanel" aria-labelledby="chart-heading" tabIndex={0} className="chart-view">
         <div className="analysis-navigation" role="group" aria-label="시장 정보 보기"><button type="button" aria-pressed={analysisView === "chart"} onClick={()=>setAnalysisView("chart")}>차트</button><button type="button" aria-pressed={analysisView === "book"} onClick={()=>setAnalysisView("book")}>호가</button></div>
         <div className="market-analysis" data-analysis-view={analysisView}>
-          <TradingChart symbol={selected} market={market} interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
-          <OrderBookPanel symbol={selected} book={orderBook} mark={freshMarkPrice(market)?.decimal} onSelectPrice={guest.phase === "ready" && selected ? price => {
+          <LiveChart interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
+          <LiveBook onSelectPrice={guest.phase === "ready" && selected ? price => {
             setBookSelection({symbolId:selected.id,price,identity:`${guest.accountId}:${guest.generation}`});
             setMainView("order");
           } : undefined} />
@@ -130,11 +128,28 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         <div className="market-sheet-content">
           <header className="section-heading"><h2 id="sheet-heading" className="section-title">Markets</h2><button type="button" onClick={closeSheet} aria-label="종목 선택 닫기" className="market-sheet-close">닫기</button></header>
           <div className="market-list-note"><label className="field-label" htmlFor="market-search">종목 검색</label><input ref={searchInput} id="market-search" className="market-search" type="search" placeholder="BTC, ETH 또는 종목명" value={symbolSearch} onChange={event=>setSymbolSearch(event.target.value)}/></div>
-          <SymbolSelector symbols={catalog.symbols.filter(symbol=>`${symbol.symbol} ${symbol.name} ${symbol.quoteAsset}`.toLowerCase().includes(symbolSearch.trim().toLowerCase()))} tickers={tickerQuery.tickers} selectedId={selected?.id ?? null} onSelect={selectFromSheet} />
+          {sheetOpen && <SymbolList symbols={catalog.symbols} search={symbolSearch} selectedId={selected?.id??null} onSelect={selectFromSheet} />}
           <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준</p>
-          {tickerQuery.isError && <button type="button" className="account-refresh" disabled={tickerQuery.isFetching} onClick={() => void tickerQuery.refetch({ cancelRefetch: false })}>통계 다시 조회</button>}
         </div>
       </dialog>
-    </div></SelectedMarketProvider>
+    </div></LiveMarketProvider>
   );
+}
+
+function LiveHeader() {
+  const {symbol,market}=useSelectedMarket(), query=useMarketTickers();
+  return <MarketHeader symbol={symbol} market={market} ticker={query.tickers.find(ticker=>ticker.tradingSymbolId===symbol?.id&&ticker.symbol===symbol.symbol&&ticker.quoteAsset===symbol.quoteAsset)} />;
+}
+function LiveChart(props: Omit<Parameters<typeof TradingChart>[0],"symbol"|"market">) {
+  const {symbol,market}=useSelectedMarket();
+  return <TradingChart {...props} symbol={symbol} market={market} />;
+}
+function LiveBook({onSelectPrice}:{onSelectPrice?: (price:string)=>void}) {
+  const {symbol,market}=useSelectedMarket(), book=useSelectedBook();
+  return book && <OrderBookPanel symbol={symbol} book={book} mark={freshMarkPrice(market)?.decimal} onSelectPrice={onSelectPrice} />;
+}
+function SymbolList({symbols,search,selectedId,onSelect}:{symbols:readonly TradingSymbol[];search:string;selectedId:number|null;onSelect:(id:number)=>void}) {
+  const query=useMarketTickers();
+  return <><SymbolSelector symbols={symbols.filter(symbol=>`${symbol.symbol} ${symbol.name} ${symbol.quoteAsset}`.toLowerCase().includes(search.trim().toLowerCase()))} tickers={query.tickers} selectedId={selectedId} onSelect={onSelect}/>
+    {query.isError && <button type="button" className="account-refresh" disabled={query.isFetching} onClick={()=>void query.refetch({cancelRefetch:false})}>통계 다시 조회</button>}</>;
 }
