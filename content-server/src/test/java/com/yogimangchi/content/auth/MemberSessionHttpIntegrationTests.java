@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.crypto.RSASSAVerifier;
 import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jwt.SignedJWT;
+import com.sun.net.httpserver.HttpServer;
 import com.yogimangchi.content.auth.dto.SignupRequest;
 import com.yogimangchi.content.auth.oauth.VerifiedIdentity;
 import com.yogimangchi.content.auth.service.AuthService;
@@ -11,8 +12,11 @@ import com.yogimangchi.content.member.entity.OAuthIdentity.Provider;
 import com.yogimangchi.content.support.*;
 import java.net.*;
 import java.net.http.*;
+import java.nio.charset.StandardCharsets;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -84,6 +88,86 @@ class MemberSessionHttpIntegrationTests extends TestEnvironment {
         var recovered=post(client,"/api/v1/auth/refresh",true);
         assertThat(recovered.statusCode()).isEqualTo(200);
         assertThat(json.readTree(recovered.body()).path("memberId").asLong()).isEqualTo(signup.access().memberId());
+    }
+
+    @Test void losingHeadersThenExplicitlyRedeliveringTheSameRequestRevokesTheRealRefreshFamily() throws Exception {
+        var signup=signup(identity());var cookies=cookies(signup.refresh());var client=document(cookies);
+        var csrf=json.readTree(get(client,"/api/v1/auth/csrf").body());
+        String cookie=String.join("; ",cookies.get(uri("/api/v1/auth/refresh"),Map.of()).get("Cookie"));
+        String requestId=UUID.randomUUID().toString();
+        var deliveries=new AtomicInteger();var statuses=new ConcurrentLinkedQueue<Integer>();var ids=new ConcurrentLinkedQueue<String>();
+        var proxy=lossProxy(false,deliveries,statuses,ids);
+        try {
+            String request="POST /api/v1/auth/refresh HTTP/1.1\r\nHost: 127.0.0.1:"+proxy.getAddress().getPort()
+                    +"\r\nCookie: "+cookie+"\r\n"+csrf.path("headerName").asText()+": "+csrf.path("token").asText()
+                    +"\r\nX-QA-Request-ID: "+requestId+"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            // A raw socket sends exactly once, so this baseline cannot hide a client retry.
+            assertThat(rawRequest(proxy,request).length).isZero();
+            assertThat(deliveries.get()).isEqualTo(1);
+            assertThat(statuses).containsExactly(200);
+            assertThat(jdbc.queryForObject("select count(*) from content.refresh_session where member_id=? and status='ACTIVE'",Long.class,signup.access().memberId())).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select count(*) from content.refresh_session where member_id=? and status='ROTATED'",Long.class,signup.access().memberId())).isEqualTo(1);
+
+            // Simulate a transport/browser redelivery, not an intentional second UI action.
+            String replay=new String(rawRequest(proxy,request),StandardCharsets.UTF_8);
+            assertThat(replay.startsWith("HTTP/1.1 401")).isTrue();
+            assertThat(replay).contains("AUTHENTICATION_REQUIRED").doesNotContain("Set-cookie:","Set-Cookie:");
+            assertThat(deliveries.get()).isEqualTo(2);
+            assertThat(ids).containsExactly(requestId,requestId);
+            assertThat(statuses).containsExactly(200,401);
+            assertThat(jdbc.queryForObject("select count(*) from content.refresh_session where member_id=? and status<>'REVOKED'",Long.class,signup.access().memberId())).isZero();
+        } finally {proxy.stop(0);}
+    }
+
+    @Test void losingOnlyTheBodyCanKeepTheSuccessorCookieAndASerializedRefreshStillWorks() throws Exception {
+        var signup=signup(identity());var cookies=cookies(signup.refresh());var client=document(cookies);
+        var csrf=json.readTree(get(client,"/api/v1/auth/csrf").body());
+        var deliveries=new AtomicInteger();var statuses=new ConcurrentLinkedQueue<Integer>();var ids=new ConcurrentLinkedQueue<String>();
+        var proxy=lossProxy(true,deliveries,statuses,ids);
+        try {
+            var request=HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+proxy.getAddress().getPort()+"/api/v1/auth/refresh"))
+                    .timeout(Duration.ofSeconds(8)).header(csrf.path("headerName").asText(),csrf.path("token").asText())
+                    .header("X-QA-Request-ID",UUID.randomUUID().toString()).POST(HttpRequest.BodyPublishers.noBody()).build();
+            assertThatThrownBy(()->client.send(request,HttpResponse.BodyHandlers.ofString())).isInstanceOf(java.io.IOException.class);
+            assertThat(deliveries.get()).isEqualTo(1);
+            assertThat(statuses).containsExactly(200);
+            assertThat(cookies.getCookieStore().getCookies().stream().filter(c->c.getName().equals("CONTENT_REFRESH"))
+                    .anyMatch(c->!c.getValue().equals(signup.refresh()))).as("HTTP client accepted the successor header before losing the body").isTrue();
+            assertThat(post(document(cookies),"/api/v1/auth/refresh",true).statusCode()).isEqualTo(200);
+            assertThat(jdbc.queryForObject("select count(*) from content.refresh_session where member_id=? and status='ACTIVE'",Long.class,signup.access().memberId())).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select count(*) from content.refresh_session where member_id=? and status='REVOKED'",Long.class,signup.access().memberId())).isZero();
+        } finally {proxy.stop(0);}
+    }
+
+    private HttpServer lossProxy(boolean sendHeaders,AtomicInteger deliveries,Queue<Integer> statuses,Queue<String> ids) throws Exception {
+        var proxy=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        // A proxy forwards the caller's cookie; it must never retain a successor of its own.
+        var upstream=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+        proxy.createContext("/api/v1/auth/refresh",exchange->{
+            int delivery=deliveries.incrementAndGet();ids.add(exchange.getRequestHeaders().getFirst("X-QA-Request-ID"));
+            try {
+                var request=HttpRequest.newBuilder(uri("/api/v1/auth/refresh")).timeout(Duration.ofSeconds(8));
+                for(String name:List.of("Cookie","X-CSRF-TOKEN"))
+                    for(String value:exchange.getRequestHeaders().getOrDefault(name,List.of())) request.header(name,value);
+                var response=upstream.send(request.POST(HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.ofByteArray());
+                statuses.add(response.statusCode());
+                if(delivery==1 && !sendHeaders) return;
+                for(String name:List.of("Set-Cookie","Content-Type","Cache-Control"))
+                    for(String value:response.headers().allValues(name)) exchange.getResponseHeaders().add(name,value);
+                exchange.sendResponseHeaders(response.statusCode(),response.body().length);
+                if(delivery==1) exchange.getResponseBody().write(response.body(),0,1);
+                else exchange.getResponseBody().write(response.body());
+            } catch(InterruptedException failure) {Thread.currentThread().interrupt();}
+            finally {exchange.close();}
+        });
+        proxy.start();return proxy;
+    }
+    private byte[] rawRequest(HttpServer proxy,String request) throws Exception {
+        try(var socket=new Socket("127.0.0.1",proxy.getAddress().getPort())) {
+            socket.setSoTimeout(10000);
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.UTF_8));socket.getOutputStream().flush();
+            return socket.getInputStream().readAllBytes();
+        }
     }
 
     private void verifyAccess(String token,RSAKey key,Long memberId) throws Exception {
