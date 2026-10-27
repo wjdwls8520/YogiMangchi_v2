@@ -37,6 +37,7 @@ test("authenticated leverage GET/PUT uses exact contract without order keys, and
   assert.equal(parseLeverage(await session.read(leveragePath(1),identity,new AbortController().signal),1).leverage,10);
   assert.equal((await session.changeLeverage(1,100,identity)).leverage,100);
   assert.deepEqual(calls.map(c=>[c.method,c.body]),[["GET",null],["PUT",{side:"LONG",leverage:100}]]);
+  assert.equal(calls[0].url,`${origin}/api/v1/trading/account/symbols/1/leverage?side=LONG`);
   assert.equal(calls[1].url,`${origin}/api/v1/trading/account/symbols/1/leverage`);
   await assert.rejects(session.changeLeverage(1,101,identity)); assert.equal(calls.length,2);
   assert.notDeepEqual(tradingKeys.leverage(identity,1),tradingKeys.leverage(identity,2));

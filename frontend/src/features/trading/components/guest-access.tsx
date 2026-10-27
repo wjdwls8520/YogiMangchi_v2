@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useMember } from "../../member/components/member-provider";
 import { MemberTradingPrompt } from "./member-trading-prompt";
@@ -29,9 +30,11 @@ export function GuestAccessProvider({ session, children }: { session: GuestSessi
     active.current = true;
     setFailed(false);
     try {
-      if (snapshot.mode === "member") await session.createMember(); else await session.createGuest();
+      if (snapshot.mode === "member") {
+        if (snapshot.phase === "anonymous") await session.createMember(); else await session.restore();
+      } else await session.createGuest();
       if (session.getSnapshot().phase === "ready") close();
-      else setFailed(true);
+      else setFailed(!(snapshot.mode === "member" && snapshot.phase !== "anonymous" && session.getSnapshot().phase === "anonymous"));
     } finally { active.current = false; }
   }
   useEffect(() => { if (snapshot.phase === "ready") close(); }, [snapshot.phase]);
@@ -57,7 +60,7 @@ export function GuestStartPrompt() {
   const { snapshot, open } = useGuestAccess();
   const member = useMember();
   if (snapshot.mode === "checking" || (member.snapshot.phase === "recovering" || member.snapshot.recovery)) return <MemberTradingPrompt member={member.snapshot} retry={() => void member.session.restore().catch(() => {})} retryConsents={member.retryConsents} />;
-  if (snapshot.mode === "member") return <div className="guest-entry-prompt"><p>{snapshot.phase === "loading" || snapshot.phase === "creating" ? "회원 선물 계정과 현재 회차를 확인하는 중입니다." : snapshot.phase === "error" ? "회원 선물 계정을 확인하지 못했습니다. 서버 연결과 회원 인증 설정을 확인해 주세요." : "회원 계정 준비 상태를 확인해 주세요. 신규 계정은 서버가 1회차를 10,000 USDT로 시작하며 Guest 자금과 분리됩니다."}</p><button type="button" className="guest-start-button" disabled={snapshot.phase === "loading" || snapshot.phase === "creating"} onClick={open}>회원 선물 계정 확인</button></div>;
+  if (snapshot.mode === "member") return <div className="guest-entry-prompt"><p>{snapshot.phase === "loading" || snapshot.phase === "creating" ? "회원 선물 계정과 현재 회차를 확인하는 중입니다." : snapshot.authRequired ? "거래 서버에서 회원 인증을 확인하지 못했습니다. 로그인 상태 또는 거래 서버 인증 설정을 확인해 주세요." : snapshot.phase === "error" ? "회원 선물 계정을 확인하지 못했습니다. 서버 연결과 회원 인증 설정을 확인해 주세요." : "회원 계정 준비 상태를 확인해 주세요. 신규 계정은 서버가 1회차를 10,000 USDT로 시작하며 Guest 자금과 분리됩니다."}</p><button type="button" className="guest-start-button" disabled={snapshot.phase === "loading" || snapshot.phase === "creating" || snapshot.authRequired} onClick={open}>회원 선물 계정 확인</button>{snapshot.authRequired && <Link className="account-refresh" href="/login">로그인 다시 확인</Link>}</div>;
   return <GuestEntryPrompt onStart={open} busy={snapshot.phase === "loading" || snapshot.phase === "creating"} storageError={snapshot.phase === "error"} />;
 }
 

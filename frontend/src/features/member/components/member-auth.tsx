@@ -12,8 +12,8 @@ import { clearWithdrawalIntent, readWithdrawalIntent, saveWithdrawalIntent } fro
 
 export function MemberLogin() {
   const { origin, snapshot } = useMember();
-  return <MemberShell title="로그인">{snapshot.phase === "ready" && !snapshot.recovery ? <p className="member-message">로그인되어 있습니다. <Link href="/account">내 계정으로 이동</Link></p>
-    : <MemberLoginView google={oauthUrl(origin, "google")} kakao={oauthUrl(origin, "kakao")} />}</MemberShell>;
+  return <MemberShell title="로그인">{snapshot.phase === "ready" && !snapshot.recovery && <p className="member-message">로그인되어 있습니다. <Link href="/account">내 계정으로 이동</Link>하거나 아래에서 로그인 상태를 다시 확인할 수 있습니다.</p>}
+    <MemberLoginView google={oauthUrl(origin, "google")} kakao={oauthUrl(origin, "kakao")} /></MemberShell>;
 }
 export function MemberCallback() {
   const { origin, session, snapshot, announce } = useMember(), router = useRouter();
