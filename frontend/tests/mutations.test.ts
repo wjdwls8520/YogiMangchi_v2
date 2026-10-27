@@ -5,10 +5,49 @@ import { createGuestSession } from "../src/features/trading/api/guest-session";
 import { TradingApiError } from "../src/features/trading/api/client";
 import { estimatedOrder, ratioQuantity, validQuantity, validLimitPrice } from "../src/features/trading/api/order-input";
 import { parseOrder } from "../src/features/trading/api/orders";
+import { MutationObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
+import { tradingMutationEffects } from "../src/features/trading/api/mutations";
+import { tradingKeys } from "../src/features/trading/api/query-keys";
 
 const snapshot = { phase: "ready" as const, accountId: 7, generation: 1 };
 const command: TradingCommand = { kind: "open", type: "MARKET", side: "LONG", tradingSymbolId: 927, quantity: "0.00100000", leverage: 10 };
 const response = { orderId: 3, positionId: 4, tradingSymbolId: 927, type: "MARKET", action: "OPEN", side: "LONG", status: "FILLED", quantity: "0.00100000", leverage: 10, requestedLeverage: 10, feeRate:"0.0005",reservedFee:"0", limitPrice: null, reservedMargin: "0", reservedCloseQuantity: "0", createdAt: "2026-10-13T00:00:00Z", completedAt: "2026-10-13T00:00:00Z", reason: null, fill: { fillId: 5, quantity: "0.00100000", price: "64000.000000000000000001", priceEventTime: "2026-10-13T00:00:00Z", executedAt: "2026-10-13T00:00:00Z", realizedPnl: "0",fee:"0",settlementAdjustment:"0",marginMode:"ISOLATED" } };
+
+test("confirmed REST result waits for financial reads but not unrelated slow history or performance", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  const releases = new Map<string, () => void>();
+  const keys = [tradingKeys.summary(snapshot), tradingKeys.pending(snapshot), [...tradingKeys.account(snapshot), "recovery"],
+    [...tradingKeys.account(snapshot), "history-page", "orders"], [...tradingKeys.account(snapshot), "symbol-performance"]];
+  const observers = keys.map(queryKey => new QueryObserver(client, {queryKey, initialData: "before", staleTime: Infinity,
+    queryFn: () => new Promise<string>(resolve => releases.set(String(queryKey[3]), () => resolve("server-after"))) }));
+  const unsubscribes = observers.map(observer => observer.subscribe(() => {}));
+  let notifications = 0, writes = 0;
+  const mutation = new MutationObserver(client, { retry: false, mutationFn: async () => { writes++; return parseOrder(response); },
+    ...tradingMutationEffects(client, {getSnapshot: () => snapshot}), onSuccess: () => { notifications++; } });
+  const execution = mutation.mutate({command, session: snapshot});
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+  try {
+    await turn();
+    assert.equal(notifications, 1, "the confirmed REST notification already precedes settlement");
+    assert.equal(mutation.getCurrentResult().isPending, true);
+    assert.equal(releases.size, 5, "all active account datasets still refresh");
+    releases.get("summary")!(); releases.get("pending")!();
+    await turn();
+    assert.equal(mutation.getCurrentResult().isPending, true, "recovery confirmation still locks the request");
+    releases.get("recovery")!();
+    await turn();
+    assert.equal(mutation.getCurrentResult().isSuccess, true, "slow history must not delay the confirmed result");
+    assert.equal(observers[3].getCurrentResult().isFetching, true);
+    assert.equal(observers[4].getCurrentResult().isFetching, true);
+    assert.equal((await execution).orderId, response.orderId);
+    assert.equal(writes, 1);
+    assert.equal(client.getQueryData(tradingKeys.summary(snapshot)), "server-after", "no optimistic wallet values");
+  } finally {
+    releases.forEach(release => release());
+    await execution;
+    unsubscribes.forEach(unsubscribe => unsubscribe()); client.clear();
+  }
+});
 
 test("mutation payloads match OPEN, CLOSE, LIMIT CLOSE and CANCEL without client execution prices", () => {
   assert.deepEqual(mutationRequest({ ...command, limitPrice: "wrong-unused-value" }), { path: "account/orders", body: { type: "MARKET", side: "LONG", tradingSymbolId: 927, quantity: "0.00100000", leverage: 10 }, keyed: true });
