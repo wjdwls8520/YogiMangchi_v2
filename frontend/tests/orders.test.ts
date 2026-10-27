@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseOrders } from "../src/features/trading/api/orders";
+import { parseOrders, orderStatusLabel } from "../src/features/trading/api/orders";
+
+test("order status distinguishes acceptance from execution and never renders an unknown server status", () => {
+  assert.equal(orderStatusLabel("PENDING"), "접수 · 체결 대기");
+  assert.equal(orderStatusLabel("FILLED"), "체결 완료");
+  assert.equal(orderStatusLabel("CANCELED"), "취소 완료");
+  assert.equal(orderStatusLabel("REJECTED"), "거절");
+  assert.equal(orderStatusLabel("internal details"), "상태 확인 필요");
+});
 
 const pending = { orderId: 3, positionId: null, tradingSymbolId: 927, type: "LIMIT", action: "OPEN", side: "LONG", status: "PENDING",
   quantity: "0.25000000", leverage: 10, requestedLeverage: 10, feeRate:"0.0005",reservedFee:"0", limitPrice: "63500.000000000000000001", reservedMargin: "1587.500000000000000000", reservedCloseQuantity: "0.00000000",

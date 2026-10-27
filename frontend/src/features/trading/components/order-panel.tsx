@@ -20,6 +20,8 @@ import { validLimitPrice, validQuantity, validSizingPrice } from "../api/order-i
 import { formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
+import { orderStatusLabel } from "../api/orders";
+import { orderReason } from "../api/order-reason";
 import { formatMarketPrice } from "../market/price-format";
 import { GuestStartPrompt } from "./guest-access";
 import { WalletOverview } from "./wallet-overview";
@@ -86,7 +88,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const canSize = ready && account.data?.wallet.availableBalance != null && (form.type === "LIMIT" ? validLimitPrice(price) : validSizingPrice(price));
   const ratioDisabled = locked || (form.type === "MARKET" && !canSize);
   const quoteRequest = symbol ? {tradingSymbolId:symbol.id,type:form.type,side:form.side,quantity,...(form.type === "LIMIT" ? {limitPrice:price} : {})} : null;
-  const quote = useOrderQuote(quoteRequest, ready && valid && !preparing);
+  const quote = useOrderQuote(quoteRequest, active && ready && valid && !preparing);
   const estimate = quote.data?.leverage === leverage ? quote.data : undefined;
   const sizingPending = sizing?.identity === identity && sizing.symbolId === symbol?.id;
   function update(values: Partial<OpenForm>) {
@@ -115,6 +117,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   function complete(order: TradingOrder | null) {
     if (!order) return;
     setResult({ order, identity });
+    if (order.status !== "FILLED" && order.status !== "PENDING") return;
     setForm((current) => current.identity === identity && current.symbolId === order.tradingSymbolId ? { ...current, quantity: "", ratio: 0 } : current);
   }
   async function submit(side: "LONG" | "SHORT") {
@@ -182,7 +185,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
       </div>
       {action.error && !serverWarning && (action.command?.kind !== "open" || action.command.tradingSymbolId === symbol?.id) && <p role="alert" className="order-warning">{action.error}</p>}
       {action.unconfirmed && <button type="button" className="account-refresh" disabled={action.pending} onClick={() => void action.retry().then(complete)}>같은 주문 결과 확인</button>}
-      {result && result.identity === identity && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {result.order.status}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
+      {result && result.identity === identity && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {orderStatusLabel(result.order.status)}{result.order.status === "REJECTED" ? ` · ${orderReason(result.order.reason)}` : ""}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
       <p id="order-preview-note" className="order-preview-note">레버리지는 방향별 담보·ROE를 바꾸며 같은 가격·수량의 절대 손익을 늘리지 않습니다. 금액은 체결 시 확정됩니다.</p>
     </form>}
   </div>;

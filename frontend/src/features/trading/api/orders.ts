@@ -17,4 +17,13 @@ export function parseOrder(value: unknown) {
     completedAt: nullable(row.completedAt, instant), reason: nullable(row.reason, text), fill: nullable(row.fill, parseFill) };
 }
 export type TradingOrder = ReturnType<typeof parseOrder>;
+export function orderStatusLabel(status: string) {
+  switch (status) {
+    case "PENDING": return "접수 · 체결 대기";
+    case "FILLED": return "체결 완료";
+    case "CANCELED": return "취소 완료";
+    case "REJECTED": return "거절";
+    default: return "상태 확인 필요";
+  }
+}
 export function parseOrders(value: unknown) { return list(value, parseOrder); }
