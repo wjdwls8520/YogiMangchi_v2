@@ -53,6 +53,7 @@ export function createTradingIntent(send: (request: TradingIntent) => Promise<Tr
 }
 
 const businessMessages: Record<string, string> = {
+  MEMBER_CREDENTIAL_REQUIRED: "회원 로그인이 필요합니다. 로그인 상태를 다시 확인해 주세요.",
   MARGIN_MIGRATION_REQUIRED:"담보 전환이 완료되지 않아 거래가 제한됩니다. Guest 재도전 또는 계정 상태 확인이 필요합니다.",
   GUEST_ACCOUNT_REQUIRED:"Guest 계정에서만 재도전할 수 있습니다.",
   GUEST_CREDENTIAL_EXPIRED:"Guest 인증이 만료되었습니다. 새 모의투자는 직접 시작해 주세요.",

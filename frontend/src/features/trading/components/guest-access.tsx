@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useMember } from "../../member/components/member-provider";
 import { MemberTradingPrompt } from "./member-trading-prompt";
@@ -20,6 +21,14 @@ export function GuestAccessProvider({ session, children }: { session: GuestSessi
   }
   function open() {
     if (snapshot.phase === "loading" || snapshot.phase === "creating" || snapshot.phase === "ready" || dialog.current?.open) return;
+    // Retrying a read does not require consent to create a financial account.
+    if (snapshot.mode === "member" && snapshot.phase === "error") {
+      if (!snapshot.authRequired && !active.current) {
+        active.current = true;
+        void session.restore().finally(() => { active.current = false; });
+      }
+      return;
+    }
     trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setFailed(false);
     dialog.current?.showModal();
@@ -29,12 +38,14 @@ export function GuestAccessProvider({ session, children }: { session: GuestSessi
     active.current = true;
     setFailed(false);
     try {
-      if (snapshot.mode === "member") await session.createMember(); else await session.createGuest();
+      if (snapshot.mode === "member") {
+        if (snapshot.phase === "anonymous") await session.createMember(); else await session.restore();
+      } else await session.createGuest();
       if (session.getSnapshot().phase === "ready") close();
-      else setFailed(true);
+      else setFailed(!(snapshot.mode === "member" && snapshot.phase !== "anonymous" && session.getSnapshot().phase === "anonymous"));
     } finally { active.current = false; }
   }
-  useEffect(() => { if (snapshot.phase === "ready") close(); }, [snapshot.phase]);
+  useEffect(() => { if (snapshot.phase === "ready" || snapshot.authRequired) close(); }, [snapshot.phase, snapshot.authRequired]);
   return <GuestAccessContext.Provider value={{ snapshot, open }}>{children}
     <GuestStartDialog member={snapshot.mode === "member"} dialogRef={dialog} creating={snapshot.phase === "creating"} failed={failed} onStart={() => void start()} onCancel={close} onClose={restoreFocus} />
   </GuestAccessContext.Provider>;
@@ -57,7 +68,7 @@ export function GuestStartPrompt() {
   const { snapshot, open } = useGuestAccess();
   const member = useMember();
   if (snapshot.mode === "checking" || (member.snapshot.phase === "recovering" || member.snapshot.recovery)) return <MemberTradingPrompt member={member.snapshot} retry={() => void member.session.restore().catch(() => {})} retryConsents={member.retryConsents} />;
-  if (snapshot.mode === "member") return <div className="guest-entry-prompt"><p>{snapshot.phase === "loading" || snapshot.phase === "creating" ? "회원 선물 계정과 현재 회차를 확인하는 중입니다." : snapshot.phase === "error" ? "회원 선물 계정을 확인하지 못했습니다. 서버 연결과 회원 인증 설정을 확인해 주세요." : "회원 계정 준비 상태를 확인해 주세요. 신규 계정은 서버가 1회차를 10,000 USDT로 시작하며 Guest 자금과 분리됩니다."}</p><button type="button" className="guest-start-button" disabled={snapshot.phase === "loading" || snapshot.phase === "creating"} onClick={open}>회원 선물 계정 확인</button></div>;
+  if (snapshot.mode === "member") return <div className="guest-entry-prompt"><p role="status">{snapshot.phase === "loading" || snapshot.phase === "creating" ? "회원 선물 계정과 현재 회차를 확인하는 중입니다." : snapshot.authRequired ? "회원 인증을 확인하지 못해 거래를 시작할 수 없습니다. 로그인을 다시 확인해 주세요. 같은 문제가 계속되면 잠시 후 이용해 주세요." : snapshot.phase === "error" ? "회원 선물 계정을 불러오지 못했습니다. 연결을 확인한 뒤 다시 조회해 주세요." : "회원 모의투자 계정이 아직 없습니다. 1회차를 10,000 USDT로 시작하며 Guest 자금과 분리됩니다."}</p>{snapshot.authRequired ? <Link className="account-refresh" href="/login">로그인 다시 확인</Link> : <button type="button" className="guest-start-button" disabled={snapshot.phase === "loading" || snapshot.phase === "creating"} onClick={open}>{snapshot.phase === "loading" || snapshot.phase === "creating" ? "계정 확인 중…" : snapshot.phase === "error" ? "회원 계정 다시 조회" : "회원 모의투자 시작"}</button>}</div>;
   return <GuestEntryPrompt onStart={open} busy={snapshot.phase === "loading" || snapshot.phase === "creating"} storageError={snapshot.phase === "error"} />;
 }
 
@@ -75,10 +86,10 @@ export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCance
       <p>브라우저 데이터를 삭제하거나 기간이 만료되면 복구할 수 없습니다.</p>
       </>}
     </div>
-    {failed && <p role="alert" className="order-warning">{member ? "회원 계정을 열지 못했습니다. 서버 연결과 인증 설정을 확인한 뒤 다시 시도해 주세요." : "계정을 생성하지 못했습니다. 연결과 브라우저 저장소 설정을 확인한 뒤 다시 시도해 주세요."}</p>}
+    {failed && <p role="alert" className="order-warning">{member ? "회원 계정 준비 결과를 확인하지 못했습니다. 창을 닫고 계정을 다시 조회해 주세요." : "계정을 생성하지 못했습니다. 연결과 브라우저 저장소 설정을 확인한 뒤 다시 시도해 주세요."}</p>}
     <div className="guest-dialog-actions">
       <button type="button" className="guest-cancel" disabled={creating} onClick={onCancel}>취소</button>
-      <button type="button" className="guest-start-button" disabled={creating} onClick={onStart}>{creating ? member ? "계정 확인 중…" : "계정 생성 중…" : member ? "회원 계정 준비 확인" : "10,000 USDT로 시작하기"}</button>
+      <button type="button" className="guest-start-button" disabled={creating || (member && failed)} onClick={onStart}>{creating ? member ? "계정 확인 중…" : "계정 생성 중…" : "10,000 USDT로 시작하기"}</button>
     </div>
   </dialog>;
 }

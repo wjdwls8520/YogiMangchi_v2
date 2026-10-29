@@ -29,7 +29,14 @@ export function tradingMutationEffects(client: Pick<QueryClient, "invalidateQuer
       onFailed?.(error,request.command);
     },
     onSettled: async (_data: TradingOrder | undefined, _error: Error | null, request: MutationRequest) => {
-      if (current(request.session)) await client.invalidateQueries({ queryKey: tradingKeys.account(request.session) });
+      if (!current(request.session)) return;
+      const queryKey = tradingKeys.account(request.session);
+      const financial = (query: { queryKey: readonly unknown[] }) => ["summary", "pending", "recovery"].includes(String(query.queryKey[3]));
+      // Keep the request locked until wallet/positions, reservations and risk state
+      // are rechecked. Slow history/performance must not delay its confirmed result.
+      const required = client.invalidateQueries({ queryKey, predicate: financial });
+      void client.invalidateQueries({ queryKey, predicate: query => !financial(query) }).catch(() => {});
+      await required;
     },
   };
 }

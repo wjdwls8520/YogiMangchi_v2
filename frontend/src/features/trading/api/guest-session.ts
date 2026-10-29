@@ -8,7 +8,7 @@ import { parseGuestRetry } from "./guest-retry";
 import { openTradingEvents, type EventState, type TradingEvent } from "./trading-events";
 import { parseRestart } from "./member-rounds";
 
-export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean; mode?: "member" | "checking"; roundId?: number };
+export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean; mode?: "member" | "checking"; roundId?: number; authRequired?: boolean };
 export const initialSession: SessionSnapshot = { phase: "loading", accountId: null, generation: 0 };
 type StorageAccess = () => Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type MemberCredential = { memberId: number; accessToken: string; expiresAt: string };
@@ -27,12 +27,12 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   let memberRoundId: number | undefined;
   let restartIntent: { key: string; memberId: number; credential: GuestCredential; roundId: number } | null = null;
   let memberRestartFlight: Promise<ReturnType<typeof parseRestart>> | null = null;
-  let memberAuthRejected = false;
+  let memberAuthRejected = false, memberLookupRecoveryAttempted = false;
   let memberRefresh: (() => void) | undefined;
   const eventReconnects = new Set<() => void>();
   const listeners = new Set<() => void>();
   function publish(phase: SessionSnapshot["phase"]) {
-    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}), ...(mode !== "guest" ? { mode } : {}), ...(mode === "member" && memberRoundId ? { roundId: memberRoundId } : {}) };
+    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}), ...(mode !== "guest" ? { mode } : {}), ...(memberAuthRejected ? { authRequired: true } : {}), ...(mode === "member" && memberRoundId ? { roundId: memberRoundId } : {}) };
     listeners.forEach((listener) => listener());
   }
   const usable = (value: GuestCredential) => Date.parse(value.expiresAt) > now();
@@ -87,25 +87,45 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   async function loadMember(open: boolean) {
     const owner = member;
     if (restartIntent) return;
-    if (mode !== "member" || !owner || Date.parse(owner.expiresAt) <= now()) return;
+    if (mode !== "member" || !owner || memberAuthRejected) return;
+    if (Date.parse(owner.expiresAt) <= now()) {
+      memberAuthRejected = true; publish("error");
+      if (!memberLookupRecoveryAttempted) { memberLookupRecoveryAttempted = true; memberRefresh?.(); }
+      return;
+    }
     if (memberRequest?.owner === owner) return;
     credential = null; publish(open ? "creating" : "loading");
     const generation = snapshot.generation;
     const request = memberRequest = { owner, generation };
+    let sentToken = owner.accessToken;
+    let reconcile = false;
     try {
-      const row = record(await tradingJson(origin, open ? "accounts/member" : "account/summary", { token: owner.accessToken, ...(open ? { method: "POST" as const } : {}) }, transport));
+      const row = record(await tradingJson(origin, open ? "accounts/member" : "account/summary", { token: sentToken, ...(open ? { method: "POST" as const } : {}) }, transport));
       if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
       if (open && (id(row.memberId) !== owner.memberId || row.status !== "ACTIVE" || row.quoteAsset !== "USDT")) throw new TradingApiError(422);
       if (open) decimal(row.balance);
-      const round = record(record(await tradingJson(origin, "account/rounds/current", { token: owner.accessToken }, transport)).round);
+      sentToken = owner.accessToken;
+      const round = record(record(await tradingJson(origin, "account/rounds/current", { token: sentToken }, transport)).round);
       if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
       if (round.currentRound !== true || round.status !== "ACTIVE") throw new TradingApiError(422);
-      memberRoundId = id(round.roundId);
+      memberRoundId = id(round.roundId); memberLookupRecoveryAttempted = false;
       credential = { accountId: id(row.accountId), accessToken: owner.accessToken, expiresAt: owner.expiresAt }; publish("ready");
     } catch (error) {
       if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
-      publish(error instanceof TradingApiError && error.status === 409 && error.code === "TRADING_ACCOUNT_REQUIRED" ? "anonymous" : "error");
-    } finally { if (memberRequest === request) memberRequest = null; }
+      const accountRequired = error instanceof TradingApiError && error.status === 409 && error.code === "TRADING_ACCOUNT_REQUIRED";
+      const denied = error instanceof TradingApiError && error.status === 401;
+      if (accountRequired) memberLookupRecoveryAttempted = false;
+      if (denied && owner.accessToken === sentToken) memberAuthRejected = true;
+      publish(accountRequired ? "anonymous" : "error");
+      if (denied) {
+        // A rejected creation is never replayed. Restore authentication, then only reconcile by GET.
+        if (owner.accessToken !== sentToken) reconcile = true;
+        else if (!memberLookupRecoveryAttempted) { memberLookupRecoveryAttempted = true; memberRefresh?.(); }
+      }
+    } finally {
+      if (memberRequest === request) memberRequest = null;
+      if (reconcile && mode === "member" && member === owner && snapshot.generation === generation + 1) await loadMember(false);
+    }
   }
   return {
     storageKey,
@@ -121,11 +141,14 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     },
     pauseMemberCheck(error = false) {
       if (mode === "checking" && snapshot.phase === (error ? "error" : "loading")) return;
-      mode = "checking"; memberAuthRejected = false; member = null; credential = null; memberRoundId = undefined; restartIntent = null; publish(error ? "error" : "loading");
+      mode = "checking"; memberAuthRejected = false; memberLookupRecoveryAttempted = false; member = null; credential = null; memberRoundId = undefined; restartIntent = null; publish(error ? "error" : "loading");
     },
     async enterMember(value: { memberId: number; accessToken: string; expiresAt: string }, refresh: () => void) {
       memberRefresh = refresh;
       if (mode === "member" && member?.memberId === value.memberId) {
+        const rotated = member.accessToken !== value.accessToken;
+        if (memberAuthRejected && !rotated) return;
+        if (rotated) memberAuthRejected = false;
         member.accessToken = value.accessToken; member.expiresAt = value.expiresAt;
         if (restartIntent) {
           restartIntent.credential.accessToken = value.accessToken;
@@ -143,14 +166,16 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         }
         if (memberRequest?.owner === member) return;
         if (snapshot.phase === "anonymous") return;
-      } else { mode = "member"; memberAuthRejected = false; member = { ...value }; memberRoundId = undefined; restartIntent = null; }
+      } else { mode = "member"; memberAuthRejected = false; memberLookupRecoveryAttempted = false; member = { ...value }; memberRoundId = undefined; restartIntent = null; }
       await loadMember(false);
     },
     leaveMember() {
       if (mode === "guest") return;
-      mode = "guest"; memberAuthRejected = false; member = null; memberRefresh = undefined; credential = null; memberRoundId = undefined; restartIntent = null; publish("loading");
+      mode = "guest"; memberAuthRejected = false; memberLookupRecoveryAttempted = false; member = null; memberRefresh = undefined; credential = null; memberRoundId = undefined; restartIntent = null; publish("loading");
     },
-    createMember() { return run(() => loadMember(true)); },
+    createMember() {
+      return run(() => snapshot.phase === "anonymous" && mode === "member" ? loadMember(true) : undefined);
+    },
     restore() {
       if (mode === "member") return credential && usable(credential) && snapshot.phase === "ready" ? Promise.resolve() : run(() => loadMember(false));
       if (mode !== "guest") return Promise.resolve();

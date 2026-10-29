@@ -1,5 +1,6 @@
 import { orderReason } from "../api/order-reason";
 import type { TradingOrder } from "../api/orders";
+import { orderStatusLabel } from "../api/orders";
 import { formatDecimal, formatQuantity, pnlTrend, symbolLabel, type Position } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
 import { LiquidationPrice } from "./liquidation-price";
@@ -52,7 +53,7 @@ export function PendingOrderTable({ orders, symbols }: { orders: readonly Tradin
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), type: order.type, intent: order.action, side: <span data-side={order.side}>{order.side}</span>,
       leverage: `${order.leverage}× / ${order.requestedLeverage}×`,
-      quantity: formatQuantity(order.quantity), price: price(order.limitPrice, order.tradingSymbolId, symbols), status: order.status, reason: orderReason(order.reason),
+      quantity: formatQuantity(order.quantity), price: price(order.limitPrice, order.tradingSymbolId, symbols), status: orderStatusLabel(order.status), reason: orderReason(order.reason),
       time:<time dateTime={order.createdAt}>{new Date(order.createdAt).toLocaleString("ko-KR",{timeZone:"Asia/Seoul"})}</time>,
       action: <CancelOrderButton orderId={order.orderId} symbol={symbolLabel(order.tradingSymbolId, symbols)} />,
     },
@@ -72,7 +73,7 @@ export function OrderHistoryTable({ orders, symbols }: { orders: readonly Tradin
     cells: {
       symbol: symbolLabel(order.tradingSymbolId, symbols), action: `${order.action}${order.action==="LIQUIDATE" ? " · 강제청산" : ""} · ${order.side}`, type: order.type,
       leverage: `${order.leverage}× / ${order.requestedLeverage}×`,
-      quantity: formatQuantity(order.quantity), price: price(order.fill?.price, order.tradingSymbolId, symbols), status: order.status, reason: orderReason(order.reason),
+      quantity: formatQuantity(order.quantity), price: price(order.fill?.price, order.tradingSymbolId, symbols), status: orderStatusLabel(order.status), reason: orderReason(order.reason),
       requested:order.type==="MARKET" ? "시장가" : price(order.limitPrice,order.tradingSymbolId,symbols),
       fee: formatDecimal(order.fill?.fee), adjustment: formatDecimal(order.fill?.settlementAdjustment),
       realized:<span data-trend={pnlTrend(order.fill?.realizedPnl??null)}>{formatDecimal(order.fill?.realizedPnl)} USDT</span>,
