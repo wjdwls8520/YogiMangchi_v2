@@ -108,6 +108,62 @@ class MemberJwtIntegrationTests {
         } finally { start.countDown(); pool.shutdownNow(); }
     }
 
+    @Test void realHttpAcceptsContentFifteenMinuteAccessWithKidAndBothAudiencesWithoutDuplicateFunding() throws Exception {
+        Instant issued=Instant.now();
+        var claims=JwtClaimsSet.builder().issuer("https://content.test").subject(Long.toString(member))
+                .issuedAt(issued).expiresAt(issued.plusSeconds(900)).audience(List.of("content","trading"))
+                .id(UUID.randomUUID().toString()).claim("token_use","access").claim("roles",List.of("MEMBER")).build();
+        var contentEncoder=new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(new RSAKey.Builder(KEY).keyID("content-test-key").build())));
+        String access=contentEncoder.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).keyId("content-test-key").build(),claims)).getTokenValue();
+        var http=HttpClient.newHttpClient();
+        var request=HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/v1/trading/accounts/member"))
+                .timeout(Duration.ofSeconds(10)).header("Origin","http://localhost:3000")
+                .header("Authorization","Bearer "+access).POST(HttpRequest.BodyPublishers.noBody()).build();
+        var first=http.send(request,HttpResponse.BodyHandlers.ofString());
+        assertThat(first.statusCode()).isEqualTo(200);
+        assertThat(first.headers().firstValue("Access-Control-Allow-Origin")).contains("http://localhost:3000");
+        assertThat(first.headers().firstValue("Cache-Control").orElseThrow()).contains("no-store");
+        var opened=json.readTree(first.body());
+        assertThat(opened.path("memberId").asLong()).isEqualTo(member);
+        assertThat(new BigDecimal(opened.path("balance").asText())).isEqualByComparingTo("10000");
+        for(int i=0;i<2;i++) {
+            var replay=http.send(request,HttpResponse.BodyHandlers.ofString());
+            assertThat(replay.statusCode()).isEqualTo(200);
+            assertThat(json.readTree(replay.body())).isEqualTo(opened);
+        }
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_account where member_id=?",Long.class,member)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from trading.member_trading_round where member_id=? and funding='INITIAL_GRANT'",Long.class,member)).isEqualTo(1);
+    }
+
+    @Test void realHttpDistinguishesMissingMemberAccessFromGuestAndInvalidAccessWithoutFunding() throws Exception {
+        var http=HttpClient.newHttpClient();
+        var uri=URI.create("http://127.0.0.1:"+port+"/api/v1/trading/accounts/member");
+        var missing=http.send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10))
+                .header("Cookie","refresh_token=not-an-access-token").POST(HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.ofString());
+        assertThat(missing.statusCode()).isEqualTo(401);
+        assertThat(json.readTree(missing.body()).path("code").asText()).isEqualTo("MEMBER_CREDENTIAL_REQUIRED");
+        mvc.perform(post("/api/v1/trading/accounts/member")).andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("MEMBER_CREDENTIAL_REQUIRED"));
+        var guest=guests.createGuest();
+        var denied=http.send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).header("Authorization","Bearer "+guest.accessToken())
+                .POST(HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.ofString());
+        assertThat(denied.statusCode()).isEqualTo(403);
+        assertThat(json.readTree(denied.body()).path("code").asText()).isEqualTo("ACCESS_DENIED");
+        var wrongKey=new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(new RSAKey.Builder(key()).keyID("content-test-key").build())));
+        Instant issued=Instant.now();
+        String invalid=wrongKey.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).keyId("content-test-key").build(),
+                JwtClaimsSet.builder().issuer("https://content.test").subject(Long.toString(member)).issuedAt(issued).expiresAt(issued.plusSeconds(900))
+                        .audience(List.of("content","trading")).claim("token_use","access").claim("roles",List.of("MEMBER")).build())).getTokenValue();
+        for(String access:List.of(invalid,token(member,Instant.now().minusSeconds(1),"https://content.test","trading","access",List.of("MEMBER"),0L))) {
+            var response=http.send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).header("Authorization","Bearer "+access)
+                    .POST(HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).isEqualTo(401);
+            assertThat(json.readTree(response.body()).path("code").asText()).isEqualTo("INVALID_ACCESS_TOKEN");
+            assertThat(response.body()).doesNotContain(access,"Exception","SELECT ");
+        }
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_account where member_id=?",Long.class,member)).isZero();
+    }
+
     @Test void openApiDistinguishesMemberOnlyProvisioningFromEitherCredentialTrading() throws Exception {
         var api=json.readTree(mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         var own=api.path("paths").path("/api/v1/trading/accounts/member").path("post").path("security");
