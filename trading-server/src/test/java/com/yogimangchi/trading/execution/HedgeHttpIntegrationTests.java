@@ -2,6 +2,9 @@ package com.yogimangchi.trading.execution;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
+import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.yogimangchi.trading.execution.trigger.TradingEngineGate;
 import com.yogimangchi.trading.marketdata.*;
 import com.yogimangchi.trading.support.PostgresTestConfiguration;
@@ -16,12 +19,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.*;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import static org.assertj.core.api.Assertions.*;
 
 /** Real embedded HTTP server + migrated PostgreSQL/Redis containers; no Binance network. */
 @SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties={"binance.mark-price.enabled=false","binance.order-book.enabled=false"})
+        properties={"binance.mark-price.enabled=false","binance.order-book.enabled=false","trading.member-auth.enabled=false"})
 @Import(PostgresTestConfiguration.class)
 class HedgeHttpIntegrationTests {
     @LocalServerPort int port;
@@ -62,6 +67,59 @@ class HedgeHttpIntegrationTests {
         var response=client.send(request,HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.headers().firstValue("Access-Control-Allow-Methods").orElseThrow()).contains("PUT");
+    }
+
+    @Test void realGuestHttpRequiresDirectionAndKeepsLongFifteenShortSevenSeparate() throws Exception {
+        long symbol=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
+        var created=json.readTree(send("POST","/api/v1/trading/accounts/guest","",null).body());
+        String token=created.path("accessToken").asText();long account=created.path("accountId").asLong();
+        String path="/api/v1/trading/account/symbols/"+symbol+"/leverage";
+        for(String suffix:List.of("","?side=","?side=BOTH","?side=long")) {
+            var invalid=send("GET",path+suffix,null,token);
+            assertThat(invalid.statusCode()).isEqualTo(400);
+            assertThat(invalid.body()).doesNotContain(token,"Exception","SELECT ");
+        }
+        assertThat(send("PUT",path,"{\"leverage\":15}",token).statusCode()).isEqualTo(400);
+        assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,account)).isZero();
+        for(String side:List.of("LONG","SHORT")) {
+            var initial=send("GET",path+"?side="+side,null,token);
+            assertThat(initial.statusCode()).isEqualTo(200);
+            assertThat(json.readTree(initial.body()).path("leverage").asInt()).isEqualTo(10);
+            assertThat(json.readTree(initial.body()).path("side").asText()).isEqualTo(side);
+        }
+        assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,account)).isZero();
+        for(String side:List.of("LONG","SHORT")) {
+            int leverage=side.equals("LONG")?15:7;
+            assertThat(send("PUT",path,"{\"side\":\""+side+"\",\"leverage\":"+leverage+"}",token).statusCode()).isEqualTo(200);
+        }
+        for(String side:List.of("LONG","SHORT")) {
+            var response=send("GET",path+"?side="+side,null,token);
+            assertThat(response.statusCode()).isEqualTo(200);
+            assertThat(json.readTree(response.body()).path("side").asText()).isEqualTo(side);
+            assertThat(json.readTree(response.body()).path("leverage").asInt()).isEqualTo(side.equals("LONG")?15:7);
+        }
+        assertThat(jdbc.queryForObject("select balance from trading.wallet where account_id=?",BigDecimal.class,account)).isEqualByComparingTo("10000");
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=?",Long.class,account)).isZero();
+        var api=json.readTree(send("GET","/v3/api-docs",null,null).body());
+        var parameters=api.path("paths").path("/api/v1/trading/account/symbols/{symbolId}/leverage").path("get").path("parameters");
+        JsonNode direction=null;for(var parameter:parameters)if(parameter.path("name").asText().equals("side"))direction=parameter;
+        assertThat(direction).isNotNull();assertThat(direction.path("required").asBoolean()).isTrue();
+        assertThat(direction.path("schema").path("enum").toString()).isEqualTo("[\"LONG\",\"SHORT\"]");
+    }
+
+    @Test void memberAuthenticationDisabledRejectsSignedAccessWithoutFunding() throws Exception {
+        var key=new RSAKeyGenerator(2048).keyID("disabled-test-key").generate();
+        var encoder=new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(key)));
+        Instant now=Instant.now();
+        var claims=JwtClaimsSet.builder().issuer("http://localhost:18080").subject("987654321")
+                .issuedAt(now).expiresAt(now.plusSeconds(900)).audience(List.of("content","trading"))
+                .claim("token_use","access").claim("roles",List.of("MEMBER")).build();
+        String token=encoder.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).keyId(key.getKeyID()).build(),claims)).getTokenValue();
+        long before=jdbc.queryForObject("select count(*) from trading.trading_account",Long.class);
+        var response=send("POST","/api/v1/trading/accounts/member",null,token);
+        assertThat(response.statusCode()).isEqualTo(401);
+        assertThat(json.readTree(response.body()).path("code").asText()).isEqualTo("INVALID_ACCESS_TOKEN");
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_account",Long.class)).isEqualTo(before);
     }
 
     private JsonNode open(long symbol,String side,String token) throws Exception {

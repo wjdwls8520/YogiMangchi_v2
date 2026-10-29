@@ -67,7 +67,12 @@ public class SecurityConfig {
                 .logout(AbstractHttpConfigurer::disable)
                 .requestCache(AbstractHttpConfigurer::disable)
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint((request, response, failure) -> {
-                    if (request.getRequestURI().substring(request.getContextPath().length()).startsWith("/api/v1/trading/")) {
+                    String path = request.getRequestURI().substring(request.getContextPath().length());
+                    if (path.startsWith("/api/v1/trading/")) {
+                        if ("POST".equals(request.getMethod()) && path.equals("/api/v1/trading/accounts/member")) {
+                            TradingTokenFilter.problem(response, 401, "MEMBER_CREDENTIAL_REQUIRED", "A Content member Access JWT is required");
+                            return;
+                        }
                         TradingTokenFilter.problem(response, 401, "GUEST_CREDENTIAL_REQUIRED", "A guest bearer credential is required");
                     } else new Http403ForbiddenEntryPoint().commence(request, response, failure);
                 }).accessDeniedHandler((request, response, failure) -> {
