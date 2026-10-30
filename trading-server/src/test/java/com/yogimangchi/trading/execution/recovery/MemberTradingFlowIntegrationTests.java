@@ -48,6 +48,7 @@ class MemberTradingFlowIntegrationTests {
         prices.beginSubscription(Set.of(btc));await().atMost(Duration.ofSeconds(12)).until(()->bridge.health().state()==RedisMarketDataBridge.State.HEALTHY);
         mark("1000");actor=new MemberTradingSoakTests.Actor(MEMBERS.incrementAndGet(),btc);
         actor.id=call(post("/api/v1/trading/accounts/member"),null,null,200).path("accountId").asLong();
+        leverage("LONG",10);leverage("SHORT",10); // Explicit historical arithmetic fixture; not the product default.
         assertThat(actor.id).isPositive();assertThat(ledger.check(actor.id).status()).isEqualTo("MATCHED");
     }
     @AfterEach void stop(){reset(trigger);prices.markUnavailable();}

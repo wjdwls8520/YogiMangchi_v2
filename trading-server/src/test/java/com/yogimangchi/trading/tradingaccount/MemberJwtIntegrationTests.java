@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.tradingaccount;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.*;
 import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
@@ -174,7 +176,8 @@ class MemberJwtIntegrationTests {
     }
 
     @Test void memberCannotSelectGuestOrAnotherMembersPositionAndHistoryByForgingIds() throws Exception {
-        var guest=guests.createGuest(); var own=members.open(member); var other=members.open(MEMBERS.incrementAndGet());
+        var guest=guests.createGuest(); var own=members.open(member);
+        LegacyLeverageFixtures.bothDirections(jdbc,own.accountId(),btc); var other=members.open(MEMBERS.incrementAndGet());
         jdbc.update("update trading.wallet set balance=1000 where account_id=?",own.accountId());
         var opened=orders.create(own.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         String token=token(member,Instant.now().plusSeconds(300),"https://content.test","trading","access",List.of("MEMBER"),guest.accountId());
@@ -206,9 +209,11 @@ class MemberJwtIntegrationTests {
     }
 
     @Test void ownMemberJwtAuthenticatesPrivateWebsocketAndExpiresWithoutLeakingGuestEvents() throws Exception {
-        var own=members.open(member); jdbc.update("update trading.wallet set balance=1000 where account_id=?",own.accountId());
+        var own=members.open(member);
+        LegacyLeverageFixtures.bothDirections(jdbc,own.accountId(),btc); jdbc.update("update trading.wallet set balance=1000 where account_id=?",own.accountId());
         var order=orders.create(own.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         var guest=guests.createGuest();
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),btc);
         orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         var messages=new LinkedBlockingQueue<JsonNode>(); var closed=new CompletableFuture<Integer>();
         var listener=new WebSocket.Listener() {
@@ -251,7 +256,9 @@ class MemberJwtIntegrationTests {
     }
 
     @Test void memberRestartKeepsLedgerLinksSnapshotsAndOriginalIdempotentResult() throws Exception {
-        Long id=members.open(member).accountId();var first=rounds.current(id).round();
+        Long id=members.open(member).accountId();
+        LegacyLeverageFixtures.bothDirections(jdbc,id,btc);
+        var first=rounds.current(id).round();
         assertThat(first.roundNumber()).isEqualTo(1);assertThat(first.initialBalance()).startsWith("10000");
         var opening=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         orders.createLimitClose(id,opening.positionId(),UUID.randomUUID().toString(),new com.yogimangchi.trading.order.dto.LimitCloseRequest(new BigDecimal("0.7"),new BigDecimal("1100")));
@@ -301,6 +308,7 @@ class MemberJwtIntegrationTests {
     }
     @Test void restartRollbackRestoresPendingOrdersWalletAndRoundAndRetryCanSucceed() {
         Long id=members.open(member).accountId();
+        LegacyLeverageFixtures.bothDirections(jdbc,id,btc);
         orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
         var before=jdbc.queryForMap("select * from trading.wallet where account_id=?",id);String key=UUID.randomUUID().toString();
         var tx=new org.springframework.transaction.support.TransactionTemplate(transactions);
@@ -323,6 +331,7 @@ class MemberJwtIntegrationTests {
     }
     @Test void staleTickCannotRevivePastOrdersOrLiquidateNewRoundPosition() {
         Long id=members.open(member).accountId();
+        LegacyLeverageFixtures.bothDirections(jdbc,id,btc);
         var oldOrder=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
         Instant oldTime=Instant.now();var oldTick=new LatestMarkPrice(btc,BigDecimal.ONE,oldTime,oldTime);
         rounds.restart(id,UUID.randomUUID().toString());
@@ -352,6 +361,7 @@ class MemberJwtIntegrationTests {
 
     @Test void v17BackfillsExplicitLegacyRoundWithoutCreditingOrRewritingFinancialLedger() {
         Long id=members.open(member).accountId();
+        LegacyLeverageFixtures.bothDirections(jdbc,id,btc);
         orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.SHORT,BigDecimal.ONE,10,new BigDecimal("1100")));
         String schema="round_upgrade_"+UUID.randomUUID().toString().replace("-","");
@@ -380,6 +390,7 @@ class MemberJwtIntegrationTests {
     @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"ORDER","CANCEL","LIQUIDATION","SUMMARY"})
     void restartSerializesWithFinancialEngineAndReads(String competing) throws Exception {
         Long id=members.open(member).accountId();
+        LegacyLeverageFixtures.bothDirections(jdbc,id,btc);
         orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         var pending=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
         var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);Instant captured=Instant.now();
@@ -415,6 +426,7 @@ class MemberJwtIntegrationTests {
     }
     @Test void inconsistentExposureRollsBackCancellationsEventsAndNewRound() {
         Long id=members.open(member).accountId();
+        LegacyLeverageFixtures.bothDirections(jdbc,id,btc);
         var pending=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
         jdbc.update("update trading.wallet set reserved_margin=reserved_margin+1 where account_id=?",id);
         long count=jdbc.queryForObject("select count(*) from trading.trading_event where account_id=?",Long.class,id);
@@ -425,6 +437,7 @@ class MemberJwtIntegrationTests {
     }
     @Test void retirementPreservesRemainingBasisAndAlreadyExecutedFeesAfterPartialClose() {
         Long id=members.open(member).accountId();
+        LegacyLeverageFixtures.bothDirections(jdbc,id,btc);
         var opened=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         orders.close(id,opened.positionId(),UUID.randomUUID().toString(),new com.yogimangchi.trading.order.dto.ClosePositionRequest(new BigDecimal("0.2")));
         var before=jdbc.queryForMap("select realized_pnl,fees_paid,settlement_adjustment from trading.wallet where account_id=?",id);
@@ -480,7 +493,8 @@ class MemberJwtIntegrationTests {
         assertThatThrownBy(() -> guestRetries.retry(account,UUID.randomUUID().toString())).isInstanceOf(com.yogimangchi.trading.error.BusinessException.class);
     }
     @Test void withdrawalCancelsAllOrdersRetiresPositionsWithoutPriceFillFeeOrPnlAndIsIdempotent() throws Exception {
-        var own=members.open(member); Long id=own.accountId();
+        var own=members.open(member);
+        LegacyLeverageFixtures.bothDirections(jdbc,own.accountId(),btc); Long id=own.accountId();
         jdbc.update("update trading.wallet set balance=10000 where account_id=?",id);
         var opened=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         Instant changed=Instant.now();
@@ -521,7 +535,8 @@ class MemberJwtIntegrationTests {
     }
 
     @Test void inconsistentWithdrawalRollsBackAndLegacyMarginHoldDoesNotRequireConversion() {
-        var own=members.open(member); Long id=own.accountId();
+        var own=members.open(member);
+        LegacyLeverageFixtures.bothDirections(jdbc,own.accountId(),btc); Long id=own.accountId();
         jdbc.update("update trading.wallet set balance=10000 where account_id=?",id);
         orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
         jdbc.update("update trading.wallet set used_margin=used_margin+1 where account_id=?",id);
@@ -536,7 +551,8 @@ class MemberJwtIntegrationTests {
     }
 
     @Test void concurrentOrderAndWithdrawalCannotLeaveExecutableExposure() throws Exception {
-        var own=members.open(member); Long id=own.accountId();
+        var own=members.open(member);
+        LegacyLeverageFixtures.bothDirections(jdbc,own.accountId(),btc); Long id=own.accountId();
         jdbc.update("update trading.wallet set balance=10000 where account_id=?",id);
         var start=new CountDownLatch(1); var pool=Executors.newFixedThreadPool(2);
         try {
@@ -553,6 +569,42 @@ class MemberJwtIntegrationTests {
             assertThat(jdbc.queryForObject("select status from trading.trading_account where id=?",String.class,id)).isEqualTo("WITHDRAWN");
         } finally { start.countDown(); pool.shutdownNow(); }
     }
+    @Test void newMemberUsesUnsavedOneTimesPerDirectionAndPreservesExplicitSettings() throws Exception {
+        String access=normalToken(member);
+        var own=members.open(member); long account=own.accountId();
+        String path="/api/v1/trading/account/symbols/"+btc+"/leverage";
+        for(String side:List.of("LONG","SHORT")) {
+            mvc.perform(get(path+"?side="+side).header("Authorization","Bearer "+access))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(1))
+                    .andExpect(jsonPath("$.updatedAt").isEmpty());
+            String quote="{\"type\":\"MARKET\",\"tradingSymbolId\":"+btc+",\"side\":\""+side+"\",\"balancePercentage\":10}";
+            var result=mvc.perform(post("/api/v1/trading/account/orders/quote").header("Authorization","Bearer "+access)
+                    .contentType("application/json").content(quote))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(1)).andReturn();
+            assertThat(new BigDecimal(json.readTree(result.getResponse().getContentAsString()).path("quantity").asText()))
+                    .isPositive().isLessThan(BigDecimal.ONE);
+        }
+        assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,account)).isZero();
+        var opened=orders.create(account,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,1,null));
+        assertThat(opened.leverage()).isEqualTo(1);
+        var first=jdbc.queryForMap("select * from trading.position where id=?",opened.positionId());
+        mvc.perform(put(path).header("Authorization","Bearer "+access).contentType("application/json").content("{\"side\":\"SHORT\",\"leverage\":7}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(7));
+        assertThat(jdbc.queryForMap("select * from trading.position where id=?",opened.positionId())).isEqualTo(first);
+        mvc.perform(get(path+"?side=LONG").header("Authorization","Bearer "+access)).andExpect(jsonPath("$.leverage").value(1));
+        for(int leverage:List.of(10,15)) {
+            mvc.perform(put(path).header("Authorization","Bearer "+access).contentType("application/json").content("{\"side\":\"LONG\",\"leverage\":"+leverage+"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(leverage));
+            mvc.perform(get(path+"?side=LONG").header("Authorization","Bearer "+access)).andExpect(jsonPath("$.leverage").value(leverage));
+            mvc.perform(get(path+"?side=SHORT").header("Authorization","Bearer "+access)).andExpect(jsonPath("$.leverage").value(7));
+        }
+        long eth=jdbc.queryForObject("select id from trading.trading_symbol where symbol='ETH'",Long.class);
+        mvc.perform(get("/api/v1/trading/account/symbols/"+eth+"/leverage?side=LONG").header("Authorization","Bearer "+access))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(1));
+        assertThat(orders.history(account,null,100)).containsExactly(opened);
+        assertThat(jdbc.queryForObject("select leverage from trading.position where id=?",Integer.class,opened.positionId())).isEqualTo(15);
+    }
+
     private static String token(long member,Instant expiry,String issuer,String audience,String use,List<String> roles,Long claimedAccount) {
         var claims=JwtClaimsSet.builder().issuer(issuer).subject(Long.toString(member)).issuedAt(Instant.now().minusSeconds(2)).expiresAt(expiry)
                 .audience(List.of(audience)).claim("token_use",use).claim("roles",roles).claim("accountId",claimedAccount).build();

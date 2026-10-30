@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.execution;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.trigger.*;
@@ -113,7 +115,7 @@ class HedgeTradingIntegrationTests {
     @Test void invalidAndMismatchedLeverageNeverImplicitlyChangesSetting() {
         for(Integer leverage:Arrays.asList(null,0,-1,101)) rejects(() -> leverages.change(guest.accountId(),btc,Position.Side.LONG,leverage),ErrorCode.INVALID_LEVERAGE);
         rejects(() -> orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,14,null)),ErrorCode.LEVERAGE_MISMATCH);
-        assertThat(leverages.get(guest.accountId(),btc,Position.Side.LONG).leverage()).isEqualTo(10);
+        assertThat(leverages.get(guest.accountId(),btc,Position.Side.LONG).leverage()).isEqualTo(1);
         assertThat(openCount()).isZero(); wallet("used_margin","0");
     }
 
@@ -218,6 +220,7 @@ class HedgeTradingIntegrationTests {
     }
 
     @Test void sameIdempotencyKeyCannotIncreaseTwiceEvenAfterLeverageChangesAndPriceLoss() {
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),btc);
         String key=key();
         var request=new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,new BigDecimal("1"),10,null);
         var first=orders.create(guest.accountId(),key,request);
@@ -334,7 +337,7 @@ class HedgeTradingIntegrationTests {
         String path="/api/v1/trading/account/symbols/"+btc+"/leverage?side=LONG";
         mvc.perform(get(path)).andExpect(status().isUnauthorized());
         mvc.perform(put(path).contentType("application/json").content("{\"side\":\"LONG\",\"leverage\":14}")).andExpect(status().isUnauthorized());
-        mvc.perform(get(path).header("Authorization",bearer())).andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(10));
+        mvc.perform(get(path).header("Authorization",bearer())).andExpect(status().isOk()).andExpect(jsonPath("$.leverage").value(1));
         assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,guest.accountId())).isZero();
         mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"side\":\"LONG\",\"leverage\":14}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.marginMode").value("ISOLATED")).andExpect(jsonPath("$.maxLeverage").value(100));
@@ -343,7 +346,7 @@ class HedgeTradingIntegrationTests {
             mvc.perform(put(path).header("Authorization",bearer()).contentType("application/json").content("{\"side\":\"LONG\",\"leverage\":"+invalid+"}"))
                     .andExpect(status().isBadRequest());
         var other=accounts.createGuest();
-        mvc.perform(get(path).header("Authorization","Bearer "+other.accessToken())).andExpect(jsonPath("$.leverage").value(10));
+        mvc.perform(get(path).header("Authorization","Bearer "+other.accessToken())).andExpect(jsonPath("$.leverage").value(1));
         mvc.perform(get("/api/v1/trading/account/symbols/999999/leverage?side=LONG").header("Authorization",bearer()))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SYMBOL_NOT_AVAILABLE"));
         jdbc.update("update trading.trading_account set credential_expires_at=now()-interval '1 day' where id=?",guest.accountId());
@@ -380,9 +383,13 @@ class HedgeTradingIntegrationTests {
     }
 
     private OrderResponse market(long symbol,Position.Side side,String quantity) {
+        LegacyLeverageFixtures.tenTimes(jdbc,guest.accountId(),symbol,side);
+
         return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,new BigDecimal(quantity),leverages.current(guest.accountId(),symbol,side),null));
     }
     private OrderResponse limit(Position.Side side,String quantity,String limit) {
+        LegacyLeverageFixtures.tenTimes(jdbc,guest.accountId(),btc,side);
+
         return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,side,new BigDecimal(quantity),leverages.current(guest.accountId(),btc,side),new BigDecimal(limit)));
     }
     private LatestMarkPrice mark(long symbol,String value) {

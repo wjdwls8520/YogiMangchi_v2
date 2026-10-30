@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.performance;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.execution.trigger.*;
@@ -136,6 +138,8 @@ class SymbolPerformanceIntegrationTests {
         mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andExpect(jsonPath("$.paths['"+path+"'].get.description").exists());
     }
     private OrderResponse open(long account,long symbol,Position.Side side,String quantity) {
+        LegacyLeverageFixtures.tenTimes(jdbc,account,symbol,side);
+
         return orders.create(account,key(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,n(quantity),10,null));
     }
     private LatestMarkPrice mark(long symbol,String amount) {

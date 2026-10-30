@@ -40,7 +40,7 @@ class TradingHttpVerificationTests {
         String token=guest.path("accessToken").asText();long id=guest.path("accountId").asLong();
         assertThat(id).isPositive();assertThat(token).isNotBlank();
         String leverage="/api/v1/trading/account/symbols/"+btc+"/leverage";
-        assertThat(request("GET",leverage+"?side=LONG",null,token,200).path("leverage").asInt()).isEqualTo(10);
+        assertThat(request("GET",leverage+"?side=LONG",null,token,200).path("leverage").asInt()).isEqualTo(1);
         request("PUT",leverage,"{\"side\":\"LONG\",\"leverage\":20}",token,200);
         request("PUT",leverage,"{\"side\":\"SHORT\",\"leverage\":5}",token,200);
         mark(btc);

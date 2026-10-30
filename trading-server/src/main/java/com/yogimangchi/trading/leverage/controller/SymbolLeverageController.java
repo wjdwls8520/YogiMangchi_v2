@@ -18,7 +18,7 @@ public class SymbolLeverageController {
     public SymbolLeverageController(SymbolLeverageService leverages) { this.leverages = leverages; }
     @GetMapping
     @Operation(summary = "Read this account's direction-specific symbol leverage",
-            description = "Required query side=LONG or side=SHORT; missing, empty or unsupported side returns 400 and never selects a shared/default direction. Default leverage 10x, maximum 100x, ISOLATED margin only. A read never creates an account, position or setting. Legacy Cross exposure is identified as LEGACY_CROSS with a PENDING/REVIEW_REQUIRED transition hold. Requires a valid member Access JWT or Guest opaque bearer; inactive/unknown symbol: 409 SYMBOL_NOT_AVAILABLE.")
+            description = "Required query side=LONG or side=SHORT; missing, empty or unsupported side returns 400 and never selects a shared/default direction. An unsaved account/symbol/side defaults to 1x, maximum 100x, ISOLATED margin only. Existing saved settings and exposure leverage are preserved. A read never creates an account, position or setting. Legacy Cross exposure is identified as LEGACY_CROSS with a PENDING/REVIEW_REQUIRED transition hold. Requires a valid member Access JWT or Guest opaque bearer; inactive/unknown symbol: 409 SYMBOL_NOT_AVAILABLE.")
     public LeverageResponse get(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long symbolId, @RequestParam Position.Side side) {
         return leverages.get(principal.accountId(), symbolId, side);
     }

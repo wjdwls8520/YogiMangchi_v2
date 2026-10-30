@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.tradingaccount;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.execution.trigger.*;
@@ -48,6 +50,7 @@ class LiquidationPriceIntegrationTests {
         btc=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
         eth=jdbc.queryForObject("select id from trading.trading_symbol where symbol='ETH'",Long.class);
         prices.beginSubscription(Set.of(btc,eth)); mark(btc,n("1000")); mark(eth,n("100"));
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),btc);
     }
     @AfterEach void cleanup() { prices.markUnavailable(); }
 

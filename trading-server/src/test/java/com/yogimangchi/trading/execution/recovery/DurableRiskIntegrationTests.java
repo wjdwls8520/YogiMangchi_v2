@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.execution.recovery;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.execution.trigger.*;
@@ -130,6 +132,7 @@ class DurableRiskIntegrationTests {
         assertThat(orderStatus(pending.orderId())).isEqualTo("FILLED");assertThat(fillCount(other.accountId())).isEqualTo(1);
     }
     @Test void notionalCapHasDistinctCodeAndNeverWritesARejectedMarketFill() {
+        LegacyLeverageFixtures.tenTimes(jdbc,guest.accountId(),btc,Position.Side.LONG);
         rejects(()->orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n("10001"),10,null)),ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED);
         assertThat(fillCount(guest.accountId())).isZero();
     }
@@ -165,6 +168,7 @@ class DurableRiskIntegrationTests {
         prices.beginSubscription(Set.of(btc,eth));tick("100");Instant now=Instant.now();
         prices.update(new LatestMarkPrice(eth,n("100"),now,now));drain();
         market(guest.accountId());var other=accounts.createGuest();
+        LegacyLeverageFixtures.tenTimes(jdbc,other.accountId(),eth,Position.Side.LONG);
         orders.create(other.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,eth,Position.Side.LONG,n("1"),10,null));
         doThrow(new org.springframework.dao.DataAccessResourceFailureException("test ingress outage")).when(jdbc)
             .queryForList(eq("select pg_advisory_xact_lock(?)"),eq(RiskAdmission.INGRESS_LOCK));
@@ -192,8 +196,12 @@ class DurableRiskIntegrationTests {
             return jdbc.queryForObject("select count(*) from trading.risk_account_work w where w.status='PENDING' and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id) and not ("+RiskGapRecovery.AUTOMATIC_HOLD+"))",Long.class)==0;
         });
     }
-    private OrderResponse limit(long account){return orders.create(account,key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,n("1"),10,n("99")));}
-    private OrderResponse market(long account){return orders.create(account,key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n("1"),10,null));}
+    private OrderResponse limit(long account){
+        LegacyLeverageFixtures.tenTimes(jdbc,account,btc,Position.Side.LONG);
+        return orders.create(account,key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,n("1"),10,n("99")));}
+    private OrderResponse market(long account){
+        LegacyLeverageFixtures.tenTimes(jdbc,account,btc,Position.Side.LONG);
+        return orders.create(account,key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n("1"),10,null));}
     private LatestMarkPrice tick(String amount){Instant now=Instant.now();var tick=new LatestMarkPrice(btc,n(amount),now,now);assertThat(prices.update(tick)).isTrue();return tick;}
     private String orderStatus(long order){return jdbc.queryForObject("select status from trading.trading_order where id=?",String.class,order);}
     private long fillCount(long account){return jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?",Long.class,account);}
