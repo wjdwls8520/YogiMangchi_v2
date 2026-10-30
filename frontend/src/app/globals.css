@@ -478,6 +478,14 @@
   .order-panel-body {
     @apply flex flex-col gap-3 p-3;
   }
+  .order-entry { @apply relative min-h-144; }
+  .order-entry-content { @apply pointer-events-none select-none opacity-30; }
+  .order-entry-overlay { @apply absolute inset-0 z-10 grid place-items-center bg-terminal-panel/65 p-4; }
+  .order-entry-card { @apply w-full max-w-xs border border-terminal-line bg-terminal-panel p-5 text-center; }
+  .order-entry-card h2 { @apply text-trade-title font-semibold text-terminal-text; }
+  .order-entry-card p { @apply mt-2 text-trade-body leading-relaxed text-terminal-muted; }
+  .order-entry-actions { @apply mt-5 flex flex-col gap-2; }
+  .order-entry-actions .guest-start-button { @apply flex items-center justify-center; }
   .order-settings-fields[data-order-type="MARKET"] > div:has(#order-quantity) { @apply col-span-2; }
   .order-book { @apply min-w-0 border-t border-terminal-line; }
   .order-book .section-heading { @apply flex-wrap gap-1; }
