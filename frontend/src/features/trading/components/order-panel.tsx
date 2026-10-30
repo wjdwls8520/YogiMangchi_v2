@@ -23,7 +23,9 @@ import type { TradingOrder } from "../api/orders";
 import { orderStatusLabel } from "../api/orders";
 import { orderReason } from "../api/order-reason";
 import { formatMarketPrice } from "../market/price-format";
-import { GuestStartPrompt } from "./guest-access";
+import { GuestStartPrompt, useGuestAccess } from "./guest-access";
+import { useMember } from "../../member/components/member-provider";
+import { AnonymousOrderPanel, isAnonymousOrderEntry } from "./anonymous-order-panel";
 import { WalletOverview } from "./wallet-overview";
 import { CloseOrderPanel } from "./close-order-panel";
 import { TradingNavigation } from "./trading-navigation";
@@ -34,6 +36,8 @@ type Form = OpenForm & { identity: string };
 export function OrderPanel() {
   const [intent,setIntent]=useState<"open"|"close">("open");
   const {snapshot}=useGuestSession(),account=useTradingSummary();
+  const member = useMember(), access = useGuestAccess();
+  if (isAnonymousOrderEntry(member.snapshot, snapshot)) return <AnonymousOrderPanel onGuest={access.open} storageError={snapshot.phase === "error"} />;
   return <section className="order-panel trading-section" aria-labelledby="order-heading">
     <header className="section-heading"><h2 id="order-heading" className="section-title">주문</h2><span className="preview-label">모의투자</span></header>
     <TradingNavigation label="주문 목적" prefix="order" activeId={intent} onSelect={value=>{if(value==="open"||value==="close")setIntent(value);}} className="order-intent-tabs" tabs={[{id:"open",label:"진입 · Open",controls:"order-open-panel"},{id:"close",label:"청산 · Close",controls:"order-close-panel"}]}/>
@@ -55,10 +59,10 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const [sizing,setSizing] = useState<{identity:string;symbolId:number;ticket:number}|null>(null);
   const [preparing,setPreparing] = useState(false);
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
-  const [stored, setForm] = useState<Form>({ identity, symbolId: null, type: "MARKET", side: "LONG", leverage: 10, quantity: "", limitPrice: "", ratio: 0 });
+  const [stored, setForm] = useState<Form>({ identity, symbolId: null, type: "MARKET", side: "LONG", leverage: 1, quantity: "", limitPrice: "", ratio: 0 });
   const longLeverage = useSymbolLeverage(symbol?.id ?? null, "LONG"), shortLeverage = useSymbolLeverage(symbol?.id ?? null, "SHORT");
   const leverageState = stored.side === "LONG" ? longLeverage : shortLeverage;
-  const leverage = leverageState.data?.leverage ?? 10;
+  const leverage = leverageState.data?.leverage ?? 1;
   const [seenBookSelection, setSeenBookSelection] = useState(bookSelection);
   const [result, setResult] = useState<{ order: TradingOrder; identity: string } | null>(null);
   const [serverWarning, setServerWarning] = useState<{ side: OpenForm["side"]; issue: OrderIssue } | null>(null);
@@ -122,8 +126,8 @@ function OpenOrderPanel({active}:{active:boolean}) {
   }
   async function submit(side: "LONG" | "SHORT") {
     const leverageState = side === "LONG" ? longLeverage : shortLeverage;
-    const leverage = leverageState.data?.leverage ?? 10;
-    if (submitLocked || leverageState.blocked() || submitting.current || sizingRequest.current) return;
+    if (submitLocked || leverageState.blocked() || !leverageState.data || submitting.current || sizingRequest.current) return;
+    const leverage = leverageState.data.leverage;
     update({ side });
     const commandForm = formForSide(form,side,leverage);
     const issue = preflightOrder(commandForm, side, ready, freshMarkPrice(market)?.decimal, account.data?.wallet.availableBalance);
@@ -145,7 +149,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
     const relation = form.type === "LIMIT" ? marketableLimitIssue(side, price, mark?.decimal) : null;
     if (relation) return relation;
     const target = side === "LONG" ? longLeverage : shortLeverage;
-    const check = valid ? preflightOrder(formForSide(form,side,target.data?.leverage ?? 10), side, ready && target.ready, mark?.decimal, account.data?.wallet.availableBalance) : null;
+    const check = valid ? preflightOrder(formForSide(form,side,target.data?.leverage ?? 1), side, ready && target.ready, mark?.decimal, account.data?.wallet.availableBalance) : null;
     return check?.kind === "balance" && form.ratio === 0 ? check : null;
   }
   return <div aria-describedby={snapshot.phase === "ready" ? "order-preview-note" : undefined}>

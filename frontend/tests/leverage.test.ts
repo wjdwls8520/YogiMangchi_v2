@@ -10,6 +10,33 @@ import { mutationMessage } from "../src/features/trading/api/mutation-request";
 
 const setting = { side: "LONG", tradingSymbolId: 1, leverage: 10, maxLeverage: 100, marginMode: "ISOLATED", marginTransitionStatus:"COMPLETE", updatedAt: null };
 const epoch = Date.parse("2026-10-19T00:00:00Z"), origin = "http://trade.example";
+
+test("server default1 and independently saved Long15/Short7 are read without writing defaults", async () => {
+  const calls:string[]=[];
+  const {session}=setup(async (url, init)=>{
+    assert.equal(init?.method ?? "GET", "GET");
+    calls.push(String(url));
+    const side = new URL(String(url)).searchParams.get("side");
+    return Response.json({...setting,side,leverage:1});
+  });
+  await session.restore();
+  for(const side of ["LONG","SHORT"] as const) {
+    const value=await session.read(leveragePath(1,side),session.getSnapshot(),new AbortController().signal);
+    assert.equal(parseLeverage(value,1,side).leverage,1);
+    assert.equal(parseLeverage({...setting,side,leverage:side === "LONG" ? 15 : 7},1,side).leverage,side === "LONG" ? 15 : 7);
+  }
+  assert.equal(calls.length,2);
+  assert.match(calls[0],/side=LONG$/); assert.match(calls[1],/side=SHORT$/);
+});
+
+test("anonymous directional leverage reads cannot send protected HTTP requests", async () => {
+  let calls=0;
+  const session=createGuestSession(origin,()=>({getItem:()=>null,setItem:()=>{},removeItem:()=>{}}),async()=>{calls++;return Response.json(setting);},()=>epoch);
+  await session.restore();
+  for(const side of ["LONG","SHORT"] as const)
+    await assert.rejects(session.read(leveragePath(1,side),session.getSnapshot(),new AbortController().signal),{name:"AbortError"});
+  assert.equal(calls,0);
+});
 function setup(transport: typeof fetch) {
   const values = new Map([[`yogimangchi.guest.v1:${origin}`, JSON.stringify({ accountId: 1,
     accessToken: `guest_${"a".repeat(43)}`, expiresAt: new Date(epoch + 86400000).toISOString() })]]);

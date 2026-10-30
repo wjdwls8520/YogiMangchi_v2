@@ -51,7 +51,7 @@ export function GuestAccessProvider({ session, children }: { session: GuestSessi
   </GuestAccessContext.Provider>;
 }
 
-function useGuestAccess() {
+export function useGuestAccess() {
   const access = useContext(GuestAccessContext);
   if (!access) throw new Error("GuestAccessProvider required");
   return access;
