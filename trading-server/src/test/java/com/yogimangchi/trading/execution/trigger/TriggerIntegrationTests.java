@@ -228,6 +228,7 @@ class TriggerIntegrationTests {
             worker.runOnce(); gate.requireCaughtUp(prices.findAll(Set.of(symbol,ether)));
         });
         market(Position.Side.LONG,"500",10);
+        leverages.change(guest.accountId(),ether,Position.Side.SHORT,10);
         orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(
                 TradingOrder.Type.MARKET,ether,Position.Side.SHORT,new BigDecimal("500"),10,null));
         LatestMarkPrice btcRisk=tick("79");

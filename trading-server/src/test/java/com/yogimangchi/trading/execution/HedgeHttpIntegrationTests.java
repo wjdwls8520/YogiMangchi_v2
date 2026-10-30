@@ -84,7 +84,7 @@ class HedgeHttpIntegrationTests {
         for(String side:List.of("LONG","SHORT")) {
             var initial=send("GET",path+"?side="+side,null,token);
             assertThat(initial.statusCode()).isEqualTo(200);
-            assertThat(json.readTree(initial.body()).path("leverage").asInt()).isEqualTo(10);
+            assertThat(json.readTree(initial.body()).path("leverage").asInt()).isEqualTo(1);
             assertThat(json.readTree(initial.body()).path("side").asText()).isEqualTo(side);
         }
         assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,account)).isZero();
@@ -120,6 +120,52 @@ class HedgeHttpIntegrationTests {
         assertThat(response.statusCode()).isEqualTo(401);
         assertThat(json.readTree(response.body()).path("code").asText()).isEqualTo("INVALID_ACCESS_TOKEN");
         assertThat(jdbc.queryForObject("select count(*) from trading.trading_account",Long.class)).isEqualTo(before);
+    }
+
+    @Test void unsavedGuestDirectionsQuoteSizeAndExecuteAtOneWithoutPersistingPreferences() throws Exception {
+        long symbol=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
+        var guest=json.readTree(send("POST","/api/v1/trading/accounts/guest","",null).body());
+        String token=guest.path("accessToken").asText(); long account=guest.path("accountId").asLong();
+        prices.beginSubscription(Set.of(symbol));
+        try {
+            Instant now=Instant.now(); prices.update(new LatestMarkPrice(symbol,new BigDecimal("1000"),now,now));
+            for(String side:List.of("LONG","SHORT")) {
+                String quote="{\"type\":\"MARKET\",\"tradingSymbolId\":"+symbol+",\"side\":\""+side+"\",\"quantity\":\"1\"}";
+                var response=send("POST","/api/v1/trading/account/orders/quote",quote,token);
+                assertThat(response.statusCode()).isEqualTo(200);
+                var estimate=json.readTree(response.body());
+                assertThat(estimate.path("leverage").asInt()).isEqualTo(1);
+                assertThat(new BigDecimal(estimate.path("margin").asText())).isEqualByComparingTo("1000");
+            }
+            String sizing="{\"type\":\"MARKET\",\"tradingSymbolId\":"+symbol+",\"side\":\"LONG\",\"balancePercentage\":10}";
+            var sized=json.readTree(send("POST","/api/v1/trading/account/orders/quote",sizing,token).body());
+            assertThat(sized.path("leverage").asInt()).isEqualTo(1);
+            BigDecimal quantity=new BigDecimal(sized.path("quantity").asText());
+            assertThat(quantity).isPositive().isLessThan(BigDecimal.ONE);
+            assertThat(new BigDecimal(sized.path("totalRequired").asText())).isLessThanOrEqualTo(new BigDecimal("1000"));
+            String order="{\"type\":\"MARKET\",\"tradingSymbolId\":"+symbol+",\"side\":\"LONG\",\"quantity\":\"1\",\"leverage\":1}";
+            var mismatch=send("POST","/api/v1/trading/account/orders",order.replace("\"leverage\":1","\"leverage\":10"),token);
+            assertThat(mismatch.statusCode()).isEqualTo(409);
+            assertThat(json.readTree(mismatch.body()).path("code").asText()).isEqualTo("LEVERAGE_MISMATCH");
+            var opened=send("POST","/api/v1/trading/account/orders",order,token);
+            assertThat(opened.statusCode()).isEqualTo(200);
+            assertThat(json.readTree(opened.body()).path("leverage").asInt()).isEqualTo(1);
+            String limit="{\"type\":\"LIMIT\",\"tradingSymbolId\":"+symbol+",\"side\":\"SHORT\",\"quantity\":\"1\",\"leverage\":1,\"limitPrice\":\"1010\"}";
+            var pending=send("POST","/api/v1/trading/account/orders",limit,token);
+            assertThat(pending.statusCode()).isEqualTo(200);
+            assertThat(json.readTree(pending.body()).path("status").asText()).isEqualTo("PENDING");
+            assertThat(new BigDecimal(json.readTree(pending.body()).path("reservedMargin").asText())).isGreaterThan(new BigDecimal("1010"));
+            assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,account)).isZero();
+            String path="/api/v1/trading/account/symbols/"+symbol+"/leverage";
+            var explicit=send("PUT",path,"{\"side\":\"LONG\",\"leverage\":1}",token);
+            assertThat(explicit.statusCode()).isEqualTo(200);
+            var saved=json.readTree(explicit.body()); assertThat(saved.path("updatedAt").isNull()).isFalse();
+            assertThat(json.readTree(send("PUT",path,"{\"side\":\"LONG\",\"leverage\":1}",token).body())).isEqualTo(saved);
+            assertThat(jdbc.queryForObject("select count(*) from trading.symbol_leverage where account_id=?",Long.class,account)).isEqualTo(1);
+            var document=json.readTree(send("GET","/v3/api-docs",null,null).body());
+            assertThat(document.path("paths").path("/api/v1/trading/account/symbols/{symbolId}/leverage").path("get").path("description").asText())
+                    .contains("defaults to 1x","Existing saved settings");
+        } finally { prices.markUnavailable(); }
     }
 
     private JsonNode open(long symbol,String side,String token) throws Exception {

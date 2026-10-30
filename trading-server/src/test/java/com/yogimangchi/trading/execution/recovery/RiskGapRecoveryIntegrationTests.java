@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.execution.recovery;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.fill.repository.FillRepository;
@@ -159,8 +161,12 @@ class RiskGapRecoveryIntegrationTests {
     void tick(long symbol,String amount){var now=Instant.now();assertThat(prices.update(new LatestMarkPrice(symbol,new BigDecimal(amount),now,now))).isTrue();}
     void drain()throws Exception{for(int i=0;i<5;i++)worker.runOnce();}
     long symbol(String symbol){return jdbc.queryForObject("select id from trading.trading_symbol where symbol=?",Long.class,symbol);}
-    OrderResponse limit(long symbol){return orders.create(account,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,symbol,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("99")));}
-    OrderResponse market(long symbol){return orders.create(account,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,Position.Side.LONG,BigDecimal.ONE,10,null));}
+    OrderResponse limit(long symbol){
+        LegacyLeverageFixtures.tenTimes(jdbc,account,symbol,Position.Side.LONG);
+        return orders.create(account,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,symbol,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("99")));}
+    OrderResponse market(long symbol){
+        LegacyLeverageFixtures.tenTimes(jdbc,account,symbol,Position.Side.LONG);
+        return orders.create(account,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,Position.Side.LONG,BigDecimal.ONE,10,null));}
     long activeHolds(){return jdbc.queryForObject("select count(*) from trading.risk_hold where account_id=? and resolved_at is null",Long.class,account);}
     long fillCount(){return jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?",Long.class,account);}
     String status(OrderResponse order){return jdbc.queryForObject("select status from trading.trading_order where id=?",String.class,order.orderId());}

@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.execution;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.yogimangchi.trading.error.BusinessException;
 import com.yogimangchi.trading.error.ErrorCode;
 import com.yogimangchi.trading.fill.repository.FillRepository;
@@ -56,6 +58,7 @@ class MarketOrderIntegrationTests {
         symbol = jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'", Long.class);
         prices.beginSubscription(Set.of(symbol));
         price("1000");
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),symbol);
     }
     @AfterEach void cleanup() { reset(fills); prices.markUnavailable(); }
 

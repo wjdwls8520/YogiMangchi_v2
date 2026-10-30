@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.tradingaccount;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.TradingOrderService;
@@ -45,6 +47,7 @@ class GuestRetryIntegrationTests {
     @BeforeEach void setup() {
         guest=accounts.createGuest(); btc=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
         prices.beginSubscription(Set.of(btc)); price("1000");
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),btc);
     }
     @AfterEach void stop() { prices.markUnavailable(); }
 

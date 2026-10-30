@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.tradehistory;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.execution.trigger.*;
@@ -53,6 +55,7 @@ class TradeHistoryIntegrationTests {
         guest=accounts.createGuest();
         btc=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
         prices.beginSubscription(Set.of(btc)); mark("1000");
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),btc);
     }
     @AfterEach void cleanup() { reset(events); events.unwatch(guest.accountId()); prices.markUnavailable(); }
 

@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.execution.recovery;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.yogimangchi.trading.reconciliation.*;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.marketdata.*;
@@ -145,7 +147,9 @@ class LedgerReconciliationIntegrationTests {
         assertThat(financial(account)).isEqualTo(before);
     }
     private Map<String,Object> financial(long id){return jdbc.queryForMap("select to_jsonb(w)::text wallet,(select coalesce(jsonb_agg(to_jsonb(p) order by p.id),'[]')::text from trading.position p where p.account_id=w.account_id) positions,(select coalesce(jsonb_agg(to_jsonb(o) order by o.id),'[]')::text from trading.trading_order o where o.account_id=w.account_id) orders,(select coalesce(jsonb_agg(to_jsonb(f) order by f.id),'[]')::text from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=w.account_id) fills from trading.wallet w where w.account_id=?",id);}
-    private OrderResponse open(long id,Position.Side side){return orders.create(id,key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,side,n("1"),10,null));}
+    private OrderResponse open(long id,Position.Side side){
+        LegacyLeverageFixtures.tenTimes(jdbc,id,btc,side);
+        return orders.create(id,key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,side,n("1"),10,null));}
     private void mark(String price){Instant now=Instant.now();assertThat(prices.update(new LatestMarkPrice(btc,n(price),now,now))).isTrue();try{for(int i=0;i<100;i++){riskWorker.runOnce();if(jdbc.queryForObject("select count(*) from trading.risk_account_work w where status='PENDING' and not exists(select 1 from trading.risk_hold h where h.account_id=w.account_id and h.resolved_at is null and (h.event_id is null or h.event_id<=w.event_id))",Long.class)==0)return;}throw new AssertionError("risk work not drained");}catch(Exception failure){throw new AssertionError(failure);}}
     private static BigDecimal n(String value){return new BigDecimal(value);}
     private static String key(){return UUID.randomUUID().toString();}
