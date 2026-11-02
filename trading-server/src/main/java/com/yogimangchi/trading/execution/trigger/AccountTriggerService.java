@@ -116,6 +116,25 @@ public class AccountTriggerService {
         if (wallet.getBalance().signum() <= 0 && open.isEmpty()) account.declareBankrupt();
         if (account.getStatus() != TradingAccount.Status.ACTIVE
                 || snapshots.get(tick.tradingSymbolId()).status() != LatestPriceStore.Status.FRESH) return;
+        // Liquidation wins a gap. Then one full-position stop takes priority over ordinary CLOSE reservations.
+        for(Position position:List.copyOf(open)) {
+            if(!position.getTradingSymbolId().equals(tick.tradingSymbolId()) || !position.stopLossCrosses(tick.domainMarkPrice(),tick.receivedAt())) continue;
+            for(TradingOrder reserved:pending) {
+                if(reserved.getStatus()==TradingOrder.Status.PENDING && reserved.getAction()==TradingOrder.Action.CLOSE
+                        && position.getId().equals(reserved.getPositionId())) {
+                    position.releaseCloseReservation(reserved.getQuantity()); reserved.cancelForStopLoss(now);
+                    committed("stop-loss-cancel-close",reserved,null);
+                }
+            }
+            BigDecimal fee=TradingFees.fee(tick.domainMarkPrice(),position.getQuantity(),TradingFees.MARKET_RATE);
+            Position.Settlement settlement=position.closeByStopLoss(tick.domainMarkPrice(),tick.eventTime(),now);
+            wallet.settle(settlement.releasedMargin(),settlement.realizedPnl(),fee,BigDecimal.ZERO);
+            TradingOrder stopped=orders.save(TradingOrder.stopLoss(position,settlement.quantity(),tick.domainMarkPrice(),now));
+            Fill fill=fills.save(Fill.execute(stopped.getId(),tick.domainMarkPrice(),settlement.quantity(),tick.eventTime(),now,
+                    settlement.realizedPnl(),fee,BigDecimal.ZERO));
+            position.linkStopLossOrder(stopped.getId()); committed("stop-loss-filled",stopped,fill); events.recordStopLoss(position);
+            positions.flush(); open.remove(position); byId.remove(position.getId()); account.recordFinancialChange(now);
+        }
         for (TradingOrder order : pending) {
             if (order.getStatus() != TradingOrder.Status.PENDING
                     || !order.getTradingSymbolId().equals(tick.tradingSymbolId()) || !order.crosses(tick.domainMarkPrice())
@@ -179,7 +198,7 @@ public class AccountTriggerService {
         order.fill(target, price.domainMarkPrice(), now);
         Fill fill=fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
                 settlement.realizedPnl(), fee, BigDecimal.ZERO));
-        if (target.getStatus() != Position.Status.OPEN) { open.remove(target); byId.remove(target.getId()); }
+        if (target.getStatus() != Position.Status.OPEN) { open.remove(target); byId.remove(target.getId()); events.recordStopLoss(target); }
         committed("limit-close-filled", order, fill);
     }
 
@@ -217,6 +236,7 @@ public class AccountTriggerService {
         Fill fill=fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
                 costs.grossPnl(), costs.fee(), costs.shortfallAdjustment()));
         committed("liquidated", order, fill);
+        events.recordStopLoss(position);
         account.recordFinancialChange(now);
     }
 

@@ -268,6 +268,7 @@ public class TradingOrderService {
         TradingOrder order = orders.save(TradingOrder.market(position, action, quantity, price.domainMarkPrice(), key, hash, now));
         Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), quantity, price.eventTime(), now, pnl, fee, BigDecimal.ZERO));
         logCommitted(order, "filled", fill);
+        if(position.getStatus()!=Position.Status.OPEN) events.recordStopLoss(position);
         return OrderResponse.from(order, fill);
     }
 

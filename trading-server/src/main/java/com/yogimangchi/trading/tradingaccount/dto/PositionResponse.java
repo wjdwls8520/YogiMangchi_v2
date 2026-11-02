@@ -15,4 +15,5 @@ public record PositionResponse(Long id, Long tradingSymbolId, String side, Strin
         @Schema(description="ESTIMATED_DOWNWARD: LONG; ESTIMATED_UPWARD: SHORT. PRICE_UNAVAILABLE: this symbol lacks fresh data. NO_THRESHOLD: no positive supported-price boundary. UNSUPPORTED_MODEL: precision/range/search cannot certify a boundary. ALREADY_AT_RISK: this position already meets the isolated liquidation condition. MARGIN_MIGRATION_REQUIRED: legacy Cross exposure is held pending safe conversion or review; price is null") Status liquidationPriceStatus,
         @Schema(description="This symbol's server receivedAt, not the provider clock. Null when its price is unavailable or legacy conversion is incomplete", nullable=true) Instant liquidationPriceAsOf,
         @Schema(description="ISOLATED, or LEGACY_CROSS while trading is held for conversion/review. There is no selectable Cross mode", allowableValues={"ISOLATED","LEGACY_CROSS"}) String marginMode,
-        @Schema(description="Historical model at this lifecycle's first entry: CROSS or ISOLATED. Conversion never rewrites opening facts") String openedMarginMode) { }
+        @Schema(description="Historical model at this lifecycle's first entry: CROSS or ISOLATED. Conversion never rewrites opening facts") String openedMarginMode,
+        com.yogimangchi.trading.stoploss.StopLossResponse stopLoss) { }

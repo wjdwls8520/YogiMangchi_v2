@@ -199,6 +199,20 @@ class TradeHistoryIntegrationTests {
         mvc.perform(get("/api/v1/trading/account/positions/history").header("Authorization",bearer()).param("cursor","invalid"))
                 .andExpect(status().isBadRequest());
     }
+    @Test void fillHistoryKeepsManualReasonNullAndDoesNotExposeUnknownOrderDetails() throws Exception {
+        var opened=open("1");
+        var closed=orders.close(guest.accountId(),opened.positionId(),key());
+        jdbc.update("update trading.trading_order set reason=? where id=?","INTERNAL_SQL_DETAIL_TEST_ONLY",closed.orderId());
+        String body=mvc.perform(get("/api/v1/trading/account/fills").header("Authorization",bearer()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("INTERNAL_SQL_DETAIL_TEST_ONLY");
+        for (var fill:json.readTree(body)) {
+            assertThat(fill.has("reason")).isTrue();
+            assertThat(fill.path("reason").isNull()).isTrue();
+        }
+    }
+
     @Test void openApiDocumentsPrivateHistoryAndStringValuedFinancialFacts() throws Exception {
         var api=json.readTree(mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         for(String endpoint:List.of("fills","positions/history","events")) {
@@ -208,6 +222,9 @@ class TradeHistoryIntegrationTests {
         }
         var schemas=api.path("components").path("schemas");
         assertThat(schemas.path("FillHistoryResponse").path("properties").path("fee").path("type").asText()).isEqualTo("string");
+        var reason=schemas.path("FillHistoryResponse").path("properties").path("reason");
+        assertThat(reason.path("description").asText()).contains("STOP_LOSS","null otherwise");
+        assertThat(reason.path("type")).contains(json.getNodeFactory().textNode("string"),json.getNodeFactory().textNode("null"));
         assertThat(schemas.path("ClosedPositionResponse").path("properties").path("netRealizedPnl").path("type").asText()).isEqualTo("string");
         assertThat(schemas.path("TradingEventResponse").path("properties").path("eventId").path("type").asText()).isEqualTo("string");
         assertThat(schemas.path("ClosedPositionResponse").path("description").asText()).contains("lifecycle","not one order");

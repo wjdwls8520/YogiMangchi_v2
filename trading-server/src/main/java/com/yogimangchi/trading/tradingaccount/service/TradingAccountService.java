@@ -94,7 +94,8 @@ public class TradingAccountService {
                 decimal(position.getEntryPrice()), position.getLeverage(), decimal(position.getMargin()), position.getStatus().name(),
                 decimal(position.getRealizedPnl()), decimal(mark), decimal(pnl), snapshot.status().name(),
                 snapshot.latestPrice().map(price -> price.eventTime()).orElse(null), position.getOpenedAt(),
-                decimal(estimate.price()), estimate.status(), estimate.asOf(), marginMode, position.getOpenedMarginMode());
+                decimal(estimate.price()), estimate.status(), estimate.asOf(), marginMode, position.getOpenedMarginMode(),
+                com.yogimangchi.trading.stoploss.StopLossResponse.from(position));
     }
 
     private static String decimal(BigDecimal value) { return value == null ? null : value.toPlainString(); }
