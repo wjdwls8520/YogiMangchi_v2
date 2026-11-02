@@ -15,7 +15,7 @@ const closed = { positionId: 16, tradingSymbolId: 1, side: "LONG", status: "CLOS
 
 test("immutable fills keep ledger decimal strings and lifecycle link", () => {
   assert.deepEqual(parseFills([]), []);
-  assert.deepEqual(parseFills([fill])[0], fill);
+  assert.deepEqual(parseFills([fill])[0], {...fill,reason:null});
   const first = parseFills(Array.from({ length: 50 }, (_, index) => ({ ...fill, fillId: 100 - index })));
   const second = parseFills(Array.from({ length: 50 }, (_, index) => ({ ...fill, fillId: 50 - index })), first.at(-1)!.fillId);
   assert.equal(new Set([...first, ...second].map(row => row.fillId)).size, 100);
@@ -24,6 +24,15 @@ test("immutable fills keep ledger decimal strings and lifecycle link", () => {
   for (const bad of [null, { items: [fill] }, [{ ...fill, fee: 0.1 }], [{ ...fill, lifecyclePositionId: null }], [{ ...fill, action: "UNKNOWN" }]]) {
     assert.throws(() => parseFills(bad));
   }
+});
+
+test("fill reason supports legacy missing/null and only retains the controlled stop-loss code",()=>{
+  for(const reason of [undefined,null,"internal Bearer credential detail",{code:"STOP_LOSS"}]) {
+    const parsed=parseFills([{...fill,reason}])[0];
+    assert.equal(parsed.reason,null);
+    assert.doesNotMatch(JSON.stringify(parsed),/Bearer|credential|internal/);
+  }
+  assert.equal(parseFills([{...fill,reason:"STOP_LOSS"}])[0].reason,"STOP_LOSS");
 });
 test("closed lifecycle page uses opaque nextCursor and server net PnL", () => {
   assert.deepEqual(parseClosedPositions({ items: [], nextCursor: null }), { items: [], nextCursor: null });

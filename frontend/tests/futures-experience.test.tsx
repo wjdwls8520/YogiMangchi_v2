@@ -12,7 +12,8 @@ import { tradingKeys } from "../src/features/trading/api/query-keys";
 import { TradingApiError } from "../src/features/trading/api/client";
 import { CloseOrderFields } from "../src/features/trading/components/close-order-fields";
 import { PositionCloseEntry } from "../src/features/trading/components/position-close-entry";
-import { OrderHistoryTable, PendingOrderTable, PositionTable } from "../src/features/trading/components/account-tables";
+import { FillHistoryTable, OrderHistoryTable, PendingOrderTable, PositionTable } from "../src/features/trading/components/account-tables";
+import { parseFills } from "../src/features/trading/api/history";
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
 import { MemberProvider } from "../src/features/member/components/member-provider";
 import { SelectedMarketProvider } from "../src/features/trading/components/selected-market-provider";
@@ -155,4 +156,14 @@ test("partial and full close commands have distinct quantity and reservation gua
 test("close sizing supports 1% steps and never rounds above free quantity",()=>{
   assert.equal(closePreset("0.8",1),"0.008");assert.equal(closePreset("0.8",37),"0.296");assert.equal(closePreset("0.8",99),"0.792");
   for(const percent of [-1,0,100.1,101,NaN])assert.equal(closePreset("1",percent),"");
+});
+
+test("trade history distinguishes stop loss, manual close and liquidation without adding a column",()=>{
+  const raw={fillId:1,orderId:1,positionId:1,lifecyclePositionId:1,tradingSymbolId:1,type:"MARKET",action:"CLOSE",side:"LONG",leverage:3,quantity:"0.02762505",price:"77000",realizedPnl:"-1",fee:"0.1",settlementAdjustment:"0",marginMode:"ISOLATED",priceEventTime:new Date(now).toISOString(),executedAt:new Date(now).toISOString()};
+  for(const [change,label] of [[{reason:"STOP_LOSS"},"손절 청산"],[{reason:null},"청산"],[{},"청산"],[{action:"LIQUIDATE",reason:null},"강제청산"]] as const){
+    const html=renderToStaticMarkup(<FillHistoryTable fills={parseFills([{...raw,...change}])} symbols={symbols}/>);
+    assert.match(html,new RegExp(`<small>${label}</small>`));
+    assert.equal((html.match(/role="columnheader"/g)??[]).length,9);
+    assert.match(html,/Long ×3/);assert.match(html,/0.02762505/);
+  }
 });
