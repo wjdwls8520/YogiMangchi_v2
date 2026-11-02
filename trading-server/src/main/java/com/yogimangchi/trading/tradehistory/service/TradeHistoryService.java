@@ -27,7 +27,7 @@ public class TradeHistoryService {
             Position.Side side, TradingOrder.Action action, TradingOrder.Type type, Instant from, Instant before) {
         validate(beforeId,limit,symbolId,from,before);
         locks.lock(accountId);
-        StringBuilder sql=new StringBuilder("select f.id,f.order_id,o.position_id,coalesce(p.merged_into_position_id,p.id) lifecycle_id,o.trading_symbol_id,o.type,o.action,o.side,o.leverage,f.quantity,f.price,f.realized_pnl,f.fee,f.settlement_adjustment,f.margin_mode,f.price_event_time,f.executed_at from trading.fill f join trading.trading_order o on o.id=f.order_id join trading.position p on p.id=o.position_id where o.account_id=? and f.id<?");
+        StringBuilder sql=new StringBuilder("select f.id,f.order_id,o.position_id,coalesce(p.merged_into_position_id,p.id) lifecycle_id,o.trading_symbol_id,o.type,o.action,o.side,o.leverage,f.quantity,f.price,f.realized_pnl,f.fee,f.settlement_adjustment,f.margin_mode,f.price_event_time,f.executed_at,case when o.reason='STOP_LOSS' then o.reason end reason from trading.fill f join trading.trading_order o on o.id=f.order_id join trading.position p on p.id=o.position_id where o.account_id=? and f.id<?");
         List<Object> args=new ArrayList<>(List.of(accountId,beforeId==null ? Long.MAX_VALUE : beforeId));
         add(sql,args,"o.trading_symbol_id",symbolId); add(sql,args,"o.side",side);
         add(sql,args,"o.action",action); add(sql,args,"o.type",type);
@@ -36,7 +36,7 @@ public class TradeHistoryService {
         return jdbc.query(sql.toString(),(r,row) -> new FillHistoryResponse(r.getLong("id"),r.getLong("order_id"),r.getLong("position_id"),r.getLong("lifecycle_id"),
                 r.getLong("trading_symbol_id"),r.getString("type"),r.getString("action"),r.getString("side"),r.getInt("leverage"),
                 decimal(r,"quantity"),decimal(r,"price"),decimal(r,"realized_pnl"),decimal(r,"fee"),decimal(r,"settlement_adjustment"),
-                r.getString("margin_mode"),r.getTimestamp("price_event_time").toInstant(),r.getTimestamp("executed_at").toInstant()),args.toArray());
+                r.getString("margin_mode"),r.getTimestamp("price_event_time").toInstant(),r.getTimestamp("executed_at").toInstant(),r.getString("reason")),args.toArray());
     }
 
     @Transactional(timeout=5)

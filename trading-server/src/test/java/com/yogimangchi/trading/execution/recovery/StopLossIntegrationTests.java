@@ -75,6 +75,10 @@ class StopLossIntegrationTests {
         assertThat(order.action()).isEqualTo("CLOSE");assertThat(order.type()).isEqualTo("MARKET");assertThat(order.reason()).isEqualTo("STOP_LOSS");
         eq(order.fill().price(),side==Position.Side.LONG?"940":"1060");eq(order.fill().realizedPnl(),"-60");
         eq(order.fill().fee(),side==Position.Side.LONG?"0.47":"0.53");
+        mvc.perform(get("/api/v1/trading/account/fills").header("Authorization","Bearer "+actor.token()).param("action","CLOSE"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].orderId").value(done.triggerOrderId()))
+                .andExpect(jsonPath("$[0].reason").value("STOP_LOSS"));
         assertThat(stops.put(account,position.positionId(),settingKey,new StopLossRequest(n(side==Position.Side.LONG?"950":"1050"),0L))).isEqualTo(active);
         var first=events.after(account,0,100).stream().filter(e->e.stopLoss()!=null).toList();
         assertThat(first).hasSize(2);assertThat(first.get(0).order()).isNull();assertThat(first.get(0).stopLoss()).isEqualTo(active);
