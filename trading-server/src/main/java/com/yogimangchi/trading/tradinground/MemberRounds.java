@@ -78,7 +78,7 @@ public class MemberRounds {
             order.cancelForMemberRestart(now);events.record(order,null);
         }
         captureRetirement(accountId);
-        for(var position:open) released=released.add(position.closeForMemberRestart(now));
+        for(var position:open) {released=released.add(position.closeForMemberRestart(now));events.recordStopLoss(position);}
         wallet.releaseExposure(released,reserved);
         finish(accountId,wallet,"MEMBER_RESTART",now);
         wallet.restartMember();account.restartMember(now);

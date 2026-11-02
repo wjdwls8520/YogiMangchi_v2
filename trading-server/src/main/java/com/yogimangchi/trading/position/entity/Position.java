@@ -13,6 +13,7 @@ import java.util.Objects;
 public class Position {
     public enum Side { LONG, SHORT }
     public enum Status { OPEN, CLOSED, LIQUIDATED, MERGED }
+    public enum StopLossStatus { NONE, ACTIVE, CANCELED, TRIGGERED, EXPIRED }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
     @Column(nullable = false, updatable = false) private Long accountId;
@@ -37,6 +38,15 @@ public class Position {
     @Column(precision = 38, scale = 18) private BigDecimal isolatedCutoverMargin;
     @Column(precision = 38, scale = 18) private BigDecimal isolatedCutoverPrice;
     private Instant isolatedCutoverAt;
+    @Enumerated(EnumType.STRING) @Column(nullable=false,length=16) private StopLossStatus stopLossStatus=StopLossStatus.NONE;
+    @Column(precision=38,scale=18) private BigDecimal stopLossPrice;
+    @Column(nullable=false) private long stopLossVersion;
+    private Instant stopLossUpdatedAt;
+    private Instant stopLossTriggeredAt;
+    private Instant stopLossPriceEventTime;
+    @Column(precision=38,scale=18) private BigDecimal stopLossTriggerPrice;
+    private Long stopLossTriggerOrderId;
+    @Column(length=32) private String stopLossReason;
 
     protected Position() { }
 
@@ -137,6 +147,7 @@ public class Position {
             exitPrice = TradingMath.amount(price);
             closedAt = now;
             status = liquidated ? Status.LIQUIDATED : Status.CLOSED;
+            expireStopLoss(liquidated ? "POSITION_LIQUIDATED" : "POSITION_CLOSED",now);
         }
         return new Settlement(closingQuantity.setScale(TradingMath.QUANTITY_SCALE), released, pnl);
     }
@@ -152,12 +163,14 @@ public class Position {
     public BigDecimal closeForMemberRestart(Instant now) {return closeAdministratively(now,"MEMBER_RESTART");}
     private BigDecimal closeAdministratively(Instant now,String reason) {
         if(status!=Status.OPEN || reservedCloseQuantity.signum()!=0 || now.isBefore(openedAt))
-            throw new IllegalStateException("Administrative closure requires an unreserved open position");
+            throw new IllegalStateException("Administrative closure requires an unreserved open position: status="+status
+                    +", hasReservation="+(reservedCloseQuantity.signum()!=0)+", closesBeforeOpen="+now.isBefore(openedAt));
         BigDecimal released=margin;
         quantity=BigDecimal.ZERO.setScale(TradingMath.QUANTITY_SCALE);
         margin=TradingMath.amount(BigDecimal.ZERO);
         entryNotional=BigDecimal.ZERO.setScale(TradingMath.BASIS_SCALE);
         status=Status.CLOSED; closedAt=Objects.requireNonNull(now); closeReason=reason;
+        expireStopLoss(reason,now);
         // Preserve already realized PnL; there is no exit quote, additional PnL or trading fee.
         return released;
     }
@@ -170,6 +183,51 @@ public class Position {
         isolatedCutoverAt = Objects.requireNonNull(now);
     }
     public String getOpenedMarginMode() { return openedMarginMode; }
+    public void configureStopLoss(BigDecimal price,Instant now) {
+        if(status!=Status.OPEN) throw new IllegalStateException("Stop loss requires an open position");
+        TradingMath.validatePrice(price);
+        stopLossPrice=TradingMath.amount(price); stopLossStatus=StopLossStatus.ACTIVE;
+        stopLossVersion=Math.incrementExact(stopLossVersion); stopLossUpdatedAt=Objects.requireNonNull(now);
+        stopLossTriggeredAt=null; stopLossPriceEventTime=null; stopLossTriggerPrice=null;
+        stopLossTriggerOrderId=null; stopLossReason=null;
+    }
+    public void cancelStopLoss(Instant now) {
+        if(stopLossStatus!=StopLossStatus.ACTIVE) return;
+        stopLossStatus=StopLossStatus.CANCELED; stopLossReason="CLIENT_CANCEL";
+        stopLossVersion=Math.incrementExact(stopLossVersion); stopLossUpdatedAt=Objects.requireNonNull(now);
+    }
+    private void expireStopLoss(String reason,Instant now) {
+        if(stopLossStatus!=StopLossStatus.ACTIVE) return;
+        stopLossStatus=StopLossStatus.EXPIRED; stopLossReason=reason;
+        stopLossVersion=Math.incrementExact(stopLossVersion); stopLossUpdatedAt=now;
+    }
+    public boolean stopLossCrosses(BigDecimal mark,Instant receivedAt) {
+        return status==Status.OPEN && stopLossStatus==StopLossStatus.ACTIVE
+                && !receivedAt.isBefore(stopLossUpdatedAt) && !receivedAt.isBefore(openedAt)
+                && (side==Side.LONG ? mark.compareTo(stopLossPrice)<=0 : mark.compareTo(stopLossPrice)>=0);
+    }
+    public Settlement closeByStopLoss(BigDecimal mark,Instant priceEventTime,Instant now) {
+        if(status!=Status.OPEN || stopLossStatus!=StopLossStatus.ACTIVE)
+            throw new IllegalStateException("Stop loss is no longer active");
+        stopLossStatus=StopLossStatus.TRIGGERED; stopLossReason="STOP_LOSS";
+        stopLossVersion=Math.incrementExact(stopLossVersion); stopLossUpdatedAt=now;
+        stopLossTriggeredAt=now; stopLossPriceEventTime=priceEventTime.truncatedTo(java.time.temporal.ChronoUnit.MICROS); stopLossTriggerPrice=TradingMath.amount(mark);
+        return close(quantity,mark,now,false);
+    }
+    public void linkStopLossOrder(Long orderId) {
+        if(stopLossStatus!=StopLossStatus.TRIGGERED || stopLossTriggerOrderId!=null || orderId==null)
+            throw new IllegalStateException("Stop loss execution already linked or missing");
+        stopLossTriggerOrderId=orderId;
+    }
+    public StopLossStatus getStopLossStatus(){return stopLossStatus;}
+    public BigDecimal getStopLossPrice(){return stopLossPrice;}
+    public long getStopLossVersion(){return stopLossVersion;}
+    public Instant getStopLossUpdatedAt(){return stopLossUpdatedAt;}
+    public Instant getStopLossTriggeredAt(){return stopLossTriggeredAt;}
+    public Instant getStopLossPriceEventTime(){return stopLossPriceEventTime;}
+    public BigDecimal getStopLossTriggerPrice(){return stopLossTriggerPrice;}
+    public Long getStopLossTriggerOrderId(){return stopLossTriggerOrderId;}
+    public String getStopLossReason(){return stopLossReason;}
     public Long getAccountId() { return accountId; }
     public Long getTradingSymbolId() { return tradingSymbolId; }
     public Side getSide() { return side; }

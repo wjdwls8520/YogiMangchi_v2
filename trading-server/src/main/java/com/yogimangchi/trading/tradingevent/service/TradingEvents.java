@@ -46,6 +46,18 @@ public class TradingEvents {
     }
 
     public void watch(long accountId) { watchers.computeIfAbsent(accountId,id -> new AtomicBoolean(true)); }
+    @Transactional(propagation=Propagation.MANDATORY)
+    public void recordStopLoss(com.yogimangchi.trading.position.entity.Position position) {
+        if(position.getStopLossVersion()==0) return;
+        String payload;
+        try {payload=mapper.writeValueAsString(com.yogimangchi.trading.stoploss.StopLossResponse.from(position));}
+        catch(JsonProcessingException exception){throw new IllegalStateException("Cannot retain stop loss event",exception);}
+        jdbc.update("insert into trading.trading_event(account_id,position_id,stop_loss_version,event_type,payload,occurred_at) values(?,?,?,'STOP_LOSS_CHANGED',?::jsonb,?) on conflict(position_id,stop_loss_version) where event_type='STOP_LOSS_CHANGED' do nothing",
+                position.getAccountId(),position.getId(),position.getStopLossVersion(),payload,position.getStopLossUpdatedAt().atOffset(ZoneOffset.UTC));
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
+            @Override public void afterCommit(){var signal=watchers.get(position.getAccountId());if(signal!=null)signal.set(true);}
+        });
+    }
     public void unwatch(long accountId) { watchers.remove(accountId); }
     public boolean consumeDirty(long accountId) {
         var signal=watchers.get(accountId);
@@ -58,7 +70,12 @@ public class TradingEvents {
         if(Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.trading_account where id=? and status='WITHDRAWN')",Boolean.class,accountId)))
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         return jdbc.query("select e.id,e.event_type,e.payload,e.occurred_at,e.round_id,r.round_number from trading.trading_event e left join trading.member_trading_round r on r.id=e.round_id where e.account_id=? and e.id>? order by e.id limit ?",(r,row) -> {
-            try { return new TradingEventResponse(Long.toString(r.getLong("id")),r.getString("event_type"),r.getTimestamp("occurred_at").toInstant(),mapper.readValue(r.getString("payload"),OrderResponse.class),r.getObject("round_id",Long.class),r.getObject("round_number",Integer.class)); }
+            try {
+                boolean stop="STOP_LOSS_CHANGED".equals(r.getString("event_type"));
+                return new TradingEventResponse(Long.toString(r.getLong("id")),r.getString("event_type"),r.getTimestamp("occurred_at").toInstant(),
+                        stop?null:mapper.readValue(r.getString("payload"),OrderResponse.class),r.getObject("round_id",Long.class),r.getObject("round_number",Integer.class),
+                        stop?mapper.readValue(r.getString("payload"),com.yogimangchi.trading.stoploss.StopLossResponse.class):null);
+            }
             catch(JsonProcessingException e) { throw new IllegalStateException("Invalid retained trading event snapshot",e); }
         },accountId,afterId,limit);
     }

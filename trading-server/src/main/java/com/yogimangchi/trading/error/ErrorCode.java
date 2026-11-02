@@ -3,6 +3,10 @@ package com.yogimangchi.trading.error;
 import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
+    INVALID_STOP_LOSS(HttpStatus.BAD_REQUEST,"Positive supported stop price and nonnegative expectedVersion are required"),
+    STOP_LOSS_NOT_PROTECTIVE(HttpStatus.CONFLICT,"LONG stop must be below current Mark and SHORT stop above it"),
+    STOP_LOSS_BEYOND_LIQUIDATION(HttpStatus.CONFLICT,"Stop must precede the position's current isolated liquidation risk"),
+    STOP_LOSS_VERSION_CONFLICT(HttpStatus.CONFLICT,"Stop loss changed; fetch current state before deliberate resubmission"),
     TRADING_ACCOUNT_REQUIRED(HttpStatus.CONFLICT,"Explicit member Trading account opening required"),
     MEMBER_ACCOUNT_REQUIRED(HttpStatus.FORBIDDEN,"Member simulation account required"),
     ROUND_NOT_FOUND(HttpStatus.NOT_FOUND,"Own trading round not found"),

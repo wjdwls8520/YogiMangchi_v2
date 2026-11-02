@@ -124,6 +124,12 @@ public class TradingOrder {
         finish(Status.FILLED, null, now);
     }
     public void cancel(Instant now) { requirePending(); finish(Status.CANCELED, "CLIENT_CANCEL", now); }
+    public void cancelForStopLoss(Instant now) { requirePending(); finish(Status.CANCELED,"STOP_LOSS",now); }
+    public static TradingOrder stopLoss(Position position,BigDecimal quantity,BigDecimal price,Instant now) {
+        TradingOrder order=market(position,Action.CLOSE,quantity,price,"stoploss:position:"+position.getId(),"0".repeat(64),now);
+        order.reason="STOP_LOSS";
+        return order;
+    }
     public void cancelForWithdrawal(Instant now) { requirePending(); finish(Status.CANCELED,"MEMBER_WITHDRAWAL",now); }
     public void cancelForGuestRetry(Instant now) { requirePending(); finish(Status.CANCELED,"GUEST_RETRY",now); }
     public void cancelForMemberRestart(Instant now) {requirePending();finish(Status.CANCELED,"MEMBER_RESTART",now);}

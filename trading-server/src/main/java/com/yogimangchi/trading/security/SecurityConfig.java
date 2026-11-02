@@ -38,6 +38,9 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.POST,"/api/v1/trading/account/restart").hasRole("MEMBER");
             authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/rounds","/api/v1/trading/account/rounds/current","/api/v1/trading/account/rounds/{roundId:[0-9]+}","/api/v1/trading/account/rounds/{roundId:[0-9]+}/{kind:orders|fills|positions}").hasRole("MEMBER");
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/retry").authenticated();
+            authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.PUT,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.DELETE,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/orders",
                     "/api/v1/trading/account/orders/quote",
                     "/api/v1/trading/account/orders/{orderId}/cancel",
@@ -95,7 +98,7 @@ public class SecurityConfig {
         }
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(allowed);
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key"));
         configuration.setAllowCredentials(false);
         configuration.setMaxAge(3600L);

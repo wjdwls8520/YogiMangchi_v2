@@ -55,7 +55,7 @@ public class GuestRetryService {
             else byId.get(order.getPositionId()).releaseCloseReservation(order.getQuantity());
             order.cancelForGuestRetry(now); events.record(order,null);
         }
-        for(var position:open) released=released.add(position.closeForGuestRetry(now));
+        for(var position:open) {released=released.add(position.closeForGuestRetry(now));events.recordStopLoss(position);}
         wallet.restartGuest(released,reserved);
         account.restartGuest(now);
         Long id=jdbc.queryForObject("insert into trading.guest_retry(account_id,request_key,balance_before,balance_after,capital_adjustment,canceled_order_count,closed_position_count,reset_at) values (?,?,?,?,?,?,?,?) returning id",
