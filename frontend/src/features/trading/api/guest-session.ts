@@ -3,6 +3,7 @@ import { decimal, id, parseCredential, parseGuest, record, type GuestCredential 
 import { mutationRequest, uncertainMutation, type TradingCommand } from "./mutation-request";
 import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
 import type { QuoteRequest } from "./quote";
+import { parseStopLoss, stopLossRequest, type StopLossCommand } from "./stop-loss-contract";
 import { parseOrder } from "./orders";
 import { parseGuestRetry } from "./guest-retry";
 import { openTradingEvents, type EventState, type TradingEvent } from "./trading-events";
@@ -208,7 +209,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { if (mode === "guest" && snapshot.generation === generation) { credential = null; publish("anonymous"); } }
       });
     },
-    async read(path: "account/recovery" | `account/performance/symbols?${string}` | "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage?side=${"LONG" | "SHORT"}`,  expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
+    async read(path: `account/positions/${number}/stop-loss` | "account/recovery" | `account/performance/symbols?${string}` | "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage?side=${"LONG" | "SHORT"}`,  expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
       const current = credential;
       const sentToken = current?.accessToken;
       if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
@@ -311,6 +312,22 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       } finally {writes--;}
+    },
+    async writeStopLoss(command: StopLossCommand, expected: SessionSnapshot, key: string) {
+      if (retrying) throw new TradingApiError(409, undefined, "TRADING_BUSY");
+      const current = credential, sentToken = current?.accessToken;
+      if (current && !usable(current)) invalidate(current, sentToken);
+      if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      const request = stopLossRequest(command);
+      writes++;
+      try {
+        const value = await tradingJson(origin, request.path, {token:sentToken, method:request.method, body:request.body, idempotencyKey:key}, transport);
+        if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+        return parseStopLoss(value, command.positionId);
+      } catch (error) {
+        if (error instanceof TradingApiError && error.status === 401) invalidate(current,sentToken);
+        throw error;
+      } finally { writes--; }
     },
     async write(command: TradingCommand, expected: SessionSnapshot, key: string) {
       if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");

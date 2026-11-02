@@ -117,8 +117,8 @@ function renderTrading(children:ReactNode) {
 }
 test("positions expose ROE, liquidation price availability and separate partial/full actions",()=>{
   const html=renderTrading(<PositionTable positions={[position]} symbols={symbols}/>);
-  for(const text of ["ROE %","청산 예약 수량","강제청산가","부분 청산","전체 청산"])assert.ok(html.includes(text));
-  assert.match(html,/role="table"/);assert.match(html,/data-key="roe"/);assert.doesNotMatch(html,/data-key="free"/);assert.match(html,/유효 임계값 없음/);
+  for(const text of ["Unrealized PnL · ROE","청산 예약:","Liq. Price","부분 청산","전체 청산","Stop Loss"])assert.ok(html.includes(text));
+  assert.match(html,/role="table"/);assert.match(html,/data-key="pnl"/);assert.doesNotMatch(html,/data-key="free"/);assert.match(html,/유효 임계값 없음/);
 });
 test("row partial close stays in a closed modal while the Close tab keeps its inline editor",()=>{
   const row=renderTrading(<PositionCloseEntry position={position} symbol="BTC / USDT" layout="row"/>);
@@ -134,10 +134,10 @@ test("row partial close stays in a closed modal while the Close tab keeps its in
 });
 test("pending and order history distinguish CLOSE, requested/fill prices, realized PnL and liquidation",()=>{
   const pending=renderTrading(<PendingOrderTable orders={[order(1,"CLOSE","PENDING")]} symbols={symbols}/>);
-  assert.match(pending,/>CLOSE</);assert.match(pending,/Created \(KST\)/);
+  assert.match(pending,/>CLOSE</);assert.match(pending,/Created · KST/);
   assert.match(pending,/접수 · 체결 대기/);
   const history=renderToStaticMarkup(<OrderHistoryTable orders={[order(2,"LIQUIDATE")]} symbols={symbols}/>);
-  for(const value of ["Requested Price","Fill Price","Gross PnL","Filled (KST)","강제청산","4.2"])assert.ok(history.includes(value));
+  for(const value of ["Fill / Order Price","Gross PnL / Fee","Filled / Created · KST","강제청산","4.2"])assert.ok(history.includes(value));
   assert.match(history,/체결 완료/);
 });
 test("partial and full close commands have distinct quantity and reservation guards",()=>{

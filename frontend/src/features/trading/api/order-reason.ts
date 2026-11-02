@@ -1,4 +1,5 @@
 const reasons: Record<string, string> = {
+  STOP_LOSS: "설정한 Mark 가격에 도달해 손절 주문이 실행되었습니다.",
   INSUFFICIENT_MARGIN: "증거금과 수수료를 위한 잔액이 부족합니다.",
   INSUFFICIENT_SETTLEMENT_CASH: "정산에 필요한 잔액이 부족합니다.",
   POSITION_LIMIT_REACHED: "보유 포지션 수 상한에 도달했습니다.", POSITION_LIMIT: "보유 포지션 수 상한에 도달했습니다.",
