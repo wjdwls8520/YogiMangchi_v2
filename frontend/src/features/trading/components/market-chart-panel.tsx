@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { marketEndpoints, parseSymbols, type TradingSymbol } from "../market/catalog";
+import { marketEndpoints, parseSymbols, loadedSymbolCatalog, failedSymbolCatalog, catalogStateLabel, type SymbolCatalog, type TradingSymbol } from "../market/catalog";
 import { retryDelay } from "../market/stream";
 import { useMarketTickers, useTradingSummary } from "../api/queries";
 import { SymbolSelector } from "./symbol-selector";
@@ -27,12 +27,13 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheet = useRef<HTMLDialogElement>(null);
   const sheetTrigger = useRef<HTMLButtonElement>(null);
-  const [catalog, setCatalog] = useState<{ symbols: TradingSymbol[]; allSymbols: TradingSymbol[]; state: "loading" | "unavailable" | "empty" | "ready"; socket: string }>({ symbols: [], allSymbols: [], state: "loading", socket: "" });
+  const [catalog, setCatalog] = useState<SymbolCatalog>({ symbols: [], allSymbols: [], state: "loading", socket: "" });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [interval, setInterval] = useState<CandleInterval>("1m");
   const unavailableIds = useRef(new Set<number>());
   const [catalogRevision, setCatalogRevision] = useState(0);
   const refreshSubscriptionCatalog=useCallback(()=>setCatalogRevision(revision=>revision+1),[]);
+  const retryCatalog=()=>{setCatalog(current=>({...current,state:"loading"}));refreshSubscriptionCatalog();};
   const refreshAfterSymbolError = useCallback((id: number) => {
     if (unavailableIds.current.has(id)) return;
     unavailableIds.current.add(id);
@@ -54,12 +55,10 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         // A refreshed catalog can briefly still advertise the rejected ID.
         // Exclude it for this mounted screen instead of resubscribing in a loop.
         const allSymbols = parseSymbols(await response.json());
-        const symbols = allSymbols.filter((entry) => !unavailableIds.current.has(entry.id)
-          && entry.quoteAsset === "USDT");
-        if (!disposed) setCatalog({ symbols, allSymbols, socket: endpoints.socket, state: symbols.length ? "ready" : "empty" });
+        if (!disposed) setCatalog(loadedSymbolCatalog(allSymbols,endpoints.socket,unavailableIds.current));
       } catch {
         if (!disposed) {
-          setCatalog({ symbols: [], allSymbols: [], socket: "", state: "unavailable" });
+          setCatalog(current=>failedSymbolCatalog(current,unavailableIds.current));
           retry = setTimeout(load, retryDelay(attempt++));
         }
       } finally { clearTimeout(timeout); }
@@ -94,10 +93,12 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
       <div className="market-overview"><header className="market-contract-header">
         <button ref={sheetTrigger} type="button" onClick={openSheet} aria-haspopup="dialog" aria-controls="market-symbol-sheet" aria-expanded={sheetOpen} className="market-sheet-trigger">
           <span className="market-coin-mark" aria-hidden="true">{selected?.symbol.charAt(0) ?? "·"}</span>
-          <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selected?.name ?? "거래 가능 종목 확인 중"}</span></span>
+          <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selected?.name ?? catalogStateLabel(catalog.state)}</span></span>
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         <span className="preview-label">무기한 선물</span>
+        {catalog.state==="unavailable"&&<p role="alert" className="market-list-note">종목을 불러오지 못했습니다. <button type="button" className="account-refresh" onClick={retryCatalog}>다시 조회</button></p>}
+        {catalog.state==="loading"&&catalog.symbols.length>0&&<p role="status" className="market-list-note">종목 목록을 다시 조회하는 중입니다.</p>}
       </header>
         <LiveHeader />
       </div>
@@ -128,6 +129,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         <div className="market-sheet-content">
           <header className="section-heading"><h2 id="sheet-heading" className="section-title">Markets</h2><button type="button" onClick={closeSheet} aria-label="종목 선택 닫기" className="market-sheet-close">닫기</button></header>
           <div className="market-list-note"><label className="field-label" htmlFor="market-search">종목 검색</label><input ref={searchInput} id="market-search" className="market-search" type="search" placeholder="BTC, ETH 또는 종목명" value={symbolSearch} onChange={event=>setSymbolSearch(event.target.value)}/></div>
+          {catalog.state!=="ready"&&<p role="status" className="market-list-note">{catalogStateLabel(catalog.state)}{catalog.state==="unavailable"&&<button type="button" className="account-refresh" onClick={retryCatalog}>다시 조회</button>}</p>}
           {sheetOpen && <SymbolList symbols={catalog.symbols} search={symbolSearch} selectedId={selected?.id??null} onSelect={selectFromSheet} />}
           <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준</p>
         </div>

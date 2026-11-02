@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { marketEndpoints, parseSymbols } from "../src/features/trading/market/catalog";
+import { marketEndpoints, parseSymbols, loadedSymbolCatalog, failedSymbolCatalog, catalogStateLabel, type SymbolCatalog } from "../src/features/trading/market/catalog";
 import { PriceHistory, MAX_PRICE_POINTS } from "../src/features/trading/market/history";
 import { portfolioAllocation, formatMargin } from "../src/features/trading/portfolio/allocation";
 
@@ -48,4 +48,20 @@ test("decimal precision is preserved; missing, zero and invalid margins are safe
   assert.equal(portfolioAllocation([]).view, "empty");
   assert.equal(portfolioAllocation([{ symbol: "BTC", margin: "0" }]).view, "empty");
   for (const margin of ["-1", "NaN", "1,000.00 USDT", "1e5"]) assert.equal(portfolioAllocation([{ symbol: "BTC", margin }]).view, "unavailable");
+});
+
+test("catalog failure is explicit, retains a working selection and recovers through a successful reload",()=>{
+  const initial:SymbolCatalog={symbols:[],allSymbols:[],socket:"",state:"loading"};
+  const failed=failedSymbolCatalog(initial,new Set());
+  assert.equal(catalogStateLabel(initial.state),"거래 가능 종목 확인 중");
+  assert.equal(catalogStateLabel(failed.state),"종목을 불러오지 못했습니다");
+  const symbols=parseSymbols([{id:1,symbol:"BTC",name:"Bitcoin",quoteAsset:"USDT",displaySymbol:"BTC / USDT"}]);
+  const ready=loadedSymbolCatalog(symbols,"ws://trade.example/ws/market",new Set());
+  const unavailable=failedSymbolCatalog(ready,new Set());
+  assert.equal(unavailable.state,"unavailable");assert.equal(unavailable.symbols[0],ready.symbols[0]);
+  assert.equal(unavailable.socket,ready.socket);assert.equal(unavailable.allSymbols,ready.allSymbols);
+  assert.deepEqual(loadedSymbolCatalog(symbols,ready.socket,new Set()),ready);
+  assert.equal(failedSymbolCatalog(ready,new Set([1])).symbols.length,0);
+  assert.equal(loadedSymbolCatalog(symbols,ready.socket,new Set([1])).state,"empty");
+  assert.equal(initial.state,"loading");assert.equal(ready.state,"ready");
 });
