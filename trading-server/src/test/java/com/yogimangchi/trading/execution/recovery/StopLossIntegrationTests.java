@@ -167,6 +167,9 @@ class StopLossIntegrationTests {
         var opened=open(account,btc,Position.Side.LONG,"1");String path="/api/v1/trading/account/positions/"+opened.positionId()+"/stop-loss";
         mvc.perform(get(path)).andExpect(status().isUnauthorized());
         mvc.perform(get(path).header("Authorization","Bearer "+actor.token())).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("NONE")).andExpect(jsonPath("$.version").value(0)).andExpect(jsonPath("$.stopPrice").isEmpty());
+        for(String incomplete:List.of("{\"stopPrice\":\"950\"}","{\"expectedVersion\":0}"))
+            mvc.perform(put(path).header("Authorization","Bearer "+actor.token()).header("Idempotency-Key",key()).contentType("application/json").content(incomplete))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_STOP_LOSS"));
         String key=key();var original=stops.put(account,opened.positionId(),key,new StopLossRequest(n("950"),0L));
         assertThat(stops.put(account,opened.positionId(),key,new StopLossRequest(n("950.0"),0L))).isEqualTo(original);
         rejects(()->stops.put(account,opened.positionId(),key,new StopLossRequest(n("960"),0L)),ErrorCode.IDEMPOTENCY_CONFLICT);
@@ -181,7 +184,8 @@ class StopLossIntegrationTests {
                 .andExpect(status().isOk()).andExpect(header().string("Access-Control-Allow-Origin","http://localhost:3000"));
         mvc.perform(delete(path).param("expectedVersion","1").header("Authorization","Bearer "+actor.token()).header("Idempotency-Key",key()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CANCELED"));
-        mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andExpect(jsonPath("$.paths['/api/v1/trading/account/positions/{positionId}/stop-loss'].put").exists());
+        mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andExpect(jsonPath("$.paths['/api/v1/trading/account/positions/{positionId}/stop-loss'].put").exists())
+                .andExpect(jsonPath("$.components.schemas.StopLossRequest.required").value(org.hamcrest.Matchers.containsInAnyOrder("stopPrice","expectedVersion")));
     }
 
     @RepeatedTest(3) void manualCloseRestartGuestRetryAndFinalWithdrawalExpireStopWithoutFakeFill()throws Exception{
