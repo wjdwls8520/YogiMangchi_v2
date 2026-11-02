@@ -167,3 +167,18 @@ test("trade history distinguishes stop loss, manual close and liquidation withou
     assert.match(html,/Long ×3/);assert.match(html,/0.02762505/);
   }
 });
+
+test("canceled rows stay concise while known cancellations and unknown rejections remain explicit",()=>{
+  for(const reason of [null,"untrusted private detail","__proto__"]){
+    const html=renderToStaticMarkup(<OrderHistoryTable orders={[{...order(1,"OPEN"),status:"CANCELED",reason,fill:null}]} symbols={symbols}/>);
+    assert.match(html,/취소 완료/);assert.doesNotMatch(html,/서버에서 처리|알려진 상세|untrusted private|__proto__/);
+  }
+  for(const reason of ["STOP_LOSS","MEMBER_RESTART","CLIENT_CANCEL"]){
+    const html=renderToStaticMarkup(<OrderHistoryTable orders={[{...order(1,"OPEN"),status:"CANCELED",reason,fill:null}]} symbols={symbols}/>);
+    assert.match(html,/손절 주문|다시시작|사용자 취소/);
+  }
+  for(const reason of [null,"untrusted private detail"]){
+    const html=renderToStaticMarkup(<OrderHistoryTable orders={[{...order(1,"OPEN"),status:"REJECTED",reason,fill:null}]} symbols={symbols}/>);
+    assert.match(html,/거절 사유를 확인할 수 없습니다/);assert.doesNotMatch(html,/untrusted private detail|체결 완료/);
+  }
+});

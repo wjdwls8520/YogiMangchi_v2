@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { orderReason } from "../api/order-reason";
+import { knownOrderReason, orderReason } from "../api/order-reason";
 import { orderStatusLabel, type TradingOrder } from "../api/orders";
 import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
@@ -19,7 +19,11 @@ function side(value:string,leverage:number) {return <span className="table-side"
 function price(value:string|null|undefined,symbolId:number,symbols:readonly TradingSymbol[]) {return formatMarketPrice(value,symbols.find(symbol=>symbol.id===symbolId)?.priceTickSize);}
 function kst(value:string) {return <time dateTime={value}>{new Date(value).toLocaleString("sv-SE",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"})}</time>;}
 function Detail({children}:{children:ReactNode}) {return <details className="table-record-detail"><summary>상세</summary><div>{children}</div></details>;}
-function Result({order}:{order:TradingOrder}) {return <span className="table-stack">{orderStatusLabel(order.status)}{order.reason&&<small>{orderReason(order.reason)}</small>}</span>;}
+function Result({order}:{order:TradingOrder}) {
+  const known=knownOrderReason(order.reason);
+  const reason=order.status==="CANCELED" ? known : order.status==="REJECTED" ? known??"거절 사유를 확인할 수 없습니다. 주문 조건과 계정 상태를 확인해 주세요." : order.reason ? orderReason(order.reason) : null;
+  return <span className="table-stack">{orderStatusLabel(order.status)}{reason&&<small>{reason}</small>}</span>;
+}
 
 export function PositionTable({positions,symbols}:{positions:readonly Position[];symbols:readonly TradingSymbol[]}) {
   const prices=usePositionMarkets();
