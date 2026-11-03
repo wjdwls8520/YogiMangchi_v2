@@ -1,4 +1,14 @@
 import type { ReactNode } from "react";
+import type { SessionSnapshot } from "../api/guest-session";
+
+export function MemberAccountPreparation({ snapshot, disabled, onPrepare, onRestore }: {
+  snapshot: SessionSnapshot; disabled: boolean; onPrepare: () => void; onRestore: () => void;
+}) {
+  if (snapshot.mode !== "member") return <p role="status">회원 동의와 금융 계정 상태를 확인하는 중입니다.</p>;
+  if (snapshot.phase === "loading" || snapshot.phase === "creating") return <p role="status">회원 금융 계정을 확인하는 중입니다.</p>;
+  if (snapshot.phase === "ready" || snapshot.retrying) return null;
+  return <><p role="status">{snapshot.phase === "anonymous" ? "회원 Trading 계정이 아직 준비되지 않았습니다. 신규 계정의 1회차 시작 자금은 서버가 10,000 USDT로 지급하며 기존 계정 잔액은 자동 변경하지 않습니다." : "회원 금융 계정을 확인하지 못했습니다. 임시 잔액은 표시하지 않습니다."}</p><button className="member-secondary" disabled={disabled} onClick={snapshot.phase === "anonymous" ? onPrepare : onRestore}>회원 계정 준비·잔액 다시 확인</button></>;
+}
 
 export function SimulationSection({ children }: { children: ReactNode }) {
   return <section className="member-simulation" aria-labelledby="member-simulation-title"><h2 id="member-simulation-title">내 모의투자 · 회차별 포트폴리오</h2>{children}</section>;
