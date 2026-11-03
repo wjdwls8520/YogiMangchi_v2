@@ -7,7 +7,7 @@ export class TradingApiError extends Error {
   }
 }
 
-const serverCodes = new Set(["MEMBER_CREDENTIAL_REQUIRED", "ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ORDER_SIZE_LIMIT_EXCEEDED", "POSITION_LIQUIDATION", "MARGIN_MIGRATION_REQUIRED", "GUEST_ACCOUNT_REQUIRED", "GUEST_CREDENTIAL_EXPIRED", "INVALID_LEVERAGE", "LEVERAGE_MISMATCH", "TRADING_BUSY", "CLOSE_QUANTITY_EXCEEDED", "ENGINE_RECOVERING", "ORDER_NOT_FOUND",
+const serverCodes = new Set(["INVALID_STOP_LOSS", "STOP_LOSS_NOT_PROTECTIVE", "STOP_LOSS_BEYOND_LIQUIDATION", "STOP_LOSS_VERSION_CONFLICT","MEMBER_CREDENTIAL_REQUIRED", "ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ORDER_SIZE_LIMIT_EXCEEDED", "POSITION_LIQUIDATION", "MARGIN_MIGRATION_REQUIRED", "GUEST_ACCOUNT_REQUIRED", "GUEST_CREDENTIAL_EXPIRED", "INVALID_LEVERAGE", "LEVERAGE_MISMATCH", "TRADING_BUSY", "CLOSE_QUANTITY_EXCEEDED", "ENGINE_RECOVERING", "ORDER_NOT_FOUND",
   "ORDER_NOT_PENDING", "PENDING_LIMIT_REACHED", "INVALID_ORDER", "INVALID_IDEMPOTENCY_KEY", "IDEMPOTENCY_CONFLICT",
   "PRICE_NOT_FRESH", "INSUFFICIENT_MARGIN", "ACCOUNT_AT_RISK", "ACCOUNT_NOT_ACTIVE", "POSITION_NOT_FOUND", "MEMBER_ACCOUNT_REQUIRED", "MEMBER_RESTART_LIMITED", "ROUND_NOT_FOUND", "TRADING_ACCOUNT_REQUIRED",
   "POSITION_NOT_OPEN", "SYMBOL_NOT_AVAILABLE", "POSITION_LIMIT_REACHED", "ACCOUNT_NOT_FOUND", "MARKETABLE_LIMIT_NOT_ALLOWED"]);
@@ -19,7 +19,7 @@ export function tradingOrigin(base: string) {
 
 // Never propagate response bodies, URLs, headers or fetch error causes into UI/errors.
 export async function tradingJson(origin: string, path: string, options: {
-  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT"; body?: object; idempotencyKey?: string;
+  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT" | "DELETE"; body?: object; idempotencyKey?: string;
 } = {}, transport: typeof fetch = fetch): Promise<unknown> {
   return apiJson(origin, `/api/v1/trading/${path}`, options, transport);
 }
@@ -32,7 +32,7 @@ export async function marketCandlesJson(origin: string, symbolId: number, interv
   return apiJson(origin, `/api/v1/market/candles?${query}`, { signal }, transport);
 }
 async function apiJson(origin: string, path: string, options: {
-  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT"; body?: object; idempotencyKey?: string;
+  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT" | "DELETE"; body?: object; idempotencyKey?: string;
 }, transport: typeof fetch = fetch): Promise<unknown> {
   const signal = AbortSignal.any([AbortSignal.timeout(10_000), ...(options.signal ? [options.signal] : [])]);
   try {

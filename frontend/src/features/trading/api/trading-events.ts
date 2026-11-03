@@ -1,3 +1,4 @@
+import { parseStopLoss } from "./stop-loss-contract";
 import { orderReason } from "./order-reason";
 import { instant, invalidContract, list, record } from "./contracts";
 import { parseOrder } from "./orders";
@@ -9,7 +10,12 @@ export function eventId(value: unknown): string {
   return value;
 }
 export function parseTradingEvent(value: unknown) {
-  const row = record(value), order = parseOrder(row.order);
+  const row = record(value);
+  if (row.type === "STOP_LOSS_CHANGED") {
+    if (row.order !== null || eventId(row.eventId) === "0") return invalidContract();
+    return {eventId:eventId(row.eventId),type:"STOP_LOSS_CHANGED" as const,occurredAt:instant(row.occurredAt),order:null,stopLoss:parseStopLoss(row.stopLoss)};
+  }
+  const order = parseOrder(row.order);
   const expected = order.action === "LIQUIDATE" && order.status === "FILLED" ? "POSITION_LIQUIDATED" : `ORDER_${order.status}`;
   if (row.type !== expected || eventId(row.eventId) === "0") return invalidContract();
   return { eventId: eventId(row.eventId), type: expected, occurredAt: instant(row.occurredAt), order };
@@ -121,6 +127,8 @@ export function openTradingEvents(options: {
 // MARKET mutation feedback already covers immediate fills. These notices cover asynchronous server transitions.
 function describeEvent(event: TradingEvent): TradingNotice | null {
   const order = event.order;
+  if (!order) return null;
+  if (order.reason === "STOP_LOSS" && order.status === "FILLED") return {kind:"warning",title:"손절 주문이 체결되었습니다",message:`${order.side} · 주문 #${order.orderId} · 체결 내역을 확인해 주세요.`};
   if (event.type === "POSITION_LIQUIDATED") return { kind: "error", title: "포지션이 강제청산되었습니다", message: `${order.side} · 주문 #${order.orderId} · 체결 내역을 확인해 주세요.` };
   if (order.type !== "LIMIT") return null;
   if (event.type === "ORDER_FILLED") return { kind: "success", title: "지정가 주문이 체결되었습니다", message: `${order.side} · ${order.action} · 주문 #${order.orderId} · 수량 ${order.quantity}` };
@@ -130,5 +138,5 @@ function describeEvent(event: TradingEvent): TradingNotice | null {
 
 export function tradingEventNotice(event: TradingEvent): TradingNotice | null {
   const notice = describeEvent(event);
-  return notice ? { ...notice, resultKey: `${event.order.orderId}:${event.order.status}` } : null;
+  return notice && event.order ? { ...notice, resultKey: `${event.order.orderId}:${event.order.status}` } : null;
 }

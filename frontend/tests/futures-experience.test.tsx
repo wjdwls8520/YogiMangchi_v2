@@ -12,7 +12,8 @@ import { tradingKeys } from "../src/features/trading/api/query-keys";
 import { TradingApiError } from "../src/features/trading/api/client";
 import { CloseOrderFields } from "../src/features/trading/components/close-order-fields";
 import { PositionCloseEntry } from "../src/features/trading/components/position-close-entry";
-import { OrderHistoryTable, PendingOrderTable, PositionTable } from "../src/features/trading/components/account-tables";
+import { FillHistoryTable, OrderHistoryTable, PendingOrderTable, PositionTable } from "../src/features/trading/components/account-tables";
+import { parseFills } from "../src/features/trading/api/history";
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
 import { MemberProvider } from "../src/features/member/components/member-provider";
 import { SelectedMarketProvider } from "../src/features/trading/components/selected-market-provider";
@@ -117,8 +118,8 @@ function renderTrading(children:ReactNode) {
 }
 test("positions expose ROE, liquidation price availability and separate partial/full actions",()=>{
   const html=renderTrading(<PositionTable positions={[position]} symbols={symbols}/>);
-  for(const text of ["ROE %","청산 예약 수량","강제청산가","부분 청산","전체 청산"])assert.ok(html.includes(text));
-  assert.match(html,/role="table"/);assert.match(html,/data-key="roe"/);assert.doesNotMatch(html,/data-key="free"/);assert.match(html,/유효 임계값 없음/);
+  for(const text of ["Unrealized PnL · ROE","청산 예약:","Liq. Price","부분 청산","전체 청산","Stop Loss"])assert.ok(html.includes(text));
+  assert.match(html,/role="table"/);assert.match(html,/data-key="pnl"/);assert.doesNotMatch(html,/data-key="free"/);assert.match(html,/유효 임계값 없음/);
 });
 test("row partial close stays in a closed modal while the Close tab keeps its inline editor",()=>{
   const row=renderTrading(<PositionCloseEntry position={position} symbol="BTC / USDT" layout="row"/>);
@@ -134,10 +135,10 @@ test("row partial close stays in a closed modal while the Close tab keeps its in
 });
 test("pending and order history distinguish CLOSE, requested/fill prices, realized PnL and liquidation",()=>{
   const pending=renderTrading(<PendingOrderTable orders={[order(1,"CLOSE","PENDING")]} symbols={symbols}/>);
-  assert.match(pending,/>CLOSE</);assert.match(pending,/Created \(KST\)/);
+  assert.match(pending,/>CLOSE</);assert.match(pending,/Created · KST/);
   assert.match(pending,/접수 · 체결 대기/);
   const history=renderToStaticMarkup(<OrderHistoryTable orders={[order(2,"LIQUIDATE")]} symbols={symbols}/>);
-  for(const value of ["Requested Price","Fill Price","Gross PnL","Filled (KST)","강제청산","4.2"])assert.ok(history.includes(value));
+  for(const value of ["Fill / Order Price","Gross PnL / Fee","Filled / Created · KST","강제청산","4.2"])assert.ok(history.includes(value));
   assert.match(history,/체결 완료/);
 });
 test("partial and full close commands have distinct quantity and reservation guards",()=>{
@@ -155,4 +156,29 @@ test("partial and full close commands have distinct quantity and reservation gua
 test("close sizing supports 1% steps and never rounds above free quantity",()=>{
   assert.equal(closePreset("0.8",1),"0.008");assert.equal(closePreset("0.8",37),"0.296");assert.equal(closePreset("0.8",99),"0.792");
   for(const percent of [-1,0,100.1,101,NaN])assert.equal(closePreset("1",percent),"");
+});
+
+test("trade history distinguishes stop loss, manual close and liquidation without adding a column",()=>{
+  const raw={fillId:1,orderId:1,positionId:1,lifecyclePositionId:1,tradingSymbolId:1,type:"MARKET",action:"CLOSE",side:"LONG",leverage:3,quantity:"0.02762505",price:"77000",realizedPnl:"-1",fee:"0.1",settlementAdjustment:"0",marginMode:"ISOLATED",priceEventTime:new Date(now).toISOString(),executedAt:new Date(now).toISOString()};
+  for(const [change,label] of [[{reason:"STOP_LOSS"},"손절 청산"],[{reason:null},"청산"],[{},"청산"],[{action:"LIQUIDATE",reason:null},"강제청산"]] as const){
+    const html=renderToStaticMarkup(<FillHistoryTable fills={parseFills([{...raw,...change}])} symbols={symbols}/>);
+    assert.match(html,new RegExp(`<small>${label}</small>`));
+    assert.equal((html.match(/role="columnheader"/g)??[]).length,9);
+    assert.match(html,/Long ×3/);assert.match(html,/0.02762505/);
+  }
+});
+
+test("canceled rows stay concise while known cancellations and unknown rejections remain explicit",()=>{
+  for(const reason of [null,"untrusted private detail","__proto__"]){
+    const html=renderToStaticMarkup(<OrderHistoryTable orders={[{...order(1,"OPEN"),status:"CANCELED",reason,fill:null}]} symbols={symbols}/>);
+    assert.match(html,/취소 완료/);assert.doesNotMatch(html,/서버에서 처리|알려진 상세|untrusted private|__proto__/);
+  }
+  for(const reason of ["STOP_LOSS","MEMBER_RESTART","CLIENT_CANCEL"]){
+    const html=renderToStaticMarkup(<OrderHistoryTable orders={[{...order(1,"OPEN"),status:"CANCELED",reason,fill:null}]} symbols={symbols}/>);
+    assert.match(html,/손절 주문|다시시작|사용자 취소/);
+  }
+  for(const reason of [null,"untrusted private detail"]){
+    const html=renderToStaticMarkup(<OrderHistoryTable orders={[{...order(1,"OPEN"),status:"REJECTED",reason,fill:null}]} symbols={symbols}/>);
+    assert.match(html,/거절 사유를 확인할 수 없습니다/);assert.doesNotMatch(html,/untrusted private detail|체결 완료/);
+  }
 });

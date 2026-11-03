@@ -32,6 +32,7 @@ export function parseFills(value: unknown, before?: number | string) {
     return { fillId: id(row.fillId), orderId: id(row.orderId), positionId: id(row.positionId), lifecyclePositionId: id(row.lifecyclePositionId),
       tradingSymbolId: id(row.tradingSymbolId), type: choice(row.type, ["MARKET", "LIMIT"]),
       action: choice(row.action, ["OPEN", "CLOSE", "LIQUIDATE"]), side: choice(row.side, ["LONG", "SHORT"]),
+      reason: row.reason === "STOP_LOSS" ? "STOP_LOSS" as const : null,
       leverage: id(row.leverage), quantity: decimal(row.quantity), price: decimal(row.price),
       realizedPnl: decimal(row.realizedPnl), fee: decimal(row.fee), settlementAdjustment: decimal(row.settlementAdjustment),
       marginMode: choice(row.marginMode, ["ISOLATED", "CROSS"]), priceEventTime: instant(row.priceEventTime), executedAt: instant(row.executedAt) };

@@ -1,4 +1,6 @@
 const reasons: Record<string, string> = {
+  CLIENT_CANCEL: "사용자 취소",
+  STOP_LOSS: "설정한 Mark 가격에 도달해 손절 주문이 실행되었습니다.",
   INSUFFICIENT_MARGIN: "증거금과 수수료를 위한 잔액이 부족합니다.",
   INSUFFICIENT_SETTLEMENT_CASH: "정산에 필요한 잔액이 부족합니다.",
   POSITION_LIMIT_REACHED: "보유 포지션 수 상한에 도달했습니다.", POSITION_LIMIT: "보유 포지션 수 상한에 도달했습니다.",
@@ -13,6 +15,9 @@ const reasons: Record<string, string> = {
   ACCOUNT_RISK_PENDING: "수신된 가격 위험 작업을 처리 중입니다.", ACCOUNT_RECOVERY_HELD: "가격 위험 기록의 운영 검토가 필요합니다.",
   MEMBER_RESTART: "모의투자 다시시작으로 취소되었습니다.", MEMBER_WITHDRAWAL: "회원 탈퇴 정리로 취소되었습니다.",
 };
+export function knownOrderReason(reason: string | null | undefined) {
+  return reason && Object.hasOwn(reasons,reason) ? reasons[reason] : null;
+}
 export function orderReason(reason: string | null | undefined) {
-  return reason ? reasons[reason] ?? "서버에서 처리했습니다. 알려진 상세 사유가 없습니다." : "—";
+  return reason ? knownOrderReason(reason) ?? "서버에서 처리했습니다. 알려진 상세 사유가 없습니다." : "—";
 }

@@ -110,3 +110,15 @@ test("credential rotation reconnects at the retained cursor without replaying a 
   h.sockets[1].frame("TRADING_EVENT", event("124"));
   assert.deepEqual(h.delivered.map(value => value.eventId), ["123", "124"]); h.stop();
 });
+
+test("stop loss changed events deduplicate durable cursors and never create duplicate fill notices",async()=>{
+  const h=harness();await flush();h.handshake();
+  const sl={positionId:17,tradingSymbolId:1,side:"LONG",status:"TRIGGERED",stopPrice:"99",version:2,updatedAt:at,triggeredAt:at,priceEventTime:at,triggerPrice:"98",triggerOrderId:3,reason:"STOP_LOSS"};
+  const changed={eventId:"1",type:"STOP_LOSS_CHANGED",occurredAt:at,order:null,stopLoss:sl};
+  h.sockets[0].frame("TRADING_EVENT",changed);h.sockets[0].frame("TRADING_EVENT",changed);
+  assert.equal(h.delivered.length,1);assert.equal(tradingEventNotice(h.delivered[0]),null);
+  const filled={...order,type:"MARKET",action:"CLOSE",status:"FILLED",reason:"STOP_LOSS",completedAt:at,fill:{fillId:1,quantity:"0.001",price:"98",priceEventTime:at,executedAt:at,realizedPnl:"-1",fee:"0.03",settlementAdjustment:"0",marginMode:"ISOLATED"}};
+  h.sockets[0].frame("TRADING_EVENT",{eventId:"2",type:"ORDER_FILLED",occurredAt:at,order:filled,stopLoss:null});
+  h.sockets[0].frame("TRADING_EVENT",changed);
+  assert.equal(h.delivered.length,2);assert.match(tradingEventNotice(h.delivered[1])!.title,/손절/);h.stop();
+});
