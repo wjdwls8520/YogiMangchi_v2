@@ -3,7 +3,8 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { contentMessage } from "../api/client";
+import { ContentApiError, contentMessage } from "../api/client";
+import { MemberErrorActions } from "./member-error-actions";
 import { parseOwnProfile } from "../api/contracts";
 import { nicknameIssue } from "../api/nickname";
 import { useMember, MemberLogout } from "./member-provider";
@@ -17,6 +18,7 @@ export function MemberAccount() {
   const { session, snapshot } = useMember(), client = useQueryClient();
   const [pending, setPending] = useState(false), [message, setMessage] = useState<string | null>(null), [error, setError] = useState<string | null>(null);
   const active = useRef(false);
+  const [requestError, setRequestError] = useState<ContentApiError | null>(null);
   const profile = useQuery({ queryKey: ["member", "own", snapshot.memberId, snapshot.generation], enabled: snapshot.phase === "ready",
     queryFn: async ({ signal }) => parseOwnProfile(await session.request("/members/me", { signal }), snapshot.memberId!),
   });
@@ -26,11 +28,11 @@ export function MemberAccount() {
     const nicknameChanged = nickname !== profile.data?.nickname;
     const nicknameError = nicknameChanged ? nicknameIssue(nickname) : null;
     if (nicknameError || profileMessage.length > 255) { setError(nicknameError ?? "소개는 최대 255자로 입력해 주세요."); return; }
-    active.current = true; setPending(true); setError(null); setMessage(null);
+    active.current = true; setPending(true); setError(null); setMessage(null); setRequestError(null);
     try {
       parseOwnProfile(await session.request("/members/me/profile", { method: "PATCH", body: { ...(nicknameChanged ? { nickname } : {}), profileMessage } }), snapshot.memberId!);
       await client.invalidateQueries({ queryKey: ["member"] }); setMessage("프로필을 저장했습니다.");
-    } catch (error) { setError(contentMessage(error)); }
+    } catch (error) { setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null); }
     finally { active.current = false; setPending(false); }
   }
   return <MemberShell title="내 계정">
@@ -41,7 +43,7 @@ export function MemberAccount() {
         <ProfileEditForm key={`${profile.data.nickname}:${profile.data.profileMessage}`} nickname={profile.data.nickname} message={profile.data.profileMessage} pending={pending} onSubmit={event => void save(event)} />
         <p className="member-note">Guest 모의투자와 회원 선물 계정은 별개이며 기록을 자동 합치지 않습니다.</p>
         <MemberConsents />{snapshot.consentStatus === "accepted" && <TradingDataProvider><MemberSimulation /></TradingDataProvider>}</>}
-      {message && <p role="status" className="member-message">{message}</p>}{error && <p role="alert" className="member-message">{error}</p>}
+      {message && <p role="status" className="member-message">{message}</p>}{error && <><p role="alert" className="member-message">{error}</p><MemberErrorActions error={requestError} checking={pending || profile.isFetching} onCheck={() => void profile.refetch()} /></>}
     </>}
     <MemberWithdrawal />
   </MemberShell>;
