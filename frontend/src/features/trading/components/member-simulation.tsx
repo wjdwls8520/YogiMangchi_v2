@@ -9,7 +9,7 @@ import { parseRound, parseRoundLedger, parseRoundSummary, roundPage, type RoundL
 import { formatDecimal, formatQuantity } from "../api/account";
 import { TradingApiError } from "../api/client";
 import { mutationMessage, uncertainMutation } from "../api/mutation-request";
-import { RestartConfirmation, SimulationSection } from "./member-simulation-views";
+import { MemberAccountPreparation, RestartConfirmation, SimulationSection } from "./member-simulation-views";
 import { reportAdmissionRejection } from "../api/admission-rejection";
 import { useTradingAdmission } from "../api/recovery";
 import { SymbolPerformance } from "./symbol-performance";
@@ -87,7 +87,7 @@ function MemberSimulationContent() {
   const summary = !detail.isError && enabled ? detail.data : undefined;
   const nextAt = current.data?.nextAvailableAt ?? limitedAt;
   return <SimulationSection>
-    {snapshot.mode !== "member" ? <p role="status">회원 동의와 금융 계정 상태를 확인하는 중입니다.</p> : snapshot.phase !== "ready" && !snapshot.retrying ? <><p role="status">{snapshot.phase === "anonymous" ? "회원 Trading 계정이 아직 준비되지 않았습니다. 신규 계정의 1회차 시작 자금은 서버가 10,000 USDT로 지급하며 기존 계정 잔액은 자동 변경하지 않습니다." : "회원 금융 계정을 확인하지 못했습니다. 임시 잔액은 표시하지 않습니다."}</p><button className="member-secondary" disabled={pending || !!intent || snapshot.phase === "loading" || snapshot.phase === "creating"} onClick={() => { void (snapshot.phase === "anonymous" ? session.createMember() : session.restore()); }}>회원 계정 준비·잔액 다시 확인</button></> : null}
+    <MemberAccountPreparation snapshot={snapshot} disabled={pending || !!intent} onPrepare={() => { void session.createMember(); }} onRestore={() => { void session.restore(); }} />
     {enabled && <><p className="member-note">서버 기준 현재 회차 · {current.data?.round.roundNumber ?? "확인 중"}회차. 과거 회차는 읽기 전용이며 거래 화면은 현재 회차만 사용합니다.</p>
       {(current.isError || rounds.isError || detail.isError) && <p className="member-message" role="alert">회차 정보를 확인하지 못했습니다. <button className="account-refresh" onClick={() => { void current.refetch(); void rounds.refetch(); void detail.refetch(); }}>다시 조회</button></p>}
       <label className="member-round-select">모의투자 회차<select aria-label="모의투자 회차 선택" value={selectedId ?? ""} disabled={!rounds.data || rounds.isError} onChange={event => setSelected(Number(event.currentTarget.value))}>
