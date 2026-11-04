@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ContentApiError, contentJson, contentMessage, contentRecovery } from "../src/features/member/api/client";
 import { createMemberSession } from "../src/features/member/api/session";
-import { MemberErrorActions } from "../src/features/member/components/member-error-actions";
+import { MemberErrorActions, RecoveredLoginAction } from "../src/features/member/components/member-error-actions";
+import { readLoginRecovery } from "../src/features/member/api/login-recovery";
 import { acceptance, type PolicyBundle } from "../src/features/member/api/policies";
 
 const origin = "http://localhost:8080";
@@ -77,4 +78,20 @@ test("CSRF and busy mutation rejection do not log out, rotate access or automati
     assert.equal(calls.filter(x => x.startsWith("POST:") && x.endsWith("/members/me/consents")).length, 1);
     assert.equal(calls.some(x => x.endsWith("/auth/logout")), false);
   }
+});
+
+test("lost signup/login response recovery only reads flow and LOGIN_READY exposes an explicit completion action",async()=>{
+  const calls:string[]=[];
+  const flow=await readLoginRecovery(origin,async(url,options)=>{
+    calls.push(`${options?.method??"GET"}:${new URL(String(url)).pathname}`);
+    return json({status:"LOGIN_READY",provider:"GOOGLE",email:"fixture@example.invalid"});
+  });
+  assert.equal(flow.status,"LOGIN_READY"); assert.deepEqual(calls,["GET:/api/v1/auth/flow"]);
+  let completions=0;
+  const html=renderToStaticMarkup(<RecoveredLoginAction pending={false} onComplete={()=>{completions++;}}/>);
+  assert.match(html,/type="button"[^>]*>로그인 완료하기/); assert.doesNotMatch(html,/disabled=|로그인을 완료하는 중/);
+  assert.equal(completions,0,"lookup and rendering must not automatically repeat login completion");
+  assert.match(renderToStaticMarkup(<RecoveredLoginAction pending onComplete={()=>{completions++;}}/>),/disabled=""/);
+  assert.equal(contentRecovery(new ContentApiError(0)),"state");
+  await assert.rejects(readLoginRecovery(origin,async()=>json({code:"LOGIN_PROOF_EXPIRED"},401)),error=>error instanceof ContentApiError&&contentRecovery(error)==="login");
 });

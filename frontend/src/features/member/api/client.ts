@@ -15,6 +15,7 @@ export function contentRecovery(error: unknown): "policies" | "login" | "state" 
   if (["POLICY_VERSION_CHANGED", "POLICY_VERSION_REQUIRED", "REQUIRED_CONSENT_MISSING", "POLICY_VERSION_OR_CONSENT_INVALID"].includes(error.code ?? "")) return "policies";
   if (error.code === "LOGIN_PROOF_REQUIRED" || error.code === "LOGIN_PROOF_EXPIRED") return "login";
   if (error.code === "MEMBER_BUSY" || error.code === "MEMBER_ALREADY_EXISTS" || error.code === "RESOURCE_ALREADY_EXISTS") return "state";
+  if (error.status === 0 || error.status === 422 || error.status >= 500) return "state";
   return error.code === "CSRF_INVALID" ? "csrf" : null;
 }
 export function contentOrigin(value: string) {
