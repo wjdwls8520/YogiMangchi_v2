@@ -27,26 +27,45 @@ export function mutationRequest(command: TradingCommand) {
     body: { ...(command.quantity === undefined ? {} : { quantity: command.quantity }), ...(command.kind === "limitClose" ? { limitPrice: command.limitPrice } : {}) }, keyed: true };
 }
 export function uncertainMutation(error: unknown) {
+  if (error instanceof TradingApiError && error.attemptOutcome === "NOT_ACCEPTED"
+    && (error.status === 409 && error.code === "TRADING_BUSY" || error.status === 503 && error.code === "ENGINE_RECOVERING")) return false;
+  if (error instanceof TradingApiError && error.outcome === "UNKNOWN") return true;
   if (error instanceof TradingApiError && error.outcome === "NOT_ACCEPTED" && error.status === 503
     && ["ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ENGINE_RECOVERING"].includes(error.code ?? "")) return false;
   return !(error instanceof TradingApiError) || error.status === 0 || error.status === 422 || error.status >= 500;
 }
+// A later rejection describes that attempt, not the outcome of an earlier lost response.
+export function mutationStillUnconfirmed(error: unknown, previouslyUnconfirmed = false) {
+  return previouslyUnconfirmed || uncertainMutation(error);
+}
+export const unconfirmedMutationMessage = "이전 요청의 결과가 아직 확인되지 않았습니다. 원래 키·내용으로 재전송하면 아직 접수되지 않은 요청이 실행될 수 있습니다. 새 요청은 만들지 않습니다.";
 export type TradingIntent = { command: TradingCommand; session: SessionSnapshot; key: string };
+export function tradingSubmissionAllowed(command: TradingCommand, unresolved: TradingIntent | null, confirming: boolean, admitted: boolean) {
+  return unresolved ? confirming && JSON.stringify(unresolved.command) === JSON.stringify(command) : admitted;
+}
 
 export function createTradingIntent(send: (request: TradingIntent) => Promise<TradingOrder>, newKey: () => string = () => crypto.randomUUID()) {
   let flight: Promise<TradingOrder> | null = null;
   let unresolved: TradingIntent | null = null;
+  let sending: TradingIntent | null = null;
+  const sameOwner = (left: SessionSnapshot, right: SessionSnapshot) => left.accountId === right.accountId && left.generation === right.generation;
   return {
+    getUnconfirmed(session: SessionSnapshot) { return unresolved && sameOwner(unresolved.session, session) ? { ...unresolved, command:{...unresolved.command}, session:{...unresolved.session} } : null; },
     execute(command: TradingCommand, session: SessionSnapshot) {
-      if (flight) return flight;
       mutationRequest(command);
+      if (flight) {
+        if (sending && sameOwner(sending.session, session) && JSON.stringify(sending.command) === JSON.stringify(command)) return flight;
+        return Promise.reject(new TradingApiError(409, "처리 중인 요청의 결과를 먼저 확인해 주세요.", "TRADING_BUSY"));
+      }
       if (unresolved && (unresolved.session.accountId !== session.accountId || unresolved.session.generation !== session.generation)) unresolved = null;
       if (unresolved && JSON.stringify(unresolved.command) !== JSON.stringify(command)) return Promise.reject(new TradingApiError(409, "이전 요청의 결과 확인을 먼저 완료해 주세요."));
       const request = unresolved ?? { command: { ...command }, session: { ...session }, key: newKey() };
+      const wasUnconfirmed = !!unresolved;
+      sending = request;
       flight = send(request).then((order) => { unresolved = null; return order; }, (error: unknown) => {
-        unresolved = uncertainMutation(error) ? request : null;
+        unresolved = mutationStillUnconfirmed(error, wasUnconfirmed) ? request : null;
         throw error;
-      }).finally(() => { flight = null; });
+      }).finally(() => { flight = null; sending = null; });
       return flight;
     },
   };
@@ -70,10 +89,10 @@ const businessMessages: Record<string, string> = {
   ACCOUNT_NOT_ACTIVE: "현재 계정은 거래할 수 없습니다.", SYMBOL_NOT_AVAILABLE: "현재 거래할 수 없는 종목입니다.",
 };
 export function mutationMessage(error: unknown) {
-  if (!(error instanceof TradingApiError)) return "요청 결과를 확인할 수 없습니다. 같은 요청으로 결과 확인을 다시 시도해 주세요.";
+  if (!(error instanceof TradingApiError)) return unconfirmedMutationMessage;
   if (error.code && ["ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ORDER_SIZE_LIMIT_EXCEEDED", "POSITION_LIMIT_REACHED", "PENDING_LIMIT_REACHED", "POSITION_LIQUIDATION"].includes(error.code)) return orderReason(error.code);
   if (error.code && businessMessages[error.code]) return businessMessages[error.code];
   if (error.status === 401 || error.status === 403) return "계정 인증을 확인할 수 없습니다. 계정 조회를 새로고침해 주세요. 주문은 새 계정으로 재전송하지 않습니다.";
-  if (uncertainMutation(error)) return "요청 결과를 확인할 수 없습니다. 같은 요청으로 결과 확인을 다시 시도해 주세요.";
+  if (uncertainMutation(error)) return unconfirmedMutationMessage;
   return "요청을 처리하지 못했습니다. 입력과 최신 계정 상태를 확인해 주세요.";
 }

@@ -1,7 +1,7 @@
 import { marketEndpoints } from "../market/catalog";
 
 export class TradingApiError extends Error {
-  constructor(readonly status: number, message = "Trading 데이터를 불러올 수 없습니다.", readonly code?: string, readonly nextAvailableAt?: string, readonly outcome?: "NOT_ACCEPTED" | "UNKNOWN") {
+  constructor(readonly status: number, message = "Trading 데이터를 불러올 수 없습니다.", readonly code?: string, readonly nextAvailableAt?: string, readonly outcome?: "NOT_ACCEPTED" | "UNKNOWN", readonly attemptOutcome?: "NOT_ACCEPTED") {
     super(message);
     this.name = "TradingApiError";
   }
@@ -46,6 +46,7 @@ async function apiJson(origin: string, path: string, options: {
     if (!response.ok) {
       let code: string | undefined;
       let outcome: "NOT_ACCEPTED" | "UNKNOWN" | undefined;
+      let attemptOutcome: "NOT_ACCEPTED" | undefined;
       let nextAvailableAt: string | undefined;
       try {
         const problem: unknown = await response.json();
@@ -56,12 +57,14 @@ async function apiJson(origin: string, path: string, options: {
         if (problem && typeof problem === "object") {
           const value = (problem as Record<string, unknown>).outcome;
           if (value === "UNKNOWN" || value === "NOT_ACCEPTED") outcome = value;
+          if ((problem as Record<string, unknown>).attemptOutcome === "NOT_ACCEPTED"
+            && (response.status === 409 && code === "TRADING_BUSY" || response.status === 503 && code === "ENGINE_RECOVERING")) attemptOutcome = "NOT_ACCEPTED";
         }
         const next = problem && typeof problem === "object" ? (problem as Record<string, unknown>).nextAvailableAt : null;
         if (response.status === 429 && code === "MEMBER_RESTART_LIMITED" && typeof next === "string"
           && next.length < 100 && /^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(next) && Number.isFinite(Date.parse(next))) nextAvailableAt = next;
       } catch { /* An unreadable error body must not replace the HTTP status. */ }
-      throw new TradingApiError(response.status, undefined, code, nextAvailableAt, outcome);
+      throw new TradingApiError(response.status, undefined, code, nextAvailableAt, outcome, attemptOutcome);
     }
     try { return await response.json(); }
     catch { throw new TradingApiError(422, "서버 응답 형식을 확인할 수 없습니다."); }

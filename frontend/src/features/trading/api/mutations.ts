@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { useGuestSession } from "../components/trading-data-provider";
-import { createTradingIntent, mutationMessage, uncertainMutation, type TradingCommand } from "./mutation-request";
+import { createTradingIntent, mutationMessage, tradingSubmissionAllowed, unconfirmedMutationMessage, type TradingCommand } from "./mutation-request";
 import { tradingKeys } from "./query-keys";
 import type { GuestSession, SessionSnapshot } from "./guest-session";
 import { useTradingNotices } from "../components/trading-notices";
@@ -55,26 +55,35 @@ export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
     mutationFn: (request: { command: TradingCommand; session: SessionSnapshot }) => intent.execute(request.command, request.session),
     ...effects,
     onSuccess: (order, request) => { if (isCurrent(request.session)) notices.push(orderNotice(order, request.command)); },
-    onError: (error, request) => { if (isCurrent(request.session)) reportAdmissionRejection(client, request.session, error); effects.onError(error, request); if (isCurrent(request.session)) notices.push(orderFailureNotice(error)); },
+    onError: (error, request) => {
+      if (!isCurrent(request.session)) return;
+      reportAdmissionRejection(client, request.session, error);
+      if (intent.getUnconfirmed(request.session)) notices.push({kind:"warning",title:"주문 결과가 미확정입니다",message:unconfirmedMutationMessage});
+      else { effects.onError(error, request); notices.push(orderFailureNotice(error)); }
+    },
   });
   const sameIdentity = (value: SessionSnapshot) => value.accountId === snapshot.accountId && value.generation === snapshot.generation;
   const pendingConfirmation = unconfirmed && sameIdentity(unconfirmed.session) ? unconfirmed : null;
-  async function submit(command: TradingCommand) {
+  async function submit(command: TradingCommand, confirming = false) {
     if (active.current || snapshot.retrying || snapshot.phase !== "ready") return null;
-    if (!(command.kind === "cancel" ? admission.cancel : admission.trade)) { notices.push({kind:"warning",title:"거래 상태를 확인해 주세요",message:"서버 또는 계정 복구 상태가 변경되었습니다. 상태 확인 후 직접 다시 요청해 주세요."}); return null; }
+    const unresolved = intent.getUnconfirmed(snapshot);
+    if (!tradingSubmissionAllowed(command, unresolved, confirming, command.kind === "cancel" ? admission.cancel : admission.trade)) {
+      notices.push({kind:"warning",title:unresolved ? "이전 요청을 먼저 확인해 주세요" : "거래 상태를 확인해 주세요",message:unresolved ? "새 주문 대신 같은 요청의 결과 확인을 이용해 주세요." : "서버 또는 계정 복구 상태가 변경되었습니다. 상태 확인 후 직접 다시 요청해 주세요."}); return null;
+    }
     active.current = true;
     try {
       const order = await mutation.mutateAsync({ command, session: snapshot });
+      if (!isCurrent(snapshot)) return null;
       setUnconfirmed(null);
       return order;
-    } catch (error) { setUnconfirmed(uncertainMutation(error) ? { command, session: snapshot } : null); return null; }
+    } catch { if (isCurrent(snapshot)) { const retained = intent.getUnconfirmed(snapshot); setUnconfirmed(retained ? {command:retained.command,session:retained.session} : null); } return null; }
     finally { active.current = false; }
   }
   const currentResult = mutation.variables && sameIdentity(mutation.variables.session);
-  return { submit, blocked: !admission.trade, cancelBlocked: !admission.cancel, retry: () => pendingConfirmation ? submit(pendingConfirmation.command) : Promise.resolve(null),
+  return { submit: (command: TradingCommand) => submit(command), blocked: !admission.trade, cancelBlocked: !admission.cancel, retry: () => pendingConfirmation ? submit(pendingConfirmation.command, true) : Promise.resolve(null),
     clearError: () => { if (!active.current && !pendingConfirmation) mutation.reset(); },
     command: currentResult ? mutation.variables?.command : null,
     pending: !!currentResult && mutation.isPending, unconfirmed: !!pendingConfirmation,
-    error: currentResult && mutation.error ? mutationMessage(mutation.error) : null,
+    error: pendingConfirmation ? unconfirmedMutationMessage : currentResult && mutation.error ? mutationMessage(mutation.error) : null,
   };
 }

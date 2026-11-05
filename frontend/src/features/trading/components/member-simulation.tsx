@@ -8,7 +8,7 @@ import { tradingKeys } from "../api/query-keys";
 import { parseRound, parseRoundLedger, parseRoundSummary, roundPage, type RoundLedgerKind, type RoundLedgerRow } from "../api/member-rounds";
 import { formatDecimal, formatQuantity } from "../api/account";
 import { TradingApiError } from "../api/client";
-import { mutationMessage, uncertainMutation } from "../api/mutation-request";
+import { mutationMessage, mutationStillUnconfirmed, unconfirmedMutationMessage } from "../api/mutation-request";
 import { MemberAccountPreparation, RestartConfirmation, SimulationSection } from "./member-simulation-views";
 import { reportAdmissionRejection } from "../api/admission-rejection";
 import { useTradingAdmission } from "../api/recovery";
@@ -69,7 +69,7 @@ function MemberSimulationContent() {
   const detail = useQuery({ queryKey: [...tradingKeys.account(snapshot), "member-round-detail", selectedId], enabled: enabled && !!selectedId,
     queryFn: async ({ signal }) => parseRoundSummary(await session.read(`account/rounds/${selectedId}`, snapshot, signal), snapshot.accountId!, selectedId) });
   async function restart() {
-    if (!admission.trade || active.current || !acknowledged || !intent && !canRestart) return;
+    if ((!intent && !admission.trade) || active.current || !acknowledged || (!intent && !canRestart)) return;
     active.current = true; setPending(true); setError(null);
     const request = intent ?? { accountId: snapshot.accountId!, key: crypto.randomUUID() };
     try {
@@ -78,10 +78,10 @@ function MemberSimulationContent() {
       setMessage(`요청은 ${result.roundNumber}회차 생성으로 처리되었습니다. 미체결 ${result.canceledOrderCount}건 취소 · 포지션 ${result.closedPositionCount}건 관리상 종료. 현재 회차와 잔액은 서버 조회값으로 표시합니다.`);
     } catch (error) {
       reportAdmissionRejection(client,snapshot,error);
-      const uncertain = uncertainMutation(error);
+      const uncertain = mutationStillUnconfirmed(error,!!intent);
       setIntent(uncertain ? request : null);
       if (error instanceof TradingApiError && error.nextAvailableAt) setLimitedAt(error.nextAvailableAt);
-      setError(uncertain ? "결과가 불확실합니다. 새 요청을 만들지 않고 같은 요청의 결과를 확인해 주세요." : error instanceof TradingApiError && error.status === 429 ? "직전 성공한 다시시작부터 24시간이 지나야 합니다. 서버가 제공한 가능 시각을 확인해 주세요." : mutationMessage(error));
+      setError(uncertain ? unconfirmedMutationMessage : error instanceof TradingApiError && error.status === 429 ? "직전 성공한 다시시작부터 24시간이 지나야 합니다. 서버가 제공한 가능 시각을 확인해 주세요." : mutationMessage(error));
     } finally { active.current = false; setPending(false); }
   }
   const summary = !detail.isError && enabled ? detail.data : undefined;
