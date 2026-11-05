@@ -7,6 +7,7 @@ import { reportAdmissionRejection } from "../api/admission-rejection";
 import { mutationMessage, mutationStillUnconfirmed, unconfirmedMutationMessage } from "../api/mutation-request";
 
 import { useTradingAdmission } from "../api/recovery";
+import { useJournalResolution } from "../api/journal-resolution";
 
 export function GuestRetry() {
   const admission = useTradingAdmission(), client = useQueryClient();
@@ -16,6 +17,7 @@ export function GuestRetry() {
   const [error,setError]=useState<string|null>(null);
   const [completed,setCompleted]=useState<{accountId:number;message:string}|null>(null);
   const unresolved=confirmation?.accountId===snapshot.accountId ? confirmation : null;
+  useJournalResolution(unresolved?{accountId:unresolved.accountId,key:unresolved.key,command:{kind:"guestRetry"}}:null,()=>{setConfirmation(null);setError(null);dialog.current?.close();});
   async function execute(){
     if((!unresolved&&!admission.trade)||active.current||snapshot.phase!=="ready"||snapshot.retrying||!snapshot.accountId)return;
     active.current=true;setPending(true);setError(null);
