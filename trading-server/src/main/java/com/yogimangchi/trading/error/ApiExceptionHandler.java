@@ -34,7 +34,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     private ProblemDetail businessProblem(ErrorCode code) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(code.status(), code.message());
         problem.setProperty("code", code.name());
-        problem.setProperty("outcome", "NOT_ACCEPTED");
+        // Admission can fail before looking up a key whose original command already committed.
+        // This attempt made no write, but it cannot establish the original command's outcome.
+        boolean admission = code == ErrorCode.TRADING_BUSY || code == ErrorCode.ENGINE_RECOVERING;
+        problem.setProperty("outcome", admission ? "UNKNOWN" : "NOT_ACCEPTED");
+        if (admission) problem.setProperty("attemptOutcome", "NOT_ACCEPTED");
         return problem;
     }
 

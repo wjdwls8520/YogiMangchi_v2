@@ -148,7 +148,8 @@ class RiskGapRecoveryIntegrationTests {
             try(var statement=connection.createStatement()){statement.execute("select pg_advisory_xact_lock("+RiskAdmission.INGRESS_LOCK+")");}
             var error=catchThrowable(()->market(btc));assertThat(error).isInstanceOf(RiskAdmission.IngressBusy.class);
             var response=new ApiExceptionHandler().handleBusinessException((BusinessException)error);
-            assertThat(response.getStatus()).isEqualTo(409);assertThat(response.getProperties()).containsEntry("code","TRADING_BUSY").containsEntry("outcome","NOT_ACCEPTED");
+            assertThat(response.getStatus()).isEqualTo(409);assertThat(response.getProperties()).containsEntry("code","TRADING_BUSY")
+                    .containsEntry("outcome","UNKNOWN").containsEntry("attemptOutcome","NOT_ACCEPTED");
             worker.runOnce();assertThat(worker.measurements().admissionDeferrals()).isEqualTo(deferred+1);
             assertThat(jdbc.queryForObject("select count(*) from trading.risk_work_attempt where account_id=?",Long.class,account)).isZero();
             assertThat(fillCount()).isZero();connection.rollback();

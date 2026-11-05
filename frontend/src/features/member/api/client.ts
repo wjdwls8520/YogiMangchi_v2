@@ -3,7 +3,21 @@ export class ContentApiError extends Error {
     super("회원 요청을 처리하지 못했습니다."); this.name = "ContentApiError";
   }
 }
-const codes = new Set(["SERVICE_TEMPORARILY_UNAVAILABLE", "NICKNAME_ALREADY_EXISTS", "NICKNAME_UNAVAILABLE", "MEMBER_BUSY", "INVALID_REQUEST", "INVALID_PROFILE", "INVALID_NICKNAME", "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "POLICY_VERSION_OR_CONSENT_INVALID", "MEMBER_NOT_ACTIVE", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS"]);
+const codes = new Set([
+  "SERVICE_TEMPORARILY_UNAVAILABLE", "NICKNAME_ALREADY_EXISTS", "NICKNAME_UNAVAILABLE", "MEMBER_BUSY", "INVALID_REQUEST", "INVALID_PROFILE", "INVALID_NICKNAME",
+  "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "MEMBER_NOT_ACTIVE", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS",
+  "POLICY_VERSION_OR_CONSENT_INVALID", "POLICY_VERSION_CHANGED", "REQUIRED_CONSENT_MISSING", "POLICY_VERSION_REQUIRED",
+  "LOGIN_PROOF_REQUIRED", "LOGIN_PROOF_EXPIRED", "CSRF_INVALID", "PROFILE_MESSAGE_UPDATE_REQUIRED", "RESOURCE_ALREADY_EXISTS",
+]);
+
+export function contentRecovery(error: unknown): "policies" | "login" | "state" | "csrf" | null {
+  if (!(error instanceof ContentApiError)) return null;
+  if (["POLICY_VERSION_CHANGED", "POLICY_VERSION_REQUIRED", "REQUIRED_CONSENT_MISSING", "POLICY_VERSION_OR_CONSENT_INVALID"].includes(error.code ?? "")) return "policies";
+  if (error.code === "LOGIN_PROOF_REQUIRED" || error.code === "LOGIN_PROOF_EXPIRED") return "login";
+  if (error.code === "MEMBER_BUSY" || error.code === "MEMBER_ALREADY_EXISTS" || error.code === "RESOURCE_ALREADY_EXISTS") return "state";
+  if (error.status === 0 || error.status === 422 || error.status >= 500) return "state";
+  return error.code === "CSRF_INVALID" ? "csrf" : null;
+}
 export function contentOrigin(value: string) {
   try {
     const url = new URL(value);
@@ -48,12 +62,23 @@ export async function contentJson(origin: string, path: string, options: {
 }
 export function contentMessage(error: unknown) {
   if (!(error instanceof ContentApiError)) return "요청을 처리하지 못했습니다. 다시 확인해 주세요.";
+  if (error.code === "POLICY_VERSION_CHANGED") return "정책 버전이 변경되었습니다. 최신 원문을 다시 확인하고 직접 동의해 주세요.";
+  if (error.code === "POLICY_VERSION_REQUIRED") return "동의할 정책 버전을 확인하지 못했습니다. 최신 원문을 다시 조회해 주세요.";
+  if (error.code === "REQUIRED_CONSENT_MISSING") return "필수 정책 동의가 누락되었습니다. 원문과 동의 항목을 확인해 주세요.";
+  if (error.code === "LOGIN_PROOF_REQUIRED" || error.code === "LOGIN_PROOF_EXPIRED") return "소셜 본인 확인이 없거나 만료되었습니다. Google 또는 Kakao로 다시 확인해 주세요.";
+  if (error.code === "CSRF_INVALID") return "요청 보안 확인에 실패했습니다. 현재 상태를 조회한 뒤 화면에서 다시 시도해 주세요.";
+  if (error.code === "MEMBER_BUSY") return "회원 정보를 처리 중입니다. 요청을 반복하지 말고 현재 상태를 먼저 확인해 주세요.";
+  if (error.code === "NICKNAME_UNAVAILABLE" || error.code === "NICKNAME_ALREADY_EXISTS") return "이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해 주세요.";
+  if (error.code === "INVALID_NICKNAME") return "닉네임은 공백·특수문자 없이 1~8자로 입력해 주세요.";
+  if (error.code === "PROFILE_MESSAGE_UPDATE_REQUIRED") return "기존 소개가 현재 입력 한도를 초과합니다. 소개를 255자 이내로 수정해 주세요.";
+  if (error.code === "MEMBER_ALREADY_EXISTS") return "이미 가입된 소셜 계정입니다. 현재 로그인 상태를 확인해 주세요.";
+  if (error.code === "RESOURCE_ALREADY_EXISTS") return "이미 처리된 정보와 요청이 충돌했습니다. 현재 상태를 먼저 확인해 주세요.";
   if (error.code === "POLICY_VERSION_OR_CONSENT_INVALID") return "정책 버전이 변경되었거나 필수 동의가 누락되었습니다. 최신 원문을 확인하고 다시 동의해 주세요.";
   if (error.code === "WITHDRAWAL_CONFIRMATION_REQUIRED") return "안내 확인과 ‘탈퇴합니다’ 문구를 정확하게 입력해 주세요.";
   if (error.status === 401) return "로그인 상태가 만료되었습니다. 다시 로그인해 주세요.";
   if (error.status === 403) return "요청 권한 또는 로그인 설정을 확인해 주세요.";
   if (error.status === 404) return "회원을 찾을 수 없습니다.";
-  if (error.status === 409) return "중복된 닉네임이나 변경 중인 정보가 있는지 확인해 주세요.";
+  if (error.status === 409) return "현재 정보와 요청이 충돌했습니다. 상태를 확인한 뒤 다시 시도해 주세요.";
   if (error.status === 400) return "입력한 내용을 확인해 주세요.";
   return "서버 연결을 확인한 뒤 다시 시도해 주세요.";
 }

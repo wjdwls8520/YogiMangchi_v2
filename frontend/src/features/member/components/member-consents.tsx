@@ -6,7 +6,8 @@ import Link from "next/link";
 import { useMember } from "./member-provider";
 import { usePolicies, PolicyConsentControl } from "./policy-controls";
 import { acceptance, parsePolicyState, type ConsentSelection } from "../api/policies";
-import { contentMessage } from "../api/client";
+import { ContentApiError, contentMessage, contentRecovery } from "../api/client";
+import { MemberErrorActions } from "./member-error-actions";
 
 function useOwnConsents() {
   const { session, snapshot } = useMember();
@@ -25,9 +26,10 @@ export function MemberConsents() {
   const { session, snapshot } = useMember(), client = useQueryClient(), mine = useOwnConsents(), policies = usePolicies();
   const [selection, setSelection] = useState<ConsentSelection>({}), [pending, setPending] = useState(false), [error, setError] = useState<string | null>(null);
   const active = useRef(false);
+  const [requestError, setRequestError] = useState<ContentApiError | null>(null);
   async function accept() {
-    if (active.current || !policies.data || !mine.data || policies.isError || mine.isError) return;
-    setError(null);
+    if (active.current || !policies.data || !mine.data || policies.isError || mine.isError || policies.isFetching || mine.isFetching) return;
+    setError(null); setRequestError(null);
     try {
       const body = acceptance(policies.data, selection, mine.data);
       active.current = true; setPending(true);
@@ -38,7 +40,7 @@ export function MemberConsents() {
       client.setQueryData(["member","consents",snapshot.memberId,snapshot.generation], state);
       session.setConsentStatus("accepted", snapshot.memberId!, snapshot.generation);
       await client.invalidateQueries({ queryKey: ["member", "consents"] });
-    } catch (error) { setError(contentMessage(error)); void policies.refetch(); }
+    } catch (error) { setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null); if (contentRecovery(error) === "policies") setSelection({}); void policies.refetch(); }
     finally { active.current = false; setPending(false); }
   }
   return <section id="policy-consents" className="member-simulation"><h2>필수 정책 동의</h2>
@@ -46,7 +48,7 @@ export function MemberConsents() {
     {(mine.isError || policies.isError) && <p className="member-message" role="alert">동의 상태를 확인하지 못했습니다. <button className="account-refresh" onClick={() => { void mine.refetch(); void policies.refetch(); }}>다시 조회</button></p>}
     {!mine.isError && !policies.isError && mine.data && policies.data && <>
       <ul className="member-note">{mine.data.policies.map(p => <li key={p.type}>{p.type === "TERMS" ? "이용약관" : "개인정보 동의"} · 이전 동의 {p.lastAcceptedVersion ?? "버전 기록 없음"} · 현재 {p.version} {p.accepted ? "동의됨" : "동의 필요"}</li>)}</ul>
-      {mine.data.reconsentRequired ? <><PolicyConsentControl bundle={policies.data} selection={selection} onChange={setSelection} pending={pending} previous={mine.data} /><button type="button" className="member-primary" disabled={pending} onClick={() => void accept()}>{pending ? "동의 기록 중…" : "필수 정책에 동의하기"}</button></> : <p role="status" className="member-message">현재 필요한 정책 동의가 완료되었습니다.</p>}
-    </>}{error && <p role="alert" className="member-message">{error}</p>}
+      {mine.data.reconsentRequired ? <><PolicyConsentControl bundle={policies.data} selection={selection} onChange={setSelection} pending={pending || policies.isFetching || mine.isFetching} previous={mine.data} /><button type="button" className="member-primary" disabled={pending || policies.isFetching || mine.isFetching} onClick={() => void accept()}>{pending ? "동의 기록 중…" : "필수 정책에 동의하기"}</button></> : <p role="status" className="member-message">현재 필요한 정책 동의가 완료되었습니다.</p>}
+    </>}{error && <><p role="alert" className="member-message">{error}</p><MemberErrorActions error={requestError} checking={pending || policies.isFetching || mine.isFetching} onCheck={() => { void policies.refetch(); void mine.refetch(); }} /></>}
   </section>;
 }

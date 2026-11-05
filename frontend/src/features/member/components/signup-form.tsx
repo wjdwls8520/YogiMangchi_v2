@@ -13,7 +13,7 @@ export function SignupForm({ onSubmit, pending }: { onSubmit: FormEventHandler<H
     <label>소개<textarea name="profileMessage" maxLength={255} rows={3} /><small>선택 · 최대 255자</small></label>
     {policies.isPending && <p role="status">필수 동의 문서를 확인하는 중입니다.</p>}
     {policies.isError && <p role="alert" className="member-message">동의 원문과 버전을 확인하지 못해 가입할 수 없습니다. <button type="button" className="account-refresh" onClick={() => void policies.refetch()}>다시 조회</button></p>}
-    {!policies.isError && policies.data && <PolicyConsentControl bundle={policies.data} selection={selection} onChange={setSelection} pending={pending} />}
-    <button type="submit" className="member-primary" disabled={pending || !policies.data || policies.isError}>{pending ? "가입 처리 중…" : "동의하고 가입하기"}</button>
+    {!policies.isError && policies.data && <PolicyConsentControl bundle={policies.data} selection={selection} onChange={setSelection} pending={pending || policies.isFetching} />}
+    <button type="submit" className="member-primary" disabled={pending || policies.isFetching || !policies.data || policies.isError}>{pending ? "가입 처리 중…" : "동의하고 가입하기"}</button>
   </fieldset></form>;
 }
