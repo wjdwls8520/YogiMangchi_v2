@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { SessionSnapshot } from "../api/guest-session";
+import { unconfirmedMutationMessage } from "../api/mutation-request";
 
 export function MemberAccountPreparation({ snapshot, disabled, onPrepare, onRestore }: {
   snapshot: SessionSnapshot; disabled: boolean; onPrepare: () => void; onRestore: () => void;
@@ -24,5 +25,6 @@ export function RestartConfirmation({ acknowledged, pending, blocked, error, unc
     <li>이 작업은 취소하거나 이전 회차의 거래를 이어갈 수 없습니다.</li>
   </ul><label className="member-check"><input type="checkbox" checked={acknowledged} disabled={pending} onChange={event => onAcknowledge(event.currentTarget.checked)} /><span>안내 내용을 확인했으며 새 회차로 다시 시작합니다.</span></label>
     {blocked && <p className="member-message" role="status">{blocked}</p>}{error && <p className="member-message" role="alert">{error}</p>}
-    <div className="member-actions"><button className="member-secondary" disabled={pending} onClick={onClose}>닫기</button><button className="member-primary" disabled={pending || !acknowledged || !!blocked && !uncertain} onClick={onExecute}>{pending ? "처리 중…" : uncertain ? "같은 요청 결과 확인" : "새 회차 시작 확인"}</button></div></>;
+    {uncertain && <p role="status" className="member-message">{unconfirmedMutationMessage}</p>}
+    <div className="member-actions"><button className="member-secondary" disabled={pending} onClick={onClose}>닫기</button><button className="member-primary" disabled={pending || !acknowledged || !!blocked && !uncertain} onClick={onExecute}>{pending ? "처리 중…" : uncertain ? "원래 다시시작 요청 재전송" : "새 회차 시작 확인"}</button></div></>;
 }

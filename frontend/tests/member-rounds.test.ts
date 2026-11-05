@@ -58,6 +58,24 @@ test("successful restart followed by failed reconciliation remains uncertain eve
   await assert.rejects(session.restartMember(session.getSnapshot(), "restart-test-key"), error => error instanceof TradingApiError && error.status === 0);
   assert.equal(session.getSnapshot().phase, "error"); assert.equal(session.getSnapshot().roundId, undefined);
 });
+
+test("restart UNKNOWN followed by busy/recovery never releases its original key or account guard",async()=>{
+  for(const rejected of [response({code:"TRADING_BUSY"},409),response({code:"ENGINE_RECOVERING",outcome:"NOT_ACCEPTED"},503)]) {
+    const keys:(string|null)[]=[];
+    const session=setup(async options=>{
+      keys.push(new Headers(options?.headers).get("Idempotency-Key"));
+      if(keys.length===1)throw new TypeError("lost response");
+      if(keys.length===2)return rejected;
+      return response(restarted);
+    },()=>response({round:round(2)}));
+    await session.enterMember(member,()=>{});
+    await assert.rejects(session.restartMember(session.getSnapshot(),"restart-sticky-key"));
+    await assert.rejects(session.restartMember(session.getSnapshot(),"restart-sticky-key"));
+    await assert.rejects(session.restartMember(session.getSnapshot(),"different-restart-key"),error=>error instanceof TradingApiError&&error.code==="IDEMPOTENCY_CONFLICT");
+    await session.restartMember(session.getSnapshot(),"restart-sticky-key");
+    assert.deepEqual(keys,Array(3).fill("restart-sticky-key")); assert.equal(session.getSnapshot().roundId,2);
+  }
+});
 test("late restart result cannot affect another member and Guest cannot invoke member restart", async () => {
   let finish!: (value: Response) => void;
   const session = setup(async () => new Promise(done => { finish = done; }));

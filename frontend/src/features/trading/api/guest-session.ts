@@ -1,6 +1,6 @@
 import { tradingJson, tradingOrigin, TradingApiError } from "./client";
 import { decimal, id, parseCredential, parseGuest, record, type GuestCredential } from "./contracts";
-import { mutationRequest, uncertainMutation, type TradingCommand } from "./mutation-request";
+import { mutationRequest, mutationStillUnconfirmed, type TradingCommand } from "./mutation-request";
 import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
 import type { QuoteRequest } from "./quote";
 import { parseStopLoss, stopLossRequest, type StopLossCommand } from "./stop-loss-contract";
@@ -253,7 +253,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           return result;
         } catch (error) {
           if (mode === "member" && member?.memberId === ownerId && restartIntent === intent) {
-            const uncertain = accepted || uncertainMutation(error);
+            const uncertain = mutationStillUnconfirmed(error, accepted || !!previous);
             if (uncertain) { credential = null; memberRoundId = undefined; }
             else { restartIntent = null; memberRoundId = intent.roundId; if (error instanceof TradingApiError && error.status === 401) invalidate(current); }
           }

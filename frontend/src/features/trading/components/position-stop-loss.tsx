@@ -7,7 +7,7 @@ import { formatQuantity, type Position } from "../api/account";
 import { parseStopLoss, latestStopLoss, type StopLoss, type StopLossCommand } from "../api/stop-loss-contract";
 import { tradingKeys } from "../api/query-keys";
 import { retryTradingQuery, TradingApiError } from "../api/client";
-import { uncertainMutation, mutationMessage } from "../api/mutation-request";
+import { mutationStillUnconfirmed, mutationMessage } from "../api/mutation-request";
 import { validLimitPrice } from "../api/order-input";
 import { useTradingAdmission } from "../api/recovery";
 import { formatMarketPrice } from "../market/price-format";
@@ -31,6 +31,7 @@ export function PositionStopLoss({position,symbol}:{position:Position;symbol:str
     if(!unresolved.current && (!query.data || query.isError || !(remove ? admission.cancel : admission.trade))) {setMessage("현재 서버 상태에서는 이 요청을 제출할 수 없습니다.");return;}
     if(unresolved.current&&(unresolved.current.accountId!==snapshot.accountId||unresolved.current.generation!==snapshot.generation)) {unresolved.current=null;setUnknown(false);return;}
     const request=unresolved.current??{command:{positionId:position.id,expectedVersion:current!.version,...(remove?{}:{stopPrice:price.trim()})},key:crypto.randomUUID(),accountId:snapshot.accountId,generation:snapshot.generation};
+    const wasUnconfirmed=!!unresolved.current;
     active.current=true;setPending(true);setMessage("");
     const same=()=>`${session.getSnapshot().accountId}:${session.getSnapshot().generation}`===identity;
     try {
@@ -41,7 +42,7 @@ export function PositionStopLoss({position,symbol}:{position:Position;symbol:str
       setMessage("손절 설정 요청이 처리되었습니다. 아래 서버의 현재 상태를 확인해 주세요.");
     } catch(error) {
       if(!same())return;
-      unresolved.current=uncertainMutation(error)?request:null;setUnknown(!!unresolved.current);setMessage(errorMessage(error));
+      unresolved.current=mutationStillUnconfirmed(error,wasUnconfirmed)?request:null;setUnknown(!!unresolved.current);setMessage(errorMessage(error));
     } finally {
       if(same()) {setPending(false);void query.refetch();void client.invalidateQueries({queryKey:[...tradingKeys.account(snapshot),"summary"]});}
       active.current=false;
@@ -59,9 +60,9 @@ export function PositionStopLoss({position,symbol}:{position:Position;symbol:str
           <label className="field-label" htmlFor={`sl-price-${position.id}`}>새 손절 가격 · USDT</label>
           <input id={`sl-price-${position.id}`} className="order-leverage-input" inputMode="decimal" value={price} disabled={pending||unknown} placeholder={current?.stopPrice??"손절 가격"} onChange={event=>setPrice(event.target.value)} />
           {message&&<p role="status" className="order-warning">{message}</p>}
-          {unknown&&<p>결과를 확인하지 못했습니다. 이전 요청의 결과만 다시 확인합니다. 현재 조회값은 다른 창에서 변경한 내용일 수 있습니다.</p>}
+          {unknown&&<p>결과가 미확정입니다. 원래 요청을 재전송하면 아직 접수되지 않은 손절 설정·해제가 실행될 수 있습니다. 현재 조회값은 다른 창에서 변경한 내용일 수 있습니다.</p>}
           <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={pending} onClick={()=>dialog.current?.close()}>닫기</button>
-            {unknown?<button type="button" disabled={pending} onClick={()=>void submit(unresolved.current?.command.stopPrice===undefined)}>같은 요청 결과 확인</button>:<>
+            {unknown?<button type="button" disabled={pending} onClick={()=>void submit(unresolved.current?.command.stopPrice===undefined)}>원래 손절 요청 재전송</button>:<>
               <button className="guest-start-button" type="submit" disabled={pending||!admission.trade||!validLimitPrice(price.trim())}>{pending?"처리 중…":current?.status==="ACTIVE"?"손절 수정":"손절 설정"}</button>
               {current?.status==="ACTIVE"&&<button type="button" disabled={pending||!admission.cancel} onClick={()=>void submit(true)}>손절 해제</button>}
             </>}

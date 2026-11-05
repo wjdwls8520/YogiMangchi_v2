@@ -56,7 +56,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
     dialog.current?.close();partialDialog.current?.close();
   }
   async function execute(full=false) {
-    if(action.blocked||action.pending||snapshot.phase!=="ready")return;
+    if((!action.unconfirmed&&action.blocked)||action.pending||snapshot.phase!=="ready")return;
     if(action.unconfirmed) {complete(await action.retry());return;}
     const command=positionCloseCommand(position,full ? "MARKET" : type,full ? position.quantity : quantity.trim(),limitPrice.trim(),mark,ready,full ? "full" : scope);
     if(command.command===null) {setWarning(command.issue);notices.push({kind:"error",title:"청산을 제출할 수 없습니다",message:command.issue});return;}
@@ -64,7 +64,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
   }
   const issue=quantity ? positionCloseCommand(position,type,quantity.trim(),limitPrice.trim(),mark,ready,scope).issue : null;
   const fullIssue=positionCloseCommand(position,"MARKET",position.quantity,"",mark,ready,"full").issue;
-  const confirmation=action.unconfirmed && <div><p role="alert" className="order-warning">{action.error} 입력을 유지하고 같은 청산 결과를 확인해 주세요.</p><button type="button" className="account-refresh" disabled={action.pending} onClick={()=>void execute()}>같은 청산 결과 확인</button></div>;
+  const confirmation=action.unconfirmed && <div><p role="alert" className="order-warning">{action.error}</p><button type="button" className="account-refresh" disabled={action.pending} onClick={()=>void execute()}>원래 청산 요청 재전송</button></div>;
   const submit=<button className="close-submit" disabled={locked||action.blocked||!ready||!validQuantity(quantity.trim())} type="submit">{action.pending ? "처리 중…" : type==="MARKET" ? "시장가 청산" : "지정가 청산 예약"}</button>;
   const editor=<form id={`${prefix}-editor`} aria-label={`${symbol} ${position.side} 청산 주문`} onSubmit={event=>{event.preventDefault();void execute();}}>
       {layout==="panel" && <p className="close-position-label"><strong>{symbol}</strong> <span data-side={position.side}>{position.side} {position.leverage}×</span></p>}
@@ -94,7 +94,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
       <p>보유 수량 {formatQuantity(position.quantity)}을 시장가로 청산합니다. 실제 체결 가격과 손익은 서버가 결정합니다.</p>
       <p>현재 Mark {formatMarketPrice(valuation.mark)} · 미실현 손익 {formatDecimal(valuation.pnl)} USDT</p>
       {(warning??action.error??fullIssue) && <p role="alert" className="order-warning">{warning??action.error??fullIssue}</p>}
-      <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>dialog.current?.close()}>취소</button><button className="guest-start-button" type="button" disabled={action.blocked||action.pending||(!action.unconfirmed&&!!fullIssue)} onClick={()=>void execute(true)}>{action.pending ? "처리 중…" : action.unconfirmed ? "같은 청산 결과 확인" : "전체 청산 확인"}</button></div>
+      <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>dialog.current?.close()}>취소</button><button className="guest-start-button" type="button" disabled={action.pending||(!action.unconfirmed&&(action.blocked||!!fullIssue))} onClick={()=>void execute(true)}>{action.pending ? "처리 중…" : action.unconfirmed ? "원래 청산 요청 재전송" : "전체 청산 확인"}</button></div>
     </dialog>
   </div>;
 }
