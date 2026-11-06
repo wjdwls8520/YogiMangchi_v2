@@ -14,6 +14,7 @@ import { reportAdmissionRejection } from "../api/admission-rejection";
 import { useTradingAdmission } from "../api/recovery";
 import { SymbolPerformance } from "./symbol-performance";
 import { useMember } from "../../member/components/member-provider";
+import { useJournalResolution } from "../api/journal-resolution";
 
 function useCurrentRound() {
   const { session, snapshot } = useGuestSession();
@@ -61,6 +62,7 @@ function MemberSimulationContent() {
   const [pending, setPending] = useState(false), [error, setError] = useState<string | null>(null), [message, setMessage] = useState<string | null>(null);
   const [intent, setIntent] = useState<{ accountId: number; key: string } | null>(null), [acknowledged, setAcknowledged] = useState(false), [limitedAt, setLimitedAt] = useState<string | null>(null);
   const active = useRef(false), dialog = useRef<HTMLDialogElement>(null);
+  useJournalResolution(intent?{accountId:intent.accountId,key:intent.key,command:{kind:"memberRestart"}}:null,()=>{setIntent(null);setError(null);setAcknowledged(false);dialog.current?.close();});
   const enabled = snapshot.mode === "member" && snapshot.phase === "ready" && !snapshot.retrying;
   const canRestart = admission.trade && enabled && !current.isError && !current.isFetching && current.data?.round.roundId === snapshot.roundId && !!current.data?.restartAvailable;
   const rounds = useInfiniteQuery({ queryKey: [...tradingKeys.account(snapshot), "member-round-list"], enabled, initialPageParam: undefined as number | undefined,

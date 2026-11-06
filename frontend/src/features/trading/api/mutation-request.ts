@@ -48,8 +48,10 @@ export function createTradingIntent(send: (request: TradingIntent) => Promise<Tr
   let flight: Promise<TradingOrder> | null = null;
   let unresolved: TradingIntent | null = null;
   let sending: TradingIntent | null = null;
+  let confirmedKey:string|null=null;
   const sameOwner = (left: SessionSnapshot, right: SessionSnapshot) => left.accountId === right.accountId && left.generation === right.generation;
   return {
+    resolveConfirmed(key:string) {if(unresolved?.key===key||sending?.key===key){confirmedKey=flight?key:null;unresolved=null;return true;}return false;},
     getUnconfirmed(session: SessionSnapshot) { return unresolved && sameOwner(unresolved.session, session) ? { ...unresolved, command:{...unresolved.command}, session:{...unresolved.session} } : null; },
     execute(command: TradingCommand, session: SessionSnapshot) {
       mutationRequest(command);
@@ -63,15 +65,16 @@ export function createTradingIntent(send: (request: TradingIntent) => Promise<Tr
       const wasUnconfirmed = !!unresolved;
       sending = request;
       flight = send(request).then((order) => { unresolved = null; return order; }, (error: unknown) => {
-        unresolved = mutationStillUnconfirmed(error, wasUnconfirmed) ? request : null;
+        unresolved = confirmedKey!==request.key&&mutationStillUnconfirmed(error, wasUnconfirmed) ? request : null;
         throw error;
-      }).finally(() => { flight = null; sending = null; });
+      }).finally(() => { flight = null; sending = null; if(confirmedKey===request.key)confirmedKey=null; });
       return flight;
     },
   };
 }
 
 const businessMessages: Record<string, string> = {
+  LOCAL_COMMAND_JOURNAL_BLOCKED:"미확정 거래 기록을 먼저 확인해 주세요. 충돌하는 새 요청은 전송하지 않았습니다. 거래 복구 안내에서 기록과 브라우저 저장·동시 처리 지원을 확인해 주세요.",
   MEMBER_CREDENTIAL_REQUIRED: "회원 로그인이 필요합니다. 로그인 상태를 다시 확인해 주세요.",
   MARGIN_MIGRATION_REQUIRED:"담보 전환이 완료되지 않아 거래가 제한됩니다. Guest 재도전 또는 계정 상태 확인이 필요합니다.",
   GUEST_ACCOUNT_REQUIRED:"Guest 계정에서만 재도전할 수 있습니다.",

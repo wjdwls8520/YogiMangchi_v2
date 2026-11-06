@@ -8,6 +8,7 @@ import { TradingNoticeProvider } from "./trading-notices";
 import { GuestAccessProvider } from "./guest-access";
 import { useMember } from "../../member/components/member-provider";
 import { MemberRoundMonitor } from "./member-simulation";
+import { TradingCommandRecovery } from "./trading-command-recovery";
 
 const SessionContext = createContext<GuestSession | null>(null);
 let browserSession: GuestSession | undefined;
@@ -63,7 +64,7 @@ export function TradingDataProvider({ children }: { children: ReactNode }) {
     };
   }, [client, session, memberSession]);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => initialSession);
-  return <QueryClientProvider client={client}><SessionContext.Provider value={session}><MemberRoundMonitor /><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`}><GuestAccessProvider session={session}>{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
+  return <QueryClientProvider client={client}><SessionContext.Provider value={session}><MemberRoundMonitor /><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`}><GuestAccessProvider session={session}><TradingCommandRecovery />{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
 }
 
 export function useGuestSession() {

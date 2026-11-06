@@ -14,6 +14,7 @@ import type { TradingOrder } from "./orders";
 
 import { reportAdmissionRejection } from "./admission-rejection";
 import { useTradingAdmission } from "./recovery";
+import { useJournalResolution } from "./journal-resolution";
 
 type Rejected = (issue: OrderIssue, command: TradingCommand, identity: SessionSnapshot) => void;
 type Failed = (error: Error, command: TradingCommand) => void;
@@ -64,6 +65,8 @@ export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
   });
   const sameIdentity = (value: SessionSnapshot) => value.accountId === snapshot.accountId && value.generation === snapshot.generation;
   const pendingConfirmation = unconfirmed && sameIdentity(unconfirmed.session) ? unconfirmed : null;
+  const durableIntent=intent.getUnconfirmed(snapshot);
+  useJournalResolution(pendingConfirmation&&durableIntent?{accountId:snapshot.accountId,key:durableIntent.key,command:durableIntent.command}:null,()=>{intent.resolveConfirmed(durableIntent!.key);setUnconfirmed(null);mutation.reset();});
   async function submit(command: TradingCommand, confirming = false) {
     if (active.current || snapshot.retrying || snapshot.phase !== "ready") return null;
     const unresolved = intent.getUnconfirmed(snapshot);

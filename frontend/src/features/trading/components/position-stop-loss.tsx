@@ -11,6 +11,7 @@ import { mutationStillUnconfirmed, mutationMessage } from "../api/mutation-reque
 import { validLimitPrice } from "../api/order-input";
 import { useTradingAdmission } from "../api/recovery";
 import { formatMarketPrice } from "../market/price-format";
+import { useJournalResolution } from "../api/journal-resolution";
 
 function errorMessage(error: unknown) {
   const messages:Record<string,string> = {INVALID_STOP_LOSS:"양수 손절 가격을 입력해 주세요. 소수점은 18자리까지 지원합니다.",STOP_LOSS_NOT_PROTECTIVE:"LONG은 현재 Mark 아래, SHORT는 현재 Mark 위로 설정해 주세요.",STOP_LOSS_BEYOND_LIQUIDATION:"강제청산 예상가보다 먼저 보호되는 손절 가격이 필요합니다.",STOP_LOSS_VERSION_CONFLICT:"다른 요청으로 손절 설정이 변경됐습니다. 현재 값을 다시 확인해 주세요."};
@@ -21,15 +22,17 @@ export function PositionStopLoss({position,symbol}:{position:Position;symbol:str
   const {session,snapshot}=useGuestSession(), client=useQueryClient(), admission=useTradingAdmission();
   const dialog=useRef<HTMLDialogElement>(null),trigger=useRef<HTMLButtonElement>(null),active=useRef(false);
   const unresolved=useRef<{command:StopLossCommand;key:string;accountId:number|null;generation:number}|null>(null);
+  const [journalRequest,setJournalRequest]=useState<{accountId:number|null;key:string;command:{kind:"stopLoss"}&StopLossCommand}|null>(null);
   const [open,setOpen]=useState(false),[price,setPrice]=useState(""),[pending,setPending]=useState(false),[unknown,setUnknown]=useState(false),[message,setMessage]=useState("");
   const identity=`${snapshot.accountId}:${snapshot.generation}`;
   const query=useQuery({queryKey:[...tradingKeys.account(snapshot),"stop-loss",position.id],enabled:open&&snapshot.phase==="ready",retry:retryTradingQuery, structuralSharing:(old,value)=>latestStopLoss(old as StopLoss|undefined,value as StopLoss)!,
     queryFn:async({signal})=>parseStopLoss(await session.read(`account/positions/${position.id}/stop-loss`,snapshot,signal),position.id,position.tradingSymbolId,position.side)});
   const current=latestStopLoss(query.data,position.stopLoss);
+  useJournalResolution(journalRequest,()=>{unresolved.current=null;setJournalRequest(null);setUnknown(false);setMessage("서버에서 기존 손절 요청을 확인했습니다. 최신 설정을 다시 조회합니다.");void query.refetch();});
   async function submit(remove=false) {
     if(active.current||snapshot.phase!=="ready")return;
     if(!unresolved.current && (!query.data || query.isError || !(remove ? admission.cancel : admission.trade))) {setMessage("현재 서버 상태에서는 이 요청을 제출할 수 없습니다.");return;}
-    if(unresolved.current&&(unresolved.current.accountId!==snapshot.accountId||unresolved.current.generation!==snapshot.generation)) {unresolved.current=null;setUnknown(false);return;}
+    if(unresolved.current&&(unresolved.current.accountId!==snapshot.accountId||unresolved.current.generation!==snapshot.generation)) {unresolved.current=null;setJournalRequest(null);setUnknown(false);return;}
     const request=unresolved.current??{command:{positionId:position.id,expectedVersion:current!.version,...(remove?{}:{stopPrice:price.trim()})},key:crypto.randomUUID(),accountId:snapshot.accountId,generation:snapshot.generation};
     const wasUnconfirmed=!!unresolved.current;
     active.current=true;setPending(true);setMessage("");
@@ -37,12 +40,12 @@ export function PositionStopLoss({position,symbol}:{position:Position;symbol:str
     try {
       const result=parseStopLoss(await session.writeStopLoss(request.command,snapshot,request.key),position.id,position.tradingSymbolId,position.side);
       if(!same())return;
-      unresolved.current=null;setUnknown(false);setPrice("");
+      unresolved.current=null;setJournalRequest(null);setUnknown(false);setPrice("");
       client.setQueryData([...tradingKeys.account(snapshot),"stop-loss",position.id],(old:StopLoss|undefined)=>latestStopLoss(old,position.stopLoss,result));
       setMessage("손절 설정 요청이 처리되었습니다. 아래 서버의 현재 상태를 확인해 주세요.");
     } catch(error) {
       if(!same())return;
-      unresolved.current=mutationStillUnconfirmed(error,wasUnconfirmed)?request:null;setUnknown(!!unresolved.current);setMessage(errorMessage(error));
+      unresolved.current=mutationStillUnconfirmed(error,wasUnconfirmed)?request:null;setJournalRequest(unresolved.current?{accountId:request.accountId,key:request.key,command:{kind:"stopLoss",...request.command}}:null);setUnknown(!!unresolved.current);setMessage(errorMessage(error));
     } finally {
       if(same()) {setPending(false);void query.refetch();void client.invalidateQueries({queryKey:[...tradingKeys.account(snapshot),"summary"]});}
       active.current=false;

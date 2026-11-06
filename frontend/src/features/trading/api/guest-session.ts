@@ -8,6 +8,8 @@ import { parseOrder } from "./orders";
 import { parseGuestRetry } from "./guest-retry";
 import { openTradingEvents, type EventState, type TradingEvent } from "./trading-events";
 import { parseRestart } from "./member-rounds";
+import { CommandJournalError, createCommandJournal, type CommandJournal, type JournalCommand, type JournalEntry, type JournalOwner } from "./command-journal";
+import { commandResultRequest, parseCommandResult, commandResultSettled, type CommandResult } from "./command-result";
 
 export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean; mode?: "member" | "checking"; roundId?: number; authRequired?: boolean };
 export const initialSession: SessionSnapshot = { phase: "loading", accountId: null, generation: 0 };
@@ -15,7 +17,8 @@ type StorageAccess = () => Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type MemberCredential = { memberId: number; accessToken: string; expiresAt: string };
 
 // Tokens stay private: snapshots, query keys/data and errors never contain them.
-export function createGuestSession(origin: string, storage: StorageAccess, transport: typeof fetch = fetch, now = Date.now, legacyStorage?: StorageAccess) {
+export function createGuestSession(origin: string, storage: StorageAccess, transport: typeof fetch = fetch, now = Date.now, legacyStorage?: StorageAccess,
+  journal:CommandJournal|undefined=typeof window==="undefined"?undefined:createCommandJournal()) {
   const storageKey = `yogimangchi.guest.v1:${origin}`;
   let credential: GuestCredential | null = null;
   let snapshot = initialSession;
@@ -32,6 +35,64 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   let memberRefresh: (() => void) | undefined;
   const eventReconnects = new Set<() => void>();
   const listeners = new Set<() => void>();
+  function commandOwner():JournalOwner|null {
+    const current=credential??(mode==="member"&&restartIntent&&restartIntent.memberId===member?.memberId?restartIntent.credential:null);
+    return current&&mode!=="checking"?{origin:tradingOrigin(origin),mode,accountId:current.accountId}:null;
+  }
+  async function journaled<T>(command:JournalCommand,accountId:number,key:string,operation:()=>Promise<T>):Promise<T> {
+    if(!journal)return operation();
+    const owner:JournalOwner={origin:tradingOrigin(origin),mode:mode==="guest"?"guest":"member",accountId};
+    let finish:(()=>void)|undefined;
+    try {
+      finish=journal.beginAttempt(owner,key,!journal.read(owner).some(entry=>entry.key===key));
+      const reserved=await journal.reserveAttempt(owner,command,key);
+      return await journal.withEntryLock(reserved.entry,async entry=>{
+        try {
+          if(reserved.existed) {
+            const found=await lookupCommand(entry);
+            if(commandResultSettled(found))return found.result as T;
+          }
+          const result=await operation();
+          // A cleanup failure retains the journal; it must not turn a known server result into a new command.
+          try{await journal.removeConfirmed(entry);}catch{ /* Recovery UI retries authoritative lookup and cleanup. */ }
+          return result;
+        } catch(error) {
+          if(!mutationStillUnconfirmed(error,reserved.existed))try{await journal.removeConfirmed(entry);}catch{ /* Keep the durable guard if storage is unavailable. */ }
+          throw error;
+        }
+      });
+    } catch(error) {
+      if(error instanceof CommandJournalError)throw new TradingApiError(409,undefined,"LOCAL_COMMAND_JOURNAL_BLOCKED");
+      throw error;
+    } finally {finish?.();}
+  }
+  async function lookupCommand(entry:JournalEntry,signal?:AbortSignal):Promise<CommandResult> {
+    const owner=commandOwner();
+    const current=credential??restartIntent?.credential;
+    if(!owner||!current||!usable(current)||owner.origin!==entry.owner.origin||owner.mode!==entry.owner.mode||owner.accountId!==entry.owner.accountId)throw new TradingApiError(401);
+    const sentToken=current.accessToken;
+    let hadJournalEntry=false;try{hadJournalEntry=!!journal?.read(owner).some(value=>value.key===entry.key);}catch{ /* Read-only lookup still has a validated original command. */ }
+    const owned=()=>{const actual=commandOwner();return actual?.origin===owner.origin&&actual.mode===owner.mode&&actual.accountId===owner.accountId;};
+    let result:CommandResult;
+    try {
+      if(entry.command.kind==="cancel") {
+        const order=parseOrder(await tradingJson(origin,`account/orders/${entry.command.orderId}`,{token:sentToken,signal},transport));
+        if(order.orderId!==entry.command.orderId)throw new TradingApiError(422);
+        result={status:"FOUND",operation:"CANCEL",observedAt:new Date(now()).toISOString(),resultKind:"ORDER_CURRENT",result:order};
+      } else result=parseCommandResult(await tradingJson(origin,"account/command-results/query",{token:sentToken,signal,method:"POST",body:commandResultRequest(entry)},transport),entry);
+      if(!owned()||signal?.aborted)throw new DOMException("Session changed","AbortError");
+      if(result.status==="FOUND"&&result.operation==="MEMBER_RESTART") {
+        if(mode!=="member"||!member)throw new TradingApiError(401);
+        const actual=record(record(await tradingJson(origin,"account/rounds/current",{token:member.accessToken,signal},transport)).round);
+        if(!owned()||signal?.aborted)throw new DOMException("Session changed","AbortError");
+        if(actual.currentRound!==true||actual.status!=="ACTIVE")throw new TradingApiError(422);
+        const roundId=id(actual.roundId),changed=hadJournalEntry||!!restartIntent||snapshot.phase!=="ready"||memberRoundId!==roundId;
+        memberRoundId=roundId;restartIntent=null;credential={accountId:owner.accountId,accessToken:member.accessToken,expiresAt:member.expiresAt};if(changed)publish("ready");
+      } else if(result.status==="FOUND"&&result.operation==="GUEST_RETRY"&&hadJournalEntry)publish("ready");
+      if(commandResultSettled(result)&&journal)await journal.removeConfirmed(entry);
+      return result;
+    } catch(error) {if(error instanceof TradingApiError&&error.status===401&&owned())invalidate(current,sentToken);throw error;}
+  }
   function publish(phase: SessionSnapshot["phase"]) {
     snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}), ...(mode !== "guest" ? { mode } : {}), ...(memberAuthRejected ? { authRequired: true } : {}), ...(mode === "member" && memberRoundId ? { roundId: memberRoundId } : {}) };
     listeners.forEach((listener) => listener());
@@ -131,6 +192,27 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   return {
     storageKey,
     getSnapshot: () => snapshot,
+    getCommandOwner: commandOwner,
+    readCommandJournal: () => {const owner=commandOwner();return owner&&journal?journal.read(owner).filter(entry=>!journal.isExecuting(entry)):[];},
+    queryJournalEntry(entry:JournalEntry,signal?:AbortSignal,allowResolved=false):Promise<CommandResult> {
+      if(!journal)return Promise.reject(new CommandJournalError("LOCK_UNSUPPORTED"));
+      return journal.withResultLock(entry,()=>{
+        if(!allowResolved&&!journal.read(entry.owner).some(value=>value.key===entry.key))throw new CommandJournalError("RESOLVED");
+        return lookupCommand(entry,signal);
+      });
+    },
+    resendJournalEntry(entry:JournalEntry):Promise<unknown> {
+      const owner=commandOwner(),expected=snapshot;
+      if(!owner||!journal||owner.origin!==entry.owner.origin||owner.mode!==entry.owner.mode||owner.accountId!==entry.owner.accountId)return Promise.reject(new TradingApiError(401));
+      const stored=journal.read(owner).find(value=>value.key===entry.key);
+      if(!stored||JSON.stringify(stored.command)!==JSON.stringify(entry.command))return Promise.reject(new TradingApiError(409,undefined,"LOCAL_COMMAND_JOURNAL_BLOCKED"));
+      switch(stored.command.kind) {
+        case "stopLoss":return this.writeStopLoss(stored.command,expected,stored.key);
+        case "memberRestart":return this.restartMember(expected,stored.key);
+        case "guestRetry":return this.retryGuest(expected,stored.key);
+        default:return this.write(stored.command,expected,stored.key);
+      }
+    },
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     suspendMember(memberId: number | null) {
       if (mode !== "member" || !member || member.memberId !== memberId || !credential || snapshot.accountId !== credential.accountId) return false;
@@ -240,9 +322,9 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       const ownerId = member.memberId;
       const intent = restartIntent = previous ?? { key, memberId: ownerId, credential: current, roundId: memberRoundId! };
       credential = current; retrying = true; publish("ready");
-      memberRestartFlight = (async () => {
-        let accepted = false;
-        try {
+      let accepted = false;
+      memberRestartFlight = journaled({kind:"memberRestart"},current.accountId,key,async () => {
+          if(mode!=="member"||member?.memberId!==ownerId||restartIntent!==intent)throw new DOMException("Session changed","AbortError");
           const result = parseRestart(await tradingJson(origin, "account/restart", { method: "POST", token: member!.accessToken, idempotencyKey: key }, transport));
           accepted = true;
           if (mode !== "member" || member?.memberId !== ownerId || restartIntent !== intent) throw new DOMException("Session changed", "AbortError");
@@ -251,7 +333,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           if (actual.currentRound !== true || actual.status !== "ACTIVE") throw new TradingApiError(422);
           memberRoundId = id(actual.roundId); restartIntent = null;
           return result;
-        } catch (error) {
+      }).catch((error:unknown) => {
           if (mode === "member" && member?.memberId === ownerId && restartIntent === intent) {
             const uncertain = mutationStillUnconfirmed(error, accepted || !!previous);
             if (uncertain) { credential = null; memberRoundId = undefined; }
@@ -259,11 +341,10 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           }
           if (accepted && !(error instanceof DOMException && error.name === "AbortError")) throw new TradingApiError(0);
           throw error;
-        } finally {
+      }).finally(() => {
           memberRestartFlight = null; retrying = false;
           if (mode === "member" && member?.memberId === ownerId) publish(credential ? "ready" : "error");
-        }
-      })();
+      });
       return memberRestartFlight;
     },
     watchEvents(expected: SessionSnapshot, onEvent: (event: TradingEvent) => void, onState: (state: EventState) => void, onReady: () => void) {
@@ -321,9 +402,12 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       const request = stopLossRequest(command);
       writes++;
       try {
+        return await journaled({kind:"stopLoss",...command},current.accountId,key,async()=>{
+        if(current!==credential||expected.generation!==snapshot.generation)throw new DOMException("Session changed","AbortError");
         const value = await tradingJson(origin, request.path, {token:sentToken, method:request.method, body:request.body, idempotencyKey:key}, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         return parseStopLoss(value, command.positionId);
+        });
       } catch (error) {
         if (error instanceof TradingApiError && error.status === 401) invalidate(current,sentToken);
         throw error;
@@ -338,10 +422,13 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       const request = mutationRequest(command);
       writes++;
       try {
+        return await journaled(command,current.accountId,key,async()=>{
+        if(current!==credential||expected.generation!==snapshot.generation)throw new DOMException("Session changed","AbortError");
         const value = await tradingJson(origin, request.path, { token: sentToken, method: "POST", body: request.body,
           idempotencyKey: request.keyed ? key : undefined }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         return parseOrder(value);
+        });
       } catch (error) {
         if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
@@ -359,17 +446,17 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       if(writes)return Promise.reject(new TradingApiError(409,undefined,"TRADING_BUSY"));
       // Advance the cache/intent epoch before reset; late reads and old uncertain orders cannot revive it.
       retrying=true;publish("ready");
-      retryFlight=(async()=>{
+      retryFlight=journaled({kind:"guestRetry"},current.accountId,key,async()=>{
         try {
+          if(current!==credential||mode!=="guest")throw new DOMException("Session changed","AbortError");
           const value=await tradingJson(origin,"account/retry",{method:"POST",token:current.accessToken,idempotencyKey:key},transport);
           if(current!==credential)throw new DOMException("Session changed","AbortError");
           return parseGuestRetry(value,current.accountId);
         } catch(error){if(error instanceof TradingApiError&&error.status===401)invalidate(current);throw error;}
-        finally {
+      }).finally(()=>{
           retrying=false;retryFlight=null;
           if(current===credential)publish("ready");
-        }
-      })();
+      });
       return retryFlight;
     },
   };
