@@ -55,3 +55,13 @@ tasks.register('soakTest', Test) {
     useJUnitPlatform { includeTags 'soak' }
     shouldRunAfter tasks.test
 }
+
+// Explicit, isolated manual QA only. Test classes are never packaged in bootJar.
+tasks.register('controlledQa', JavaExec) {
+    description = 'Starts isolated port 18091 with a file-controlled test Mark feed and the real worker.'
+    group = 'verification'
+    dependsOn tasks.testClasses
+    classpath = sourceSets.test.runtimeClasspath - files(sourceSets.test.output.resourcesDir)
+    mainClass = 'com.yogimangchi.trading.qa.ControlledPriceQa'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(17) }
+}
