@@ -173,6 +173,9 @@ class CommandResultQueryIntegrationTests {
             assertThat(json.readTree(response.body()).path("code").asText()).isEqualTo("INVALID_COMMAND_RESULT_REQUEST");
             ok(query(owner,new Subject(STOP_LOSS_PUT,key(),node("positionId",1,"stopPrice",exponent,"expectedVersion",0),null)),400);
             ok(query(owner,new Subject(OPEN,key(),openRequest("MARKET").put("quantity",exponent),null)),400);
+            var rejected=mutate("POST","/api/v1/trading/account/orders",openRequest("MARKET").put("quantity",exponent),key());
+            ok(rejected,400);
+            assertThat(json.readTree(rejected.body()).path("code").asText()).isEqualTo("INVALID_ORDER");
         }
         assertThat(snapshot(owner.account())).isEqualTo(before);
     }

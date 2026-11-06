@@ -60,17 +60,21 @@ public class TradingOrderService {
         gate.enterTradingTransaction();
         validateKey(key);
         if (request == null || request.type() == null || request.tradingSymbolId() == null
-                || request.tradingSymbolId() <= 0 || request.side() == null || request.quantity() == null || request.leverage() == null
-                || request.quantity().signum() <= 0 || request.quantity().stripTrailingZeros().scale() > TradingMath.QUANTITY_SCALE
-                || request.quantity().compareTo(TradingMath.MAX_QUANTITY) > 0
-                || request.leverage() < 1 || request.leverage() > TradingMath.MAX_LEVERAGE)
+                || request.tradingSymbolId() <= 0 || request.side() == null || request.leverage() == null)
             throw new BusinessException(ErrorCode.INVALID_ORDER);
         if (request.type() == TradingOrder.Type.MARKET && request.limitPrice() != null)
             throw new BusinessException(ErrorCode.INVALID_ORDER);
-        if (request.type() == TradingOrder.Type.LIMIT) {
-            try { TradingMath.validateNewOrder(request.quantity(), request.leverage(), request.limitPrice()); }
-            catch (TradingMath.LimitExceeded limit) { throw new BusinessException(ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED); }
-        catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
+        try {
+            if (request.type() == TradingOrder.Type.LIMIT) {
+                TradingMath.validateNewOrder(request.quantity(), request.leverage(), request.limitPrice());
+            } else {
+                TradingMath.validateQuantity(request.quantity());
+                TradingMath.validateLeverage(request.leverage());
+            }
+        } catch (TradingMath.LimitExceeded limit) {
+            throw new BusinessException(ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED);
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.INVALID_ORDER);
         }
         String hash = TradingCommandFingerprint.open(request);
         TradingAccount account = locks.lock(accountId);
