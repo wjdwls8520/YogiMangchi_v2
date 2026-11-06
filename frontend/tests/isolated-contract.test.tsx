@@ -21,6 +21,9 @@ test("submit quote retries only ENGINE_RECOVERING once, retaining the request an
     [recovery, recovery, false, 2],
     [recovery, null, true, 1],
     [new TradingApiError(503), null, false, 1],
+    [new TradingApiError(401), null, false, 1],
+    [new TradingApiError(503, undefined, "ACCOUNT_RISK_PENDING"), null, false, 1],
+    [new DOMException("Aborted", "AbortError"), null, false, 1],
     [new TradingApiError(409, undefined, "ENGINE_RECOVERING"), null, false, 1],
   ] as const) {
     const controller = new AbortController();

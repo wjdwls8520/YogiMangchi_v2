@@ -158,7 +158,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
     try {
       const value=await readSubmitQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side,...(form.ratio > 0 ? {balancePercentage:form.ratio} : {quantity}),...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
       const currentSession = session.getSnapshot();
-      if (controller.signal.aborted || currentSession.accountId !== snapshot.accountId || currentSession.generation !== snapshot.generation) return;
+      if (controller.signal.aborted || currentSession.phase !== "ready" || currentSession.accountId !== snapshot.accountId || currentSession.generation !== snapshot.generation) return;
       if (recoveringQuoteNotice.current !== null) {
         notices.dismiss(recoveringQuoteNotice.current);
         recoveringQuoteNotice.current = null;
@@ -167,7 +167,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
       complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity: value.quantity,
         leverage: value.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
     } catch(error) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
       reportAdmissionRejection(client, snapshot, error);
       const notice = {kind:"error" as const,title:"주문 견적을 확인하지 못했습니다",message:mutationMessage(error)};
       if (isRecoveringQuote(error)) {
