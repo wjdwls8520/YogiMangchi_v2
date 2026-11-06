@@ -4,14 +4,48 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { parsePosition } from "../src/features/trading/api/account";
 import { parseLeverage } from "../src/features/trading/api/leverage-contract";
 import { isolatedReady } from "../src/features/trading/api/margin";
-import { parseQuote, readQuote, type QuoteRequest } from "../src/features/trading/api/quote";
-import { createGuestSession } from "../src/features/trading/api/guest-session";
+import { parseQuote, readQuote, readSubmitQuote, type QuoteRequest } from "../src/features/trading/api/quote";
+import { createGuestSession, type GuestSession } from "../src/features/trading/api/guest-session";
+import { TradingApiError } from "../src/features/trading/api/client";
 import { LiquidationPrice } from "../src/features/trading/components/liquidation-price";
 
 const time="2026-10-22T00:00:00Z";
 const position={id:1,tradingSymbolId:2,side:"LONG",quantity:"1",reservedCloseQuantity:"0",freeCloseQuantity:"1",entryPrice:"100",leverage:100,margin:"1",status:"OPEN",realizedPnl:"0",markPrice:"100",unrealizedPnl:"0",priceStatus:"FRESH",priceEventTime:time,openedAt:time,marginMode:"ISOLATED",openedMarginMode:"ISOLATED",liquidationPrice:"99.000000000000000001",liquidationPriceStatus:"ESTIMATED_DOWNWARD",liquidationPriceAsOf:time};
 const request:QuoteRequest={tradingSymbolId:2,type:"MARKET",side:"LONG",quantity:"1"};
 const quote={tradingSymbolId:2,type:"MARKET",side:"LONG",leverage:100,quantity:"1.00000000",referencePrice:"100.000000000000000001",notional:"100.000000000000000001",margin:"1.000000000000000001",feeRate:"0.0005",estimatedFee:"0.050000000000000001",totalRequired:"1.050000000000000002",availableBalance:"10000",balancePercentage:null,priceEventTime:time,quotedAt:time};
+
+test("submit quote retries only ENGINE_RECOVERING once, retaining the request and cancellation", async () => {
+  const recovery = new TradingApiError(503, undefined, "ENGINE_RECOVERING");
+  for (const [first, second, cancel, count] of [
+    [recovery, null, false, 2],
+    [recovery, recovery, false, 2],
+    [recovery, null, true, 1],
+    [new TradingApiError(503), null, false, 1],
+    [new TradingApiError(409, undefined, "ENGINE_RECOVERING"), null, false, 1],
+  ] as const) {
+    const controller = new AbortController();
+    const identity = { phase: "ready", accountId: 1, generation: 1 } as const;
+    let calls = 0;
+    const session: Pick<GuestSession, "read"> = {
+      async read(path, snapshot, signal, body) {
+        assert.equal(path, "account/orders/quote");
+        assert.equal(snapshot, identity);
+        assert.equal(signal, controller.signal);
+        assert.equal(body, request);
+        if (++calls === 1) throw first;
+        if (second) throw second;
+        return quote;
+      },
+    };
+    const result = readSubmitQuote(session as GuestSession, identity, request, controller.signal);
+    const timer = cancel ? setTimeout(() => controller.abort(), 20) : undefined;
+    if (cancel) await assert.rejects(result, { name: "AbortError" });
+    else if (second || count === 1) await assert.rejects(result, error => error === (second ?? first));
+    else assert.equal((await result).quantity, quote.quantity);
+    clearTimeout(timer);
+    assert.equal(calls, count);
+  }
+});
 
 test("isolated liquidation contracts preserve server precision and never fabricate an unavailable threshold",()=>{
   assert.equal(parsePosition(position).liquidationPrice,position.liquidationPrice);
