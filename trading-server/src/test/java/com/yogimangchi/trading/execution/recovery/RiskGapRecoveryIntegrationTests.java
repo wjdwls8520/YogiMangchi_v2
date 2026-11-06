@@ -13,6 +13,7 @@ import com.yogimangchi.trading.reconciliation.LedgerReconciler;
 import com.yogimangchi.trading.tradingaccount.service.TradingAccountService;
 import java.math.BigDecimal;
 import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -159,7 +160,15 @@ class RiskGapRecoveryIntegrationTests {
         assertThat(ledger.check(account).status()).isEqualTo("MATCHED");
     }
     void gap(){prices.markUnavailable();prices.beginSubscription(Set.of(btc,eth));}
-    void tick(long symbol,String amount){var now=Instant.now();assertThat(prices.update(new LatestMarkPrice(symbol,new BigDecimal(amount),now,now))).isTrue();}
+    void tick(long symbol,String amount){
+        Instant receivedAt=Instant.now();
+        Instant eventTime=receivedAt.truncatedTo(ChronoUnit.MICROS);
+        Instant previous=prices.find(symbol).latestPrice().map(LatestMarkPrice::eventTime).orElse(Instant.MIN);
+        // Distinct provider events must also remain distinct at PostgreSQL timestamp precision.
+        if(!eventTime.isAfter(previous))eventTime=previous.truncatedTo(ChronoUnit.MICROS).plus(1,ChronoUnit.MICROS);
+        assertThat(prices.update(new LatestMarkPrice(symbol,new BigDecimal(amount),eventTime,receivedAt)))
+                .as("fixture price: symbol=%s eventTime=%s previous=%s receivedAt=%s",symbol,eventTime,previous,receivedAt).isTrue();
+    }
     void drain()throws Exception{for(int i=0;i<5;i++)worker.runOnce();}
     long symbol(String symbol){return jdbc.queryForObject("select id from trading.trading_symbol where symbol=?",Long.class,symbol);}
     OrderResponse limit(long symbol){

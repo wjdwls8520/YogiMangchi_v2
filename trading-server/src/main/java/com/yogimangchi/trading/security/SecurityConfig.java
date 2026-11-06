@@ -38,6 +38,8 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.POST,"/api/v1/trading/account/restart").hasRole("MEMBER");
             authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/rounds","/api/v1/trading/account/rounds/current","/api/v1/trading/account/rounds/{roundId:[0-9]+}","/api/v1/trading/account/rounds/{roundId:[0-9]+}/{kind:orders|fills|positions}").hasRole("MEMBER");
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/retry").authenticated();
+            authorize.requestMatchers(HttpMethod.POST,"/api/v1/trading/account/command-results/query").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/orders/{orderId:[0-9]+}").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.PUT,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.DELETE,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");

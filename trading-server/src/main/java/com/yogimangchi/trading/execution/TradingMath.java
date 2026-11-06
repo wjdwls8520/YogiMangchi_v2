@@ -46,8 +46,8 @@ public final class TradingMath {
     }
 
     public static void validateQuantity(BigDecimal quantity) {
-        if (quantity == null || quantity.signum() <= 0 || quantity.stripTrailingZeros().scale() > QUANTITY_SCALE
-                || quantity.compareTo(MAX_QUANTITY) > 0) {
+        if (quantity == null || quantity.signum() <= 0 || quantity.compareTo(MAX_QUANTITY) > 0
+                || quantity.stripTrailingZeros().scale() > QUANTITY_SCALE) {
             throw new IllegalArgumentException("Quantity must be positive with at most 8 decimal places");
         }
     }
@@ -70,8 +70,8 @@ public final class TradingMath {
     }
 
     public static void validatePrice(BigDecimal price) {
-        if (price == null || price.signum() <= 0 || price.stripTrailingZeros().scale() > AMOUNT_SCALE
-                || price.precision() - price.scale() > 20) throw new IllegalArgumentException("Invalid price precision");
+        if (price == null || price.signum() <= 0 || (long) price.precision() - price.scale() > 20
+                || price.stripTrailingZeros().scale() > AMOUNT_SCALE) throw new IllegalArgumentException("Invalid price precision");
     }
 
     /** Keep rounding dust on the remaining lot; the final close releases every remaining unit. */

@@ -11,6 +11,8 @@ import org.springframework.jdbc.datasource.DelegatingDataSource;
 final class RiskSqlCounter implements BeanPostProcessor {
     private static final ThreadLocal<AtomicLong> ACTIVE=new ThreadLocal<>();
     private static final ThreadLocal<AtomicLong> SELECTS=new ThreadLocal<>();
+    private static final ThreadLocal<Runnable> AFTER_NEXT_SELECT=new ThreadLocal<>();
+    static AutoCloseable afterNextSelect(Runnable hook){AFTER_NEXT_SELECT.set(hook);return AFTER_NEXT_SELECT::remove;}
     static Scope start(){var counter=new AtomicLong();var reads=new AtomicLong();ACTIVE.set(counter);SELECTS.set(reads);return new Scope(counter,reads);}
     record Scope(AtomicLong counter,AtomicLong reads) implements AutoCloseable {long count(){return counter.get();}long selectCount(){return reads.get();}public void close(){ACTIVE.remove();SELECTS.remove();}}
     @Override public Object postProcessAfterInitialization(Object bean,String name) {
@@ -33,7 +35,12 @@ final class RiskSqlCounter implements BeanPostProcessor {
                         String normalized=sql.stripLeading().toLowerCase(java.util.Locale.ROOT);
                         if(normalized.startsWith("select")||normalized.startsWith("with")||normalized.startsWith("explain"))SELECTS.get().incrementAndGet();
                     }
-                    return invoke(statement,m,a);
+                    Object value=invoke(statement,m,a);
+                    if(m.getName().equals("executeQuery")){
+                        var hook=AFTER_NEXT_SELECT.get();
+                        if(hook!=null){AFTER_NEXT_SELECT.remove();hook.run();}
+                    }
+                    return value;
                 });
             }
             return result;
