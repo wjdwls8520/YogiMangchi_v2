@@ -99,7 +99,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
     sizingRequest.current?.abort(); sizingRequest.current=null; sizingTicket.current++; setSizing(null);
     setForm({ ...formForSide({...form,...values},values.side??form.side,leverage), identity }); setResult(null); setServerWarning(null); action.clearError();
   }
-  async function selectRatio(percent: number) {
+  async function selectRatio(percent: number, settle = false) {
     if (locked) return;
     if (percent === 0 || (form.type === "LIMIT" && !validLimitPrice(price))) { update({ratio:percent,quantity:"0"}); return; }
     if (!canSize || !symbol) return;
@@ -107,6 +107,18 @@ function OpenOrderPanel({active}:{active:boolean}) {
     const ticket=++sizingTicket.current, controller=new AbortController(); sizingRequest.current=controller;
     setSizing({identity,symbolId:symbol.id,ticket});
     try {
+      if (settle) {
+        await new Promise<void>(resolve => {
+          const finish = () => {
+            clearTimeout(timer);
+            controller.signal.removeEventListener("abort", finish);
+            resolve();
+          };
+          const timer = setTimeout(finish, 150);
+          controller.signal.addEventListener("abort", finish, { once: true });
+        });
+        if (controller.signal.aborted || sizingTicket.current !== ticket) return;
+      }
       const value=await readQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side:form.side,balancePercentage:percent,...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
       if (sizingTicket.current!==ticket || value.leverage!==leverage) return;
       setForm(current=>current.identity===identity&&current.symbolId===symbol.id&&current.ratio===percent&&current.type===form.type&&current.side===form.side&&current.limitPrice===form.limitPrice ? {...current,quantity:value.quantity,ratio:percent} : current);
@@ -167,7 +179,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
           <OrderInput id="order-quantity" label="주문 수량" unit={symbol?.symbol ?? "—"} placeholder="0.000" value={form.quantity} disabled={locked || !symbol} onChange={(value) => update({ quantity: value, ratio: 0 })} hint="양수 · 소수점 최대 8자리" />
           <div className="order-ratio">
             <label htmlFor="order-ratio" className="field-label">참고 자산 비율 <span className="float-right font-semibold tabular-nums text-brand-700">{form.ratio}%</span></label>
-            <input id="order-ratio" type="range" min="0" max="100" step="1" value={form.ratio} disabled={ratioDisabled} onChange={(event) => selectRatio(Number(event.target.value))} className="h-8 w-full accent-brand-600" />
+            <input id="order-ratio" type="range" min="0" max="100" step="1" value={form.ratio} disabled={ratioDisabled} onChange={(event) => selectRatio(Number(event.target.value), true)} className="h-8 w-full accent-brand-600" />
             <OrderChoices legend="비율 선택" name="ratio-preset" selected={String(form.ratio)} disabled={ratioDisabled} onChange={(value) => selectRatio(Number(value))} choices={[25, 50, 75, 100].map((value) => ({ value: String(value), label: `${value}%` }))} />
             <p className="order-input-hint">선택 비율로 수량을 채웁니다. 가격 변경 시 수량은 유지됩니다.</p>
             {!canSize && <p role="status" className="order-input-hint">{sizingUnavailable(form.type,price,ready,account.data?.wallet.availableBalance)}</p>}

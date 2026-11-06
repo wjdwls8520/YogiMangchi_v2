@@ -36,6 +36,7 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const reference = candles.at(-1)?.close ?? freshMarkPrice(market)?.decimal;
   const initialFormat = useRef(marketChartPriceFormat(reference, symbol.priceTickSize));
+  const previousTickSize = useRef(symbol.priceTickSize);
 
   // Buffer marks only during latest reconciliation. Older pages leave live updates running.
   useEffect(() => {
@@ -82,7 +83,10 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
   }, [book, pager]);
   useEffect(() => { renderData(); }, [candles, renderData]);
   useEffect(() => {
-    initialFormat.current = marketChartPriceFormat(reference, symbol.priceTickSize);
+    const format = marketChartPriceFormat(reference, symbol.priceTickSize);
+    if (previousTickSize.current === symbol.priceTickSize && initialFormat.current.minMove === format.minMove) return;
+    previousTickSize.current = symbol.priceTickSize;
+    initialFormat.current = format;
     const current = series.current;
     try { current?.applyOptions({ priceFormat: initialFormat.current }); }
     catch { queueMicrotask(() => { if (series.current === current) setRendererFailed(true); }); }
