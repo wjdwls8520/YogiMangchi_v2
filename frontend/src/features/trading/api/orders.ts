@@ -27,3 +27,7 @@ export function orderStatusLabel(status: string) {
   }
 }
 export function parseOrders(value: unknown) { return list(value, parseOrder); }
+
+export function orderReceiptLabel(status: TradingOrder["status"]) {
+  return status === "PENDING" ? "접수 확인 · 현재 상태는 Order History(주문 내역)에서 확인해 주세요." : orderStatusLabel(status);
+}

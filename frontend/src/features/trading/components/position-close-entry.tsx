@@ -13,7 +13,7 @@ import { CloseOrderFields } from "./close-order-fields";
 import { useGuestSession } from "./trading-data-provider";
 import { useMarketDetails, usePositionMarkets } from "./selected-market-provider";
 import type { TradingOrder } from "../api/orders";
-import { orderStatusLabel } from "../api/orders";
+import { orderReceiptLabel } from "../api/orders";
 import { orderReason } from "../api/order-reason";
 
 export function PositionCloseEntry({position,symbol,layout="panel",active=true}:{position:Position;symbol:string;layout?:"panel"|"row";active?:boolean}) {
@@ -50,7 +50,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
   }
   function complete(order:TradingOrder|null) {
     if(!order)return;
-    setResult(`청산 주문 #${order.orderId} · ${orderStatusLabel(order.status)}${order.status === "REJECTED" ? ` · ${orderReason(order.reason)}` : ""}`);
+    setResult(`청산 주문 #${order.orderId} · ${orderReceiptLabel(order.status)}${order.status === "REJECTED" ? ` · ${orderReason(order.reason)}` : ""}`);
     if (order.status !== "FILLED" && order.status !== "PENDING") return;
     setQuantity("");setRatio(0);
     dialog.current?.close();partialDialog.current?.close();
