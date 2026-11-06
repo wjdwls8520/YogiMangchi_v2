@@ -1,10 +1,15 @@
 import { comparePrices } from "../market/price-format";
-import { decimalUnits, estimatedOrder, ratioQuantity, SERVER_MAX_LEVERAGE, validLimitPrice, validQuantity, validSizingPrice } from "./order-input";
+import { belowMinimumOpenNotional, decimalUnits, estimatedOrder, MIN_OPEN_NOTIONAL, ratioQuantity, SERVER_MAX_LEVERAGE, validLimitPrice, validQuantity, validSizingPrice } from "./order-input";
 import type { TradingCommand } from "./mutation-request";
 
 export type OpenForm = { symbolId: number | null; type: "MARKET" | "LIMIT"; side: "LONG" | "SHORT";
   leverage: number; quantity: string; limitPrice: string; ratio: number };
-export type OrderIssue = { kind: "marketable" | "balance" | "input" | "unavailable"; message: string };
+export type OrderIssue = { kind: "marketable" | "balance" | "minimum" | "input" | "unavailable"; message: string };
+export function minimumOpenIssue(quantity: string, price: string): OrderIssue | null {
+  return belowMinimumOpenNotional(quantity, price)
+    ? { kind: "minimum", message: `최소 진입 주문 금액은 ${MIN_OPEN_NOTIONAL} USDT입니다. 수량을 늘려 주세요.` }
+    : null;
+}
 export function formForSide(form: OpenForm, side: OpenForm["side"], leverage: number): OpenForm {
   return { ...form, side, leverage };
 }
@@ -33,6 +38,8 @@ export function preflightOrder(form: OpenForm, side: OpenForm["side"], ready: bo
     || (form.type === "LIMIT" && !validLimitPrice(price))) return { kind: "input", message: "주문 수량·지정가·레버리지를 확인해 주세요." };
   const relation = form.type === "LIMIT" ? marketableLimitIssue(side, price, mark) : null;
   if (relation) return relation;
+  const minimum = minimumOpenIssue(quantity, price);
+  if (minimum) return minimum;
   try {
     const estimate = estimatedOrder(quantity, price, form.leverage);
     if (availableBalance == null || !estimate) throw new Error("Unavailable balance");

@@ -17,7 +17,7 @@ import { isolatedReady } from "../api/margin";
 import { useSymbolLeverage } from "../api/leverage";
 import { useTradingMutation } from "../api/mutations";
 import { validLimitPrice, validQuantity, validSizingPrice } from "../api/order-input";
-import { formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
+import { formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, minimumOpenIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
 import { orderStatusLabel } from "../api/orders";
@@ -89,10 +89,11 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const price = form.type === "LIMIT" ? form.limitPrice.trim() : mark?.decimal ?? "";
   const quantity = form.quantity.trim();
   const valid = validQuantity(quantity) && (form.type === "MARKET" || validLimitPrice(price));
+  const minimumIssue = valid ? minimumOpenIssue(quantity, price) : null;
   const canSize = ready && account.data?.wallet.availableBalance != null && (form.type === "LIMIT" ? validLimitPrice(price) : validSizingPrice(price));
   const ratioDisabled = locked || (form.type === "MARKET" && !canSize);
   const quoteRequest = symbol ? {tradingSymbolId:symbol.id,type:form.type,side:form.side,quantity,...(form.type === "LIMIT" ? {limitPrice:price} : {})} : null;
-  const quote = useOrderQuote(quoteRequest, active && ready && valid && !preparing);
+  const quote = useOrderQuote(quoteRequest, active && ready && valid && !minimumIssue && !preparing);
   const estimate = quote.data?.leverage === leverage ? quote.data : undefined;
   const sizingPending = sizing?.identity === identity && sizing.symbolId === symbol?.id;
   function update(values: Partial<OpenForm>) {
@@ -143,7 +144,12 @@ function OpenOrderPanel({active}:{active:boolean}) {
     update({ side });
     const commandForm = formForSide(form,side,leverage);
     const issue = preflightOrder(commandForm, side, ready, freshMarkPrice(market)?.decimal, account.data?.wallet.availableBalance);
-    if (issue && !(issue.kind === "balance" && form.ratio > 0)) { setServerWarning({ side, issue }); notices.push({kind:"error",title:"주문을 제출할 수 없습니다",message:issue.message}); return; }
+    // A percentage submission asks the server to size again at the current price and leverage.
+    if (issue && !(form.ratio > 0 && (issue.kind === "balance" || issue.kind === "minimum"))) {
+      if (issue.kind !== "minimum") setServerWarning({ side, issue });
+      notices.push({kind:"error",title:"주문을 제출할 수 없습니다",message:issue.message});
+      return;
+    }
     if (!symbol) return;
     submitting.current=true; setPreparing(true);
     const controller=new AbortController(); preflightRequest.current=controller;
@@ -189,6 +195,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
       </details>
       {sizingPending && <p role="status" className="order-input-hint">서버에서 수수료 포함 비율 수량을 계산 중입니다.</p>}
       {quote.error && <p role="status" className="order-input-hint">서버 견적: {quote.error}</p>}
+      {minimumIssue && <p role="status" className="order-warning">{minimumIssue.message}</p>}
       {form.quantity && !validQuantity(quantity) && !(form.type === "LIMIT" && quantity === "0" && !validLimitPrice(price)) && <p role="alert" className="order-input-hint">수량은 0보다 커야 하며 소수점은 8자리까지 지원합니다.</p>}
       {form.type === "LIMIT" && form.limitPrice && !validLimitPrice(price) && <p role="alert" className="order-input-hint">양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.</p>}
       {account.data && !isolatedReady(account.data.wallet) && <p role="alert" className="order-warning">이전 담보 방식의 전환 확인이 필요합니다. 전환 완료 전에는 주문할 수 없습니다.</p>}
