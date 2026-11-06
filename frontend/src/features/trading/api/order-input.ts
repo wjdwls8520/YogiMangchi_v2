@@ -26,6 +26,13 @@ function priceFraction(value: string) {
   const [whole, fraction = ""] = value.split(".");
   return { units: BigInt(whole + fraction), scale: BigInt(10) ** BigInt(fraction.length) };
 }
+// TradingMath.MIN_ORDER_NOTIONAL applies only to new OPEN orders.
+export const MIN_OPEN_NOTIONAL = "10";
+export function belowMinimumOpenNotional(quantity: string, price: string) {
+  if (!validQuantity(quantity) || !validSizingPrice(price)) return false;
+  const parsed = priceFraction(price);
+  return decimalUnits(quantity) * parsed.units < decimalUnits(MIN_OPEN_NOTIONAL) * parsed.scale;
+}
 export function estimatedOrder(quantity: string, price: string, leverage: number) {
   if (!validQuantity(quantity) || !validSizingPrice(price) || !Number.isInteger(leverage) || leverage < 1 || leverage > MAX_INPUT_LEVERAGE) return null;
   const parsed = priceFraction(price), product = decimalUnits(quantity) * parsed.units;

@@ -150,9 +150,18 @@ test("preflight uses reservation-adjusted available balance and current edited q
   for(const value of [{...form,quantity:"0"},{...form,leverage:101},{...form,limitPrice:"NaN"}]) assert.equal(preflightOrder(value,"LONG",true,"100","1000")?.kind,"input");
   assert.equal(preflightOrder(form,"LONG",false,"100","1000")?.kind,"unavailable");
 });
+test("new OPEN minimum uses the limit price or latest Mark and accepts exactly 10 USDT", () => {
+  const form = { ...initial, quantity: "0.01", type: "LIMIT" as const, limitPrice: "990" };
+  assert.equal(preflightOrder(form, "LONG", true, "1000", "100")?.kind, "minimum");
+  assert.equal(preflightOrder({ ...form, limitPrice: "1000" }, "LONG", true, "1001", "100"), null);
+
+  const market = { ...form, type: "MARKET" as const };
+  assert.equal(preflightOrder(market, "LONG", true, "999.999999999999999999", "100")?.kind, "minimum");
+  assert.equal(preflightOrder(market, "LONG", true, "1000", "100"), null);
+  assert.equal(preflightOrder(market, "LONG", true, "999", "100")?.kind, "minimum");
+});
 test("precision is retained for 30-decimal Mark sizing, passive comparison and CEILING margin at 18 decimals",()=>{
   assert.equal(estimatedOrder("0.00000001","0.000000000000000001",20)?.margin,"0.000000000000000001");
-  assert.equal(preflightOrder({...initial,quantity:"0.00000001",leverage:20},"LONG",true,"0.000000000000000001","0")?.kind,"balance");
   assert.equal(estimatedOrder("1","100.000000000000000000000000000001",1)?.margin,"100.000000000000000001");
   assert.equal(ratioQuantity("1","0.000000010000000000000000000001",1,100),"99999999.99999999");
   assert.equal(marketableLimitIssue("LONG","100.000000000000000001","100.000000000000000002"),null);
