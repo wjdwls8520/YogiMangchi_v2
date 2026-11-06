@@ -4,8 +4,8 @@ import { createContext, useContext, useEffect, useMemo, useState, useSyncExterna
 import { createPortal } from "react-dom";
 import { createNoticeStore, type TradingNotice } from "../api/notices";
 
-type NoticeActions = { push: (notice: TradingNotice) => void };
-const NoticeContext = createContext<NoticeActions>({ push: () => {} });
+type NoticeActions = { push: (notice: TradingNotice) => number | null; dismiss: (id: number) => void };
+const NoticeContext = createContext<NoticeActions>({ push: () => null, dismiss: () => {} });
 const empty: readonly never[] = [];
 
 // Keep notifications within the active modal's accessible layer and above its backdrop.
@@ -31,7 +31,7 @@ export function TradingNoticeProvider({ identity, children }: { identity: string
   const [store] = useState(createNoticeStore);
   const notices = useSyncExternalStore(store.subscribe, store.getSnapshot, () => empty);
   useEffect(() => () => store.clear(), [store, identity]);
-  const actions = useMemo(() => ({ push: (notice: TradingNotice) => store.push(notice, identity) }), [store, identity]);
+  const actions = useMemo(() => ({ push: (notice: TradingNotice) => store.push(notice, identity), dismiss: store.dismiss }), [store, identity]);
   return <NoticeContext.Provider value={actions}>{children}<TradingNoticeList notices={notices.filter(notice => notice.identity === identity)} dismiss={store.dismiss} /></NoticeContext.Provider>;
 }
 export function useTradingNotices() { return useContext(NoticeContext); }

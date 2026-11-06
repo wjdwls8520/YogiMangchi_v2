@@ -10,7 +10,7 @@ import { useSelectedMarket } from "./selected-market-provider";
 import { useGuestSession } from "./trading-data-provider";
 import { freshMarkPrice } from "../market/selected-market";
 import { useTradingSummary } from "../api/queries";
-import { readQuote } from "../api/quote";
+import { isRecoveringQuote, readQuote, readSubmitQuote } from "../api/quote";
 import { useOrderQuote } from "../api/quote-query";
 import { mutationMessage } from "../api/mutation-request";
 import { isolatedReady } from "../api/margin";
@@ -56,6 +56,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const client = useQueryClient();
   const sizingRequest = useRef<AbortController | null>(null), sizingTicket = useRef(0), submitting = useRef(false);
   const preflightRequest = useRef<AbortController | null>(null);
+  const recoveringQuoteNotice = useRef<number | null>(null);
   const [sizing,setSizing] = useState<{identity:string;symbolId:number;ticket:number}|null>(null);
   const [preparing,setPreparing] = useState(false);
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
@@ -155,12 +156,25 @@ function OpenOrderPanel({active}:{active:boolean}) {
     submitting.current=true; setPreparing(true);
     const controller=new AbortController(); preflightRequest.current=controller;
     try {
-      const value=await readQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side,...(form.ratio > 0 ? {balancePercentage:form.ratio} : {quantity}),...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
-      if(controller.signal.aborted)return;
+      const value=await readSubmitQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side,...(form.ratio > 0 ? {balancePercentage:form.ratio} : {quantity}),...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
+      const currentSession = session.getSnapshot();
+      if (controller.signal.aborted || currentSession.phase !== "ready" || currentSession.accountId !== snapshot.accountId || currentSession.generation !== snapshot.generation) return;
+      if (recoveringQuoteNotice.current !== null) {
+        notices.dismiss(recoveringQuoteNotice.current);
+        recoveringQuoteNotice.current = null;
+      }
       if (value.leverage!==leverage) { await leverageState.refresh(); notices.push({kind:"warning",title:"레버리지를 확인해 주세요",message:"서버 설정을 다시 조회했습니다. 확인 후 직접 주문해 주세요."}); return; }
       complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity: value.quantity,
         leverage: value.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
-    } catch(error) { if(!controller.signal.aborted)reportAdmissionRejection(client, snapshot, error); if(!controller.signal.aborted)notices.push({kind:"error",title:"주문 견적을 확인하지 못했습니다",message:mutationMessage(error)}); }
+    } catch(error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+      reportAdmissionRejection(client, snapshot, error);
+      const notice = {kind:"error" as const,title:"주문 견적을 확인하지 못했습니다",message:mutationMessage(error)};
+      if (isRecoveringQuote(error)) {
+        if (recoveringQuoteNotice.current !== null) notices.dismiss(recoveringQuoteNotice.current);
+        recoveringQuoteNotice.current = notices.push(notice);
+      } else notices.push(notice);
+    }
     finally { preflightRequest.current=null;submitting.current=false;setPreparing(false); }
   }
   function warning(side: OpenForm["side"]) {

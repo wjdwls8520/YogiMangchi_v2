@@ -1,6 +1,7 @@
 import { decimal, id, instant, invalidContract, record } from "./contracts";
 import { decimalUnits } from "./order-input";
 import type { GuestSession, SessionSnapshot } from "./guest-session";
+import { TradingApiError } from "./client";
 
 export type QuoteRequest = { tradingSymbolId: number; type: "MARKET" | "LIMIT"; side: "LONG" | "SHORT"; quantity?: string; balancePercentage?: number; limitPrice?: string };
 export function parseQuote(value: unknown, request: QuoteRequest) {
@@ -22,4 +23,30 @@ export function parseQuote(value: unknown, request: QuoteRequest) {
 }
 export function readQuote(session: GuestSession, identity: SessionSnapshot, request: QuoteRequest, signal: AbortSignal) {
   return session.read("account/orders/quote", identity, signal, request).then(value => parseQuote(value,request));
+}
+
+export function isRecoveringQuote(error: unknown) {
+  return error instanceof TradingApiError && error.status === 503 && error.code === "ENGINE_RECOVERING";
+}
+
+export async function readSubmitQuote(session: GuestSession, identity: SessionSnapshot, request: QuoteRequest, signal: AbortSignal) {
+  try {
+    return await readQuote(session, identity, request, signal);
+  } catch (error) {
+    if (!isRecoveringQuote(error)) throw error;
+    signal.throwIfAborted();
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      }, 300);
+      function abort() {
+        clearTimeout(timer);
+        reject(signal.reason);
+      }
+      signal.addEventListener("abort", abort, { once: true });
+    });
+    signal.throwIfAborted();
+    return readQuote(session, identity, request, signal);
+  }
 }
