@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseOrders, orderStatusLabel } from "../src/features/trading/api/orders";
+import { parseOrders, orderReceiptLabel, orderStatusLabel } from "../src/features/trading/api/orders";
 
 test("order status distinguishes acceptance from execution and never renders an unknown server status", () => {
   assert.equal(orderStatusLabel("PENDING"), "접수 · 체결 대기");
@@ -8,6 +8,14 @@ test("order status distinguishes acceptance from execution and never renders an 
   assert.equal(orderStatusLabel("CANCELED"), "취소 완료");
   assert.equal(orderStatusLabel("REJECTED"), "거절");
   assert.equal(orderStatusLabel("internal details"), "상태 확인 필요");
+});
+
+test("the pending submit receipt directs users to history without claiming the order is still pending", () => {
+  assert.match(orderReceiptLabel("PENDING"), /접수 확인.*Order History/);
+  assert.doesNotMatch(orderReceiptLabel("PENDING"), /체결 대기/);
+  for (const status of ["FILLED", "CANCELED", "REJECTED"]) {
+    assert.equal(orderReceiptLabel(status), orderStatusLabel(status));
+  }
 });
 
 const pending = { orderId: 3, positionId: null, tradingSymbolId: 927, type: "LIMIT", action: "OPEN", side: "LONG", status: "PENDING",

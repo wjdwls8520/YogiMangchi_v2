@@ -20,7 +20,7 @@ import { validLimitPrice, validQuantity, validSizingPrice } from "../api/order-i
 import { formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
-import { orderStatusLabel } from "../api/orders";
+import { orderReceiptLabel } from "../api/orders";
 import { orderReason } from "../api/order-reason";
 import { formatMarketPrice } from "../market/price-format";
 import { GuestStartPrompt, useGuestAccess } from "./guest-access";
@@ -32,7 +32,7 @@ import { TradingNavigation } from "./trading-navigation";
 import { RecoveryStatus } from "./recovery-status";
 import { GuestRetry } from "./guest-retry";
 
-type Form = OpenForm & { identity: string };
+type Form = OpenForm & { identity: string; scope: number };
 export function OrderPanel() {
   const [intent,setIntent]=useState<"open"|"close">("open");
   const {snapshot}=useGuestSession(),account=useTradingSummary();
@@ -59,15 +59,16 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const [sizing,setSizing] = useState<{identity:string;symbolId:number;ticket:number}|null>(null);
   const [preparing,setPreparing] = useState(false);
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
-  const [stored, setForm] = useState<Form>({ identity, symbolId: null, type: "MARKET", side: "LONG", leverage: 1, quantity: "", limitPrice: "", ratio: 0 });
+  const [stored, setForm] = useState<Form>({ identity, scope: 0, symbolId: null, type: "MARKET", side: "LONG", leverage: 1, quantity: "", limitPrice: "", ratio: 0 });
   const longLeverage = useSymbolLeverage(symbol?.id ?? null, "LONG"), shortLeverage = useSymbolLeverage(symbol?.id ?? null, "SHORT");
   const leverageState = stored.side === "LONG" ? longLeverage : shortLeverage;
   const leverage = leverageState.data?.leverage ?? 1;
   const [seenBookSelection, setSeenBookSelection] = useState(bookSelection);
-  const [result, setResult] = useState<{ order: TradingOrder; identity: string } | null>(null);
+  const [result, setResult] = useState<{ order: TradingOrder; scope: number } | null>(null);
   const [serverWarning, setServerWarning] = useState<{ side: OpenForm["side"]; issue: OrderIssue } | null>(null);
   const switched = stored.symbolId !== (symbol?.id ?? null) || stored.identity !== identity;
-  const form: Form = { ...formForSide(switched ? { ...formForSymbol(stored, symbol?.id ?? null), quantity: "", limitPrice: "", ratio: 0 } : stored, stored.side, leverage), identity };
+  const scope = stored.scope + (switched ? 1 : 0);
+  const form: Form = { ...formForSide(switched ? { ...formForSymbol(stored, symbol?.id ?? null), quantity: "", limitPrice: "", ratio: 0 } : stored, stored.side, leverage), identity, scope };
   // Commit the reset, so switching A -> B -> A cannot resurrect A's old inputs.
   if (switched) { setForm(form); setResult(null); setServerWarning(null); }
   useEffect(() => () => { sizingRequest.current?.abort(); preflightRequest.current?.abort(); }, [identity,symbol?.id]);
@@ -84,7 +85,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   if (bookSelection !== seenBookSelection) {
     setSeenBookSelection(bookSelection);
     const next = bookSelection && bookSelection.identity === identity && active && !locked ? formForBookPrice(form,bookSelection.symbolId,bookSelection.price) : null;
-    if (next) { setForm({...next,identity}); setResult(null); setServerWarning(null); }
+    if (next) { setForm({...next,identity,scope}); setResult(null); setServerWarning(null); }
   }
   const price = form.type === "LIMIT" ? form.limitPrice.trim() : mark?.decimal ?? "";
   const quantity = form.quantity.trim();
@@ -97,7 +98,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const sizingPending = sizing?.identity === identity && sizing.symbolId === symbol?.id;
   function update(values: Partial<OpenForm>) {
     sizingRequest.current?.abort(); sizingRequest.current=null; sizingTicket.current++; setSizing(null);
-    setForm({ ...formForSide({...form,...values},values.side??form.side,leverage), identity }); setResult(null); setServerWarning(null); action.clearError();
+    setForm({ ...formForSide({...form,...values},values.side??form.side,leverage), identity, scope }); setResult(null); setServerWarning(null); action.clearError();
   }
   async function selectRatio(percent: number, settle = false) {
     if (locked) return;
@@ -132,9 +133,9 @@ function OpenOrderPanel({active}:{active:boolean}) {
   }
   function complete(order: TradingOrder | null) {
     if (!order) return;
-    setResult({ order, identity });
+    setResult(current => current && current.scope > scope ? current : { order, scope });
     if (order.status !== "FILLED" && order.status !== "PENDING") return;
-    setForm((current) => current.identity === identity && current.symbolId === order.tradingSymbolId ? { ...current, quantity: "", ratio: 0 } : current);
+    setForm((current) => current.scope === scope && current.symbolId === order.tradingSymbolId ? { ...current, quantity: "", ratio: 0 } : current);
   }
   async function submit(side: "LONG" | "SHORT") {
     const leverageState = side === "LONG" ? longLeverage : shortLeverage;
@@ -201,7 +202,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
       </div>
       {action.error && !serverWarning && (action.command?.kind !== "open" || action.command.tradingSymbolId === symbol?.id) && <p role="alert" className="order-warning">{action.error}</p>}
       {action.unconfirmed && <button type="button" className="account-refresh" disabled={action.pending} onClick={() => void action.retry().then(complete)}>원래 주문 재전송</button>}
-      {result && result.identity === identity && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {orderStatusLabel(result.order.status)}{result.order.status === "REJECTED" ? ` · ${orderReason(result.order.reason)}` : ""}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
+      {result && result.scope === scope && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {orderReceiptLabel(result.order.status)}{result.order.status === "REJECTED" ? ` · ${orderReason(result.order.reason)}` : ""}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
       <p id="order-preview-note" className="order-preview-note">레버리지는 방향별 담보·ROE를 바꾸며 같은 가격·수량의 절대 손익을 늘리지 않습니다. 금액은 체결 시 확정됩니다.</p>
     </form>}
   </div>;
