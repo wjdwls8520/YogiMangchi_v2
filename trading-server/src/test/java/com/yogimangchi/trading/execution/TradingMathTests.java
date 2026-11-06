@@ -8,6 +8,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TradingMathTests {
+    @Test void extremePriceExponentsAreRejectedBeforePlainStringExpansion() {
+        BigDecimal huge = n("1e2147483647");
+        // Inspect only metadata: expanding this input is deliberately never attempted.
+        assertThat(huge.precision() - huge.scale()).isNegative();
+        assertThat((long) huge.precision() - huge.scale()).isGreaterThan(20L);
+        assertThatThrownBy(() -> n("100e2147483647").stripTrailingZeros()).isInstanceOf(ArithmeticException.class);
+        for (String price : new String[]{"1e2147483647", "100e2147483647", "1e-2147483647", "1e20", "1e-19"}) {
+            assertThatThrownBy(() -> TradingMath.validatePrice(n(price))).isInstanceOf(IllegalArgumentException.class);
+        }
+        for (String quantity : new String[]{"1e2147483647", "100e2147483647", "1e-2147483647"}) {
+            assertThatThrownBy(() -> TradingMath.validateQuantity(n(quantity))).isInstanceOf(IllegalArgumentException.class);
+        }
+        TradingMath.validatePrice(n("1e19"));
+        TradingMath.validatePrice(n("1e-18"));
+    }
     @Test void proportionalMarginKeepsRoundingRemainderUntilFinalClose() {
         BigDecimal margin = TradingMath.basisMargin(n("1"), 3);
         BigDecimal first = TradingMath.releasedMargin(margin, n("1"), n("0.3"));

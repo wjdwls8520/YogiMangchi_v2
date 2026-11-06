@@ -20,8 +20,6 @@ import com.yogimangchi.trading.tradingevent.service.TradingEvents;
 import com.yogimangchi.trading.tradingsymbol.entity.TradingSymbolStatus;
 import com.yogimangchi.trading.tradingsymbol.repository.TradingSymbolRepository;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -62,21 +60,23 @@ public class TradingOrderService {
         gate.enterTradingTransaction();
         validateKey(key);
         if (request == null || request.type() == null || request.tradingSymbolId() == null
-                || request.tradingSymbolId() <= 0 || request.side() == null || request.quantity() == null || request.leverage() == null
-                || request.quantity().signum() <= 0 || request.quantity().stripTrailingZeros().scale() > TradingMath.QUANTITY_SCALE
-                || request.quantity().compareTo(TradingMath.MAX_QUANTITY) > 0
-                || request.leverage() < 1 || request.leverage() > TradingMath.MAX_LEVERAGE)
+                || request.tradingSymbolId() <= 0 || request.side() == null || request.leverage() == null)
             throw new BusinessException(ErrorCode.INVALID_ORDER);
         if (request.type() == TradingOrder.Type.MARKET && request.limitPrice() != null)
             throw new BusinessException(ErrorCode.INVALID_ORDER);
-        if (request.type() == TradingOrder.Type.LIMIT) {
-            try { TradingMath.validateNewOrder(request.quantity(), request.leverage(), request.limitPrice()); }
-            catch (TradingMath.LimitExceeded limit) { throw new BusinessException(ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED); }
-        catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
+        try {
+            if (request.type() == TradingOrder.Type.LIMIT) {
+                TradingMath.validateNewOrder(request.quantity(), request.leverage(), request.limitPrice());
+            } else {
+                TradingMath.validateQuantity(request.quantity());
+                TradingMath.validateLeverage(request.leverage());
+            }
+        } catch (TradingMath.LimitExceeded limit) {
+            throw new BusinessException(ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED);
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.INVALID_ORDER);
         }
-        String hash = fingerprint("OPEN|" + request.type() + "|" + request.tradingSymbolId() + "|" + request.side()
-                + "|" + request.quantity().stripTrailingZeros().toPlainString() + "|" + request.leverage()
-                + (request.limitPrice() == null ? "" : "|" + request.limitPrice().stripTrailingZeros().toPlainString()));
+        String hash = TradingCommandFingerprint.open(request);
         TradingAccount account = locks.lock(accountId);
         OrderResponse previous = existing(accountId, key, hash);
         if (previous != null) return previous;
@@ -145,8 +145,7 @@ public class TradingOrderService {
         catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
         }
         // Preserve the original bodyless full-close idempotency contract.
-        String hash = fingerprint("CLOSE|" + positionId + (requestedQuantity == null ? ""
-                : "|" + requestedQuantity.stripTrailingZeros().toPlainString()));
+        String hash = TradingCommandFingerprint.close(positionId,requestedQuantity);
         TradingAccount account = locks.lock(accountId);
         OrderResponse previous = existing(accountId, key, hash);
         if (previous != null) return previous;
@@ -185,9 +184,7 @@ public class TradingOrderService {
             if (request.quantity() != null) TradingMath.validateQuantity(request.quantity());
         } catch (TradingMath.LimitExceeded limit) { throw new BusinessException(ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED); }
         catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_ORDER); }
-        String hash = fingerprint("LIMIT_CLOSE|" + positionId + "|"
-                + (request.quantity() == null ? "ALL" : request.quantity().stripTrailingZeros().toPlainString())
-                + "|" + request.limitPrice().stripTrailingZeros().toPlainString());
+        String hash = TradingCommandFingerprint.limitClose(positionId,request.quantity(),request.limitPrice());
         TradingAccount account = locks.lock(accountId);
         OrderResponse previous = existing(accountId, key, hash);
         if (previous != null) return previous;
@@ -309,9 +306,5 @@ public class TradingOrderService {
     private static Instant now() { return Instant.now().truncatedTo(ChronoUnit.MICROS); }
     private static void validateKey(String key) {
         if (key == null || !key.matches("[A-Za-z0-9_-]{8,100}")) throw new BusinessException(ErrorCode.INVALID_IDEMPOTENCY_KEY);
-    }
-    private static String fingerprint(String value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (java.security.NoSuchAlgorithmException exception) { throw new IllegalStateException(exception); }
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.TradingMath;
+import com.yogimangchi.trading.execution.TradingCommandFingerprint;
 import com.yogimangchi.trading.execution.trigger.TradingEngineGate;
 import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import com.yogimangchi.trading.position.entity.Position;
@@ -15,8 +16,6 @@ import com.yogimangchi.trading.tradingevent.service.TradingEvents;
 import com.yogimangchi.trading.tradingsymbol.entity.TradingSymbolStatus;
 import com.yogimangchi.trading.tradingsymbol.repository.TradingSymbolRepository;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -53,7 +52,7 @@ public class StopLossService {
         if(key==null || !key.matches("[A-Za-z0-9_-]{8,100}")) throw new BusinessException(ErrorCode.INVALID_IDEMPOTENCY_KEY);
         if(expected==null || expected<0) throw new BusinessException(ErrorCode.INVALID_STOP_LOSS);
         gate.enterTradingTransaction(); var account=locks.lock(accountId);
-        String hash=fingerprint(positionId+"|"+expected+"|"+(stop==null?"DELETE":stop.stripTrailingZeros().toPlainString()));
+        String hash=TradingCommandFingerprint.stopLoss(positionId,expected,stop);
         var old=jdbc.queryForList("select request_fingerprint,response::text from trading.position_stop_loss_command where account_id=? and request_key=?",accountId,key);
         if(!old.isEmpty()) {
             if(!hash.equals(old.get(0).get("request_fingerprint"))) throw new BusinessException(ErrorCode.IDEMPOTENCY_CONFLICT);
@@ -95,9 +94,5 @@ public class StopLossService {
     private Position owned(Long account,Long position) {
         return positions.findById(position).filter(p->p.getAccountId().equals(account))
                 .orElseThrow(()->new BusinessException(ErrorCode.POSITION_NOT_FOUND));
-    }
-    private String fingerprint(String value) {
-        try {return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));}
-        catch(java.security.NoSuchAlgorithmException exception){throw new IllegalStateException(exception);}
     }
 }
