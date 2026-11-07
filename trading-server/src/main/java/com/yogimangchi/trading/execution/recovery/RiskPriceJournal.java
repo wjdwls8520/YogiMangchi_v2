@@ -18,11 +18,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class RiskPriceJournal {
     private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(RiskPriceJournal.class);
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final RiskAdmission admission;private final TransactionTemplate tx;
+    private final DurableRiskWorker worker;
     private boolean broken;
     private final Set<Long> unrecordedSymbols=new HashSet<>();
     private Instant lostSince;
     public RiskPriceJournal(JdbcTemplate jdbc,ObjectMapper json,RiskAdmission admission,PlatformTransactionManager transactions) {
-        this.jdbc=jdbc;this.json=json;this.admission=admission;tx=new TransactionTemplate(transactions);tx.setPropagationBehavior(3);tx.setTimeout(2);
+        this(jdbc,json,admission,transactions,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public RiskPriceJournal(JdbcTemplate jdbc,ObjectMapper json,RiskAdmission admission,PlatformTransactionManager transactions,@org.springframework.lang.Nullable DurableRiskWorker worker) {
+        this.jdbc=jdbc;this.json=json;this.admission=admission;this.worker=worker;tx=new TransactionTemplate(transactions);tx.setPropagationBehavior(3);tx.setTimeout(2);
     }
     @EventListener @Order(-100)
     public synchronized void receive(MarketDataEvent event) {
@@ -56,7 +61,7 @@ public class RiskPriceJournal {
                         """.formatted(RiskGapRecovery.AUTOMATIC_HOLD),id,tick.tradingSymbolId(),tick.tradingSymbolId(),tick.tradingSymbolId());
                 } else recordGap(event,event.type().name(),"PROVIDER_CONTINUITY_UNKNOWN");
             });
-            broken=false;unrecordedSymbols.clear();lostSince=null;admission.recordedIngress();
+            broken=false;unrecordedSymbols.clear();lostSince=null;admission.recordedIngress();if(worker!=null)worker.nudge();
         } catch(RuntimeException failure) {
             broken=true;unrecordedSymbols.addAll(event.tradingSymbolIds());
             if(lostSince==null||event.occurredAt().isBefore(lostSince))lostSince=event.occurredAt();

@@ -47,6 +47,8 @@ class DurableRiskIntegrationTests {
     @Autowired LatestPriceStore prices;
     @Autowired DurableRiskWorker worker;
     @Autowired RiskWorkRunner runner;
+    @Autowired RiskAdmission admission;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
     @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
     @Autowired TradingEngineGate gate;
     @MockitoSpyBean JdbcTemplate jdbc;
@@ -188,6 +190,51 @@ class DurableRiskIntegrationTests {
         assertThat(jdbc.queryForObject("select used_margin+reserved_margin from trading.wallet where account_id=?",BigDecimal.class,account)).isZero();
         assertThat(fillCount(account)).isEqualTo(1);
         assertThat(jdbc.queryForObject("select count(*) from trading.risk_account_work where account_id=? and status='RETIRED' and completion_reason='MEMBER_WITHDRAWAL'",Long.class,account)).isEqualTo(1);
+    }
+
+    @Test void riskPriceJournalNudgesEnabledWorkerImmediatelyCoalescesBurstAndNoOpsWhenDisabledOrClosed() throws Exception {
+        assertThat(worker.isEnabled()).isFalse();
+        long disabledQueriesBefore=worker.measurements().readyQueries();
+        worker.nudge();
+        assertThat(worker.measurements().readyQueries()).isEqualTo(disabledQueriesBefore);
+
+        var enabledWorker=new DurableRiskWorker(jdbc,json,runner,gate,bridge,true);
+        try {
+            assertThat(enabledWorker.isEnabled()).isTrue();
+            var journal=new RiskPriceJournal(jdbc,json,admission,transactions,enabledWorker);
+            var pending=limit(guest.accountId());
+            var entered=new java.util.concurrent.CountDownLatch(1);
+            var release=new java.util.concurrent.CountDownLatch(1);
+            doAnswer(inv->{
+                entered.countDown();
+                assertThat(release.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                return inv.callRealMethod();
+            }).when(trigger).processRecorded(argThat(p->p!=null&&p.accountId()==guest.accountId()));
+
+            var mark=tick("98");
+            assertThat(worker.measurements().readyQueries()).isEqualTo(disabledQueriesBefore);
+            assertThat(orderStatus(pending.orderId())).isEqualTo("PENDING");
+
+            journal.receive(MarketDataEvent.price(mark));
+            assertThat(entered.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long queriesAtPause=enabledWorker.measurements().readyQueries();
+            for(int i=0;i<10;i++)enabledWorker.nudge();
+            release.countDown();
+
+            await().atMost(Duration.ofSeconds(5)).pollInterval(Duration.ofMillis(10)).until(()->
+                "FILLED".equals(orderStatus(pending.orderId()))&&enabledWorker.measurements().readyQueries()>queriesAtPause);
+            assertThat(enabledWorker.measurements().committedWork()).isGreaterThanOrEqualTo(1);
+            assertThat(enabledWorker.measurements().readyQueries()-queriesAtPause).isLessThanOrEqualTo(2);
+            gate.requireCaughtUp(prices.findAll(Set.of(btc)));
+            gate.requireAccountClear(guest.accountId());
+        } finally {
+            reset(trigger);
+            enabledWorker.close();
+        }
+        assertThat(enabledWorker.isEnabled()).isFalse();
+        long closedQueries=enabledWorker.measurements().readyQueries();
+        enabledWorker.nudge();
+        assertThat(enabledWorker.measurements().readyQueries()).isEqualTo(closedQueries);
     }
 
     private void drain() throws Exception {

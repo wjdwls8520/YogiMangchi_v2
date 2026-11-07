@@ -39,8 +39,9 @@ public class DurableRiskWorker {
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final RiskWorkRunner runner;
     private final TradingEngineGate gate;private final RedisMarketDataBridge bridge;private final boolean enabled;
     private final ScheduledExecutorService executor=Executors.newSingleThreadScheduledExecutor(r -> {var t=new Thread(r,"durable-risk-worker");t.setDaemon(true);return t;});
-    private boolean closed;
-    private int failures;private long retryAfter;
+    private final java.util.concurrent.atomic.AtomicBoolean nudgePending=new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile boolean closed;
+    private volatile int failures;private volatile long retryAfter;
     private long committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts;
     private long readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork,admissionDeferrals;
     public record Measurements(long committedWork,long maxReceiveCommitMs,long maxWorkDelayMs,long failedWork,long lockTimeouts,long readyQueries,long readyQueryNanos,long maxReadyQueryNanos,long selectedWork,long admissionDeferrals) { }
@@ -49,8 +50,17 @@ public class DurableRiskWorker {
         this.jdbc=jdbc;this.json=json;this.runner=runner;this.gate=gate;this.bridge=bridge;this.enabled=enabled;
     }
     @EventListener(ApplicationReadyEvent.class) public void start(){if(enabled)executor.scheduleWithFixedDelay(this::pump,0,50,TimeUnit.MILLISECONDS);}
+    public boolean isEnabled(){return enabled&&!closed;}
+    private boolean backingOff(){return failures>0&&System.nanoTime()-retryAfter<0;}
+    public void nudge() {
+        if(!enabled||closed||backingOff())return;
+        if(nudgePending.compareAndSet(false,true)) {
+            try{executor.execute(() -> {nudgePending.set(false);pump();});}
+            catch(RejectedExecutionException ignored){nudgePending.set(false);}
+        }
+    }
     private void pump() {
-        if(System.nanoTime()<retryAfter)return;
+        if(backingOff())return;
         try{runOnce();failures=0;}
         catch(Exception failure) {
             gate.recovering();failures=Math.min(6,failures+1);int seconds=Math.min(30,1<<(failures-1));
@@ -103,6 +113,7 @@ public class DurableRiskWorker {
                 if(System.nanoTime()>=deadline)break;
             }
         } while(progressed&&System.nanoTime()<deadline);
+        if(progressed)nudge();
     }
     @PreDestroy public synchronized void close(){closed=true;gate.recovering();executor.shutdownNow();}
 }
