@@ -29,6 +29,11 @@ public class SecurityConfig {
             a.requestMatchers(HttpMethod.DELETE,"/api/v1/members/{memberId:[0-9]+}/follows").authenticated();
             a.requestMatchers(HttpMethod.GET,"/api/v1/members/{memberId:[0-9]+}/follows","/api/v1/members/{memberId:[0-9]+}/followers","/api/v1/members/{memberId:[0-9]+}/followings").permitAll();
             a.requestMatchers(HttpMethod.GET,"/api/v1/members/{memberId:[0-9]+}","/api/v1/members/nickname/availability").permitAll();
+            a.requestMatchers(HttpMethod.GET,"/api/v1/news","/api/v1/news/{newsId:[0-9]+}","/api/v1/community/posts","/api/v1/community/posts/{postId:[0-9]+}","/api/v1/community/posts/{postId:[0-9]+}/comments").permitAll();
+            a.requestMatchers(HttpMethod.POST,"/api/v1/community/posts","/api/v1/community/posts/{postId:[0-9]+}/comments").authenticated();
+            a.requestMatchers(HttpMethod.PATCH,"/api/v1/community/posts/{postId:[0-9]+}").authenticated();
+            a.requestMatchers(HttpMethod.PUT,"/api/v1/community/posts/{postId:[0-9]+}/likes").authenticated();
+            a.requestMatchers(HttpMethod.DELETE,"/api/v1/community/posts/{postId:[0-9]+}","/api/v1/community/posts/{postId:[0-9]+}/likes","/api/v1/community/comments/{commentId:[0-9]+}").authenticated();
             if(docs) a.requestMatchers("/v3/api-docs","/v3/api-docs/**","/v3/api-docs.yaml","/swagger-ui.html","/swagger-ui/**").permitAll();
             a.anyRequest().denyAll();
         }).cors(c -> c.configurationSource(cors))
