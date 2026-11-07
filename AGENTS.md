@@ -1,391 +1,71 @@
-# Yogimangchi V2 Agent Instructions
-
-프로젝트의 전체 목적, 기능 범위 및 아키텍처는 루트의 `README.md`를 먼저 참고한다.
-
-이 문서는 개발 시 지켜야 할 불변조건, 기본 선호와 작업 원칙을 정의한다. README는 프로젝트 목적·현재 구현·실행 방법을 설명하며, 구체적인 구현 방법은 불변조건 안에서 Agent가 선택한다.
-
-특정 애플리케이션 또는 디렉터리에 별도의 `AGENTS.md`가 존재하는 경우 루트 규칙과 함께 해당 하위 규칙을 반드시 따른다.
-
-- `trading-server`를 수정할 경우 `trading-server/AGENTS.md`의 추가 규칙을 반드시 따른다.
-- `content-server`를 수정할 경우 `content-server/AGENTS.md`의 추가 규칙을 반드시 따른다.
-- 향후 다른 디렉터리에 별도의 `AGENTS.md`가 추가될 경우 해당 디렉터리 작업에는 그 규칙을 함께 적용한다.
-
----
-
-## 1. Core Principles
-
-- Yogimangchi V2는 새로운 설계로 처음부터 구축하는 Greenfield 프로젝트다.
-- 현재 V2 Repository에 존재하는 코드와 문서를 기준으로 개발한다.
-- 개발 기간은 약 2주를 목표로 하지만 일정 때문에 설계 또는 구현 품질을 낮추지 않는다.
-- 개발 속도보다 **실무 및 운영 환경에서 사용할 수 있는 수준의 코드 품질, 안정성, 데이터 정합성, 보안 및 유지보수성**을 우선한다.
-- 구현이 복잡해지더라도 현재 기능에 실질적으로 필요한 구조라면 단순화를 이유로 배제하지 않는다.
-- 반대로 실제 필요성이 없는 과도한 추상화, 미래 기능을 위한 선행 구현, 기술 과시는 피한다.
-- 현재 방식보다 실무 및 운영 환경에 적합한 방식이 있다면 단순히 현재 지시를 따르지 말고 **반드시** 문제점과 권장 방식을 설명한다.
-- 요구사항을 만족하는 가장 단순하고 안정적인 구현을 우선한다. 기존 구조를 존중하되 명확히 더 나은 방식은 개선할 수 있다.
-- 현재 요구사항에 필요한 의존성은 Agent가 추가할 수 있다. 이미 제공되는 기능으로 충분하면 추가하지 않는다.
-- 의존성을 추가한 경우 도입 이유, 기존 기능으로 해결하지 않은 이유, 보안·호환성·운영 영향을 완료 보고에서 설명한다.
-- Java/Spring Boot/PostgreSQL 등 프로젝트 기반 기술 자체를 변경할 때는 사전 승인을 받는다. 일반적인 구현·의존성 선택 때문에 작업을 중단하지 않는다.
-- 비밀번호, API Key, JWT 서명키 등 실제 비밀값을 Repository에 저장하지 않는다. 환경변수 또는 적절한 Secret 관리 수단을 사용한다.
-- 현재 V2 Repository에 이미 구현된 코드가 있다면 새로운 코드를 작성하기 전에 기존 구현의 재사용 가능성을 확인한다.
-
----
-
-## 2. Technology Baseline
-
-Backend의 기본 기술 기준은 다음과 같다.
-
-- Java 17
-- Spring Boot 3.5.x
-- Gradle
-- PostgreSQL
-- Redis
-
-Spring Boot의 Major 또는 Minor Version을 임의로 변경하지 않는다.
-
-기반 기술 변경은 변경 이유와 호환성 영향을 설명하고 사전 승인을 받는다. 현재 Java 17 / Spring Boot 3.5.x 기준을 유지한다.
-
----
-
-## 3. Repository Structure
-
-Yogimangchi V2는 하나의 Git Repository에서 관리하는 Monorepo를 기본으로 한다.
-
-개념적인 구조:
-
-```text
-Yogimangchi-V2/
-├── README.md
-├── AGENTS.md
-├── docker-compose.yml
-├── .env.example
-├── docs/
-├── frontend/
-├── content-server/
-└── trading-server/
-```
-
-Rules:
-
-- `frontend`, `content-server`, `trading-server` 내부에 별도의 Git Repository를 생성하지 않는다.
-- 하나의 Repository를 사용하더라도 각 애플리케이션의 실행, 배포 및 데이터 소유권 경계는 독립적으로 유지한다.
-- Git Repository 경계와 애플리케이션 경계를 동일한 개념으로 취급하지 않는다.
-- 공용 Docker Compose는 Repository 루트의 `docker-compose.yml`에서 관리한다.
-- 애플리케이션 디렉터리별 Compose 파일을 기본 구조로 만들지 않는다.
-- 공용 로컬 인프라 환경변수 예시는 루트 `.env.example`에서 관리한다.
-
----
-
-## 4. Application Boundaries
-
-Yogimangchi V2 Backend는 두 개의 독립된 Spring Boot 애플리케이션으로 구성한다.
-
-### `content-server`
-
-주요 책임:
-
-- 회원
-- 인증/인가
-- 뉴스
-- 커뮤니티
-- 댓글
-- 검색
-- Content 영역에서 발생하는 알림
-
-### `trading-server`
-
-주요 책임:
-
-- Binance WebSocket 실시간 시세 수신
-- 서버 기준 가격 관리
-- 모의투자 주문 및 체결
-- 자산
-- 포지션
-- 모의투자 대회
-- 랭킹
-- Trading 영역에서 발생하는 알림
-
-### Boundary Rules
-
-- `content-server`와 `trading-server`의 책임을 임의로 합치거나 이동하지 않는다.
-- 두 애플리케이션은 향후 독립적으로 배포, 분리 및 확장할 수 있는 경계를 유지한다.
-- 공용 PostgreSQL Database 이름은 `yogimangchi`이며 애플리케이션의 데이터 소유권은 Schema 기준으로 분리한다.
-- Trading Schema는 `trading`, Content Schema는 `content`이며 각 서비스의 실제 기능에 필요한 테이블만 자신의 Flyway로 관리한다.
-- 다른 애플리케이션이 소유한 Entity를 현재 애플리케이션의 JPA Entity에서 연관관계로 참조하지 않는다.
-- 다른 애플리케이션이 소유한 테이블을 직접 조회, JOIN, INSERT, UPDATE 또는 DELETE하지 않는다.
-- 다른 애플리케이션의 데이터를 참조해야 하는 경우 필요한 식별자(ID)만 저장한다.
-- 다른 애플리케이션의 기능 실행이 필요한 경우 상대 애플리케이션의 DB를 직접 조작하지 않고 명시적인 애플리케이션 간 통신 방식을 사용한다.
-- 예: `trading-server`의 `Order`는 `content-server`의 `Member`를 `@ManyToOne`으로 참조하지 않고 `memberId`만 저장한다.
-- 예: `trading-server`가 `content-server` 소유의 알림 테이블에 직접 알림을 INSERT하지 않는다.
-
----
-
-## 5. Data Responsibilities
-
-### PostgreSQL
-
-영구적으로 보존되어야 하며 데이터 정합성이 필요한 데이터의 원본 저장소로 사용한다.
-
-예:
-
-- 회원
-- 게시글 및 댓글
-- 뉴스
-- 주문 및 체결
-- 자산 및 포지션
-- 대회 데이터
-- 영구 보존이 필요한 알림
-
-### Redis
-
-Redis를 영구 데이터의 유일한 원본 저장소로 사용하지 않는다.
-
-주요 용도:
-
-- 실시간 가격
-- 캐시
-- 랭킹
-- TTL이 필요한 데이터
-- 필요한 경우 Pub/Sub
-
-Redis 데이터가 유실되더라도 영구적으로 보존되어야 하는 핵심 데이터의 정합성이 깨지는 구조를 만들지 않는다.
-
-### Trading Price Rule
-
-- 주문 요청에 포함된 Frontend 가격을 실제 체결 가격으로 신뢰하지 않는다.
-- 주문 및 체결은 `trading-server`가 관리하는 서버 기준 가격을 사용한다.
-- 서버 기준 가격은 Binance WebSocket으로 수신한 데이터를 기반으로 관리한다.
-- 클라이언트가 임의로 전달한 가격으로 주문 결과나 자산 상태를 결정하지 않는다.
-
----
-
-## 6. Work Rules
-
-- 작업을 시작하기 전에 `README.md`, 이 문서, 현재 V2 Repository의 관련 구현을 확인한다.
-- 요청된 기능과 관련된 기존 V2 코드가 있다면 먼저 구조와 재사용 가능성을 확인한다.
-- 아직 존재하지 않는 기능이나 패키지를 단순히 미래에 사용할 가능성이 있다는 이유로 미리 구현하지 않는다.
-- 요청된 작업 범위를 불필요하게 확장하지 않는다.
-- 요청 범위 안의 구조·데이터 모델·구현 선택은 Agent가 판단하고 중요한 선택과 근거를 완료 보고에서 설명한다. 불변조건을 위반하거나 요구 범위를 바꾸는 변경은 임의로 진행하지 않는다.
-- 현재 지시가 데이터 정합성, 보안, 장애 대응 또는 운영 안정성 측면에서 문제가 있다면 그대로 구현하지 말고 문제를 알린다.
-- 중요한 동작은 의미 있는 자동 테스트로 검증하고 관련 테스트와 빌드를 실행한다. 실패를 숨기기 위해 테스트를 삭제하거나 비활성화하지 않는다.
-- 작업 완료 시 테스트/빌드 결과와 중요한 설계 결정을 설명한다.
-
----
-
-## 7. Package Structure
-
-최상위 패키지는 Layer 기준이 아닌 Domain/Feature 기준으로 구성한다.
-
-예:
-
-```text
-order/
-asset/
-tradingsymbol/
-competition/
-ranking/
-```
-
-각 Domain 내부에서 실제 필요한 Layer를 구성한다.
-
-예:
-
-```text
-order/
-├── controller/
-├── service/
-├── repository/
-├── entity/
-└── dto/
-```
-
-Rules:
-
-- 사용하지 않는 Domain 또는 하위 패키지를 미리 생성하지 않는다.
-- 모든 Controller, Service, Repository 등을 각각 하나의 최상위 Layer 패키지에 모으는 구조를 사용하지 않는다.
-- Domain 간 책임을 불필요하게 섞지 않는다.
-- 공통 코드라는 이유만으로 성급하게 `common` 또는 `util` 영역으로 이동하지 않는다.
-
----
-
-## 8. JPA Rules
-
-### Entity Relationships
-
-- Entity 관계는 같은 애플리케이션 소유 데이터 사이에서 실제 필요한 경우에만 사용한다. 다른 애플리케이션의 Entity 참조 금지는 유지한다.
-- 기본적으로 단방향 LAZY 관계와 명시적인 업무 처리를 선호한다.
-- 불필요한 collection·양방향 관계를 피한다. 관계 종류 자체를 일괄 금지하지 않으며 생명주기와 조회 비용을 근거로 선택한다.
-
-### Query Rules
-
-- 필요한 데이터만 조회하는 명시적 Query와 DTO Projection을 선호한다.
-- Fetch Join / EntityGraph는 N+1 등 실제 조회 문제를 더 단순하고 명확하게 해결할 때 사용할 수 있다.
-- 페이징, 카디널리티, 불필요한 로딩 및 쿼리 수에 미치는 영향을 확인한다. 예외적인 선택의 이유를 코드 또는 완료 보고에서 설명한다.
-
-### Lifecycle Rules
-
-- 연관 데이터 변경은 업무 Transaction 경계 안에서 명확하게 드러나야 한다.
-- Cascade / orphanRemoval은 기본적으로 피하되, 동일한 생명주기를 실제로 소유하고 영향 범위를 검증할 수 있을 때 사용한다.
-- 어떤 매핑 방식도 Data Retention 규칙을 우회하여 업무 이력을 삭제해서는 안 된다.
-
----
-## 9. Entity Rules
-
-- Entity에 Setter를 만들지 않는다.
-- Lombok `@Setter`를 Entity에 사용하지 않는다.
-- Entity에 Lombok `@Builder`를 사용하지 않는다.
-- Getter는 사용할 수 있다.
-- JPA 기본 생성자는 `protected` 접근 수준으로 제한한다.
-- Entity 생성은 생성 의도가 드러나는 생성자 또는 정적 팩토리 메서드를 사용한다.
-- Entity 상태 변경은 Setter 대신 의미 있는 Domain Method를 사용한다.
-
-예:
-
-```java
-order.cancel();
-order.fill(price);
-```
-
-다음과 같이 외부에서 Entity 상태를 직접 변경하지 않는다.
-
-```java
-order.setStatus(...);
-order.setPrice(...);
-```
-
-- Entity를 Controller의 API Response로 직접 반환하지 않는다.
-- API Request/Response에는 DTO를 사용한다.
-
----
-
-## 10. Authentication Rules
-
-지원하는 로그인 방식은 다음 세 가지로 제한한다.
-
-- Google OAuth2
-- Kakao OAuth2
-- One-click Guest Login
-
-Rules:
-
-- 일반 ID/Password 회원가입 및 로그인을 구현하지 않는다.
-- 인증 및 인가에는 Spring Security를 사용한다.
-- Google/Kakao OAuth2 인증 성공 후 Yogimangchi 자체 JWT를 발급한다.
-- Google 또는 Kakao에서 발급한 OAuth Access Token을 Yogimangchi API 인증 토큰으로 직접 사용하지 않는다.
-- Guest 로그인 역시 Yogimangchi 자체 JWT를 발급한다.
-- 로그인 방식과 관계없이 로그인 완료 이후에는 동일한 JWT 기반 인증 흐름을 사용한다.
-- `content-server`와 `trading-server`는 각각 요청에 포함된 Yogimangchi JWT를 검증하고 인증 정보를 구성한다.
-- `trading-server`는 JWT 인증을 위해 매 요청마다 `content-server`에 사용자 인증 여부를 조회하지 않는다.
-- 인증된 사용자는 애플리케이션 간에 `Member` Entity를 공유하지 않고 `memberId`를 기준으로 식별한다.
-- JWT Access/Refresh Token 구성과 클라이언트 저장 방식은 별도 결정 전까지 임의로 확정하지 않는다.
-
-2026-10-21 사용자 승인 계약: 회원 Access JWT15분(JSON 응답/Frontend 메모리), Refresh 고정7일
-HttpOnly·운영 Secure 쿠키, PostgreSQL 해시 저장·회전·재사용 계열 폐기, 쿠키 인증 요청 CSRF 검증.
-로그아웃은 Refresh를 폐기하고 기존 Access는 최대15분 유효할 수 있다. Google/Kakao 공급자 ID로
-회원을 구분하며 이메일 자동 계정 연결·Guest 금융 이력 자동 병합을 금지한다.
-현재 Trading Guest Bearer 유지와 최종 Guest JWT 전환을 구분하여 호환성과 소유권을 검증한다.
-
----
-
-## 11. Notification Boundary
-
-- Content 영역에서 발생한 알림과 Trading 영역에서 발생한 알림은 각각 해당 애플리케이션이 소유할 수 있다.
-- `content-server`는 댓글, 답글, 커뮤니티 등 Content 영역에서 발생하는 알림을 담당할 수 있다.
-- `trading-server`는 주문 체결, 주문 상태 변경, 대회 등 Trading 영역에서 발생하는 알림을 담당할 수 있다.
-- 한 애플리케이션이 다른 애플리케이션 소유의 알림 테이블을 직접 수정하지 않는다.
-- Content 알림과 Trading 알림을 하나의 사용자 화면으로 제공해야 하는 경우 각 애플리케이션의 API 결과를 Frontend에서 통합하여 시간순으로 표현하는 방식을 사용할 수 있다.
-- 알림 통합 방식이 페이징, 읽음 상태, 실시간 전달 등의 요구사항으로 인해 복잡해질 경우 현재 구조를 억지로 유지하지 말고 Backend 통합 API 또는 별도 알림 구조를 검토한다.
-- 현재 단계에서 알림만을 위한 별도의 Notification Server를 미리 만들지 않는다.
-
----
-
-## 12. Infrastructure Constraints
-
-배포 시 기본 인프라는 다음을 기준으로 한다.
-
-- Next.js → Vercel
-- Spring Boot → Docker
-- PostgreSQL → Docker
-- Redis → Docker
-- Nginx
-- Docker Compose
-- GitHub Actions
-
-현재 실행 구조와 환경변수는 루트 및 애플리케이션 README를 따른다. 실행 절차를 AGENTS에 중복 관리하지 않는다.
-
-현재 V2에서는 기본적으로 다음 기술을 사용하지 않는다.
-
-- Kubernetes
-- Kafka
-
-단, 향후 실제 요구사항 또는 운영상의 문제가 발생하여 새로운 인프라 기술이 필요해지는 경우 무조건 배제하지 않는다.
-
-현재 요구사항에 실질적으로 필요한지 평가하며, 범위를 벗어난 인프라를 선행 도입하지 않는다. 기반 기술 변경의 승인 규칙은 Core Principles를 따른다.
-
-현재 하나의 서버 또는 PostgreSQL 인스턴스에서 운영하더라도 애플리케이션 경계와 데이터 소유권은 유지하여 향후 물리적으로 분리할 수 있는 구조를 지향한다.
-
----
-
-## 13. API Documentation Rules
-
-- REST API는 OpenAPI 3 / Swagger 기반으로 문서화한다.
-- Spring에서는 `springdoc-openapi`를 사용한다.
-- `content-server`와 `trading-server`의 OpenAPI 문서는 각각 독립적으로 관리한다.
-- API를 추가하거나 Request/Response 구조를 변경할 경우 관련 OpenAPI 문서도 함께 최신 상태로 유지한다.
-- Request/Response DTO의 주요 필드, API의 목적, 주요 응답 상태를 문서에서 이해할 수 있어야 한다.
-- Swagger 문서화를 위해 Controller에 불필요하게 많은 Annotation을 추가하지 않는다.
-- `@Operation`, `@Schema`, 응답 관련 Annotation 등은 자동 생성되는 정보만으로 API의 의미를 충분히 전달할 수 없는 경우에 사용한다.
-- 문서화를 위해 Controller의 가독성이나 비즈니스 코드 구조를 훼손하지 않는다.
-- 개발 환경에서는 Swagger UI와 OpenAPI Docs endpoint를 사용할 수 있다.
-- 운영 환경에서는 Swagger UI와 OpenAPI Docs endpoint를 외부에 노출하지 않는다.
-- 포트폴리오 및 API 계약 확인을 위해 Content/Trading의 OpenAPI 명세를 별도의 YAML 또는 JSON 문서로 남길 수 있다.
-
----
-
-## 14. Exception & Failure Handling Rules
-
-### API Exception Handling
-
-- API 예외 응답은 `@RestControllerAdvice` 기반의 전역 예외 처리 방식을 사용한다.
-- API마다 개별적으로 예외 응답 형식을 구현하지 않는다.
-- API 오류 응답은 일관된 구조를 사용한다.
-- 비즈니스 규칙 위반은 의미 있는 ErrorCode와 공통 BusinessException 계열로 표현한다.
-- 예외 종류마다 불필요하게 Handler 메서드와 Exception 클래스를 증가시키지 않는다.
-- 예상하지 못한 서버 오류의 내부 구현 정보나 Stack Trace를 API Response에 노출하지 않는다.
-- Validation, 인증/인가, 비즈니스 예외, 예상하지 못한 서버 오류를 구분하여 처리한다.
-
-### Transaction & Rollback
-
-- 데이터 정합성이 필요한 여러 DB 변경은 적절한 Transaction 경계 안에서 처리한다.
-- Transaction 범위는 Controller가 아닌 Service Layer의 업무 단위를 기준으로 설정한다.
-- 예외 처리 과정에서 정상적인 Transaction Rollback을 방해하도록 예외를 무분별하게 catch하여 삼키지 않는다.
-- 주문, 체결, 자산 변경처럼 함께 성공하거나 실패해야 하는 작업은 원자성을 보장한다.
-
-### External System Failure
-
-- S3, 외부 API, WebSocket, 다른 애플리케이션 등 외부 시스템 작업은 DB Transaction만으로 Rollback할 수 있다고 가정하지 않는다.
-- 외부 시스템과 DB 변경이 함께 발생하는 작업은 실패 시 데이터 정합성에 미치는 영향을 먼저 검토한다.
-- 필요한 경우 보상 작업, 재시도, 실패 상태 저장, Outbox 등의 방식을 검토한다.
-- 이러한 패턴을 모든 기능에 미리 적용하지 않고 실제 정합성 및 복구 요구사항이 있는 기능에 적용한다.
-- 외부 시스템 장애를 이유로 무한 재시도하거나 요청 Thread를 장시간 점유하지 않는다.
-
-### Logging
-
-- 일반적인 애플리케이션 오류를 별도의 Error Log 테이블에 무조건 저장하지 않는다.
-- 예상하지 못한 서버 오류는 원인 분석이 가능하도록 적절한 수준의 로그를 남긴다.
-- 비밀번호, JWT, OAuth Token, 개인정보 등 민감한 정보를 로그에 기록하지 않는다.
-- 업무적으로 추적, 복구 또는 재시도가 필요한 실패는 단순 로그와 구분하여 상태 데이터로 관리할 수 있다.
-- 로그 저장 및 모니터링 기술은 실제 운영 요구사항이 정해지기 전까지 특정 제품에 종속시키지 않는다.
-
----
-
-## 15. Data Retention & Deletion Rules
-
-- 회원, 게시글, 댓글, 주문, 체결, 포지션, 대회 등 업무 및 이력 데이터는 기본적으로 물리 삭제하지 않는다.
-- 업무 데이터의 삭제가 필요한 경우 Soft Delete 또는 상태 변경 방식으로 처리한다.
-- Trading의 주문, 체결 등 이력 데이터는 삭제 개념보다 상태 전이를 우선한다.
-  - 예: `PENDING`, `FILLED`, `CANCELED`, `LIQUIDATED`
-- Soft Delete 대상 Entity에는 프로젝트에서 정한 일관된 삭제 상태 또는 `deletedAt` 정책을 사용한다.
-- Soft Delete된 데이터가 일반 조회 결과에 포함되지 않도록 조회 정책을 명확하게 관리한다.
-- Hard Delete는 임시 데이터, 만료 데이터, 보안/개인정보 파기, 운영상 데이터 보존 정책 등 명확한 이유가 있는 경우에만 허용한다.
-- Hard Delete가 필요할 경우 임의로 적용하지 말고 이유와 영향 범위를 먼저 설명한다.
-- 단순히 데이터가 필요 없어졌다는 이유만으로 업무 이력을 삭제하지 않는다.
+# Yogimangchi V2 — Agent Instructions
+
+이 문서는 모든 개발 에이전트가 지켜야 할 **공통 작업 경계와 불변조건**이다. 구체적인 구현 방식은 현재 코드·테스트·요구사항을 분석하여 자율적으로 선택한다.
+
+## 1. 작업 시작과 기준
+
+- 저장소는 단일 Monorepo이며 기본 개발 브랜치는 `develop`이다.
+- 작업 시작 순서는 **루트 README.md → 루트 AGENTS.md → 담당 디렉터리 README.md → 담당 디렉터리 AGENTS.md → 관련 코드·테스트·상세 계약**이다. 더 하위 AGENTS.md가 있으면 함께 따른다.
+- **사용자의 명시적 최신 요구·승인 정책을 우선**한다. 코드·테스트·실행 API·문서가 다르면 Git 커밋과 서버 실행본을 먼저 확인한다. 이미 승인된 수정 범위는 진행하고 차이와 근거를 보고한다. 범위·제품 정책·불변조건의 변경이 필요한 부분만 Head/사용자에게 조율한다. 과거 문구 때문에 승인된 개선 전체를 중단하거나 구버전으로 되돌리지 않는다.
+- 기존 구현을 재사용하고, 실제 필요성이 없는 재설계·추상화·새 의존성·미래 기능 선행 구현을 피한다.
+- Java/Spring Boot, Next.js, 데이터베이스 등 기반 기술이나 서버 책임을 바꿀 때는 사전 승인을 받는다. 일반적인 라이브러리와 구현 방식은 이유를 검토해 선택한다.
+
+## 2. 에이전트 역할과 파일 소유권
+
+- **Head (Work):** 아키텍처·우선순위·서버 간 계약·작업 의존성·통합 검수. 사용자의 최종 승인 권한을 대신하지 않는다.
+- **Trading:** `trading-server/**` — 주문·체결·포지션·청산·모의투자 원장·시세.
+- **Content:** `content-server/**` — 회원·인증·프로필·팔로우 및 향후 커뮤니티·뉴스.
+- **Frontend:** `frontend/**` — Next.js UI, 세션·API·WebSocket 연동.
+- **Infra:** 루트 인프라 설정, Docker, 배포, CI/CD, 운영 설정(서비스 코드의 소유권은 제외).
+- 담당 외 영역은 **읽기 가능, 수정은 기본 금지**. 변경이 필요하면 관련 브랜치·PR을 확인하고 담당 에이전트 또는 Head에 의존성을 전달한다. 사용자에게 명시적으로 승인받은 통합 작업만 예외로 한다.
+- 서로 다른 Work/Codex 채팅이 직접 통신하거나 실행 상태를 자동 공유한다고 가정하지 않는다. **GitHub의 PR·커밋·`develop`**을 공통 작업 상태로 사용한다.
+
+## 3. Git 브랜치·커밋·PR
+
+- 최신 `develop`을 확인하고 담당 영역의 독립 브랜치에서 시작한다. 다른 작업자의 미커밋 변경을 덮어쓰거나 정리하지 않는다.
+- 브랜치 예: `feature/trading/<kebab-case>`, `fix/content/<kebab-case>`, `feature/frontend/<kebab-case>`, `chore/infra/<kebab-case>`. 필요에 따라 `test/<영역>/`, `refactor/<영역>/`, `docs/<영역>/`를 사용할 수 있다. `backend/` 또는 `codex/`처럼 소유 영역이 모호한 새 브랜치는 피한다.
+- 커밋 메시지와 PR 제목: **`[영역:기능] type: 설명`**. 예: `[trading-server:주문] fix: 취소 경합 검증`, `[content-server:인증] feat: 로그인 보강`, `[frontend:거래화면] feat: 주문 이력 표시`, `[infra:배포] chore: 실행 설정 정리`.
+- `type`: `feat`, `fix`, `refactor`, `test`, `docs`, `chore` 등. 제목은 변경 내용을 정확히 설명한다.
+- Trading·Content·Frontend·공용 인프라는 **원칙적으로 브랜치·커밋·PR을 분리**한다. 다른 서비스 변경을 하나의 작업 커밋에 섞지 않는다.
+- 작업한 파일만 선택해 stage한다. `git add .`, `git add -A`, 임의의 `reset/restore/stash/clean`, 공유 이력 재작성 및 강제 푸시를 금지한다.
+- 자신의 변경은 관련 테스트·빌드를 확인한 후 PR로 제출한다. develop 병합은 브랜치/PR별 제목·목적·검증 결과가 구분되게 수행한다. 다른 에이전트의 PR을 임의 병합하지 않는다.
+- 의존성 PR은 코드·테스트 상태를 확인하고, 병합 승인 정책에 따라 처리한다. 선행 변경이 `develop`에 병합되면 이를 반영한 뒤 후속 작업을 진행한다.
+- 자신의 PR 병합도 **사전에 승인된 범위와 충족된 검증 조건**이 있을 때만 한다. 실패·충돌·미검증 상태에서 보호 규칙을 우회하지 않는다.
+- `master` 및 운영 배포는 사용자 명시적 승인 없이 변경하지 않는다.
+
+## 4. 시스템 불변조건
+
+- Content와 Trading은 서로 다른 Spring Boot 앱이다. 같은 PostgreSQL의 `content`/`trading` Schema를 각자 소유하며, 상대 서비스 테이블·JPA Entity를 직접 조회·수정·JOIN하지 않는다. 통신은 명시적인 API/식별자 기반이다.
+- PostgreSQL이 영속 회원·금융 데이터의 원본이다. Redis는 시세·스트림·캐시 등을 담당하며 금융 원장의 유일한 저장소가 될 수 없다.
+- 주문 가격·체결·잔고·증거금·청산의 최종 판단은 Trading Server가 수행한다. 클라이언트 가격과 계산을 신뢰하지 않는다.
+- 기존 금융 계정 잠금·트랜잭션·멱등성·회복/재처리 방어를 검증 없이 제거하지 않는다. 주문·청산 등은 중복·동시 실행에서도 일관된 결과여야 한다.
+- 회원 OAuth는 Google/Kakao만 지원한다. 회원 Access JWT와 Guest opaque Bearer는 **서로 다른 인증 방식**이며 Guest 자산을 회원에게 자동 합치지 않는다.
+- 비밀키·토큰·개인정보를 저장소·로그에 노출하지 않는다. 과거 주문·체결 등 업무 원장을 임의 삭제하거나 이미 적용한 Flyway Migration을 수정하지 않는다.
+
+## 5. 검증과 문서 정책
+
+- 변경 범위에 맞는 기존 자동 테스트·빌드를 실행하고, 필요할 때만 새 테스트를 추가한다. 실패를 숨기기 위해 테스트를 끄거나 삭제하지 않는다.
+- 실제로 실행한 검증, 미실행·미검증 사항, 변경 파일, 남은 위험을 완료 보고에 구분한다. 테스트 결과를 추정하거나 성공했다고 꾸미지 않는다.
+- **기존 README·AGENTS 및 기타 MD는 사용자가 요청하지 않으면 수정·삭제하지 않는다.** 문서 불일치는 완료 보고에 적는다. 새 MD는 사용자가 요청한 문서·보고서 산출물에 포함될 때 작성하며, 작업마다 불필요한 문서를 자동 생성하지 않는다. API 소스의 OpenAPI 설명과 DTO 문서화는 기능 변경에 맞춰 갱신한다.
+- 구체적인 API·버전·실행 명령의 최종 판단은 해당 소스·의존성 선언·Runtime OpenAPI와 테스트를 확인한다. 운영 후속 작업은 `OPERATIONS_CHECKLIST.md`에 기록되어 있으나, 파일 갱신도 별도 지시가 있을 때만 수행한다.
+
+## 6. 공통 코드·데이터 기준
+
+- Backend는 Java 17 / Spring Boot 3.5.x를 유지한다. Major/Minor 변경은 사전 승인 대상이다. 패키지는 Domain/Feature 중심으로 구성하고 사용하지 않는 계층을 미리 만들지 않는다.
+- Entity에 Setter, Lombok @Setter/@Builder를 사용하지 않는다. JPA 기본 생성자는 protected, 생성·변경은 의도가 드러나는 팩토리/도메인 메서드로 표현한다. Controller 응답은 Entity 대신 DTO다.
+- 같은 서비스 내 관계는 필요한 경우에만 사용하며 LAZY·단방향을 우선한다. 무분별한 collection, Cascade/orphanRemoval을 피하고 필요할 때 생명주기·이력 보존 영향을 검증한다.
+- 필요한 필드의 명시적 Query/DTO Projection을 우선하며 N+1, 페이지 크기, 쿼리 수와 실행계획을 확인한다. Fetch Join/EntityGraph 등은 실제 문제에 맞게 선택한다.
+- 금융 값은 BigDecimal 등 정확한 Decimal로 계산한다. float/double을 사용하지 않으며 scale·반올림·단위 정책을 기존 금융 계약에 맞춰 일관되게 유지한다.
+- 업무 트랜잭션 경계는 Service에 둔다. 예외를 삼켜 롤백을 방해하지 않는다. 외부 HTTP/OAuth 호출을 DB 잠금 안에서 장시간 수행하지 않는다. 외부 부작용은 DB 롤백만으로 취소되지 않으므로 필요한 실패 상태·재시도·멱등성을 설계한다.
+- API 오류는 기존 전역 예외 처리와 의미 있는 ErrorCode를 재사용한다. 내부 예외·SQL·스택·비밀값을 사용자 응답에 노출하지 않는다. 인증·입력 오류·업무 거절·결과 미확정을 구분한다.
+- 업무 데이터는 상태 전이/Soft Delete가 기본이다. 개인정보 파기·만료 임시 데이터 등 명확한 사유의 Hard Delete는 이유와 영향 범위를 먼저 설명한다. 사용자 금융 원장이나 기존 DB/Volume을 임의 초기화하지 않는다.
+- 알림은 발생 서비스가 소유한다. 타 서비스 알림 테이블을 직접 쓰지 않는다. 불필요한 별도 서버·Kafka·Kubernetes 등은 선행 도입하지 않는다.
+
+## 7. 이번 안정화 작업의 판단 기준
+
+- 목표는 로그인한 사용자의 실제 거래 기능과 부드러운 Frontend다. 인프라 확장·배포는 별도 요청 범위다. 모의투자라도 주문·수수료·잔액·이력의 정합성은 유지한다.
+- **탈퇴 전파 중 즉시 Trading 차단은 요구하지 않는다.** 최종 탈퇴 시 주문 취소·포지션 행정 종료·예약 해제·접근 차단·중복 전달 안전성은 유지한다.
+- 자동 테스트 통과, 실제 서버 통합 성공, 실제 OAuth 성공, 성능 측정은 서로 다른 증거다. 모의 응답이나 작은 데이터셋만으로 운영 가능·무결함을 선언하지 않는다.
+- 지속 시세·누적 보류 이력·정상 계정이 섞인 상황에서 응답 지연뿐 아니라 체결 완료·이벤트 전달 지연, 대기 건수/최고 대기 시간, 거절률, 원장 정합성을 확인한다.
+- 빠른 응답을 위해 안전 검증을 제거하거나 성공 알림·잔액을 꾸미지 않는다. 설정된 스케줄 주기와 실제 처리 속도를 구분한다.
+- 각 Work는 담당 경로만 수정한다. 독립 작업은 별도 worktree/checkout에서 진행하고 공용 파일·DB migration·서버 프로세스 변경은 다른 작업과 충돌하지 않게 조율한다. 브랜치가 달라도 같은 작업 폴더에서 동시에 checkout하지 않는다.
