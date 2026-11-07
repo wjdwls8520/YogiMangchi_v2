@@ -15,9 +15,79 @@ import { clearWithdrawalIntent, readWithdrawalIntent, saveWithdrawalIntent } fro
 
 export function MemberLogin() {
   const { origin, snapshot } = useMember();
-  return <MemberShell title="로그인">{snapshot.phase === "ready" && !snapshot.recovery && <p className="member-message">로그인되어 있습니다. <Link href="/account">내 계정으로 이동</Link>하거나 아래에서 로그인 상태를 다시 확인할 수 있습니다.</p>}
-    <MemberLoginView google={oauthUrl(origin, "google")} kakao={oauthUrl(origin, "kakao")} /></MemberShell>;
+  return (
+    <MemberShell
+      title="로그인"
+      subtitle="요기망치 계정으로 실시간 속보·커뮤니티·선물 모의투자를 이용하세요"
+      variant="auth"
+    >
+      {snapshot.phase === "ready" && !snapshot.recovery && (
+        <p className="member-message">
+          로그인되어 있습니다. <Link href="/account">내 계정으로 이동</Link>하거나 아래에서 로그인 상태를 다시 확인할 수 있습니다.
+        </p>
+      )}
+      <MemberLoginView google={oauthUrl(origin, "google")} kakao={oauthUrl(origin, "kakao")} />
+    </MemberShell>
+  );
 }
+
+export function MemberSignupPage() {
+  const { origin, snapshot } = useMember();
+  const [notice, setNotice] = useState<string | null>(null);
+  const google = oauthUrl(origin, "google");
+  const kakao = oauthUrl(origin, "kakao");
+
+  function handlePreviewSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setNotice("상단 Google 또는 Kakao 본인확인을 먼저 완료하면 입력하신 닉네임과 약관 동의로 즉시 가입이 완료됩니다.");
+  }
+
+  return (
+    <MemberShell
+      title="회원가입"
+      subtitle="소셜 본인확인 후 닉네임과 프로필, 필수 약관 동의를 설정하세요."
+      variant="signup"
+    >
+      {snapshot.phase === "ready" && (
+        <p className="member-message">
+          이미 로그인되어 있습니다. <Link href="/account">내 계정 관리</Link>에서 프로필을 수정할 수 있습니다.
+        </p>
+      )}
+
+      <div className="identity_verification_wrap" aria-label="소셜 계정 본인인증">
+        <div className="ym-verify-icon" aria-hidden="true">
+          ✓
+        </div>
+        <h2 className="ym-verify-title">소셜 계정 본인인증</h2>
+        <p className="ym-verify-desc">
+          요기망치는 별도 비밀번호 없이 Google 또는 Kakao OAuth2 본인확인으로 안전하게 가입을 진행합니다.
+        </p>
+        <div className="ym-verify-btn-group">
+          <a href={google} className="ym-dark-verify-btn">
+            Google 본인확인 시작
+          </a>
+          <a href={kakao} className="ym-dark-verify-btn is-kakao-border">
+            Kakao 본인확인 시작
+          </a>
+        </div>
+      </div>
+
+      {notice && (
+        <p role="status" className="member-message">
+          {notice}
+        </p>
+      )}
+
+      <SignupForm onSubmit={handlePreviewSubmit} pending={false} />
+
+      <div className="ym-signup-footer-links">
+        <span>이미 계정이 있으신가요?</span>
+        <Link href="/login">로그인 페이지로 이동</Link>
+      </div>
+    </MemberShell>
+  );
+}
+
 export function MemberCallback() {
   const { origin, session, snapshot, announce } = useMember(), router = useRouter();
   const [flow, setFlow] = useState<ReturnType<typeof parseFlow> | null>(null), [error, setError] = useState<string | null>(null), [pending, setPending] = useState(false);
@@ -111,13 +181,20 @@ export function MemberCallback() {
     } catch (error) { setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null); if (contentRecovery(error) === "login") setFlow(null); }
     finally { setChecking(false); }
   }
-  return <MemberShell title={flow?.status === "SIGNUP_REQUIRED" ? "회원가입" : "로그인 확인"}>
+  return <MemberShell title={flow?.status === "SIGNUP_REQUIRED" ? "회원가입" : "로그인 확인"} variant="signup">
     {error && <p role="alert" className="member-message">{error}</p>}
     {error && <MemberErrorActions error={requestError} onCheck={() => void checkState()} checking={checking || pending} onLogin={clearWithdrawalIntent} />}
     {!flow && !error && <p role="status" className="member-message">로그인을 확인하는 중입니다. 계속 진행되지 않으면 <Link href="/login">다시 로그인</Link>해 주세요.</p>}
     {completionReady ? <RecoveredLoginAction pending={pending || checking} onComplete={() => void completeRecoveredLogin()} /> : flow?.status === "LOGIN_READY" && !error && <p role="status" className="member-message">로그인을 완료하는 중입니다.</p>}
     {flow?.status === "WITHDRAWAL_PENDING" && <p role="status" className="member-message">이 계정의 탈퇴 정리를 진행 중입니다. 완료 전에는 신규 가입이나 기존 계정 사용을 할 수 없습니다. 완료 후 같은 소셜 계정으로 새로 가입할 수 있으며 과거 자산·회차는 이전되지 않습니다.</p>}
-    {flow?.status === "SIGNUP_REQUIRED" && !withdrawalIntent && snapshot.phase !== "ready" && <><p className="member-message">{flow.provider} · {flow.accountHint} 계정을 확인했습니다. 닉네임과 가입 동의를 입력해 주세요. 탈퇴 후 재가입인 경우 새로운 회원으로 시작하며 기존 자산·이력은 이전되지 않습니다.</p><SignupForm onSubmit={event => void signup(event)} pending={pending} /></>}
+    {flow?.status === "SIGNUP_REQUIRED" && !withdrawalIntent && snapshot.phase !== "ready" && <>
+      <div className="identity_verification_wrap is-verified">
+        <div className="ym-verify-icon" aria-hidden="true">✓</div>
+        <h2 className="ym-verify-title">소셜 계정 본인인증 완료</h2>
+        <p className="member-message">{flow.provider} · {flow.accountHint} 계정을 확인했습니다. 닉네임과 가입 동의를 입력해 주세요. 탈퇴 후 재가입인 경우 새로운 회원으로 시작하며 기존 자산·이력은 이전되지 않습니다.</p>
+      </div>
+      <SignupForm onSubmit={event => void signup(event)} pending={pending} />
+    </>}
     {error && <Link href="/login" onClick={clearWithdrawalIntent}>로그인으로 돌아가기</Link>}
   </MemberShell>;
 }

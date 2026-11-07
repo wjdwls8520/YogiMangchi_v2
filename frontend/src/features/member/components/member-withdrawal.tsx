@@ -6,6 +6,7 @@ import { ContentApiError, contentMessage, oauthUrl } from "../api/client";
 import { clearWithdrawalIntent, readWithdrawalIntent, saveWithdrawalIntent } from "../api/withdrawal-intent";
 import { WithdrawalConfirmation } from "./withdrawal-confirmation";
 import { MemberErrorActions } from "./member-error-actions";
+import { useDialogScrollLock } from "./dim-modal";
 
 export function MemberWithdrawal() {
   const { origin, session, snapshot, announce } = useMember(), dialog = useRef<HTMLDialogElement>(null), active = useRef(false);
@@ -20,6 +21,7 @@ export function MemberWithdrawal() {
     setOwner(snapshot.memberId); setReceipt(null); setReady(true); setAcknowledged(false); setConfirmation(""); setError(null);
   }
   const confirmedReady = (ready && owner === snapshot.memberId) || returned;
+  useDialogScrollLock(dialog, returned);
   const status = useCallback(async (silent = false) => {
     if (active.current) return;
     active.current = true; if (!silent) setPending(true);

@@ -11,6 +11,7 @@ import { useMember, MemberLogout } from "./member-provider";
 import { MemberShell, ProfileEditForm } from "./member-views";
 import { MemberWithdrawal } from "./member-withdrawal";
 import { MemberConsents } from "./member-consents";
+import { ProfileImageUploadSlot } from "./s3-upload-slot";
 import { TradingDataProvider } from "../../trading/components/trading-data-provider";
 import { MemberSimulation } from "../../trading/components/member-simulation";
 
@@ -35,16 +36,120 @@ export function MemberAccount() {
     } catch (error) { setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null); }
     finally { active.current = false; setPending(false); }
   }
-  return <MemberShell title="내 계정">
-    {snapshot.phase !== "ready" ? <><p role="status" className="member-message">{snapshot.phase === "loading" || snapshot.phase === "authenticating" ? "로그인 상태를 확인하는 중입니다." : snapshot.phase === "recovering" ? "세션 복구 대기 중입니다. 기존 회원 정보는 보존하며 보호 요청은 인증 확인 후 재개합니다." : snapshot.phase === "error" ? "회원 연결을 확인하지 못했습니다." : snapshot.phase === "withdrawing" ? "탈퇴 진행 상태를 확인하는 중입니다. 완료 전까지 회원 기능은 중단됩니다." : "로그인이 필요합니다."}</p>{snapshot.phase !== "withdrawing" && <Link href="/login">로그인</Link>}{snapshot.phase === "error" && <div className="member-actions"><button className="member-secondary" onClick={() => void session.restore().catch(() => {})}>로그인 다시 확인</button><MemberLogout /></div>}</> : <>
-      {profile.isPending && <p role="status">프로필을 불러오는 중입니다.</p>}
-      {profile.isError && <p role="alert" className="member-message">{contentMessage(profile.error)} <button className="account-refresh" onClick={() => void profile.refetch()}>다시 조회</button></p>}
-      {profile.data && <><p className="member-note">회원 #{profile.data.memberId} · {profile.data.role}</p><div className="member-actions"><Link href={`/members/${profile.data.memberId}`}>공개 프로필·팔로우 보기</Link><MemberLogout /></div>
-        <ProfileEditForm key={`${profile.data.nickname}:${profile.data.profileMessage}`} nickname={profile.data.nickname} message={profile.data.profileMessage} pending={pending} onSubmit={event => void save(event)} />
-        <p className="member-note">Guest 모의투자와 회원 선물 계정은 별개이며 기록을 자동 합치지 않습니다.</p>
-        <MemberConsents />{snapshot.consentStatus === "accepted" && <TradingDataProvider><MemberSimulation /></TradingDataProvider>}</>}
-      {message && <p role="status" className="member-message">{message}</p>}{error && <><p role="alert" className="member-message">{error}</p><MemberErrorActions error={requestError} checking={pending || profile.isFetching} onCheck={() => void profile.refetch()} /></>}
-    </>}
-    <MemberWithdrawal />
-  </MemberShell>;
+  return (
+    <MemberShell
+      title="내 계정 · 회원정보 수정"
+      subtitle="프로필 이미지, 닉네임, 약관 동의 버전 및 선물 모의투자 회차 원장을 한곳에서 관리합니다."
+      variant="default"
+    >
+      <section className="ym-account-section" aria-label="프로필 이미지 관리">
+        <div className="ym-section-head">
+          <h2>프로필 이미지 설정</h2>
+          <span className="ym-badge-outline">S3 업로드 연동 준비</span>
+        </div>
+        <ProfileImageUploadSlot slotName="account-profile-image" />
+      </section>
+
+      {snapshot.phase !== "ready" ? (
+        <section className="ym-account-section">
+          <p role="status" className="member-message">
+            {snapshot.phase === "loading" || snapshot.phase === "authenticating"
+              ? "로그인 상태를 확인하는 중입니다."
+              : snapshot.phase === "recovering"
+                ? "세션 복구 대기 중입니다. 기존 회원 정보는 보존하며 보호 요청은 인증 확인 후 재개합니다."
+                : snapshot.phase === "error"
+                  ? "회원 연결을 확인하지 못했습니다."
+                  : snapshot.phase === "withdrawing"
+                    ? "탈퇴 진행 상태를 확인하는 중입니다. 완료 전까지 회원 기능은 중단됩니다."
+                    : "로그인이 필요합니다."}
+          </p>
+          {snapshot.phase !== "withdrawing" && (
+            <div className="member-actions">
+              <Link href="/login" className="login-button ym-btn-inline">
+                로그인
+              </Link>
+              <Link href="/signup" className="signup-button ym-btn-inline">
+                회원가입
+              </Link>
+            </div>
+          )}
+          {snapshot.phase === "error" && (
+            <div className="member-actions">
+              <button className="member-secondary" onClick={() => void session.restore().catch(() => {})}>
+                로그인 다시 확인
+              </button>
+              <MemberLogout />
+            </div>
+          )}
+        </section>
+      ) : (
+        <>
+          {profile.isPending && <p role="status" className="member-message">프로필을 불러오는 중입니다.</p>}
+          {profile.isError && (
+            <p role="alert" className="member-message">
+              {contentMessage(profile.error)}{" "}
+              <button className="account-refresh" onClick={() => void profile.refetch()}>
+                다시 조회
+              </button>
+            </p>
+          )}
+          {profile.data && (
+            <>
+              <section className="ym-account-summary-card" aria-label="회원 계정 요약">
+                <div className="ym-account-meta">
+                  <p className="member-note">
+                    회원 #{profile.data.memberId} · {profile.data.role}
+                  </p>
+                  <strong className="ym-account-nick">{profile.data.nickname}</strong>
+                </div>
+                <div className="member-actions">
+                  <Link href={`/members/${profile.data.memberId}`} className="signup-button ym-btn-inline">
+                    공개 프로필·팔로우 보기
+                  </Link>
+                  <MemberLogout />
+                </div>
+              </section>
+
+              <section className="ym-account-section" aria-label="기본 회원정보 수정">
+                <h2>회원정보 수정</h2>
+                <ProfileEditForm
+                  key={`${profile.data.nickname}:${profile.data.profileMessage}`}
+                  nickname={profile.data.nickname}
+                  message={profile.data.profileMessage}
+                  pending={pending}
+                  onSubmit={event => void save(event)}
+                />
+                <p className="member-note">Guest 모의투자와 회원 선물 계정은 별개이며 기록을 자동 합치지 않습니다.</p>
+              </section>
+
+              <MemberConsents />
+              {snapshot.consentStatus === "accepted" && (
+                <TradingDataProvider>
+                  <MemberSimulation />
+                </TradingDataProvider>
+              )}
+            </>
+          )}
+          {message && (
+            <p role="status" className="member-message is-available">
+              {message}
+            </p>
+          )}
+          {error && (
+            <>
+              <p role="alert" className="member-message">
+                {error}
+              </p>
+              <MemberErrorActions
+                error={requestError}
+                checking={pending || profile.isFetching}
+                onCheck={() => void profile.refetch()}
+              />
+            </>
+          )}
+        </>
+      )}
+      <MemberWithdrawal />
+    </MemberShell>
+  );
 }

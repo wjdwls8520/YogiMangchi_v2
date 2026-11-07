@@ -6,6 +6,7 @@ import { useMember } from "./member-provider";
 import { readPolicies, policyAccepted, type ConsentSelection, type PolicyBundle, type PolicyState, type PolicyType } from "../api/policies";
 import { PolicyContent } from "./policy-content";
 import { PolicyConsentFields, PolicyDialogContent } from "./policy-consent-views";
+import { useDialogScrollLock } from "./dim-modal";
 
 export function usePolicies() {
   const { origin } = useMember();
@@ -22,6 +23,7 @@ export function PolicyConsentControl({ bundle, selection, onChange, pending, pre
 }) {
   const [active, setActive] = useState<PolicyType>("TERMS");
   const dialog = useRef<HTMLDialogElement>(null), trigger = useRef<HTMLElement | null>(null);
+  useDialogScrollLock(dialog);
   const versions = { TERMS: bundle.documents.TERMS.version, PRIVACY: bundle.documents.PRIVACY.version };
   const selected = { TERMS: policyAccepted(selection, "TERMS", versions.TERMS, previous), PRIVACY: policyAccepted(selection, "PRIVACY", versions.PRIVACY, previous) };
   const choose = (type: PolicyType, agreed: boolean) => onChange({ ...selection, [type]: { version: versions[type], agreed } });

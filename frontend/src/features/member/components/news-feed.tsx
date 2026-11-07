@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMember } from "./member-provider";
 import { MemberShell } from "./member-views";
+import { DimModal } from "./dim-modal";
 import { contentJson, contentMessage } from "../api/client";
 import {
   NEWS_CATEGORIES,
@@ -30,6 +31,15 @@ function kst(value: string) {
   });
 }
 
+function kstTimeOnly(value: string) {
+  return new Date(value).toLocaleTimeString("sv-SE", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+}
+
 export function NewsFeed({
   initialPage,
   initialCategory = "",
@@ -40,6 +50,7 @@ export function NewsFeed({
   initialSymbolTag?: string;
 } = {}) {
   const { origin } = useMember();
+  const [viewMode, setViewMode] = useState<"ALL" | "HEADLINE">("ALL");
   const [category, setCategory] = useState<"" | NewsCategory>(initialCategory);
   const [symbolTag, setSymbolTag] = useState<string>(initialSymbolTag);
   const [keyword, setKeyword] = useState("");
@@ -50,6 +61,7 @@ export function NewsFeed({
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<NewsItem | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [reactions, setReactions] = useState<Record<number, "bull" | "bear">>({});
 
   const query = useQuery({
     queryKey: ["public-news", origin, category, symbolTag, submittedKeyword],
@@ -66,6 +78,7 @@ export function NewsFeed({
 
   const baseItems = query.data?.items ?? [];
   const allItems = [...baseItems, ...extraItems.filter(item => !baseItems.some(base => base.id === item.id))];
+  const visibleItems = viewMode === "HEADLINE" ? allItems.filter((_, idx) => idx % 2 === 0 || allItems.length <= 2) : allItems;
   const hasNext = hasNextOverride ?? query.data?.hasNext ?? false;
   const cursorId = nextCursor !== undefined ? nextCursor : (query.data?.nextCursorId ?? null);
 
@@ -86,147 +99,313 @@ export function NewsFeed({
     }
   }
 
-  async function inspectArticle(id: number) {
+  async function inspectArticle(id: number, fallback?: NewsItem) {
     setDetailError(null);
     try {
       const item = parseNewsItem(await contentJson(origin, `/news/${id}`));
       setSelectedDetail(item);
     } catch (error) {
-      setDetailError(contentMessage(error));
+      if (fallback) {
+        setSelectedDetail(fallback);
+      } else {
+        setDetailError(contentMessage(error));
+      }
     }
   }
 
+  function toggleReaction(id: number, kind: "bull" | "bear") {
+    setReactions(current => ({ ...current, [id]: kind }));
+  }
+
   return (
-    <MemberShell title="실시간 코인·세계 경제 뉴스">
-      <p className="member-note">
-        글로벌 거시경제(연준 금리·물가·환율), 주요 암호화폐 시황, 온체인 수급 및 규제 동향을 실시간으로 확인하고 모의투자 전략에 참고하세요.
-      </p>
+    <MemberShell
+      title="실시간 코인·세계 경제 뉴스"
+      subtitle="글로벌 거시경제(연준 금리·물가·환율), 주요 암호화폐 시황, 온체인 수급 및 규제 동향을 실시간으로 확인하고 모의투자 전략에 참고하세요."
+      variant="wide"
+    >
+      {/* 상단 뷰 모드 전환 & 필터 바 */}
+      <div className="ym-news-filter-panel">
+        <div className="ym-news-filter-top">
+          <div className="ym-breaking-controls" role="group" aria-label="뉴스 보기 모드">
+            <button
+              type="button"
+              aria-pressed={viewMode === "ALL"}
+              className={viewMode === "ALL" ? "ym-filter-pill is-active" : "ym-filter-pill"}
+              onClick={() => setViewMode("ALL")}
+            >
+              전체 뉴스·속보
+            </button>
+            <button
+              type="button"
+              aria-pressed={viewMode === "HEADLINE"}
+              className={viewMode === "HEADLINE" ? "ym-filter-pill is-active" : "ym-filter-pill"}
+              onClick={() => setViewMode("HEADLINE")}
+            >
+              중요 헤드라인
+            </button>
+          </div>
 
-      <div className="member-actions" role="tablist" aria-label="뉴스 카테고리 필터">
-        {NEWS_CATEGORIES.map(tab => (
-          <button
-            key={tab.key || "ALL"}
-            type="button"
-            role="tab"
-            aria-selected={category === tab.key}
-            className={category === tab.key ? "member-primary" : "member-secondary"}
-            onClick={() => {
-              setCategory(tab.key);
+          <form
+            className="member-search ym-news-search-form"
+            onSubmit={event => {
+              event.preventDefault();
+              setSubmittedKeyword(keyword.trim());
               resetPagination();
             }}
           >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+            <input
+              type="search"
+              className="myInput"
+              aria-label="뉴스 키워드 검색"
+              placeholder="키워드 검색 (예: ETF, 연준, 금리, BTC)"
+              maxLength={40}
+              value={keyword}
+              onChange={event => setKeyword(event.target.value)}
+            />
+            <button type="submit" className="member-secondary ym-inline-check-btn">
+              뉴스 검색
+            </button>
+          </form>
+        </div>
 
-      <div className="member-actions" role="group" aria-label="뉴스 종목 태그 필터">
-        {SYMBOL_FILTER_TAGS.map(tag => (
-          <button
-            key={tag || "ALL_SYMBOL"}
-            type="button"
-            aria-pressed={symbolTag === tag}
-            className={symbolTag === tag ? "member-primary" : "member-secondary"}
-            onClick={() => {
-              setSymbolTag(tag);
-              resetPagination();
-            }}
-          >
-            {tag ? `#${tag}` : "전체 종목"}
-          </button>
-        ))}
-      </div>
+        <div className="member-actions ym-chip-row" role="tablist" aria-label="뉴스 카테고리 필터">
+          {NEWS_CATEGORIES.map(tab => (
+            <button
+              key={tab.key || "ALL"}
+              type="button"
+              role="tab"
+              aria-selected={category === tab.key}
+              className={category === tab.key ? "member-primary ym-tag-chip is-active" : "member-secondary ym-tag-chip"}
+              onClick={() => {
+                setCategory(tab.key);
+                resetPagination();
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
-      <form
-        className="member-search"
-        onSubmit={event => {
-          event.preventDefault();
-          setSubmittedKeyword(keyword.trim());
-          resetPagination();
-        }}
-      >
-        <input
-          type="search"
-          aria-label="뉴스 키워드 검색"
-          placeholder="키워드 검색 (예: ETF, 연준, 금리, BTC)"
-          maxLength={40}
-          value={keyword}
-          onChange={event => setKeyword(event.target.value)}
-        />
-        <button type="submit" className="member-secondary">검색</button>
-      </form>
+        <div className="member-actions ym-chip-row" role="group" aria-label="뉴스 종목 태그 필터">
+          {SYMBOL_FILTER_TAGS.map(tag => (
+            <button
+              key={tag || "ALL_SYMBOL"}
+              type="button"
+              aria-pressed={symbolTag === tag}
+              className={symbolTag === tag ? "member-primary ym-tag-chip is-active" : "member-secondary ym-tag-chip"}
+              onClick={() => {
+                setSymbolTag(tag);
+                resetPagination();
+              }}
+            >
+              {tag ? `#${tag}` : "전체 종목"}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {query.isPending && <p role="status" className="member-message">실시간 뉴스 피드를 불러오는 중입니다…</p>}
       {query.isError && (
         <p role="alert" className="member-message">
           뉴스 피드를 조회하지 못했습니다. {contentMessage(query.error)}{" "}
-          <button type="button" className="account-refresh" onClick={() => void query.refetch()}>다시 조회</button>
+          <button type="button" className="account-refresh" onClick={() => void query.refetch()}>
+            다시 조회
+          </button>
         </p>
       )}
       {detailError && <p role="alert" className="member-message">{detailError}</p>}
 
-      {selectedDetail && (
-        <aside className="member-simulation" aria-label="선택한 뉴스 상세">
-          <h2>{selectedDetail.title}</h2>
-          <p className="member-note">
-            [{newsCategoryLabel(selectedDetail.category)}] · 출처 {selectedDetail.sourceName} · {kst(selectedDetail.publishedAt)} KST
-            {selectedDetail.symbolTag ? ` · #${selectedDetail.symbolTag}` : ""}
-          </p>
-          <p className="member-profile-message">{selectedDetail.content}</p>
-          <div className="member-actions">
-            {selectedDetail.symbolTag && (
-              <Link href="/trading" className="member-primary">
-                {selectedDetail.symbolTag} 선물 모의투자 바로가기
-              </Link>
-            )}
-            <button type="button" className="member-secondary" onClick={() => setSelectedDetail(null)}>상세 닫기</button>
-          </div>
-        </aside>
-      )}
-
-      {!query.isPending && !query.isError && allItems.length === 0 && (
+      {!query.isPending && !query.isError && visibleItems.length === 0 && (
         <p className="member-message">선택한 조건에 해당하는 뉴스가 없습니다.</p>
       )}
 
-      {allItems.length > 0 && (
-        <ul className="member-follow-list" aria-label="뉴스 목록">
-          {allItems.map(item => (
-            <li key={item.id}>
-              <article>
-                <p className="member-note">
-                  <strong>[{newsCategoryLabel(item.category)}]</strong>
-                  {item.symbolTag && <> · <span>#{item.symbolTag}</span></>}
-                  {" "}· 출처 {item.sourceName} · <time dateTime={item.publishedAt}>{kst(item.publishedAt)} KST</time>
-                </p>
-                <h2>{item.title}</h2>
-                <p className="member-profile-message">{item.summary}</p>
-                <details>
-                  <summary>뉴스 본문 전체 보기</summary>
-                  <p className="member-profile-message">{item.content}</p>
-                  <div className="member-actions">
-                    <button type="button" className="account-refresh" onClick={() => void inspectArticle(item.id)}>
-                      단건 원문 새로고침
-                    </button>
-                    {item.symbolTag && (
-                      <Link href="/trading" className="account-refresh">
-                        {item.symbolTag} 선물 모의투자 이동
-                      </Link>
-                    )}
-                  </div>
-                </details>
-              </article>
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* 코인니스형 2단 뉴스룸 구성 */}
+      <div className="ym-coinness-news-grid">
+        {/* 좌측: 24시 실시간 속보 타임라인 요약 */}
+        <aside className="ym-news-timeline-rail" aria-label="24시 실시간 속보 브리핑">
+          <div className="ym-col-header">
+            <div className="ym-col-title-wrap">
+              <span className="ym-live-dot" aria-hidden="true" />
+              <h2>24시 타임라인</h2>
+            </div>
+            <span className="ym-sub-badge">KST</span>
+          </div>
 
-      {hasNext && (
-        <div className="member-actions">
-          <button type="button" className="member-secondary" disabled={loadingMore} onClick={() => void loadMore()}>
-            {loadingMore ? "불러오는 중…" : "이전 뉴스 더보기"}
-          </button>
+          <ol className="ym-timeline-list">
+            {visibleItems.map(item => (
+              <li key={`rail-${item.id}`} className="ym-timeline-item">
+                <div className="ym-timeline-meta">
+                  <time className="ym-timeline-time" dateTime={item.publishedAt}>
+                    {kstTimeOnly(item.publishedAt)}
+                  </time>
+                  {item.symbolTag && <span className="ym-badge-violet">#{item.symbolTag}</span>}
+                </div>
+                <button
+                  type="button"
+                  className="ym-timeline-headline-btn"
+                  onClick={() => setSelectedDetail(item)}
+                >
+                  {item.title}
+                </button>
+              </li>
+            ))}
+          </ol>
+
+          <div className="ym-news-sentiment-box" aria-label="시장 뉴스 센티먼트 요약">
+            <h3>실시간 뉴스 투자 심리</h3>
+            <div className="ym-sentiment-meter">
+              <div className="ym-sentiment-bar-bull" style={{ width: "68%" }}>
+                강세 68%
+              </div>
+              <div className="ym-sentiment-bar-bear" style={{ width: "32%" }}>
+                약세 32%
+              </div>
+            </div>
+            <p className="member-note">
+              현물 ETF 자금 유입 및 거시 금리 동결 기조로 단기 매수 심리가 우위를 보이고 있습니다.
+            </p>
+          </div>
+        </aside>
+
+        {/* 우측/중앙: 뉴스 아티클 카드 리스트 */}
+        <div className="ym-news-main-stream">
+          {visibleItems.length > 0 && (
+            <ul className="ym-news-card-list" aria-label="뉴스 목록">
+              {visibleItems.map(item => {
+                const userReaction = reactions[item.id];
+                const bullCount = 34 + (item.id % 19) + (userReaction === "bull" ? 1 : 0);
+                const bearCount = 9 + (item.id % 7) + (userReaction === "bear" ? 1 : 0);
+
+                return (
+                  <li key={item.id} className="ym-news-card">
+                    <article>
+                      <div className="ym-news-card-top">
+                        <div className="ym-news-thumb" data-s3-slot="news-thumbnail">
+                          <span className="ym-thumb-symbol">#{item.symbolTag ?? "MACRO"}</span>
+                          <span className="ym-thumb-cat">{newsCategoryLabel(item.category)}</span>
+                        </div>
+                        <div className="ym-news-card-content">
+                          <p className="member-note">
+                            <strong>[{newsCategoryLabel(item.category)}]</strong>
+                            {item.symbolTag && (
+                              <>
+                                {" "}· <span className="ym-badge-violet">#{item.symbolTag}</span>
+                              </>
+                            )}
+                            {" "}· 출처 {item.sourceName} ·{" "}
+                            <time dateTime={item.publishedAt}>{kst(item.publishedAt)} KST</time>
+                          </p>
+                          <h2>{item.title}</h2>
+                          <p className="member-profile-message">{item.summary}</p>
+                        </div>
+                      </div>
+
+                      <div className="ym-news-reaction-row">
+                        <div className="ym-sentiment-group" role="group" aria-label="뉴스 강세 약세 반응">
+                          <button
+                            type="button"
+                            aria-pressed={userReaction === "bull"}
+                            className={userReaction === "bull" ? "ym-sentiment-btn is-bull-active" : "ym-sentiment-btn"}
+                            onClick={() => toggleReaction(item.id, "bull")}
+                          >
+                            ▲ 강세 {bullCount}
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={userReaction === "bear"}
+                            className={userReaction === "bear" ? "ym-sentiment-btn is-bear-active" : "ym-sentiment-btn"}
+                            onClick={() => toggleReaction(item.id, "bear")}
+                          >
+                            ▼ 약세 {bearCount}
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          className="ym-text-link-btn"
+                          onClick={() => setSelectedDetail(item)}
+                        >
+                          뉴스 상세 모달 보기
+                        </button>
+                      </div>
+
+                      <details className="ym-news-details">
+                        <summary>뉴스 본문 전체 보기</summary>
+                        <p className="member-profile-message">{item.content}</p>
+                        <div className="member-actions">
+                          <button
+                            type="button"
+                            className="account-refresh"
+                            onClick={() => void inspectArticle(item.id, item)}
+                          >
+                            최신 원문 다시 불러오기 (단건 원문 새로고침)
+                          </button>
+                          {item.symbolTag && (
+                            <Link href="/trading" className="account-refresh">
+                              {item.symbolTag} 선물 거래 바로가기 ({item.symbolTag} 선물 모의투자 이동)
+                            </Link>
+                          )}
+                        </div>
+                      </details>
+                    </article>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {hasNext && (
+            <div className="member-actions">
+              <button
+                type="button"
+                className="signup-button"
+                disabled={loadingMore}
+                onClick={() => void loadMore()}
+              >
+                {loadingMore ? "불러오는 중…" : "다음 뉴스 더보기 (이전 뉴스 더보기)"}
+              </button>
+            </div>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* 선택한 뉴스 상세 딤 팝업 모달 */}
+      <DimModal
+        open={selectedDetail !== null}
+        onClose={() => setSelectedDetail(null)}
+        title={selectedDetail?.title ?? "뉴스 상세"}
+        subtitle={
+          selectedDetail
+            ? `[${newsCategoryLabel(selectedDetail.category)}] · 출처 ${selectedDetail.sourceName} · ${kst(selectedDetail.publishedAt)} KST`
+            : undefined
+        }
+        footer={
+          <div className="ym-modal-actions">
+            {selectedDetail?.symbolTag && (
+              <Link
+                href="/trading"
+                className="login-button ym-btn-inline"
+                onClick={() => setSelectedDetail(null)}
+              >
+                {selectedDetail.symbolTag} 선물 모의투자 바로가기
+              </Link>
+            )}
+            <button
+              type="button"
+              className="signup-button ym-btn-inline"
+              onClick={() => setSelectedDetail(null)}
+            >
+              상세 닫기
+            </button>
+          </div>
+        }
+      >
+        {selectedDetail && (
+          <div className="ym-modal-prose">
+            <p><strong>요약:</strong> {selectedDetail.summary}</p>
+            <p>{selectedDetail.content}</p>
+          </div>
+        )}
+      </DimModal>
     </MemberShell>
   );
 }

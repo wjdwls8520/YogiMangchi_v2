@@ -28,6 +28,24 @@ export function NicknameCheck() {
     } catch { /* Changed input/unmounted forms cancel their checks without showing stale feedback. */ }
     finally { if (request.current === controller) { setPending(false); request.current = null; } }
   }
-  return <div><button ref={buttonRef} type="button" className="member-secondary" disabled={pending} onClick={event => void check(event.currentTarget)}>{pending ? "확인 중…" : "닉네임 중복 확인"}</button>
-    <p id={feedbackId} role={feedback && feedback.kind !== "available" ? "alert" : "status"} className={feedback ? "member-message" : undefined}>{feedback?.message}</p></div>;
+  return (
+    <div className="ym-nickname-check-wrap">
+      <button
+        ref={buttonRef}
+        type="button"
+        className="member-secondary ym-inline-check-btn"
+        disabled={pending}
+        onClick={event => void check(event.currentTarget)}
+      >
+        {pending ? "확인 중…" : "닉네임 중복 확인"}
+      </button>
+      <p
+        id={feedbackId}
+        role={feedback && feedback.kind !== "available" ? "alert" : "status"}
+        className={feedback ? `member-message ${feedback.kind === "available" ? "is-available" : ""}` : "sr-only"}
+      >
+        {feedback?.message}
+      </p>
+    </div>
+  );
 }

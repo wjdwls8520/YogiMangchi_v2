@@ -343,3 +343,97 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     client.clear();
   }
 });
+
+import { MainPortal } from "../src/features/member/components/main-portal";
+import { MemberSignupPage } from "../src/features/member/components/member-auth";
+import { MemberAccount } from "../src/features/member/components/member-account";
+import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
+
+test("MainPortal, MemberSignupPage, MemberAccount, and CommunityBoard render xrhub/CoinNess/Toss layouts and S3 upload slots", () => {
+  const client = new QueryClient();
+  try {
+    const portalHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+    assert.match(portalHtml, /24시 실시간 속보/);
+    assert.match(portalHtml, /BTC 도미넌스/);
+    assert.match(portalHtml, /선물 모의투자 퀵 시뮬레이터/);
+    assert.match(portalHtml, /선물 모의투자 시작하기/);
+    assert.match(portalHtml, /실시간 커뮤니티 HOT/);
+    assert.match(portalHtml, /data-s3-slot="news-thumbnail"/);
+
+    const signupHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberSignupPage />
+      </MemberProvider>,
+    );
+    assert.match(signupHtml, /identity_verification_wrap/);
+    assert.match(signupHtml, /소셜 계정 본인인증/);
+    assert.match(signupHtml, /data-s3-slot="signup-profile-image"/);
+
+    const accountHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberAccount />
+      </MemberProvider>,
+    );
+    assert.match(accountHtml, /data-s3-slot="account-profile-image"/);
+  } finally {
+    client.clear();
+  }
+});
+
+test("DimModal and scroll lock preserve exact scrollY position and hide scrollbar without jumping to top", () => {
+  resetScrollLockForTest();
+  let restoredX = -1;
+  let restoredY = -1;
+  const mockWin = {
+    scrollY: 480,
+    scrollTo: (x: number, y: number) => {
+      restoredX = x;
+      restoredY = y;
+    },
+  };
+  const mockDoc = {
+    body: {
+      style: {} as Record<string, string>,
+      dataset: {} as Record<string, string | undefined>,
+    },
+    documentElement: {
+      scrollTop: 480,
+      style: {} as Record<string, string>,
+    },
+  };
+
+  const saved = lockBodyScroll(mockWin, mockDoc);
+  assert.equal(saved, 480);
+  assert.equal(mockDoc.body.style.position, "fixed");
+  assert.equal(mockDoc.body.style.top, "-480px");
+  assert.equal(mockDoc.body.style.overflow, "hidden");
+  assert.equal(mockDoc.documentElement.style.overflow, "hidden");
+  assert.equal(mockDoc.documentElement.style.scrollbarWidth, "none");
+
+  const unlockedY = unlockBodyScroll(mockWin, mockDoc);
+  assert.equal(unlockedY, 480);
+  assert.equal(mockDoc.body.style.position, "");
+  assert.equal(mockDoc.body.style.top, "");
+  assert.equal(restoredX, 0);
+  assert.equal(restoredY, 480);
+
+  const openModalHtml = renderToStaticMarkup(
+    <DimModal open onClose={() => {}} title="속보 상세 팝업">
+      <p>팝업 본문 내용</p>
+    </DimModal>,
+  );
+  assert.match(openModalHtml, /data-dim-modal="open"/);
+  assert.match(openModalHtml, /속보 상세 팝업/);
+  assert.equal(
+    renderToStaticMarkup(
+      <DimModal open={false} onClose={() => {}} title="닫힌 팝업">
+        <p>내용</p>
+      </DimModal>,
+    ),
+    "",
+  );
+});
