@@ -30,6 +30,8 @@
 | 공개 프로필·닉네임 | `GET /api/v1/members/{memberId}`, `GET /api/v1/members/nickname/availability` |
 | 팔로우·조회 | `PUT/DELETE /api/v1/members/{memberId}/follows`, 관련 목록·집계 GET |
 | 탈퇴 요청·상태 | `POST/GET /api/v1/members/me/withdrawal` |
+| 약관·개인정보 정책 조회 | `GET /api/v1/policies/current`, `GET /api/v1/policies/{type}/{version}` |
+| 내 정책 동의 조회·제출 | `GET/POST /api/v1/members/me/consents` |
 | 공개 검증키 | `GET /.well-known/jwks.json` |
 
 가입은 버전별 약관·개인정보 동의를 기록한다. 탈퇴는 `WITHDRAWING` 요청을 영속화하고 Trading 정리 확인 후 `COMPLETED`로 확정하는 비동기 흐름이다. 재가입은 새 회원 신원으로 취급하며 이전 금융 기록을 자동 복구하지 않는다.

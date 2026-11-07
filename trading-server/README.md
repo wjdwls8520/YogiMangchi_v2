@@ -29,10 +29,12 @@ Binance WebSocket 시세를 사용하는 **USDT 선물 모의투자** 백엔드�
 | 계정 복구 상태 | `GET /api/v1/trading/account/recovery` |
 | 글로벌 처리 상태 | `GET /api/v1/trading/status` |
 | 주문 예상 견적 | `POST /api/v1/trading/account/orders/quote` |
-| 주문 생성·조회·취소 | `POST/GET /api/v1/trading/account/orders`, `POST /api/v1/trading/account/orders/{orderId}/cancel` |
+| 주문 생성·조회·취소 | `POST/GET /api/v1/trading/account/orders`, `GET /api/v1/trading/account/orders/{orderId}`, `POST /api/v1/trading/account/orders/{orderId}/cancel` |
+| 미확정 명령 결과 재조회 | `POST /api/v1/trading/account/command-results/query` |
 | 포지션 청산 | `POST /api/v1/trading/account/positions/{positionId}/close` |
 | 예약 청산 | `POST /api/v1/trading/account/positions/{positionId}/close-orders` |
-| 체결·종료 포지션 이력 | `GET /api/v1/trading/account/fills`, `/positions/history` |
+| 포지션 손절가 설정·해제 | `GET/PUT/DELETE /api/v1/trading/account/positions/{positionId}/stop-loss` |
+| 체결·종료 포지션·이벤트 이력 | `GET /api/v1/trading/account/fills`, `/positions/history`, `/events` |
 | Guest 재도전 | `POST /api/v1/trading/account/retry` |
 | 회원 재시작·회차 목록 | `POST /api/v1/trading/account/restart`, `GET /api/v1/trading/account/rounds` |
 | 현재 회차·회차별 원장 | `GET /api/v1/trading/account/rounds/current`, `/rounds/{roundId}`, `/rounds/{roundId}/orders`, `/fills`, `/positions` |

@@ -2,7 +2,7 @@
 
 ## 변경 범위와 유지 계약
 
-기준: develop `4c6800c`, 작업 브랜치 `codex/content-auth-contract`. 변경은 content-server 안에만 있다.
+기준: `develop` 반영 완료 (`content-server` 인증·오류·쿠키 연동 계약). 변경은 `content-server` 안에만 있다.
 기존 OAuth/회원/동의/탈퇴/전송 큐를 재사용한다. Trading JWT claim·내부 API·금융 정책은 바꾸지 않는다.
 Google OIDC sub와 Kakao id로 계정을 구분하며 이메일 자동 연결과 Guest 금융 이력 병합은 없다.
 Access 15분 JSON/Frontend 메모리, Refresh 최초 로그인부터 고정7일/해시 저장/회전/재사용 family 폐기,
@@ -40,7 +40,7 @@ code로 분기하고 detail/공급자 원문/내부 예외를 사용자에게 �
 |500 INTERNAL_ERROR|안전한 일반 오류. 성공 여부가 불분명한 변경은 자동 반복하지 않음|
 
 과거 `POLICY_VERSION_OR_CONSENT_INVALID`는 이 서버에서 위 세 정책/동의 코드로 분리한다.
-현재 Frontend `features/member/api/client.ts`의 허용 목록은 신규 코드가 없으므로 후속 Work에서 추가해야 한다.
+Frontend `features/member/api/client.ts`도 위 오류 코드 계약을 기준으로 분기한다.
 새 code를 모르는 클라이언트는 HTTP 상태 기반의 기존 일반 안내로 동작한다. 상태/성공 응답 DTO는 유지한다.
 기존 `NICKNAME_UNAVAILABLE`, `MEMBER_BUSY`도 사용자 행동을 구분해 표시해야 한다.
 
@@ -152,7 +152,7 @@ prod는 prod profile/HTTPS·Secure 설정을 사용한다. 서버 재시작 후 
 ## 검증 경계와 Frontend 실제 확인표
 
 자동 검증은 임시 PostgreSQL17.11 Testcontainers와 로컬 mock 공급자만 사용한다.
-2026-10-24 Java17 `clean build`:133개 통과, 실패·오류·건너뜀0. 테스트는 이 Work 전용 브랜치에서 실행했다.
+자동 테스트 통과 수치와 동시성 검증 결과는 루트 [`BENCHMARK_LOG.md`](../../BENCHMARK_LOG.md)에서 최신 이력을 관리한다.
 `OidcHttpIntegrationTests`는 실제 임의 포트 Tomcat/Java HTTP cookie jar/기본 Spring OIDC 검증기를 실행한다.
 이 HTTP client는 브라우저의 SameSite/CORS/Web Locks 정책을 구현하지 않으므로 브라우저 검증으로 세지 않는다.
 서버는 테스트 종료 후 종료한다. 사용자 DB/Volume/실제 OAuth Secret과 기존8080 서버는 변경하지 않는다.
