@@ -11,6 +11,7 @@ import com.yogimangchi.content.member.validation.NicknamePolicy;
 import java.time.*;
 import java.util.*;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,8 +23,9 @@ public class AuthService {
     private final com.yogimangchi.content.member.service.MemberProvisioning provisioning;
     private final AccessTokens access;
     private final com.yogimangchi.content.consent.PolicyConsents consents;
-    public AuthService(MemberRepository members,OAuthIdentityRepository identities,RefreshSessionRepository sessions,AccessTokens access,com.yogimangchi.content.consent.PolicyConsents consents,com.yogimangchi.content.member.service.MemberProvisioning provisioning) {
-        this.members=members; this.identities=identities; this.sessions=sessions; this.access=access; this.consents=consents;this.provisioning=provisioning;
+    private final JdbcTemplate jdbc;
+    public AuthService(MemberRepository members,OAuthIdentityRepository identities,RefreshSessionRepository sessions,AccessTokens access,com.yogimangchi.content.consent.PolicyConsents consents,com.yogimangchi.content.member.service.MemberProvisioning provisioning,JdbcTemplate jdbc) {
+        this.members=members; this.identities=identities; this.sessions=sessions; this.access=access; this.consents=consents;this.provisioning=provisioning;this.jdbc=jdbc;
     }
     /** Internal handoff only; never serialize this wrapper (it contains the raw refresh token). */
     public record Issued(AccessResponse access,String refresh,Instant refreshExpiresAt) { }
@@ -59,11 +61,13 @@ public class AuthService {
     public Issued completeLogin(VerifiedIdentity identity) {
         identity.requireFresh();
         var link=identities.findByProviderAndProviderSubject(identity.provider(),identity.subject()).orElseThrow(AuthFailure::unauthorized);
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
         Instant now=now(); return issue(active(link.getMemberId()),UUID.randomUUID(),now,now.plus(Duration.ofDays(7)));
     }
     @Transactional(timeout=5,noRollbackFor=AuthFailure.class)
     public Issued refresh(String token) {
         if(!RefreshTokens.valid(token)) throw AuthFailure.unauthorized();
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
         // Member -> refresh lock order matches withdrawal, preventing post-revocation token issuance.
         Long owner=sessions.memberByHash(RefreshTokens.hash(token)).orElseThrow(AuthFailure::unauthorized);
         members.lockById(owner).filter(m->m.getStatus()==Member.Status.ACTIVE).orElseThrow(AuthFailure::unauthorized);
@@ -82,6 +86,7 @@ public class AuthService {
     @Transactional(timeout=5)
     public void logout(String token) {
         if(!RefreshTokens.valid(token)) return;
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
         String hash=RefreshTokens.hash(token);
         var owner=sessions.memberByHash(hash);
         // Serialize with rotation/withdrawal before locking a family. Otherwise a family-wide

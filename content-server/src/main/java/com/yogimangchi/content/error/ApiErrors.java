@@ -47,15 +47,32 @@ public class ApiErrors {
     ResponseEntity<ProblemDetail> protocol(Exception e) {
         return problem(HttpStatus.valueOf(((ErrorResponse)e).getStatusCode().value()),"INVALID_REQUEST");
     }
-    @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
+    @ExceptionHandler({org.springframework.dao.PessimisticLockingFailureException.class,jakarta.persistence.PessimisticLockException.class,jakarta.persistence.LockTimeoutException.class})
     ResponseEntity<ProblemDetail> busy(Exception e) { return problem(HttpStatus.CONFLICT,"MEMBER_BUSY"); }
     @ExceptionHandler({org.springframework.dao.DataAccessResourceFailureException.class,org.springframework.transaction.CannotCreateTransactionException.class})
     ResponseEntity<ProblemDetail> unavailable(Exception e) { return problem(HttpStatus.SERVICE_UNAVAILABLE,"SERVICE_TEMPORARILY_UNAVAILABLE"); }
+    @ExceptionHandler({org.springframework.dao.DataAccessException.class,jakarta.persistence.PersistenceException.class})
+    ResponseEntity<ProblemDetail> dataAccess(Exception e) {
+        if(isLockTimeout(e)) return problem(HttpStatus.CONFLICT,"MEMBER_BUSY");
+        return unexpected(e);
+    }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ProblemDetail> unexpected(Exception e) {
+        if(isLockTimeout(e)) return problem(HttpStatus.CONFLICT,"MEMBER_BUSY");
         // SQL/provider response messages may contain personal data; do not dump request/token objects.
         log.error("Content request failed exceptionType={} locations={}",e.getClass().getName(),java.util.Arrays.toString(e.getStackTrace()));
         return problem(HttpStatus.INTERNAL_SERVER_ERROR,"INTERNAL_ERROR");
+    }
+    private static boolean isLockTimeout(Throwable e) {
+        for(Throwable cause=e;cause!=null;cause=cause.getCause()) {
+            if(cause instanceof org.springframework.dao.PessimisticLockingFailureException
+                    || cause instanceof jakarta.persistence.PessimisticLockException
+                    || cause instanceof jakarta.persistence.LockTimeoutException
+                    || cause instanceof java.sql.SQLException sql && "55P03".equals(sql.getSQLState())) {
+                return true;
+            }
+        }
+        return false;
     }
     private ResponseEntity<ProblemDetail> problem(HttpStatus status,String code) {
         var detail=ProblemDetail.forStatusAndDetail(status,code); detail.setProperty("code",code);

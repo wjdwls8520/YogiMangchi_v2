@@ -167,6 +167,59 @@ class RefreshConcurrencyIntegrationTests extends TestEnvironment {
         } finally {start.countDown();pool.shutdownNow();}
     }
 
+    @Test void refreshDuringConcurrentMemberRowLockReturns409MemberBusyWithoutClearingCookieOrConsumingToken() throws Exception {
+        var login=signup(identity());
+        var pool=Executors.newSingleThreadExecutor();
+        var locked=new CountDownLatch(1);
+        var release=new CountDownLatch(1);
+        try {
+            var holder=pool.submit(()->{
+                new TransactionTemplate(transactions).executeWithoutResult(status->{
+                    jdbc.queryForObject("select id from content.member where id=? for update",Long.class,login.access().memberId());
+                    locked.countDown();
+                    try {
+                        assertThat(release.await(5,TimeUnit.SECONDS)).isTrue();
+                    } catch(InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(e);
+                    }
+                });
+            });
+            assertThat(locked.await(2,TimeUnit.SECONDS)).isTrue();
+            long holdStartedAt=System.nanoTime();
+            long requestStartedAt=System.nanoTime();
+            var busy=mvc.perform(post("/api/v1/auth/refresh")
+                    .with(csrf())
+                    .header(HttpHeaders.ORIGIN,"https://app.test")
+                    .cookie(new Cookie("CONTENT_REFRESH",login.refresh())))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("MEMBER_BUSY"))
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL,"no-store"))
+                    .andReturn();
+            long requestElapsedMs=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-requestStartedAt);
+            assertThat(requestElapsedMs).isBetween(1800L,4000L);
+            assertThat(busy.getResponse().getHeaders(HttpHeaders.SET_COOKIE)).isEmpty();
+
+            long remainingHoldMs=2300L-TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-holdStartedAt);
+            if(remainingHoldMs>0) Thread.sleep(remainingHoldMs);
+            release.countDown();
+            holder.get(5,TimeUnit.SECONDS);
+
+            var recovered=mvc.perform(post("/api/v1/auth/refresh")
+                    .with(csrf())
+                    .header(HttpHeaders.ORIGIN,"https://app.test")
+                    .cookie(new Cookie("CONTENT_REFRESH",login.refresh())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.memberId").value(login.access().memberId()))
+                    .andReturn();
+            assertThat(recovered.getResponse().getCookie("CONTENT_REFRESH")).isNotNull();
+            assertThat(recovered.getResponse().getCookie("CONTENT_REFRESH").getValue()).isNotEqualTo(login.refresh());
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+    }
+
     private MvcResult refresh(String token) throws Exception {
         var request=post("/api/v1/auth/refresh").with(csrf());
         if(token!=null)request.cookie(new Cookie("CONTENT_REFRESH",token));

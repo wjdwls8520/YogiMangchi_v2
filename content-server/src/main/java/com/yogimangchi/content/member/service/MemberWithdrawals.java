@@ -49,6 +49,7 @@ public class MemberWithdrawals {
     }
     @Transactional(timeout=3)
     public void delivered(Long memberId) {
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
         var member=members.lockById(memberId).orElseThrow();
         if(jdbc.queryForObject("select count(*) from content.member_withdrawal where member_id=?",Long.class,memberId)==0) return;
         // Privacy/security destruction only; business IDs and financial histories remain intact.
