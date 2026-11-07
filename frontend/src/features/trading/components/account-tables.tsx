@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useState, type ReactNode } from "react";
 import { knownOrderReason, orderReason } from "../api/order-reason";
-import { orderStatusLabel, type TradingOrder } from "../api/orders";
+import { orderStatusLabel, parseOrder, type TradingOrder } from "../api/orders";
 import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/account";
 import type { TradingSymbol } from "../market/catalog";
 import { LiquidationPrice } from "./liquidation-price";
@@ -13,6 +15,8 @@ import { formatMarketPrice } from "../market/price-format";
 import { usePositionMarkets } from "./selected-market-provider";
 import { positionValuation } from "../api/position-display";
 import type { ClosedPositionHistory, FillHistory } from "../api/history";
+import { useOptionalGuestSession } from "./trading-data-provider";
+import type { GuestSession, SessionSnapshot } from "../api/guest-session";
 
 function quantity(value:string,symbolId:number,symbols:readonly TradingSymbol[],referencePrice?:string|null) { return <TableQuantity value={value} referencePrice={referencePrice} unit={symbols.find(symbol=>symbol.id===symbolId)?.symbol} />; }
 function side(value:string,leverage:number) {return <span className="table-side" data-side={value}>{value==="LONG"?"Long":"Short"} ×{leverage}</span>;}
@@ -23,6 +27,36 @@ function Result({order}:{order:TradingOrder}) {
   const known=knownOrderReason(order.reason);
   const reason=order.status==="CANCELED" ? known : order.status==="REJECTED" ? known??"거절 사유를 확인할 수 없습니다. 주문 조건과 계정 상태를 확인해 주세요." : order.reason ? orderReason(order.reason) : null;
   return <span className="table-stack">{orderStatusLabel(order.status)}{reason&&<small>{reason}</small>}</span>;
+}
+
+export async function readOrderSnapshot(session: Pick<GuestSession, "read">, snapshot: SessionSnapshot, orderId: number, signal: AbortSignal) {
+  return parseOrder(await session.read(`account/orders/${orderId}`, snapshot, signal));
+}
+
+export function OrderSnapshotDetail({order,symbols,showSettlement=false,latest:initialLatest=null}:{order:TradingOrder;symbols:readonly TradingSymbol[];showSettlement?:boolean;latest?:TradingOrder|null}) {
+  const context=useOptionalGuestSession();
+  const [latest,setLatest]=useState<TradingOrder|null>(initialLatest),[loading,setLoading]=useState(false),[error,setError]=useState<string|null>(null);
+  void symbols;
+  async function refresh() {
+    if(!context||loading||context.snapshot.phase!=="ready")return;
+    setLoading(true);setError(null);
+    const controller=new AbortController();
+    try {
+      const next=await readOrderSnapshot(context.session,context.snapshot,order.orderId,controller.signal);
+      setLatest(next);
+    } catch {
+      setError("단건 주문 상태를 조회하지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  return <>
+    주문 #{order.orderId}<br/>요청 배수 ×{order.requestedLeverage}
+    {showSettlement&&<><br/>정산 조정 {formatDecimal(order.fill?.settlementAdjustment)} USDT</>}
+    <br/><button type="button" className="account-refresh" disabled={loading||context?.snapshot.phase!=="ready"} onClick={()=>void refresh()}>{loading?"조회 중…":"단건 상태 재조회"}</button>
+    {error&&<p role="alert" className="order-warning">{error}</p>}
+    {latest&&<div role="status" className="account-snapshot-note">최신 상태: {orderStatusLabel(latest.status)} · 예약 증거금: {formatDecimal(latest.reservedMargin)} USDT · 예약 수수료: {formatDecimal(latest.reservedFee)} USDT · 수수료율: {formatDecimal(latest.feeRate)}</div>}
+  </>;
 }
 
 export function PositionTable({positions,symbols}:{positions:readonly Position[];symbols:readonly TradingSymbol[]}) {
@@ -43,7 +77,7 @@ export function PendingOrderTable({orders,symbols}:{orders:readonly TradingOrder
     {key:"symbol",label:"Symbol"},{key:"side",label:"Side"},{key:"type",label:"Type / Action"},{key:"quantity",label:"Quantity"},{key:"price",label:"Limit Price"},{key:"status",label:"Status"},{key:"time",label:"Created · KST"},{key:"detail",label:"Details"},{key:"action",label:"Cancel"},
   ]} rows={orders.map(order=>({id:String(order.orderId),cells:{
     symbol:symbolLabel(order.tradingSymbolId,symbols),side:side(order.side,order.leverage),type:<span className="table-stack">{order.type}<small>{order.action}</small></span>,quantity:quantity(order.quantity,order.tradingSymbolId,symbols,order.limitPrice),price:price(order.limitPrice,order.tradingSymbolId,symbols),status:<Result order={order}/>,time:kst(order.createdAt),
-    detail:<Detail>주문 #{order.orderId}<br/>요청 배수 ×{order.requestedLeverage}</Detail>,action:<CancelOrderButton orderId={order.orderId} symbol={symbolLabel(order.tradingSymbolId,symbols)}/>,
+    detail:<Detail><OrderSnapshotDetail order={order} symbols={symbols}/></Detail>,action:<CancelOrderButton orderId={order.orderId} symbol={symbolLabel(order.tradingSymbolId,symbols)}/>,
   }}))}/>;
 }
 export function OrderHistoryTable({orders,symbols}:{orders:readonly TradingOrder[];symbols:readonly TradingSymbol[]}) {
@@ -53,7 +87,7 @@ export function OrderHistoryTable({orders,symbols}:{orders:readonly TradingOrder
     symbol:symbolLabel(order.tradingSymbolId,symbols),side:side(order.side,order.leverage),type:<span className="table-stack">{order.type}<small>{order.action==="LIQUIDATE"?"강제청산":order.action}</small></span>,quantity:quantity(order.quantity,order.tradingSymbolId,symbols,order.fill?.price??order.limitPrice),
     price:<span className="table-stack">{price(order.fill?.price,order.tradingSymbolId,symbols)}<small>주문 {order.type==="MARKET"?"시장가":price(order.limitPrice,order.tradingSymbolId,symbols)}</small></span>,status:<Result order={order}/>,
     pnl:<span className="table-stack"><span data-trend={pnlTrend(order.fill?.realizedPnl??null)}>{formatDecimal(order.fill?.realizedPnl)} USDT</span><small>수수료 {formatDecimal(order.fill?.fee)}</small></span>,
-    time:<span className="table-stack">{order.fill?kst(order.fill.executedAt):"—"}<small>접수 {kst(order.createdAt)}</small></span>,detail:<Detail>주문 #{order.orderId}<br/>요청 배수 ×{order.requestedLeverage}<br/>정산 조정 {formatDecimal(order.fill?.settlementAdjustment)} USDT</Detail>,
+    time:<span className="table-stack">{order.fill?kst(order.fill.executedAt):"—"}<small>접수 {kst(order.createdAt)}</small></span>,detail:<Detail><OrderSnapshotDetail order={order} symbols={symbols} showSettlement/></Detail>,
   }}))}/>;
 }
 export function FillHistoryTable({fills,symbols}:{fills:readonly FillHistory[];symbols:readonly TradingSymbol[]}) {

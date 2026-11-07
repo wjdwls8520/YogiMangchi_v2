@@ -2,7 +2,7 @@ import { ContentApiError, contentJson } from "./client";
 
 export type PolicyType = "TERMS" | "PRIVACY";
 export type PolicyDocument = { type: PolicyType; version: string; documentStatus: "DEVELOPMENT_DRAFT"; sha256: string; text: string };
-export type Policy = { type: PolicyType; version: string; required: boolean; accepted: boolean; lastAcceptedVersion: string | null; lastAgreedAt: string | null; documentUrl: string };
+export type Policy = { type: PolicyType; version: string; required: boolean; accepted: boolean; lastAcceptedVersion: string | null; lastAgreedAt: string | null; lastAcceptedAt?: string | null; documentUrl: string };
 export type PolicyState = { policies: Policy[]; reconsentRequired: boolean };
 export type PolicyBundle = { state: PolicyState; documents: Record<PolicyType, PolicyDocument> };
 export type ConsentSelection = Partial<Record<PolicyType, { version: string; agreed: boolean }>>;
@@ -14,11 +14,12 @@ export function parsePolicyState(value: unknown): PolicyState {
   if (!Array.isArray(row.policies) || row.policies.length !== 2 || typeof row.reconsentRequired !== "boolean") return fail();
   const policies = row.policies.map(value => {
     const p = object(value);
+    const agreedAt = p.lastAgreedAt !== undefined ? p.lastAgreedAt : (p.lastAcceptedAt ?? null);
     if (!["TERMS", "PRIVACY"].includes(String(p.type)) || !validPolicyVersion(p.version) || typeof p.required !== "boolean" || typeof p.accepted !== "boolean"
       || p.documentUrl !== `/api/v1/policies/${p.type}/${p.version}` || p.lastAcceptedVersion !== null && !validPolicyVersion(p.lastAcceptedVersion)
-      || p.lastAgreedAt !== null && (typeof p.lastAgreedAt !== "string" || !Number.isFinite(Date.parse(p.lastAgreedAt)))) return fail();
+      || agreedAt !== null && (typeof agreedAt !== "string" || !Number.isFinite(Date.parse(agreedAt)))) return fail();
     return { type: p.type as PolicyType, version: p.version, required: p.required, accepted: p.accepted,
-      lastAcceptedVersion: p.lastAcceptedVersion as string | null, lastAgreedAt: p.lastAgreedAt as string | null, documentUrl: p.documentUrl as string };
+      lastAcceptedVersion: p.lastAcceptedVersion as string | null, lastAgreedAt: agreedAt as string | null, lastAcceptedAt: agreedAt as string | null, documentUrl: p.documentUrl as string };
   });
   if (new Set(policies.map(p => p.type)).size !== 2 || row.reconsentRequired !== policies.some(p => p.required && !p.accepted)) return fail();
   return { policies, reconsentRequired: row.reconsentRequired };

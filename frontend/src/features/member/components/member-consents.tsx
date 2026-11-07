@@ -48,7 +48,24 @@ export function MemberConsents() {
     {(mine.isError || policies.isError) && <p className="member-message" role="alert">동의 상태를 확인하지 못했습니다. <button className="account-refresh" onClick={() => { void mine.refetch(); void policies.refetch(); }}>다시 조회</button></p>}
     {!mine.isError && !policies.isError && mine.data && policies.data && <>
       <ul className="member-note">{mine.data.policies.map(p => <li key={p.type}>{p.type === "TERMS" ? "이용약관" : "개인정보 동의"} · 이전 동의 {p.lastAcceptedVersion ?? "버전 기록 없음"} · 현재 {p.version} {p.accepted ? "동의됨" : "동의 필요"}</li>)}</ul>
-      {mine.data.reconsentRequired ? <><PolicyConsentControl bundle={policies.data} selection={selection} onChange={setSelection} pending={pending || policies.isFetching || mine.isFetching} previous={mine.data} /><button type="button" className="member-primary" disabled={pending || policies.isFetching || mine.isFetching} onClick={() => void accept()}>{pending ? "동의 기록 중…" : "필수 정책에 동의하기"}</button></> : <p role="status" className="member-message">현재 필요한 정책 동의가 완료되었습니다.</p>}
+      {mine.data.reconsentRequired ? <><PolicyConsentControl bundle={policies.data} selection={selection} onChange={setSelection} pending={pending || policies.isFetching || mine.isFetching} previous={mine.data} /><button type="button" className="member-primary" disabled={pending || policies.isFetching || mine.isFetching} onClick={() => void accept()}>{pending ? "동의 기록 중…" : "필수 정책에 동의하기"}</button></> : <>
+        <p role="status" className="member-message">현재 필요한 정책 동의가 완료되었습니다.</p>
+        <ul className="member-note">
+          {mine.data.policies.map(p => {
+            const label = p.type === "TERMS" ? "이용약관" : "개인정보처리방침";
+            const agreedVersion = p.lastAcceptedVersion ?? p.version;
+            const agreedAt = p.lastAcceptedAt ?? p.lastAgreedAt;
+            const document = policies.data?.documents[p.type];
+            return <li key={`summary-${p.type}`}>
+              <strong>{label}</strong> · 동의 버전 {agreedVersion} · 동의 시각 {agreedAt ?? "기록 없음"}
+              {document && <details>
+                <summary>{label} 원문 보기 ({document.version})</summary>
+                <pre className="policy-original">{document.text}</pre>
+              </details>}
+            </li>;
+          })}
+        </ul>
+      </>}
     </>}{error && <><p role="alert" className="member-message">{error}</p><MemberErrorActions error={requestError} checking={pending || policies.isFetching || mine.isFetching} onCheck={() => { void policies.refetch(); void mine.refetch(); }} /></>}
   </section>;
 }

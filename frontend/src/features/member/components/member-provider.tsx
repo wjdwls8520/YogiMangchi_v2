@@ -12,9 +12,9 @@ import { bindMemberActivity } from "../api/activity";
 const origin = () => contentOrigin(process.env.NEXT_PUBLIC_CONTENT_SERVER_URL || "http://localhost:8080");
 let browserSession: MemberSession | undefined;
 const Context = createContext<{ session: MemberSession; origin: string; announce: (type: "changed" | "ended") => void; retryConsents: () => void } | null>(null);
-export function MemberProvider({ children, session: provided }: { children: ReactNode; session?: MemberSession }) {
+export function MemberProvider({ children, session: provided, client: providedClient }: { children: ReactNode; session?: MemberSession; client?: QueryClient }) {
   const [session] = useState(() => provided ?? (typeof window === "undefined" ? createMemberSession(origin()) : browserSession ??= createMemberSession(origin())));
-  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, gcTime: typeof window === "undefined" ? Infinity : 60_000,
+  const [client] = useState(() => providedClient ?? new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, gcTime: typeof window === "undefined" ? Infinity : 60_000,
     refetchIntervalInBackground: false,
     retry: (count, error) => count < 2 && error instanceof ContentApiError && [0, 500, 502, 503, 504].includes(error.status),
   }, mutations: { retry: false } } }));

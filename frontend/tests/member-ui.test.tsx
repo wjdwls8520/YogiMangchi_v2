@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { MemberProvider } from "../src/features/member/components/member-provider";
+import { MemberConsents } from "../src/features/member/components/member-consents";
 import { MemberLoginView, ProfileEditForm, SignupForm } from "../src/features/member/components/member-views";
 import { GuestStartDialog } from "../src/features/trading/components/guest-access";
 import { AccountQueryState } from "../src/features/trading/components/account-query-state";
@@ -13,6 +14,7 @@ import { WithdrawalConfirmation } from "../src/features/member/components/withdr
 import { MemberWithdrawal } from "../src/features/member/components/member-withdrawal";
 import { createMemberSession } from "../src/features/member/api/session";
 import { clearWithdrawalIntent, saveWithdrawalIntent } from "../src/features/member/api/withdrawal-intent";
+import { parsePolicyState, type PolicyBundle } from "../src/features/member/api/policies";
 test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
   const html = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending={false}/></MemberProvider>);
   assert.match(html, /disabled=""[^>]*>동의하고 가입하기/);
@@ -91,5 +93,41 @@ test("MemberWithdrawal automatically opens the confirmation dialog when rendered
   } finally {
     if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
     else (globalThis as { window?: unknown }).window = previousWindow;
+  }
+});
+
+test("MemberConsents displays consented policy versions, agreed timestamps, and expandable policy text when reconsent is not required", async () => {
+  const epoch = Date.now();
+  const session = createMemberSession("http://localhost:8080", async url => String(url).endsWith("csrf")
+    ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+    : Response.json({ memberId: 7, nickname: "회원", accessToken: "header.payload.sig", tokenType: "Bearer", expiresIn: 900, expiresAt: new Date(epoch + 900000).toISOString() }), () => epoch, fn => fn(), () => true, () => null);
+  await session.restore();
+  const snapshot = session.getSnapshot();
+  const policyState = parsePolicyState({
+    reconsentRequired: false,
+    policies: [
+      { type: "TERMS", version: "ym-terms-v1", required: true, accepted: true, lastAcceptedVersion: "ym-terms-v1", lastAcceptedAt: "2026-10-25T12:00:00Z", documentUrl: "/api/v1/policies/TERMS/ym-terms-v1" },
+      { type: "PRIVACY", version: "ym-privacy-v1", required: true, accepted: true, lastAcceptedVersion: "ym-privacy-v1", lastAcceptedAt: "2026-10-25T12:00:00Z", documentUrl: "/api/v1/policies/PRIVACY/ym-privacy-v1" },
+    ],
+  });
+  const bundle: PolicyBundle = {
+    state: policyState,
+    documents: {
+      TERMS: { type: "TERMS", version: "ym-terms-v1", documentStatus: "DEVELOPMENT_DRAFT", sha256: "a".repeat(64), text: "제1조 이용약관 등록 원문" },
+      PRIVACY: { type: "PRIVACY", version: "ym-privacy-v1", documentStatus: "DEVELOPMENT_DRAFT", sha256: "b".repeat(64), text: "제1조 개인정보처리방침 등록 원문" },
+    },
+  };
+  const client = new QueryClient();
+  client.setQueryData(["member", "consents", snapshot.memberId, snapshot.generation], policyState);
+  client.setQueryData(["public-policies", "http://localhost:8080"], bundle);
+  try {
+    const html = renderToStaticMarkup(<MemberProvider session={session} client={client}><MemberConsents /></MemberProvider>);
+    assert.match(html, /현재 필요한 정책 동의가 완료되었습니다\./);
+    assert.match(html, /<strong>이용약관<\/strong> · 동의 버전 ym-terms-v1 · 동의 시각 2026-10-25T12:00:00Z/);
+    assert.match(html, /<strong>개인정보처리방침<\/strong> · 동의 버전 ym-privacy-v1 · 동의 시각 2026-10-25T12:00:00Z/);
+    assert.match(html, /<details><summary>이용약관 원문 보기 \(ym-terms-v1\)<\/summary><pre class="policy-original">제1조 이용약관 등록 원문<\/pre><\/details>/);
+    assert.match(html, /<details><summary>개인정보처리방침 원문 보기 \(ym-privacy-v1\)<\/summary><pre class="policy-original">제1조 개인정보처리방침 등록 원문<\/pre><\/details>/);
+  } finally {
+    client.clear();
   }
 });

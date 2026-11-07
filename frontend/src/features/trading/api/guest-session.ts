@@ -6,7 +6,7 @@ import type { QuoteRequest } from "./quote";
 import { parseStopLoss, stopLossRequest, type StopLossCommand } from "./stop-loss-contract";
 import { parseOrder } from "./orders";
 import { parseGuestRetry } from "./guest-retry";
-import { openTradingEvents, type EventState, type TradingEvent } from "./trading-events";
+import { openTradingEvents, parseTradingEvents, type EventState, type TradingEvent } from "./trading-events";
 import { parseRestart } from "./member-rounds";
 import { CommandJournalError, createCommandJournal, type CommandJournal, type JournalCommand, type JournalEntry, type JournalOwner } from "./command-journal";
 import { commandResultRequest, parseCommandResult, commandResultSettled, type CommandResult } from "./command-result";
@@ -72,7 +72,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     if(!owner||!current||!usable(current)||owner.origin!==entry.owner.origin||owner.mode!==entry.owner.mode||owner.accountId!==entry.owner.accountId)throw new TradingApiError(401);
     const sentToken=current.accessToken;
     let hadJournalEntry=false;try{hadJournalEntry=!!journal?.read(owner).some(value=>value.key===entry.key);}catch{ /* Read-only lookup still has a validated original command. */ }
-    const owned=()=>{const actual=commandOwner();return actual?.origin===owner.origin&&actual.mode===owner.mode&&actual.accountId===owner.accountId;};
+    const owned=()=>{const actual=commandOwner();return actual?.origin===owner.origin&&actual.mode===owner.mode&&actual.accountId===entry.owner.accountId;};
     let result:CommandResult;
     try {
       if(entry.command.kind==="cancel") {
@@ -291,7 +291,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { if (mode === "guest" && snapshot.generation === generation) { credential = null; publish("anonymous"); } }
       });
     },
-    async read(path: `account/positions/${number}/stop-loss` | "account/recovery" | `account/performance/symbols?${string}` | "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage?side=${"LONG" | "SHORT"}`,  expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
+    async read(path: `account/positions/${number}/stop-loss` | `account/orders/${number}` | `account/events?afterId=${number | string}&limit=${number}` | "account/recovery" | `account/performance/symbols?${string}` | "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage?side=${"LONG" | "SHORT"}`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
       const current = credential;
       const sentToken = current?.accessToken;
       if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
@@ -305,6 +305,9 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       }
+    },
+    async readEvents(expected: SessionSnapshot, signal: AbortSignal, limit = 50, afterId: number | string = 0) {
+      return parseTradingEvents(await this.read(`account/events?afterId=${afterId}&limit=${limit}`, expected, signal));
     },
     observeMemberRound(roundId: number, expected: SessionSnapshot) {
       if (mode !== "member" || snapshot.phase !== "ready" || snapshot.generation !== expected.generation || snapshot.accountId !== expected.accountId) return;

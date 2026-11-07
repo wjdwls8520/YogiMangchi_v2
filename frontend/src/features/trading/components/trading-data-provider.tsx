@@ -11,6 +11,8 @@ import { MemberRoundMonitor } from "./member-simulation";
 import { TradingCommandRecovery } from "./trading-command-recovery";
 
 const SessionContext = createContext<GuestSession | null>(null);
+const emptySubscribe = () => () => {};
+const emptyGetSnapshot = () => initialSession;
 let browserSession: GuestSession | undefined;
 function getSession() {
   const origin = process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081";
@@ -32,13 +34,13 @@ export function bindGuestCache(client: QueryClient, session: GuestSession) {
   });
 }
 
-export function TradingDataProvider({ children }: { children: ReactNode }) {
+export function TradingDataProvider({ children, session: providedSession, client: providedClient }: { children: ReactNode; session?: GuestSession; client?: QueryClient }) {
   const { session: memberSession } = useMember();
-  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: {
+  const [client] = useState(() => providedClient ?? new QueryClient({ defaultOptions: { queries: {
     staleTime: 15_000, gcTime: 60_000, retry: retryTradingQuery, refetchIntervalInBackground: false,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
   } } }));
-  const [session] = useState(getSession);
+  const [session] = useState(() => providedSession ?? getSession());
   useEffect(() => {
     const unsubscribe = bindGuestCache(client, session);
     const identity = memberSession.observeAccess(access => {
@@ -63,13 +65,19 @@ export function TradingDataProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("storage", syncStorage); window.removeEventListener("focus", restore);
     };
   }, [client, session, memberSession]);
-  const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => initialSession);
+  const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => session.getSnapshot());
   return <QueryClientProvider client={client}><SessionContext.Provider value={session}><MemberRoundMonitor /><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`}><GuestAccessProvider session={session}><TradingCommandRecovery />{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
 }
 
 export function useGuestSession() {
   const session = useContext(SessionContext);
   if (!session) throw new Error("TradingDataProvider required");
-  const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => initialSession);
+  const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => session.getSnapshot());
   return { session, snapshot };
+}
+
+export function useOptionalGuestSession() {
+  const session = useContext(SessionContext);
+  const snapshot = useSyncExternalStore(session ? session.subscribe : emptySubscribe, session ? session.getSnapshot : emptyGetSnapshot, session ? session.getSnapshot : emptyGetSnapshot);
+  return session ? { session, snapshot } : null;
 }
