@@ -61,5 +61,12 @@ trading:
     enabled: ${TRADING_GUEST_CLEANUP_ENABLED:true}
   trigger:
     enabled: ${TRADING_TRIGGER_ENABLED:true}
+  risk:
+    retention:
+      enabled: ${TRADING_RISK_RETENTION_ENABLED:true}
+      duration: ${TRADING_RISK_RETENTION_DURATION:PT72H}
+      batch-size: ${TRADING_RISK_RETENTION_BATCH_SIZE:500}
+      interval-ms: ${TRADING_RISK_RETENTION_INTERVAL_MS:3600000}
+      initial-delay-ms: ${TRADING_RISK_RETENTION_INITIAL_DELAY_MS:120000}
   http:
     allowed-origins: ${TRADING_HTTP_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
