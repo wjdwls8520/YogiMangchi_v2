@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { MarketChartPanel } from "./market-chart-panel";
 import { OrderPanel } from "./order-panel";
 import { TradingDataProvider } from "./trading-data-provider";
@@ -22,6 +23,10 @@ export function TradingWorkspace() {
             요기망치 <span className="trading-brand-latin">YOGIMANGCHI</span>
           </p>
           <p className="trading-header-product">선물 모의투자</p>
+          <nav aria-label="서비스 메뉴" className="flex items-center gap-3 text-trade-body text-terminal-secondary">
+            <Link href="/news">실시간 뉴스</Link>
+            <Link href="/community">커뮤니티</Link>
+          </nav>
           <GuestHeaderAction />
           <MemberHeaderAction />
         </div>

@@ -7,7 +7,7 @@ const codes = new Set([
   "SERVICE_TEMPORARILY_UNAVAILABLE", "NICKNAME_ALREADY_EXISTS", "NICKNAME_UNAVAILABLE", "MEMBER_BUSY", "INVALID_REQUEST", "INVALID_PROFILE", "INVALID_NICKNAME",
   "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "MEMBER_NOT_ACTIVE", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS",
   "POLICY_VERSION_OR_CONSENT_INVALID", "POLICY_VERSION_CHANGED", "REQUIRED_CONSENT_MISSING", "POLICY_VERSION_REQUIRED",
-  "LOGIN_PROOF_REQUIRED", "LOGIN_PROOF_EXPIRED", "CSRF_INVALID", "PROFILE_MESSAGE_UPDATE_REQUIRED", "RESOURCE_ALREADY_EXISTS",
+  "LOGIN_PROOF_REQUIRED", "LOGIN_PROOF_EXPIRED", "CSRF_INVALID", "PROFILE_MESSAGE_UPDATE_REQUIRED", "RESOURCE_ALREADY_EXISTS", "RESOURCE_NOT_FOUND",
 ]);
 
 export function contentRecovery(error: unknown): "policies" | "login" | "state" | "csrf" | null {
@@ -32,7 +32,7 @@ export function oauthUrl(origin: string, provider: "google" | "kakao") {
 export async function contentJson(origin: string, path: string, options: {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; access?: string; csrf?: string; body?: object; signal?: AbortSignal;
 } = {}, transport: typeof fetch = fetch): Promise<unknown> {
-  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout)|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?)(?:\?[^#]*)?$/.test(path)
+  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout)|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?|news(?:\/[0-9]+)?|community\/(?:posts(?:\/[0-9]+(?:\/(?:likes|comments))?)?|comments\/[0-9]+))(?:\?[^#]*)?$/.test(path)
     || path.includes("..") || path.includes("\\")) throw new ContentApiError(400);
   const cookie = path.startsWith("/auth/") || path === "/members/me/withdrawal";
   try {
@@ -73,11 +73,12 @@ export function contentMessage(error: unknown) {
   if (error.code === "PROFILE_MESSAGE_UPDATE_REQUIRED") return "기존 소개가 현재 입력 한도를 초과합니다. 소개를 255자 이내로 수정해 주세요.";
   if (error.code === "MEMBER_ALREADY_EXISTS") return "이미 가입된 소셜 계정입니다. 현재 로그인 상태를 확인해 주세요.";
   if (error.code === "RESOURCE_ALREADY_EXISTS") return "이미 처리된 정보와 요청이 충돌했습니다. 현재 상태를 먼저 확인해 주세요.";
+  if (error.code === "RESOURCE_NOT_FOUND") return "요청한 게시글·댓글·뉴스 또는 회원을 찾을 수 없습니다.";
   if (error.code === "POLICY_VERSION_OR_CONSENT_INVALID") return "정책 버전이 변경되었거나 필수 동의가 누락되었습니다. 최신 원문을 확인하고 다시 동의해 주세요.";
   if (error.code === "WITHDRAWAL_CONFIRMATION_REQUIRED") return "안내 확인과 ‘탈퇴합니다’ 문구를 정확하게 입력해 주세요.";
   if (error.status === 401) return "로그인 상태가 만료되었습니다. 다시 로그인해 주세요.";
   if (error.status === 403) return "요청 권한 또는 로그인 설정을 확인해 주세요.";
-  if (error.status === 404) return "회원을 찾을 수 없습니다.";
+  if (error.status === 404) return "요청한 항목 또는 회원을 찾을 수 없습니다.";
   if (error.status === 409) return "현재 정보와 요청이 충돌했습니다. 상태를 확인한 뒤 다시 시도해 주세요.";
   if (error.status === 400) return "입력한 내용을 확인해 주세요.";
   return "서버 연결을 확인한 뒤 다시 시도해 주세요.";
