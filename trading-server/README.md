@@ -48,6 +48,7 @@ Binance WebSocket 시세를 사용하는 **USDT 선물 모의투자** 백엔드�
 - Worker 재시작은 영속 작업을 재개한다. 미수신 구간은 복원했다고 가정하지 않고 hold/검토 상태로 보존한다. 글로벌 `ENGINE_RECOVERING`, 계정 대기 `ACCOUNT_RISK_PENDING`, 검토 필요 `ACCOUNT_RECOVERY_HELD`, 현재 시세 미가용 `PRICE_NOT_FRESH`를 구분한다.
 - 계정 recovery 상태는 CLEAR/PENDING/REVIEW_REQUIRED다. 명확한 업무 거절 outcome=NOT_ACCEPTED와 예상치 못한500/응답 유실의 UNKNOWN을 구분해 동일 키 결과 확인을 지원한다.
 - 원장 대사는 지갑·예약·포지션·Fill·회차/자본조정의 일치를 검사한다. 불일치는 LEDGER_MISMATCH hold로 남기며 돈을 자동 보정하지 않는다.
+- 완료(`DONE`/`RETIRED`) 후 보존 주기(기본 72시간)가 지난 `risk_account_work`·`risk_work_attempt` 및 미참조 과거 `risk_price_event`는 `RiskJournalRetentionService`(`V24`)가 배치 제한 단위로 안전 정리하며, `PENDING`/`HELD` 작업·`risk_hold` 참조 이벤트·`risk_price_head` 최신 포인터·금융 원장은 보존한다.
 - 현재 실행 설계는 단일 노드 중심이다. 다중 노드 Worker 소유권·조정은 후속 Scale-Out 과제다.
 
 ## 실행·검증

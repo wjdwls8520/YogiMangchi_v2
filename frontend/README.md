@@ -6,8 +6,7 @@
 
 - Next.js 16.4.1 이상(현재 `package.json`의 `^16.4.1` 범위), React 19.3, TypeScript 5.9, Tailwind CSS 4.
 - TanStack Query, Lightweight Charts, Chart.js 사용. 정확한 실행 버전은 `package-lock.json`을 기준으로 확인한다.
-- 구현된 주요 화면: 거래, 로그인·OAuth 콜백, 계정/회차, 회원 공개 프로필, 이용약관·개인정보처리방침.
-- 커뮤니티·뉴스의 완성 화면은 현재 `develop`의 구현 범위로 가정하지 않는다.
+- 구현된 주요 화면: 선물 모의투자 거래(`/trading` — 손절 계산기·단건 주문 상세·최근 거래 이벤트 내역 포함), 실시간 경제·코인 뉴스 피드(`/news`), 트레이더 커뮤니티(`/community`), 로그인·OAuth 콜백(`/login`, `/auth/callback`), 계정/회차(`/account`), 회원 공개 프로필(`/members/[memberId]`), 이용약관·개인정보처리방침(`/terms`, `/privacy`).
 
 ## API·인증
 
@@ -39,7 +38,7 @@ npm test
 npm run build
 ```
 
-다음 조건을 특히 확인한다: Guest·회원 전환, 로그인/로그아웃/탈퇴, Access 만료와 다중 탭 Refresh, 중복 주문 방지, WS 재연결, 주문 미확정 응답 처리 및 계정·회차 이력.
+다음 조건을 특히 확인한다: Guest·회원 전환, 로그인/로그아웃/탈퇴, Access 만료와 다중 탭 Refresh, 중복 주문 방지, WS 재연결, 주문 미확정 응답 처리, 계정·회차 이력, 실시간 뉴스 및 커뮤니티(탈퇴한 작성자 `"탈퇴한회원"` 표시 포함).
 
 Backend 계약은 각 서버의 현재 Runtime OpenAPI(`/v3/api-docs`) 및 실제 Controller/DTO가 기준이다. 백엔드 수정이 필요하면 별도 담당 PR로 요청하고, 이번 Frontend 변경에 섞지 않는다. Git·MD 규칙은 [`AGENTS.md`](AGENTS.md) 및 [`../AGENTS.md`](../AGENTS.md)를 따른다.
 

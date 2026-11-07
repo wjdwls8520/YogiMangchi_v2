@@ -1,6 +1,6 @@
 # Content Server
 
-회원 인증과 콘텐츠 도메인을 소유하는 독립 Spring Boot 애플리케이션이다. 현재 `develop`에는 **회원·인증·프로필·팔로우** 기능이 있으며 커뮤니티 게시글·뉴스는 후속 구현 대상이다.
+회원 인증과 콘텐츠 도메인을 소유하는 독립 Spring Boot 애플리케이션이다. 현재 `develop`에는 **회원·인증·프로필·팔로우·버전 약관 동의·회원 탈퇴·만료 세션 보존 정리·트레이더 커뮤니티(게시글/댓글/대댓글/좋아요)·실시간 경제/코인 뉴스 피드** 기능이 구현되어 있다.
 
 ## 기술·경계
 
@@ -32,9 +32,12 @@
 | 탈퇴 요청·상태 | `POST/GET /api/v1/members/me/withdrawal` |
 | 약관·개인정보 정책 조회 | `GET /api/v1/policies/current`, `GET /api/v1/policies/{type}/{version}` |
 | 내 정책 동의 조회·제출 | `GET/POST /api/v1/members/me/consents` |
+| 실시간 경제·코인 뉴스 | `GET /api/v1/news`, `GET /api/v1/news/{newsId}` |
+| 커뮤니티 게시글·좋아요 | `GET/POST /api/v1/community/posts`, `GET/PATCH/DELETE /api/v1/community/posts/{postId}`, `PUT/DELETE /api/v1/community/posts/{postId}/likes` |
+| 커뮤니티 댓글·대댓글 | `GET/POST /api/v1/community/posts/{postId}/comments`, `DELETE /api/v1/community/comments/{commentId}` |
 | 공개 검증키 | `GET /.well-known/jwks.json` |
 
-가입은 버전별 약관·개인정보 동의를 기록한다. 탈퇴는 `WITHDRAWING` 요청을 영속화하고 Trading 정리 확인 후 `COMPLETED`로 확정하는 비동기 흐름이다. 재가입은 새 회원 신원으로 취급하며 이전 금융 기록을 자동 복구하지 않는다.
+가입은 버전별 약관·개인정보 동의를 기록한다. 탈퇴는 `WITHDRAWING` 요청을 영속화하고 Trading 정리 확인 후 `COMPLETED`(`WITHDRAWN`)로 확정하는 비동기 흐름이며, 탈퇴한 회원이 작성한 커뮤니티 게시글·댓글의 작성자 표시는 `"탈퇴한회원"`으로 익명화되어 보존된다. 만료·폐기된 `refresh_session`과 종결된 `member_trading_provision` 이력은 보존 주기(기본 30일) 경과 후 `ContentRetentionCleanupService`가 배치 정리한다. 재가입은 새 회원 신원으로 취급하며 이전 금융 기록을 자동 복구하지 않는다.
 
 ## 실행·검증
 

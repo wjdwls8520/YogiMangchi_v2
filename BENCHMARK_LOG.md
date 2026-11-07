@@ -7,7 +7,33 @@
 
 ---
 
-## 2026-11-08 — 위험 워커 즉시 깨우기·인증 잠금 제한·바이낸스/바이비트형 거래 보호 및 알림 UX 완료 (`develop` `229857c`)
+## 2026-11-08 (2차) — 영속 저널·세션 보존 주기 정리, 20계정 연속 시세 E2E 리허설, 커뮤니티·실시간 뉴스 피드 구축 (`develop` `fa7eafa`)
+
+### 1. 기준 커밋 및 반영 내역
+- **기준 브랜치 / HEAD**: `origin/develop` `fa7eafa`
+  - `5bae660` — `[trading-server:위험저널보존] feat: 완료된 시세 저널·위험 작업 보존 주기 정리 추가`
+  - `848d1ef` — `[content-server:커뮤니티및뉴스] feat: 만료 세션 보존 정리와 커뮤니티·실시간 뉴스 API 추가`
+  - `fa7eafa` — `[frontend:커뮤니티및뉴스] feat: 실시간 경제·코인 뉴스 피드와 트레이더 커뮤니티 화면 추가`
+
+### 2. 자동 테스트 및 빌드 집계
+- **전체 자동 테스트**: **총 1,170개 통과 / 실패 0건 / 오류 0건 / 건너뜀 0건 (통과율 100%)**
+  - **Trading Server**: 75개 테스트 스위트 / **698개 통과** (`.\gradlew.bat clean build` 소요 시간: **7분 40초**)
+  - **Content Server**: 18개 테스트 스위트 / **146개 통과** (`.\gradlew.bat clean build` 소요 시간: **1분 06초**)
+  - **Frontend**: **326개 통과** (`npm test` 소요 시간: **61,983ms (62.0초)**, `typecheck`·`lint`·프로덕션 `build` 11개 라우트 오류 **0건**)
+
+### 3. 20계정 연속 시세 E2E 지연 실측 (`p50` / `p95` / `max`) 및 보존 주기 정리(Purge) 검증
+
+| 측정 항목 | 실측 수치 | 검증 조건 및 정합성 결과 |
+| :--- | :---: | :--- |
+| **20계정 연속 4-틱 시세 처리 지연 (`completed_at - recorded_at`)** | **p50 = `368.40 ms`**<br>**p95 = `658.01 ms`**<br>**max = `686.44 ms`** | 20개 격리마진 선물 계정(10개 지정가 체결 + 10개 강제청산)에 연속 시세 4틱 투입(`workItems = 60`, `limitFills = 20`, `liquidationFills = 20`), `DurableRiskWorker.nudge()` 즉시 깨우기 활성화 상태 |
+| **시세 발생 시각 대비 원장 커밋 지연 (`completed_at - occurred_at`)** | **p50 = `374.43 ms`**<br>**p95 = `665.34 ms`**<br>**max = `699.30 ms`** | 20개 계정 전원 `LedgerReconciler = MATCHED` (**원장 불일치 0건**, `PENDING`/`HELD` 잔여 적체 **0건**) |
+| **`RiskJournalRetentionService` 배치 정리 (`V24`)** | `purgedAttempts = 1`<br>`purgedWorks = 10`<br>`purgedEvents = 1` | 보존 기준(72시간) 경과 및 `safeMaxEventId`(미완료 작업·`risk_hold`·`risk_price_head` 최솟값) 미만 완료 건만 안전 삭제, `PENDING`/`HELD`·`risk_hold`·금융 원장 100% 보존 |
+| **`ContentRetentionCleanupService` 배치 정리 (`V5`)** | `purgedSessions = 2`<br>`purgedProvisions = 2` | 보존 기준(30일) 경과 만료/폐기 `refresh_session` 및 종결 `member_trading_provision` 정리, 활성 세션·`PENDING` 프로비저닝·약관 동의·회원 Tombstone 100% 보존 |
+| **커뮤니티 동시 좋아요 경합 & 회원 탈퇴(`WITHDRAWN`) 익명화** | 동시 2회 `PUT /likes` → **`likeCount = 1`** | `(post_id, member_id)` PK 멱등 처리로 중복 증가 0건; 작성자 탈퇴 확정 시 게시글·댓글 작성자 표시가 `"탈퇴한회원"`(`authorWithdrawn = true`)으로 안전 전환 |
+
+---
+
+## 2026-11-08 (1차) — 위험 워커 즉시 깨우기·인증 잠금 제한·바이낸스/바이비트형 거래 보호 및 알림 UX 완료 (`develop` `229857c`)
 
 ### 1. 기준 커밋 및 반영 내역
 - **기준 브랜치 / HEAD**: `origin/develop` `229857c`
