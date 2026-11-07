@@ -10,7 +10,7 @@ import { useSelectedMarket } from "./selected-market-provider";
 import { useGuestSession } from "./trading-data-provider";
 import { freshMarkPrice } from "../market/selected-market";
 import { useTradingSummary } from "../api/queries";
-import { isRecoveringQuote, readQuote, readSubmitQuote } from "../api/quote";
+import { isRecoveringQuote, readSubmitQuote } from "../api/quote";
 import { useOrderQuote } from "../api/quote-query";
 import { mutationMessage } from "../api/mutation-request";
 import { isolatedReady } from "../api/margin";
@@ -122,7 +122,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
         });
         if (controller.signal.aborted || sizingTicket.current !== ticket) return;
       }
-      const value=await readQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side:form.side,balancePercentage:percent,...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
+      const value=await readSubmitQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side:form.side,balancePercentage:percent,...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
       if (sizingTicket.current!==ticket || value.leverage!==leverage) return;
       setForm(current=>current.identity===identity&&current.symbolId===symbol.id&&current.ratio===percent&&current.type===form.type&&current.side===form.side&&current.limitPrice===form.limitPrice ? {...current,quantity:value.quantity,ratio:percent} : current);
     } catch(error) {

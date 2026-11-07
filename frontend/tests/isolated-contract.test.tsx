@@ -16,8 +16,11 @@ const quote={tradingSymbolId:2,type:"MARKET",side:"LONG",leverage:100,quantity:"
 
 test("submit quote retries only ENGINE_RECOVERING once, retaining the request and cancellation", async () => {
   const recovery = new TradingApiError(503, undefined, "ENGINE_RECOVERING");
+  const riskPending = new TradingApiError(503, undefined, "ACCOUNT_RISK_PENDING", undefined, "NOT_ACCEPTED");
   for (const [first, second, cancel, count] of [
     [recovery, null, false, 2],
+    [riskPending, null, false, 2],
+    [riskPending, riskPending, false, 2],
     [recovery, recovery, false, 2],
     [recovery, null, true, 1],
     [new TradingApiError(503), null, false, 1],

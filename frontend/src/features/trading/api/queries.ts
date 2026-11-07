@@ -7,7 +7,7 @@ import { tradingKeys } from "./query-keys";
 import { parseOrders } from "./orders";
 import { useEffect, useState } from "react";
 import { marketTickersJson } from "./client";
-import { parseTickers, visibleTicker } from "../market/tickers";
+import { nextTickerExpiryDelay, parseTickers, visibleTicker } from "../market/tickers";
 import { HISTORY_LIMIT, historyPath, parseClosedPositions, parseFills, parseOrderHistory, validHistoryDates, type HistoryFilters, type HistoryKind } from "./history";
 
 export function useTradingSummary() {
@@ -89,9 +89,15 @@ export function useMarketTickers() {
     staleTime: 1000, refetchInterval: (query) => query.state.status === "error" ? false : 2000,
   });
   const [now, setNow] = useState(Date.now);
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  const currentNow = Math.max(now, query.dataUpdatedAt);
+  const delay = nextTickerExpiryDelay(query.dataUpdatedAt, Boolean(query.data?.length) && !query.isError, currentNow);
+  useEffect(() => {
+    if (delay === null) return;
+    const timer = window.setTimeout(() => setNow(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [delay, query.dataUpdatedAt]);
   return { ...query, tickers: query.isError ? [] : (query.data ?? []).flatMap((ticker) => {
-    const visible = visibleTicker(ticker, now - query.dataUpdatedAt);
+    const visible = visibleTicker(ticker, currentNow - query.dataUpdatedAt);
     return visible ? [visible] : [];
   }) };
 }

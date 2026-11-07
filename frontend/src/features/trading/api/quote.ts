@@ -26,7 +26,7 @@ export function readQuote(session: GuestSession, identity: SessionSnapshot, requ
 }
 
 export function isRecoveringQuote(error: unknown) {
-  return error instanceof TradingApiError && error.status === 503 && error.code === "ENGINE_RECOVERING";
+  return error instanceof TradingApiError && error.status === 503 && (error.code === "ENGINE_RECOVERING" || (error.code === "ACCOUNT_RISK_PENDING" && error.outcome === "NOT_ACCEPTED"));
 }
 
 export async function readSubmitQuote(session: GuestSession, identity: SessionSnapshot, request: QuoteRequest, signal: AbortSignal) {

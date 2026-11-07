@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseTickers, visibleTicker } from "../src/features/trading/market/tickers";
+import { nextTickerExpiryDelay, parseTickers, visibleTicker } from "../src/features/trading/market/tickers";
 
 const ticker = { tradingSymbolId: 927, symbol: "BTC", quoteAsset: "USDT", markPrice: "64000.000000000000000001", changePercent24h: "-2.370",
   highPrice24h: "65100.12", lowPrice24h: "62000.12", quoteVolume24h: "1234567890.000000000000000001", status: "FRESH", updatedAt: "2026-10-13T00:00:00Z" };
@@ -18,4 +18,8 @@ test("expired frontend ticker cache cannot show an old price as current", () => 
   const parsed = parseTickers([ticker])[0];
   assert.equal(visibleTicker(parsed, 5000), parsed); assert.equal(visibleTicker(parsed, 5001), undefined);
   assert.equal(visibleTicker(undefined, 0), undefined);
+  assert.equal(nextTickerExpiryDelay(1000, true, 1000), 5001);
+  assert.equal(nextTickerExpiryDelay(1000, true, 6000), 50);
+  assert.equal(nextTickerExpiryDelay(1000, true, 6001), null);
+  assert.equal(nextTickerExpiryDelay(1000, false, 1000), null);
 });

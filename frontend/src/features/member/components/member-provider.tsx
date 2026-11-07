@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyn
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Link from "next/link";
 import { ContentApiError, contentMessage, contentOrigin } from "../api/client";
-import { createMemberSession, initialMember, type MemberSession } from "../api/session";
+import { createMemberSession, type MemberSession } from "../api/session";
 import { MemberRecoveryStatus } from "./member-recovery-status";
 import { MemberConsentGate } from "./member-consents";
 import { bindMemberActivity } from "../api/activity";
@@ -12,8 +12,8 @@ import { bindMemberActivity } from "../api/activity";
 const origin = () => contentOrigin(process.env.NEXT_PUBLIC_CONTENT_SERVER_URL || "http://localhost:8080");
 let browserSession: MemberSession | undefined;
 const Context = createContext<{ session: MemberSession; origin: string; announce: (type: "changed" | "ended") => void; retryConsents: () => void } | null>(null);
-export function MemberProvider({ children }: { children: ReactNode }) {
-  const [session] = useState(() => typeof window === "undefined" ? createMemberSession(origin()) : browserSession ??= createMemberSession(origin()));
+export function MemberProvider({ children, session: provided }: { children: ReactNode; session?: MemberSession }) {
+  const [session] = useState(() => provided ?? (typeof window === "undefined" ? createMemberSession(origin()) : browserSession ??= createMemberSession(origin())));
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, gcTime: typeof window === "undefined" ? Infinity : 60_000,
     refetchIntervalInBackground: false,
     retry: (count, error) => count < 2 && error instanceof ContentApiError && [0, 500, 502, 503, 504].includes(error.status),
@@ -45,7 +45,7 @@ export function MemberProvider({ children }: { children: ReactNode }) {
 export function useMember() {
   const context = useContext(Context);
   if (!context) throw new Error("MemberProvider required");
-  const snapshot = useSyncExternalStore(context.session.subscribe, context.session.getSnapshot, () => initialMember);
+  const snapshot = useSyncExternalStore(context.session.subscribe, context.session.getSnapshot, context.session.getSnapshot);
   return { ...context, snapshot };
 }
 export function MemberHeaderAction() {

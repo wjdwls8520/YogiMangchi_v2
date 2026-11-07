@@ -18,3 +18,8 @@ export function visibleTicker(ticker: MarketTicker | undefined, age: number): Ma
   // The API already nulls stale components. Do not keep showing a cached quote as current.
   return age <= 5000 ? ticker : undefined;
 }
+export function nextTickerExpiryDelay(dataUpdatedAt: number, hasTickers: boolean, now: number): number | null {
+  if (!hasTickers || dataUpdatedAt <= 0) return null;
+  const expiresAt = dataUpdatedAt + 5001;
+  return now < expiresAt ? Math.max(50, expiresAt - now) : null;
+}

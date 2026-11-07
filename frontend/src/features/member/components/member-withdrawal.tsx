@@ -14,6 +14,12 @@ export function MemberWithdrawal() {
   const [owner, setOwner] = useState<number | null>(null);
   const [ready, setReady] = useState(false), [acknowledged, setAcknowledged] = useState(false), [confirmation, setConfirmation] = useState("");
   const [pending, setPending] = useState(false), [error, setError] = useState<string | null>(null), [receipt, setReceipt] = useState<"PENDING" | "COMPLETED" | "UNCERTAIN" | "NOT_REQUESTED" | null>(null);
+  const intent = snapshot.phase === "ready" && snapshot.memberId !== null ? readWithdrawalIntent() : null;
+  const returned = Boolean(intent?.returned && intent.memberId === snapshot.memberId);
+  if (returned && (!ready || owner !== snapshot.memberId)) {
+    setOwner(snapshot.memberId); setReceipt(null); setReady(true); setAcknowledged(false); setConfirmation(""); setError(null);
+  }
+  const confirmedReady = (ready && owner === snapshot.memberId) || returned;
   const status = useCallback(async (silent = false) => {
     if (active.current) return;
     active.current = true; if (!silent) setPending(true);
@@ -28,6 +34,16 @@ export function MemberWithdrawal() {
     const timer = setInterval(() => { if (document.visibilityState !== "hidden" && failures.current < 3) void status(true); }, 5000);
     return () => clearInterval(timer);
   }, [snapshot.phase, status]);
+  useEffect(() => {
+    if (!confirmedReady || snapshot.phase !== "ready" || snapshot.memberId === null) return;
+    const current = readWithdrawalIntent();
+    if (!current?.returned || current.memberId !== snapshot.memberId) return;
+    failures.current = 0; clearWithdrawalIntent();
+    if (dialog.current && typeof dialog.current.showModal === "function") {
+      if (dialog.current.open) dialog.current.close();
+      dialog.current.showModal();
+    }
+  }, [confirmedReady, snapshot.phase, snapshot.memberId]);
   async function withdraw(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (active.current || owner !== snapshot.memberId || !ready || !acknowledged || confirmation !== "탈퇴합니다" || snapshot.phase !== "ready") return;
@@ -44,7 +60,7 @@ export function MemberWithdrawal() {
   }
   return <section className="member-simulation" aria-label="회원 탈퇴">
     {snapshot.phase === "ready" && <button type="button" className="account-refresh" onClick={() => {
-      const intent = readWithdrawalIntent(); setOwner(snapshot.memberId); setReceipt(null); failures.current = 0; setReady(!!intent?.returned && intent.memberId === snapshot.memberId); clearWithdrawalIntent();
+      const intent = readWithdrawalIntent(); setOwner(snapshot.memberId); setReceipt(null); failures.current = 0; setReady((ready && owner === snapshot.memberId) || (!!intent?.returned && intent.memberId === snapshot.memberId)); clearWithdrawalIntent();
       setAcknowledged(false); setConfirmation(""); setError(null); dialog.current?.showModal();
     }}>회원 탈퇴</button>}
     {((receipt && (snapshot.memberId === null || owner === snapshot.memberId)) || snapshot.phase === "withdrawing") && <><h2>탈퇴 진행 상태</h2><p className="member-message" role="status">{receipt === "COMPLETED" ? "Trading 정리와 개인정보 제거가 완료되었습니다. 같은 소셜 계정으로 새로 가입할 수 있으며 이전 회원 ID·회차·자산은 복구하거나 이전하지 않습니다."
@@ -58,9 +74,9 @@ export function MemberWithdrawal() {
     {error && <MemberErrorActions error={requestError} checking={pending} onCheck={snapshot.phase === "withdrawing" ? () => void status() : undefined} onLogin={event => {
       try { if (owner) saveWithdrawalIntent(owner); } catch { event.preventDefault(); setError("본인 확인을 위한 임시 상태를 저장하지 못했습니다. 브라우저 저장 설정을 확인해 주세요."); }
     }} />}
-    <dialog key={snapshot.memberId} ref={dialog} className="position-close-dialog member-withdrawal-dialog" aria-labelledby="member-withdraw-title" onCancel={event => { if (pending) event.preventDefault(); }}>
-      <WithdrawalConfirmation ready={ready && owner === snapshot.memberId} pending={pending} acknowledged={acknowledged} confirmation={confirmation} onAcknowledge={setAcknowledged} onConfirmation={setConfirmation} onSubmit={event => void withdraw(event)} onCancel={() => dialog.current?.close()} error={error} />
-      {!ready && snapshot.memberId && <div className="member-actions">{(["google", "kakao"] as const).map(provider => <a key={provider} className="member-secondary" href={oauthUrl(origin, provider)} onClick={event => {
+    <dialog key={snapshot.memberId} ref={dialog} open={returned || undefined} className="position-close-dialog member-withdrawal-dialog" aria-labelledby="member-withdraw-title" onCancel={event => { if (pending) event.preventDefault(); }}>
+      <WithdrawalConfirmation ready={confirmedReady} pending={pending} acknowledged={acknowledged} confirmation={confirmation} onAcknowledge={setAcknowledged} onConfirmation={setConfirmation} onSubmit={event => void withdraw(event)} onCancel={() => dialog.current?.close()} error={error} />
+      {!confirmedReady && snapshot.memberId && <div className="member-actions">{(["google", "kakao"] as const).map(provider => <a key={provider} className="member-secondary" href={oauthUrl(origin, provider)} onClick={event => {
         try { saveWithdrawalIntent(snapshot.memberId!); } catch { event.preventDefault(); setError("본인 확인을 위한 임시 상태를 저장하지 못했습니다. 브라우저 저장 설정을 확인해 주세요."); }
       }}>{provider === "google" ? "Google" : "Kakao"}로 본인 확인</a>)}</div>}
     </dialog>

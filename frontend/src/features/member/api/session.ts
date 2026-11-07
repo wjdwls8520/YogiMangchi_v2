@@ -6,6 +6,13 @@ export type MemberSnapshot = { phase: "loading" | "anonymous" | "authenticating"
   memberId: number | null; nickname: string; expiresAt: string | null; generation: number; recovery?: { retryable: boolean; retryAt: number; uncertain: boolean }; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
 export const initialMember: MemberSnapshot = { phase: "loading", memberId: null, nickname: "", expiresAt: null, generation: 0 };
 export type CookieLock = <T>(operation: () => Promise<T>) => Promise<T>;
+export function clearRefreshPending(error: unknown) {
+  return error instanceof ContentApiError && (
+    (error.status === 503 && error.code === "SERVICE_TEMPORARILY_UNAVAILABLE")
+    || (error.status === 409 && error.code === "MEMBER_BUSY")
+    || (error.status === 403 && (error.code === "CSRF_INVALID" || error.code === "CSRF_REQUIRED"))
+  );
+}
 export function browserCookieLock(origin: string): CookieLock {
   return async operation => {
     if (typeof navigator === "undefined" || !navigator.locks) throw new ContentApiError(0);
@@ -76,7 +83,7 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
         if (error instanceof ContentApiError && error.status === 401) { if (ownsMarker) marker?.removeItem(pendingKey); clear("anonymous"); }
         else {
           // Only a pre-rotation failure or the documented no-consumption 503 is safe to retry.
-          const safe = !blockedByPending && (!rotationStarted || error instanceof ContentApiError && error.status === 503 && error.code === "SERVICE_TEMPORARILY_UNAVAILABLE");
+          const safe = !blockedByPending && (!rotationStarted || clearRefreshPending(error));
           if (safe && ownsMarker) { marker?.removeItem(pendingKey); ownsMarker = false; }
           refreshFailures++;
           snapshot = { ...snapshot, phase: access && !accessRejected && Date.parse(access.expiresAt) > now() ? "ready" : "recovering",

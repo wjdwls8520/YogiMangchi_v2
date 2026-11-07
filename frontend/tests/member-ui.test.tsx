@@ -10,6 +10,9 @@ import { AccountQueryState } from "../src/features/trading/components/account-qu
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
 import { TradingAccountTabs } from "../src/features/trading/components/trading-account-tabs";
 import { WithdrawalConfirmation } from "../src/features/member/components/withdrawal-confirmation";
+import { MemberWithdrawal } from "../src/features/member/components/member-withdrawal";
+import { createMemberSession } from "../src/features/member/api/session";
+import { clearWithdrawalIntent, saveWithdrawalIntent } from "../src/features/member/api/withdrawal-intent";
 test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
   const html = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending={false}/></MemberProvider>);
   assert.match(html, /disabled=""[^>]*>동의하고 가입하기/);
@@ -63,4 +66,30 @@ test("withdrawal explains irreversible identity removal and preserved records, r
   assert.equal(html.includes('checked=""'), false);
   assert.equal(html.includes("모든 정보가 완전히 삭제"), false);
   assert.equal(html.includes("공인된 전자서명"), false);
+});
+test("MemberWithdrawal automatically opens the confirmation dialog when rendered with a returned WithdrawalIntent for the active member", async () => {
+  const epoch = Date.now();
+  const session = createMemberSession("http://localhost:8080", async url => String(url).endsWith("csrf")
+    ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+    : Response.json({ memberId: 7, nickname: "회원", accessToken: "header.payload.sig", tokenType: "Bearer", expiresIn: 900, expiresAt: new Date(epoch + 900000).toISOString() }), () => epoch, fn => fn(), () => true, () => null);
+  await session.restore();
+  const store = new Map<string, string>();
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    sessionStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } },
+  };
+  try {
+    saveWithdrawalIntent(7, true);
+    const html = renderToStaticMarkup(<MemberProvider session={session}><MemberWithdrawal /></MemberProvider>);
+    assert.match(html, /<dialog[^>]*\sopen=""/);
+    assert.match(html, />탈퇴 요청<\/button>/);
+    assert.doesNotMatch(html, /Google로 본인 확인|본인 확인 필요/);
+    clearWithdrawalIntent();
+    const closed = renderToStaticMarkup(<MemberProvider session={session}><MemberWithdrawal /></MemberProvider>);
+    assert.doesNotMatch(closed, /<dialog[^>]*\sopen=/);
+    assert.match(closed, />본인 확인 필요<\/button>/);
+  } finally {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  }
 });

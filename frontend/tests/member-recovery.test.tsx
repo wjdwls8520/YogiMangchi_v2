@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createMemberSession } from "../src/features/member/api/session";
+import { clearRefreshPending, createMemberSession } from "../src/features/member/api/session";
 import { ContentApiError } from "../src/features/member/api/client";
 import { MemberTradingPrompt } from "../src/features/trading/components/member-trading-prompt";
 import { parseRecovery } from "../src/features/trading/api/recovery-contract";
@@ -89,4 +89,21 @@ test("documented no-consumption503 releases the shared marker; successful login 
  await assert.rejects(session.restore());assert.equal(values.size,0);
  values.set("yogimangchi:content-refresh-pending:http://localhost:8080","pending");unavailable=false;await session.complete();
  assert.equal(session.getSnapshot().phase,"ready");assert.equal(values.size,0);
+});
+test("pre-rotation 409 MEMBER_BUSY refresh clears pending marker and recovers without uncertain lock",async()=>{
+  assert.equal(clearRefreshPending(new ContentApiError(409,"MEMBER_BUSY")),true);
+  assert.equal(clearRefreshPending(new ContentApiError(503,"SERVICE_TEMPORARILY_UNAVAILABLE")),true);
+  assert.equal(clearRefreshPending(new ContentApiError(500)),false);
+  const values=new Map<string,string>();const storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);},removeItem:(key:string)=>{values.delete(key);}};
+  let now=epoch,busy=true;
+  const transport:typeof fetch=async url=>String(url).endsWith("csrf")?json({headerName:"X-CSRF-TOKEN",token:"csrf"}):busy?json({code:"MEMBER_BUSY"},409):json({memberId:1,nickname:"회원",tokenType:"Bearer",accessToken:"header.payload.token",expiresIn:900,expiresAt:new Date(now+900000).toISOString()});
+  const session=createMemberSession("http://localhost:8080",transport,()=>now,fn=>fn(),()=>true,()=>storage);
+  await assert.rejects(session.restore());
+  assert.equal(values.size,0);
+  assert.equal(session.getSnapshot().recovery?.uncertain,false);
+  assert.equal(session.getSnapshot().recovery?.retryable,true);
+  busy=false;now+=1001;
+  await session.restore();
+  assert.equal(session.getSnapshot().phase,"ready");
+  assert.equal(session.getSnapshot().recovery,undefined);
 });
