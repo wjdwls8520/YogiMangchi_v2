@@ -19,6 +19,7 @@ trading-server/     Java 17 · Spring Boot 3.5.x · PostgreSQL(trading) · Redis
 docker-compose.yml  로컬 PostgreSQL 17 및 Redis 7
 .env.example        공통 개발/운영 환경변수 예시
 AGENTS.md           에이전트 공통 규칙
+BENCHMARK_LOG.md    일자별 성능·동시성·검증 일지
 OPERATIONS_CHECKLIST.md  공개 운영 준비 항목
 ```
 
@@ -29,7 +30,7 @@ OPERATIONS_CHECKLIST.md  공개 운영 준비 항목
 - **Guest:** Trading이 발급하는 7일 유효 opaque Bearer Token(JWT 아님). 모의투자 10,000 USDT, 동일 Guest 계정의 재도전 기능 제공.
 - **회원:** Google/Kakao OAuth2 → Content 자체 RS256 Access JWT(15분, 클라이언트 메모리) 및 회전형 HttpOnly Refresh Cookie(최초 발급 기준 고정 7일). Guest 금융 기록 자동 병합 없음.
 - **회원 거래:** Trading에 회원 계정을 명시적으로 생성·조회하며 첫 회차 10,000 USDT. 재시작에는 24시간 제한이 있고 과거 회차·주문·체결 원장을 보존한다.
-- **선물:** 서버 기준 시세, Isolated Margin, LONG/SHORT 동시 보유, 신규 주문 레버리지 1~100배(기본 10배). **Backend 레버리지는 계정·종목·방향(LONG/SHORT)별 독립 설정**이다. GET 쿼리와 PUT 본문의 side가 필수이며 Frontend 반영 여부는 별도로 확인한다.
+- **선물:** 서버 기준 시세, Isolated Margin, LONG/SHORT 동시 보유, 신규 주문 레버리지 1~100배(직접 다른 레버리지를 지정하지 않으면 기본 1배). **레버리지는 계정·종목·방향(LONG/SHORT)별 독립 설정**이며 GET 쿼리와 PUT 본문의 `side`가 필수다.
 - **정합성:** 서버 주도 주문·청산, 계정 잠금, 트랜잭션, 멱등성 및 시세 복구 게이트를 기존 테스트로 보호한다.
 
 ## 로컬 개발 빠른 시작
@@ -64,20 +65,11 @@ npm run build
 - [Trading 안내](trading-server/README.md) · [Trading 규칙](trading-server/AGENTS.md)
 - [Content 안내](content-server/README.md) · [Content 규칙](content-server/AGENTS.md)
 - [Frontend 안내](frontend/README.md) · [Frontend 규칙](frontend/AGENTS.md)
+- [성능·동시성·검증 일지](BENCHMARK_LOG.md)
 - [운영 체크리스트](OPERATIONS_CHECKLIST.md)
 
 상세 API의 최종 기준은 각 서비스의 **현재 코드와 Runtime OpenAPI**다. 문서가 실제 구현과 어긋나면 변경 내용을 먼저 보고하며, **사용자의 명시적 지시 없이 MD를 자동 갱신하지 않는다.**
 
-## 다음 작업의 기준 상태 (2026-10-25 확인)
+## 성능·동시성 및 검증 기록
 
-이 기록은 develop `0e47eac` 기준이며 이후 작업은 최신 Git/PR과 실행본을 다시 확인한다.
-
-| 영역 | 확인된 구현과 다음 검증 |
-|---|---|
-| Trading | 방향별 레버리지(#46), 종목별 성과(#48), 영속 가격 위험 작업/계정 복구(#49), 원장 대사(#50)가 병합됨. 누적 대기 이력에서 조회가 느려져 정상 계정 주문·청산도 막히는 문제를 최우선 해결 |
-| Content | 인증 계약 보강(#47) 병합. 회원 보안 회귀와 실제 공급자·세 서버 연동을 구분해 검증 |
-| Frontend | 방향별 레버리지·성과·복구 연동 작업본 `3b2ba63`은 이 확인 시점에 develop 미병합. 기존 develop Frontend는 side 없는 요청을 사용하므로 최신 Backend와 그대로 조합하지 않음 |
-
-확인 당시 Content133·Trading600·최신 Frontend246개 자동 테스트는 통과했지만 실제 거래 적체가 재현됐다. 이는 운영 준비 완료 선언이 아니다. 수치와 상태는 새 작업에서 재검증한다.
-
-상세 계약과 과거 검증 기록은 각 서비스 README의 링크를 따른다. 기존 `docs/`를 일괄 삭제하지 않는다. 과거 버전 문서의 설명이 최신 승인 계약을 덮어쓰지 않도록 기준 커밋·날짜를 확인한다.
+작업별 응답·체결 소요 시간(ms), 다중 동시 처리 시 성공·거절·실패 건수, 병목 해소 및 일자별 자동/통합 검증 기록은 [`BENCHMARK_LOG.md`](BENCHMARK_LOG.md)에 날짜별 일지 형태로 기록·갱신한다. 상세 계약과 이관 자료는 각 서비스 README의 `docs/` 링크를 따른다. 기존 `docs/`는 일괄 삭제하지 않는다.

@@ -6,7 +6,7 @@ Binance WebSocket 시세를 사용하는 **USDT 선물 모의투자** 백엔드�
 
 - Java 17, Spring Boot 3.5.16, Gradle, Spring Security, JPA/Flyway, PostgreSQL, Redis, WebSocket.
 - Guest/회원 계정, 서버 가격, 시장가·지정가, 미체결 취소, LONG/SHORT Hedge, Isolated Margin, 부분 청산·강제청산, 주문·체결·포지션 이력, 회원 회차 및 Guest 재도전.
-- 레버리지 범위 **1~100배**, 기본 **10배**. 설정은 **계정·종목·LONG/SHORT 방향별 독립**이다. Backend에 이미 반영된 계약이며 Frontend 연결 상태는 따로 검증한다.
+- 레버리지 범위 **1~100배**, 직접 다른 레버리지를 지정하지 않으면 기본 **1배**. 설정은 **계정·종목·LONG/SHORT 방향별 독립**이다.
 - 수수료·격리 담보·위험 계산·체결 가격은 서버가 결정한다. 최신 정책·수치의 권위 있는 근거는 `TradingMath`, 실행 서비스 및 DTO다.
 
 ## 인증과 데이터
@@ -76,4 +76,4 @@ Binance WebSocket 시세를 사용하는 **USDT 선물 모의투자** 백엔드�
 
 V18~20 이관 시 백업과 구버전 Trading 앱/worker 중지, Flyway 버전 순서 및 Frontend side 계약 확인이 필요하다. 기존 migration을 수정하거나 공유 DB를 초기화하지 않는다.
 
-2026-10-25 develop `0e47eac` 검증에서는 자동 테스트600개가 통과했으나 실제 누적 위험 작업 조회가 약2.93초 걸리고 정상 계정의 대기가 증가해 주문·청산이 차단됐다. 다음 작업은 이 적체 해결과 실제 회원 거래 전 과정 검증이다. 이 기록은 과거 관측이며 수정 완료 여부는 새 테스트·PR에서 확인한다.
+작업별 처리 지연(ms), 다중 동시 주문·취소·청산 경합 결과 및 일자별 검증 기록은 루트 [성능·동시성·검증 일지](../BENCHMARK_LOG.md)에서 관리한다.
