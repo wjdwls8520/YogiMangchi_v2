@@ -14,19 +14,21 @@
 
 - **Head (Work):** 아키텍처·우선순위·서버 간 계약·작업 의존성·통합 검수. 사용자의 최종 승인 권한을 대신하지 않는다.
 - **Trading:** `trading-server/**` — 주문·체결·포지션·청산·모의투자 원장·시세.
-- **Content:** `content-server/**` — 회원·인증·프로필·팔로우 및 향후 커뮤니티·뉴스.
-- **Frontend:** `frontend/**` — Next.js UI, 세션·API·WebSocket 연동.
+- **Content:** `content-server/**` — 회원·인증·프로필·팔로우·커뮤니티·뉴스.
+- **Publishing:** `frontend/**` (트레이딩 화면 디자인 제외) — 콘텐츠·회원·메인·커뮤니티·뉴스 화면의 마크업(Markup), 스타일(Tailwind CSS / CSS), 클라이언트 동적 UI 인터랙션(딤·스크롤 잠금·탭·프리뷰 등) 퍼블리싱 전담.
+- **Frontend:** `frontend/**` — Next.js UI, 세션·API·WebSocket 연동 및 백엔드 계약 통합.
 - **Infra:** 루트 인프라 설정, Docker, 배포, CI/CD, 운영 설정(서비스 코드의 소유권은 제외).
 - 담당 외 영역은 **읽기 가능, 수정은 기본 금지**. 변경이 필요하면 관련 브랜치·PR을 확인하고 담당 에이전트 또는 Head에 의존성을 전달한다. 사용자에게 명시적으로 승인받은 통합 작업만 예외로 한다.
+- 콘텐츠·회원 화면 개편 및 기능 확장은 **Publishing(마크업·스타일·동적 UI 퍼블리싱) → Content(백엔드 API·DB 기능 구현) → Frontend(실제 API·상태 연동)** 순으로 순차 진행하며, 서로 다른 에이전트에게 같은 작업 범위를 동시에 실행시켜 커밋이나 코드가 꼬이지 않게 한다.
 - 서로 다른 Work/Codex 채팅이 직접 통신하거나 실행 상태를 자동 공유한다고 가정하지 않는다. **GitHub의 PR·커밋·`develop`**을 공통 작업 상태로 사용한다.
 
 ## 3. Git 브랜치·커밋·PR
 
 - 최신 `develop`을 확인하고 담당 영역의 독립 브랜치에서 시작한다. 다른 작업자의 미커밋 변경을 덮어쓰거나 정리하지 않는다.
-- 브랜치 예: `feature/trading/<kebab-case>`, `fix/content/<kebab-case>`, `feature/frontend/<kebab-case>`, `chore/infra/<kebab-case>`. 필요에 따라 `test/<영역>/`, `refactor/<영역>/`, `docs/<영역>/`를 사용할 수 있다. `backend/` 또는 `codex/`처럼 소유 영역이 모호한 새 브랜치는 피한다.
-- 커밋 메시지와 PR 제목: **`[영역:기능] type: 설명`**. 예: `[trading-server:주문] fix: 취소 경합 검증`, `[content-server:인증] feat: 로그인 보강`, `[frontend:거래화면] feat: 주문 이력 표시`, `[infra:배포] chore: 실행 설정 정리`.
+- 브랜치 예: `feature/trading/<kebab-case>`, `fix/content/<kebab-case>`, `feature/publishing/<kebab-case>`, `feature/frontend/<kebab-case>`, `chore/infra/<kebab-case>`. 필요에 따라 `test/<영역>/`, `refactor/<영역>/`, `docs/<영역>/`를 사용할 수 있다. `backend/` 또는 `codex/`처럼 소유 영역이 모호한 새 브랜치는 피한다.
+- 커밋 메시지와 PR 제목: **`[영역:기능] type: 설명`**. 예: `[trading-server:주문] fix: 취소 경합 검증`, `[content-server:인증] feat: 로그인 보강`, `[publishing:콘텐츠화면] feat: 메인·커뮤니티·뉴스 및 회원 화면 퍼블리싱`, `[frontend:거래화면] feat: 주문 이력 표시`, `[infra:배포] chore: 실행 설정 정리`.
 - `type`: `feat`, `fix`, `refactor`, `test`, `docs`, `chore` 등. 제목은 변경 내용을 정확히 설명한다.
-- Trading·Content·Frontend·공용 인프라는 **원칙적으로 브랜치·커밋·PR을 분리**한다. 다른 서비스 변경을 하나의 작업 커밋에 섞지 않는다.
+- Trading·Content·Publishing·Frontend·공용 인프라는 **원칙적으로 브랜치·커밋·PR을 분리**한다. 다른 서비스 변경을 하나의 작업 커밋에 섞지 않는다.
 - 작업한 파일만 선택해 stage한다. `git add .`, `git add -A`, 임의의 `reset/restore/stash/clean`, 공유 이력 재작성 및 강제 푸시를 금지한다.
 - 자신의 변경은 관련 테스트·빌드를 확인한 후 PR로 제출한다. develop 병합은 브랜치/PR별 제목·목적·검증 결과가 구분되게 수행한다. 다른 에이전트의 PR을 임의 병합하지 않는다.
 - 의존성 PR은 코드·테스트 상태를 확인하고, 병합 승인 정책에 따라 처리한다. 선행 변경이 `develop`에 병합되면 이를 반영한 뒤 후속 작업을 진행한다.
