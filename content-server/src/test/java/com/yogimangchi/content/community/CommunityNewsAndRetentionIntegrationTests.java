@@ -22,10 +22,12 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -41,6 +43,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
     @Autowired MemberWithdrawals withdrawals;
     @Autowired MemberProvisioning provisioning;
     @Autowired ContentRetentionCleanupService retentionCleanup;
+    @Autowired CommunityS3Service s3;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
 
@@ -315,6 +318,216 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         mvc.perform(get("/api/v1/community/posts/" + readerPostId))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
+    }
+
+    @Test
+    void v1S3MultipartAttachmentsPositionShareCommentTreeMentionsReportsAndUxSseWorkEndToEnd() throws Exception {
+        var author = signup();
+        var responder = signup();
+        String authorBearer = "Bearer " + author.access().accessToken();
+        String responderBearer = "Bearer " + responder.access().accessToken();
+
+        // 1. Report reasons public endpoints (both main and V1 alias)
+        mvc.perform(get("/api/v1/community/report-reasons"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].code").value("SPAM"));
+        mvc.perform(get("/api/v1/report/type/community"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].code").value("SPAM"));
+
+        // 2. UX SSE feed subscription
+        mvc.perform(get("/api/v1/community/ux/subscribe/feed"))
+                .andExpect(status().isOk());
+
+        // 3. Reject GIF upload on multipart post creation
+        var gifFile = new MockMultipartFile("files", "anim.gif", "image/gif", new byte[]{1, 2, 3, 4});
+        mvc.perform(multipart("/api/v1/community/posts")
+                        .file(gifFile)
+                        .param("category", "POSITION")
+                        .param("title", "GIF 거절 테스트")
+                        .param("content", "GIF 파일은 업로드할 수 없습니다.")
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        // 4. Create multipart post with 2 images and a shared position snapshot
+        var img1 = new MockMultipartFile("files", "chart-1.png", "image/png", new byte[]{10, 20, 30, 40});
+        var img2 = new MockMultipartFile("files", "chart-2.jpg", "image/jpeg", new byte[]{50, 60, 70, 80, 90});
+        String sharedPosJson = json.writeValueAsString(new CommunityService.SharedPositionSnapshot(
+                "pos-btc-long-1",
+                "비트코인 무기한",
+                "BTC",
+                "BTCUSDT",
+                "LONG",
+                25,
+                "94,120.00",
+                "95,680.50",
+                "90,510.00",
+                "+41.45%",
+                "+310.88 USDT",
+                true,
+                true,
+                true
+        ));
+
+        var multipartCreatedBody = mvc.perform(multipart("/api/v1/community/posts")
+                        .file(img1)
+                        .file(img2)
+                        .param("category", "POSITION")
+                        .param("symbolTag", "btc")
+                        .param("title", "BTC 25배 롱 포지션 수익 인증")
+                        .param("content", "전저점 리테스트 구간에서 진입해 1차 익절 완료했습니다.")
+                        .param("sharedPosition", sharedPosJson)
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.category").value("POSITION"))
+                .andExpect(jsonPath("$.symbolTag").value("BTC"))
+                .andExpect(jsonPath("$.files.length()").value(2))
+                .andExpect(jsonPath("$.files[0].originalName").value("chart-1.png"))
+                .andExpect(jsonPath("$.files[1].originalName").value("chart-2.jpg"))
+                .andExpect(jsonPath("$.sharedPosition.symbol").value("BTC"))
+                .andExpect(jsonPath("$.sharedPosition.leverage").value(25))
+                .andExpect(jsonPath("$.sharedPosition.roePct").value("+41.45%"))
+                .andReturn().getResponse().getContentAsString();
+
+        var createdPost = json.readTree(multipartCreatedBody);
+        long postId = createdPost.path("id").asLong();
+        long firstFileId = createdPost.path("files").get(0).path("id").asLong();
+        String firstFileKey = jdbc.queryForObject(
+                "select s3_key from content.community_post_file where id = ?",
+                String.class, firstFileId);
+        assertThat(firstFileKey).startsWith("community/post/").endsWith(".png");
+        assertThat(s3.isSimulatedKeyPresent(firstFileKey)).isTrue();
+
+        // 5. Update multipart post: delete first image and attach a new WebP image
+        var img3 = new MockMultipartFile("files", "updated-chart.webp", "image/webp", new byte[]{1, 3, 5, 7, 9});
+        mvc.perform(multipart(org.springframework.http.HttpMethod.PATCH, "/api/v1/community/posts/" + postId)
+                        .file(img3)
+                        .param("title", "BTC 25배 롱 포지션 수익 인증 (차트 교체)")
+                        .param("deleteFileIds", Long.toString(firstFileId))
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("BTC 25배 롱 포지션 수익 인증 (차트 교체)"))
+                .andExpect(jsonPath("$.files.length()").value(2))
+                .andExpect(jsonPath("$.files[0].originalName").value("chart-2.jpg"))
+                .andExpect(jsonPath("$.files[1].originalName").value("updated-chart.webp"));
+
+        // Verify deleted file key was purged from S3 after transaction commit
+        assertThat(s3.isSimulatedKeyPresent(firstFileKey)).isFalse();
+
+        // 6. latest-check and sort aliases (ALL / BEST)
+        mvc.perform(get("/api/v1/community/posts/latest-check").param("sincePostId", "0").param("category", "POSITION"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.newPostCount").isNumber())
+                .andExpect(jsonPath("$.latestPostId").value(postId))
+                .andExpect(jsonPath("$.items[0].id").value(postId));
+
+        mvc.perform(get("/api/v1/community/posts").param("sort", "BEST"))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/community/posts").param("sort", "ALL"))
+                .andExpect(status().isOk());
+
+        // 7. Create parent comment, edit it, like it, reply with target mention, then delete parent comment
+        var parentCommentBody = mvc.perform(post("/api/v1/community/posts/" + postId + "/comments")
+                        .header("Authorization", authorBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("content", "1차 목표가는 96.2k 부근입니다."))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.deleted").value(false))
+                .andReturn().getResponse().getContentAsString();
+        long parentCommentId = json.readTree(parentCommentBody).path("id").asLong();
+
+        // Update comment
+        mvc.perform(patch("/api/v1/community/comments/" + parentCommentId)
+                        .header("Authorization", authorBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("content", "1차 목표가는 96.5k 부근으로 상향합니다."))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value("1차 목표가는 96.5k 부근으로 상향합니다."));
+
+        // Like & unlike comment
+        mvc.perform(put("/api/v1/community/comments/" + parentCommentId + "/likes")
+                        .header("Authorization", responderBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.commentId").value(parentCommentId))
+                .andExpect(jsonPath("$.likeCount").value(1))
+                .andExpect(jsonPath("$.likedByMe").value(true));
+
+        // Create reply with targetCommentId & targetMemberId mention
+        var childCommentBody = mvc.perform(post("/api/v1/community/posts/" + postId + "/comments")
+                        .header("Authorization", responderBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of(
+                                "content", "타겟 멘션 답글입니다!",
+                                "parentCommentId", parentCommentId,
+                                "targetCommentId", parentCommentId,
+                                "targetMemberId", author.access().memberId()))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.parentCommentId").value(parentCommentId))
+                .andExpect(jsonPath("$.targetCommentId").value(parentCommentId))
+                .andExpect(jsonPath("$.targetMemberId").value(author.access().memberId()))
+                .andExpect(jsonPath("$.targetNickname").value(author.access().nickname()))
+                .andReturn().getResponse().getContentAsString();
+        long childCommentId = json.readTree(childCommentBody).path("id").asLong();
+
+        // Delete parent comment while child reply is still ACTIVE -> parent stays in list as masked node!
+        mvc.perform(delete("/api/v1/community/comments/" + parentCommentId)
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/v1/community/posts/" + postId + "/comments")
+                        .header("Authorization", responderBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[0].id").value(parentCommentId))
+                .andExpect(jsonPath("$.items[0].deleted").value(true))
+                .andExpect(jsonPath("$.items[0].content").value("삭제된 댓글입니다."))
+                .andExpect(jsonPath("$.items[1].id").value(childCommentId))
+                .andExpect(jsonPath("$.items[1].deleted").value(false))
+                .andExpect(jsonPath("$.items[1].targetNickname").value(author.access().nickname()));
+
+        // Active comment count on post is 1 (only the active child reply)
+        mvc.perform(get("/api/v1/community/posts/" + postId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.commentCount").value(1));
+
+        // 8. Post & comment reports (self-report blocked, other member report idempotent)
+        mvc.perform(put("/api/v1/community/posts/" + postId + "/reports")
+                        .header("Authorization", authorBearer)
+                        .param("reasonType", "SPAM"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        for (int i = 0; i < 2; i++) {
+            mvc.perform(put("/api/v1/community/posts/" + postId + "/reports")
+                            .header("Authorization", responderBearer)
+                            .contentType("application/json")
+                            .content("{\"reasonType\":\"FRAUD\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.targetId").value(postId))
+                    .andExpect(jsonPath("$.reportCount").value(1))
+                    .andExpect(jsonPath("$.reportedByMe").value(true));
+        }
+
+        mvc.perform(delete("/api/v1/community/posts/" + postId + "/reports")
+                        .header("Authorization", responderBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportCount").value(0))
+                .andExpect(jsonPath("$.reportedByMe").value(false));
+
+        mvc.perform(put("/api/v1/community/comments/" + childCommentId + "/reports")
+                        .header("Authorization", authorBearer)
+                        .param("reasonType", "ABUSE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetId").value(childCommentId))
+                .andExpect(jsonPath("$.reportCount").value(1))
+                .andExpect(jsonPath("$.reportedByMe").value(true));
+
+        mvc.perform(delete("/api/v1/community/comments/" + childCommentId + "/reports")
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportCount").value(0))
+                .andExpect(jsonPath("$.reportedByMe").value(false));
     }
 
     private AuthService.Issued signup() {

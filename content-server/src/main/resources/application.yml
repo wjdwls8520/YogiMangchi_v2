@@ -22,6 +22,10 @@ spring:
   sql:
     init:
       mode: never
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 55MB
 server:
   address: 127.0.0.1
   port: ${CONTENT_SERVER_PORT:8080}
@@ -62,3 +66,8 @@ content:
     allowed-origins: ${CONTENT_HTTP_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
   oauth:
     enabled: ${CONTENT_OAUTH_ENABLED:false}
+  s3:
+    bucket: ${S3_BUCKET:}
+    access-key: ${S3_ACCESS:}
+    secret-key: ${S3_SECRET:}
+    region: ${S3_REGION:ap-northeast-2}

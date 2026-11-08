@@ -1,5 +1,7 @@
 package com.yogimangchi.content.community;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.content.error.AuthFailure;
 import com.yogimangchi.content.member.entity.Member;
 import com.yogimangchi.content.member.repository.MemberRepository;
@@ -7,25 +9,112 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class CommunityService {
     private static final Set<String> CATEGORIES = Set.of("MARKET", "ANALYSIS", "POSITION", "FREE");
-    private static final Set<String> SORTS = Set.of("LATEST", "POPULAR");
     public static final String WITHDRAWN_AUTHOR_NICKNAME = "탈퇴한회원";
+    public static final String DELETED_COMMENT_MASK = "삭제된 댓글입니다.";
 
-    public record CreatePostRequest(String category, String symbolTag, String title, String content) { }
+    private static final Map<String, String> REPORT_REASONS;
+    static {
+        Map<String, String> reasons = new LinkedHashMap<>();
+        reasons.put("SPAM", "스팸 홍보/도배글입니다.");
+        reasons.put("SEXUAL", "음란물입니다.");
+        reasons.put("ILLEGAL", "불법정보를 포함하고 있습니다.");
+        reasons.put("YOUTH_HARMFUL", "청소년에게 유해한 내용입니다.");
+        reasons.put("ABUSE", "욕설/생명경시/혐오/차별적 표현입니다.");
+        reasons.put("PRIVACY", "개인정보 노출 게시물입니다.");
+        reasons.put("INAPPROPRIATE", "불쾌한 표현이 있습니다.");
+        reasons.put("FRAUD", "사기·허위정보");
+        reasons.put("ETC", "기타");
+        REPORT_REASONS = Collections.unmodifiableMap(reasons);
+    }
 
-    public record UpdatePostRequest(String category, String symbolTag, String title, String content) { }
+    public record SharedPositionSnapshot(
+            String id,
+            String marketLabel,
+            String symbol,
+            String pair,
+            String side,
+            int leverage,
+            String entryPrice,
+            String markPrice,
+            String liquidationPrice,
+            String roePct,
+            String pnlUsdt,
+            boolean positive,
+            Boolean showPnlAmount,
+            Boolean verified
+    ) { }
 
-    public record CreateCommentRequest(String content, Long parentCommentId) { }
+    public record PostFileResponse(
+            Long id,
+            Long postId,
+            String originalName,
+            long size,
+            String url,
+            String contentType,
+            Instant createdAt
+    ) { }
+
+    public record CreatePostRequest(
+            String category,
+            String symbolTag,
+            String title,
+            String content,
+            SharedPositionSnapshot sharedPosition
+    ) {
+        public CreatePostRequest(String category, String symbolTag, String title, String content) {
+            this(category, symbolTag, title, content, null);
+        }
+    }
+
+    public record UpdatePostRequest(
+            String category,
+            String symbolTag,
+            String title,
+            String content,
+            SharedPositionSnapshot sharedPosition,
+            List<Long> deleteFileIds
+    ) {
+        public UpdatePostRequest(String category, String symbolTag, String title, String content) {
+            this(category, symbolTag, title, content, null, null);
+        }
+    }
+
+    public record CreateCommentRequest(
+            String content,
+            Long parentCommentId,
+            Long targetCommentId,
+            Long targetMemberId
+    ) {
+        public CreateCommentRequest(String content, Long parentCommentId) {
+            this(content, parentCommentId, null, null);
+        }
+    }
+
+    public record UpdateCommentRequest(String content) { }
+
+    public record ReportRequest(String reasonType, String reason) { }
+
+    public record ReportReasonResponse(String code, String description) { }
+
+    public record ReportResponse(Long targetId, int reportCount, boolean reportedByMe) { }
 
     public record CommunityPostResponse(
             Long id,
@@ -38,8 +127,12 @@ public class CommunityService {
             String content,
             int likeCount,
             int commentCount,
+            int reportCount,
             boolean likedByMe,
+            boolean reportedByMe,
             boolean mine,
+            List<PostFileResponse> files,
+            SharedPositionSnapshot sharedPosition,
             Instant createdAt,
             Instant updatedAt
     ) { }
@@ -50,8 +143,20 @@ public class CommunityService {
             Long nextCursorId
     ) { }
 
+    public record LatestPostsCheckResponse(
+            long newPostCount,
+            Long latestPostId,
+            List<CommunityPostResponse> items
+    ) { }
+
     public record PostLikeResponse(
             Long postId,
+            int likeCount,
+            boolean likedByMe
+    ) { }
+
+    public record CommentLikeResponse(
+            Long commentId,
             int likeCount,
             boolean likedByMe
     ) { }
@@ -63,8 +168,16 @@ public class CommunityService {
             String authorNickname,
             boolean authorWithdrawn,
             Long parentCommentId,
+            Long targetCommentId,
+            Long targetMemberId,
+            String targetNickname,
             String content,
+            int likeCount,
+            int reportCount,
+            boolean likedByMe,
+            boolean reportedByMe,
             boolean mine,
+            boolean deleted,
             Instant createdAt,
             Instant updatedAt
     ) { }
@@ -75,10 +188,38 @@ public class CommunityService {
 
     private final MemberRepository members;
     private final JdbcTemplate jdbc;
+    private final ObjectMapper json;
+    private final CommunityS3Service s3;
+    private final CommunityUxSseService uxSse;
 
-    public CommunityService(MemberRepository members, JdbcTemplate jdbc) {
+    public CommunityService(
+            MemberRepository members,
+            JdbcTemplate jdbc,
+            ObjectMapper json,
+            CommunityS3Service s3,
+            CommunityUxSseService uxSse) {
         this.members = members;
         this.jdbc = jdbc;
+        this.json = json;
+        this.s3 = s3;
+        this.uxSse = uxSse;
+    }
+
+    public List<ReportReasonResponse> listReportReasons() {
+        return REPORT_REASONS.entrySet().stream()
+                .map(e -> new ReportReasonResponse(e.getKey(), e.getValue()))
+                .toList();
+    }
+
+    public SharedPositionSnapshot parseSharedPositionJson(String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            return null;
+        }
+        try {
+            return json.readValue(rawJson, SharedPositionSnapshot.class);
+        } catch (JsonProcessingException e) {
+            throw invalidRequest();
+        }
     }
 
     @Transactional(readOnly = true, timeout = 3)
@@ -97,17 +238,16 @@ public class CommunityService {
 
         String normalizedCategory = null;
         if (category != null && !category.isBlank()) {
-            normalizedCategory = category.strip().toUpperCase(Locale.ROOT);
-            if (!CATEGORIES.contains(normalizedCategory)) {
-                throw invalidRequest();
+            String upper = category.strip().toUpperCase(Locale.ROOT);
+            if (!"ALL".equals(upper)) {
+                if (!CATEGORIES.contains(upper)) {
+                    throw invalidRequest();
+                }
+                normalizedCategory = upper;
             }
         }
 
-        String normalizedSort = sort == null || sort.isBlank() ? "LATEST" : sort.strip().toUpperCase(Locale.ROOT);
-        if (!SORTS.contains(normalizedSort)) {
-            throw invalidRequest();
-        }
-
+        String normalizedSort = normalizeSort(sort);
         String normalizedSymbol = normalizeSymbolTag(symbolTag);
 
         String search = "";
@@ -120,17 +260,19 @@ public class CommunityService {
 
         StringBuilder sql = new StringBuilder(
                 "select p.id, p.member_id, m.nickname as member_nickname, m.status as member_status, "
-                        + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, "
-                        + "p.created_at, p.updated_at, "
+                        + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
+                        + "p.shared_position_json, p.created_at, p.updated_at, "
                         + (viewerId == null
-                        ? "false as liked_by_me "
-                        : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me ")
+                        ? "false as liked_by_me, false as reported_by_me "
+                        : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me, "
+                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ?) as reported_by_me ")
                         + "from content.community_post p "
                         + "join content.member m on m.id = p.member_id "
                         + "where p.status = 'ACTIVE'");
 
         List<Object> params = new ArrayList<>();
         if (viewerId != null) {
+            params.add(viewerId);
             params.add(viewerId);
         }
 
@@ -166,11 +308,52 @@ public class CommunityService {
         }
         params.add(limit + 1);
 
-        var rows = jdbc.query(sql.toString(), (rs, n) -> mapPost(rs, viewerId), params.toArray());
-        boolean hasNext = rows.size() > limit;
-        var page = rows.subList(0, Math.min(limit, rows.size()));
-        Long nextCursorId = hasNext && !page.isEmpty() ? page.get(page.size() - 1).id() : null;
-        return new CommunityPostPageResponse(page, hasNext, nextCursorId);
+        var rawRows = jdbc.query(sql.toString(), (rs, n) -> mapRawPost(rs, viewerId), params.toArray());
+        boolean hasNext = rawRows.size() > limit;
+        var pageRaw = rawRows.subList(0, Math.min(limit, rawRows.size()));
+        var hydrated = hydratePostFiles(pageRaw);
+        Long nextCursorId = hasNext && !hydrated.isEmpty() ? hydrated.get(hydrated.size() - 1).id() : null;
+        return new CommunityPostPageResponse(hydrated, hasNext, nextCursorId);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public LatestPostsCheckResponse checkLatestPosts(Long sincePostId, String category, String symbolTag, Long viewerId) {
+        if (sincePostId != null && sincePostId < 0) {
+            throw invalidRequest();
+        }
+        String normalizedCategory = null;
+        if (category != null && !category.isBlank()) {
+            String upper = category.strip().toUpperCase(Locale.ROOT);
+            if (!"ALL".equals(upper)) {
+                if (!CATEGORIES.contains(upper)) {
+                    throw invalidRequest();
+                }
+                normalizedCategory = upper;
+            }
+        }
+        String normalizedSymbol = normalizeSymbolTag(symbolTag);
+
+        long baselineId = sincePostId == null ? 0L : sincePostId;
+        StringBuilder countSql = new StringBuilder(
+                "select count(*) from content.community_post p where p.status = 'ACTIVE' and p.id > ?");
+        List<Object> countParams = new ArrayList<>();
+        countParams.add(baselineId);
+        if (normalizedCategory != null) {
+            countSql.append(" and p.category = ?");
+            countParams.add(normalizedCategory);
+        }
+        if (normalizedSymbol != null) {
+            countSql.append(" and p.symbol_tag = ?");
+            countParams.add(normalizedSymbol);
+        }
+        Long newCount = jdbc.queryForObject(countSql.toString(), Long.class, countParams.toArray());
+
+        CommunityPostPageResponse topPage = listPosts(normalizedCategory, "LATEST", normalizedSymbol, null, null, 5, viewerId);
+        List<CommunityPostResponse> freshItems = sincePostId == null
+                ? topPage.items()
+                : topPage.items().stream().filter(p -> p.id() > sincePostId).toList();
+        Long latestId = topPage.items().isEmpty() ? sincePostId : topPage.items().get(0).id();
+        return new LatestPostsCheckResponse(newCount == null ? 0L : newCount, latestId, freshItems);
     }
 
     @Transactional(readOnly = true, timeout = 3)
@@ -183,6 +366,11 @@ public class CommunityService {
 
     @Transactional(timeout = 5)
     public CommunityPostResponse createPost(Long memberId, CreatePostRequest body) {
+        return createPost(memberId, body, List.of());
+    }
+
+    @Transactional(timeout = 5)
+    public CommunityPostResponse createPost(Long memberId, CreatePostRequest body, List<MultipartFile> files) {
         if (body == null) {
             throw invalidRequest();
         }
@@ -190,24 +378,50 @@ public class CommunityService {
         String symbolTag = normalizeSymbolTag(body.symbolTag());
         String title = validateTitle(body.title());
         String content = validatePostContent(body.content());
+        String sharedPositionJson = serializeSharedPosition(body.sharedPosition());
 
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
         requireActiveMember(memberId);
 
+        List<CommunityS3Service.UploadResult> uploadedFiles = s3.validateAndUploadPostImages(files, 0);
+
         Long postId = jdbc.queryForObject(
-                "insert into content.community_post(member_id, category, symbol_tag, title, content, status, like_count, comment_count, created_at, updated_at) "
-                        + "values (?, ?, ?, ?, ?, 'ACTIVE', 0, 0, now(), now()) returning id",
+                "insert into content.community_post("
+                        + "member_id, category, symbol_tag, title, content, shared_position_json, "
+                        + "status, like_count, comment_count, report_count, created_at, updated_at"
+                        + ") values (?, ?, ?, ?, ?, ?, 'ACTIVE', 0, 0, 0, now(), now()) returning id",
                 Long.class,
-                memberId, category, symbolTag, title, content);
-        return queryActivePost(postId, memberId);
+                memberId, category, symbolTag, title, content, sharedPositionJson);
+
+        insertUploadedFiles(postId, uploadedFiles);
+
+        CommunityPostResponse created = queryActivePost(postId, memberId);
+        uxSse.publishPostCreatedAfterCommit(new CommunityUxSseService.PostCreatedUxEvent(
+                created.id(),
+                created.title(),
+                created.memberId(),
+                created.authorNickname(),
+                created.category(),
+                created.symbolTag(),
+                created.createdAt()
+        ));
+        return created;
     }
 
     @Transactional(timeout = 5)
     public CommunityPostResponse updatePost(Long memberId, Long postId, UpdatePostRequest body) {
+        return updatePost(memberId, postId, body, List.of());
+    }
+
+    @Transactional(timeout = 5)
+    public CommunityPostResponse updatePost(Long memberId, Long postId, UpdatePostRequest body, List<MultipartFile> newFiles) {
         if (postId == null || postId <= 0 || body == null) {
             throw invalidRequest();
         }
-        if (body.category() == null && body.symbolTag() == null && body.title() == null && body.content() == null) {
+        boolean hasFileMutations = (body.deleteFileIds() != null && !body.deleteFileIds().isEmpty())
+                || (newFiles != null && newFiles.stream().anyMatch(f -> f != null && !f.isEmpty()));
+        if (body.category() == null && body.symbolTag() == null && body.title() == null
+                && body.content() == null && body.sharedPosition() == null && !hasFileMutations) {
             throw invalidRequest();
         }
 
@@ -215,7 +429,8 @@ public class CommunityService {
         requireActiveMember(memberId);
 
         var locked = jdbc.query(
-                "select id, member_id, category, symbol_tag, title, content, status from content.community_post where id = ? for update",
+                "select id, member_id, category, symbol_tag, title, content, shared_position_json, status "
+                        + "from content.community_post where id = ? for update",
                 (rs, n) -> new LockedPost(
                         rs.getLong("id"),
                         rs.getLong("member_id"),
@@ -223,6 +438,7 @@ public class CommunityService {
                         rs.getString("symbol_tag"),
                         rs.getString("title"),
                         rs.getString("content"),
+                        rs.getString("shared_position_json"),
                         rs.getString("status")),
                 postId);
         if (locked.isEmpty() || !"ACTIVE".equals(locked.get(0).status())) {
@@ -233,14 +449,45 @@ public class CommunityService {
             throw forbidden();
         }
 
+        List<String> keysToDeleteAfterCommit = new ArrayList<>();
+        if (body.deleteFileIds() != null && !body.deleteFileIds().isEmpty()) {
+            List<Long> cleanDeleteIds = body.deleteFileIds().stream()
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .toList();
+            for (Long fileId : cleanDeleteIds) {
+                var s3Keys = jdbc.queryForList(
+                        "delete from content.community_post_file where id = ? and post_id = ? returning s3_key",
+                        String.class,
+                        fileId, postId);
+                keysToDeleteAfterCommit.addAll(s3Keys);
+            }
+        }
+
+        Integer remainingFilesCount = jdbc.queryForObject(
+                "select count(*) from content.community_post_file where post_id = ?",
+                Integer.class,
+                postId);
+        List<CommunityS3Service.UploadResult> uploadedFiles = s3.validateAndUploadPostImages(
+                newFiles,
+                remainingFilesCount == null ? 0 : remainingFilesCount);
+        insertUploadedFiles(postId, uploadedFiles);
+
+        if (!keysToDeleteAfterCommit.isEmpty()) {
+            s3.registerAfterCommitDelete(keysToDeleteAfterCommit);
+        }
+
         String category = body.category() == null ? existing.category() : validateCategory(body.category());
         String symbolTag = body.symbolTag() == null ? existing.symbolTag() : normalizeSymbolTag(body.symbolTag());
         String title = body.title() == null ? existing.title() : validateTitle(body.title());
         String content = body.content() == null ? existing.content() : validatePostContent(body.content());
+        String sharedPositionJson = body.sharedPosition() == null
+                ? existing.sharedPositionJson()
+                : serializeSharedPosition(body.sharedPosition());
 
         jdbc.update(
-                "update content.community_post set category = ?, symbol_tag = ?, title = ?, content = ?, updated_at = now() where id = ?",
-                category, symbolTag, title, content, postId);
+                "update content.community_post set category = ?, symbol_tag = ?, title = ?, content = ?, shared_position_json = ?, updated_at = now() where id = ?",
+                category, symbolTag, title, content, sharedPositionJson, postId);
         return queryActivePost(postId, memberId);
     }
 
@@ -264,6 +511,11 @@ public class CommunityService {
             throw forbidden();
         }
         if ("ACTIVE".equals(existing.status())) {
+            List<String> keys = jdbc.queryForList(
+                    "delete from content.community_post_file where post_id = ? returning s3_key",
+                    String.class,
+                    postId);
+            s3.registerAfterCommitDelete(keys);
             jdbc.update(
                     "update content.community_post set status = 'DELETED', deleted_at = now(), updated_at = now() where id = ?",
                     postId);
@@ -303,6 +555,46 @@ public class CommunityService {
         return new PostLikeResponse(postId, likeCount == null ? 0 : likeCount, like);
     }
 
+    @Transactional(timeout = 5)
+    public ReportResponse changePostReport(Long memberId, Long postId, String reasonType, boolean report) {
+        if (postId == null || postId <= 0) {
+            throw notFound();
+        }
+        String normalizedReason = report ? normalizeReportReason(reasonType) : "SPAM";
+
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        requireActiveMember(memberId);
+
+        var locked = jdbc.query(
+                "select member_id, status from content.community_post where id = ? for update",
+                (rs, n) -> new OwnerStatus(rs.getLong("member_id"), rs.getString("status")),
+                postId);
+        if (locked.isEmpty() || !"ACTIVE".equals(locked.get(0).status())) {
+            throw notFound();
+        }
+        if (locked.get(0).memberId().equals(memberId)) {
+            throw invalidRequest();
+        }
+
+        if (report) {
+            jdbc.update(
+                    "insert into content.community_post_report(post_id, member_id, reason_type, created_at) "
+                            + "values (?, ?, ?, now()) "
+                            + "on conflict(post_id, member_id) do update set reason_type = excluded.reason_type",
+                    postId, memberId, normalizedReason);
+        } else {
+            jdbc.update(
+                    "delete from content.community_post_report where post_id = ? and member_id = ?",
+                    postId, memberId);
+        }
+
+        Integer reportCount = jdbc.queryForObject(
+                "update content.community_post set report_count = (select count(*) from content.community_post_report where post_id = ?) where id = ? returning report_count",
+                Integer.class,
+                postId, postId);
+        return new ReportResponse(postId, reportCount == null ? 0 : reportCount, report);
+    }
+
     @Transactional(readOnly = true, timeout = 3)
     public CommunityCommentListResponse listComments(Long postId, Long viewerId) {
         if (postId == null || postId <= 0) {
@@ -316,15 +608,27 @@ public class CommunityService {
             throw notFound();
         }
 
-        var items = jdbc.query(
-                "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.status as member_status, "
-                        + "c.parent_comment_id, c.content, c.created_at, c.updated_at "
-                        + "from content.community_comment c "
-                        + "join content.member m on m.id = c.member_id "
-                        + "where c.post_id = ? and c.status = 'ACTIVE' "
-                        + "order by c.id asc",
-                (rs, n) -> mapComment(rs, viewerId),
-                postId);
+        String sql = "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.status as member_status, "
+                + "c.parent_comment_id, c.target_comment_id, c.target_member_id, "
+                + "tm.nickname as target_member_nickname, tm.status as target_member_status, "
+                + "c.content, c.status as comment_status, c.like_count, c.report_count, c.created_at, c.updated_at, "
+                + (viewerId == null
+                ? "false as liked_by_me, false as reported_by_me "
+                : "exists(select 1 from content.community_comment_like l where l.comment_id = c.id and l.member_id = ?) as liked_by_me, "
+                  + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
+                + "from content.community_comment c "
+                + "join content.member m on m.id = c.member_id "
+                + "left join content.member tm on tm.id = c.target_member_id "
+                + "where c.post_id = ? "
+                + "and (c.status = 'ACTIVE' or exists("
+                + "  select 1 from content.community_comment child "
+                + "  where child.post_id = c.post_id and child.parent_comment_id = c.id and child.status = 'ACTIVE'"
+                + ")) "
+                + "order by c.id asc";
+
+        var items = viewerId == null
+                ? jdbc.query(sql, (rs, n) -> mapComment(rs, null), postId)
+                : jdbc.query(sql, (rs, n) -> mapComment(rs, viewerId), viewerId, viewerId, postId);
         return new CommunityCommentListResponse(items);
     }
 
@@ -338,7 +642,11 @@ public class CommunityService {
         }
         String content = validateCommentContent(body.content());
         Long parentCommentId = body.parentCommentId();
-        if (parentCommentId != null && parentCommentId <= 0) {
+        Long targetCommentId = body.targetCommentId();
+        Long targetMemberId = body.targetMemberId();
+        if (parentCommentId != null && parentCommentId <= 0
+                || targetCommentId != null && targetCommentId <= 0
+                || targetMemberId != null && targetMemberId <= 0) {
             throw invalidRequest();
         }
 
@@ -354,34 +662,90 @@ public class CommunityService {
         }
 
         if (parentCommentId != null) {
-            Boolean validParent = jdbc.queryForObject(
-                    "select exists(select 1 from content.community_comment where id = ? and post_id = ? and status = 'ACTIVE')",
-                    Boolean.class,
+            var parentRows = jdbc.query(
+                    "select id, member_id, status from content.community_comment where id = ? and post_id = ?",
+                    (rs, n) -> new OwnerStatus(rs.getLong("member_id"), rs.getString("status")),
                     parentCommentId, postId);
-            if (!Boolean.TRUE.equals(validParent)) {
+            if (parentRows.isEmpty() || !"ACTIVE".equals(parentRows.get(0).status())) {
+                throw invalidRequest();
+            }
+            if (targetCommentId != null) {
+                var targetRows = jdbc.query(
+                        "select member_id from content.community_comment where id = ? and post_id = ?",
+                        (rs, n) -> rs.getLong("member_id"),
+                        targetCommentId, postId);
+                if (targetRows.isEmpty()) {
+                    throw invalidRequest();
+                }
+                if (targetMemberId == null) {
+                    targetMemberId = targetRows.get(0);
+                }
+            }
+        } else if (targetCommentId != null) {
+            throw invalidRequest();
+        }
+
+        if (targetMemberId != null) {
+            Boolean memberExists = jdbc.queryForObject(
+                    "select exists(select 1 from content.member where id = ?)",
+                    Boolean.class,
+                    targetMemberId);
+            if (!Boolean.TRUE.equals(memberExists)) {
                 throw invalidRequest();
             }
         }
 
         Long commentId = jdbc.queryForObject(
-                "insert into content.community_comment(post_id, member_id, parent_comment_id, content, status, created_at, updated_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', now(), now()) returning id",
+                "insert into content.community_comment("
+                        + "post_id, member_id, parent_comment_id, target_comment_id, target_member_id, "
+                        + "content, status, like_count, report_count, reply_count, created_at, updated_at"
+                        + ") values (?, ?, ?, ?, ?, ?, 'ACTIVE', 0, 0, 0, now(), now()) returning id",
                 Long.class,
-                postId, memberId, parentCommentId, content);
+                postId, memberId, parentCommentId, targetCommentId, targetMemberId, content);
+
+        if (parentCommentId != null) {
+            jdbc.update(
+                    "update content.community_comment set reply_count = ("
+                            + "select count(*) from content.community_comment where parent_comment_id = ? and status = 'ACTIVE'"
+                            + ") where id = ?",
+                    parentCommentId, parentCommentId);
+        }
 
         jdbc.update(
                 "update content.community_post set comment_count = (select count(*) from content.community_comment where post_id = ? and status = 'ACTIVE') where id = ?",
                 postId, postId);
 
-        var created = jdbc.query(
-                "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.status as member_status, "
-                        + "c.parent_comment_id, c.content, c.created_at, c.updated_at "
-                        + "from content.community_comment c "
-                        + "join content.member m on m.id = c.member_id "
-                        + "where c.id = ?",
-                (rs, n) -> mapComment(rs, memberId),
+        return querySingleComment(commentId, memberId);
+    }
+
+    @Transactional(timeout = 5)
+    public CommunityCommentResponse updateComment(Long memberId, Long commentId, UpdateCommentRequest body) {
+        if (commentId == null || commentId <= 0) {
+            throw notFound();
+        }
+        if (body == null) {
+            throw invalidRequest();
+        }
+        String content = validateCommentContent(body.content());
+
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        requireActiveMember(memberId);
+
+        var locked = jdbc.query(
+                "select post_id, member_id, status from content.community_comment where id = ? for update",
+                (rs, n) -> new CommentOwnerStatus(rs.getLong("post_id"), rs.getLong("member_id"), rs.getString("status")),
                 commentId);
-        return created.get(0);
+        if (locked.isEmpty() || !"ACTIVE".equals(locked.get(0).status())) {
+            throw notFound();
+        }
+        if (!locked.get(0).memberId().equals(memberId)) {
+            throw forbidden();
+        }
+
+        jdbc.update(
+                "update content.community_comment set content = ?, updated_at = now() where id = ?",
+                content, commentId);
+        return querySingleComment(commentId, memberId);
     }
 
     @Transactional(timeout = 5)
@@ -393,13 +757,17 @@ public class CommunityService {
         requireActiveMember(memberId);
 
         var locked = jdbc.query(
-                "select post_id, member_id, status from content.community_comment where id = ? for update",
-                (rs, n) -> new CommentOwnerStatus(rs.getLong("post_id"), rs.getLong("member_id"), rs.getString("status")),
+                "select post_id, member_id, parent_comment_id, status from content.community_comment where id = ? for update",
+                (rs, n) -> {
+                    long parentRaw = rs.getLong("parent_comment_id");
+                    Long parentId = rs.wasNull() ? null : parentRaw;
+                    return new CommentOwnerHierarchy(rs.getLong("post_id"), rs.getLong("member_id"), parentId, rs.getString("status"));
+                },
                 commentId);
         if (locked.isEmpty()) {
             throw notFound();
         }
-        CommentOwnerStatus existing = locked.get(0);
+        CommentOwnerHierarchy existing = locked.get(0);
         if (!existing.memberId().equals(memberId)) {
             throw forbidden();
         }
@@ -409,29 +777,191 @@ public class CommunityService {
             jdbc.update(
                     "update content.community_comment set status = 'DELETED', deleted_at = now(), updated_at = now() where id = ?",
                     commentId);
+            if (existing.parentCommentId() != null) {
+                jdbc.update(
+                        "update content.community_comment set reply_count = ("
+                                + "select count(*) from content.community_comment where parent_comment_id = ? and status = 'ACTIVE'"
+                                + ") where id = ?",
+                        existing.parentCommentId(), existing.parentCommentId());
+            }
             jdbc.update(
                     "update content.community_post set comment_count = (select count(*) from content.community_comment where post_id = ? and status = 'ACTIVE') where id = ?",
                     existing.postId(), existing.postId());
         }
     }
 
+    @Transactional(timeout = 5)
+    public CommentLikeResponse changeCommentLike(Long memberId, Long commentId, boolean like) {
+        if (commentId == null || commentId <= 0) {
+            throw notFound();
+        }
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        requireActiveMember(memberId);
+
+        var statusRows = jdbc.queryForList(
+                "select status from content.community_comment where id = ? for update",
+                String.class,
+                commentId);
+        if (statusRows.isEmpty() || !"ACTIVE".equals(statusRows.get(0))) {
+            throw notFound();
+        }
+
+        if (like) {
+            jdbc.update(
+                    "insert into content.community_comment_like(comment_id, member_id, created_at) values (?, ?, now()) on conflict(comment_id, member_id) do nothing",
+                    commentId, memberId);
+        } else {
+            jdbc.update(
+                    "delete from content.community_comment_like where comment_id = ? and member_id = ?",
+                    commentId, memberId);
+        }
+
+        Integer likeCount = jdbc.queryForObject(
+                "update content.community_comment set like_count = (select count(*) from content.community_comment_like where comment_id = ?) where id = ? returning like_count",
+                Integer.class,
+                commentId, commentId);
+        return new CommentLikeResponse(commentId, likeCount == null ? 0 : likeCount, like);
+    }
+
+    @Transactional(timeout = 5)
+    public ReportResponse changeCommentReport(Long memberId, Long commentId, String reasonType, boolean report) {
+        if (commentId == null || commentId <= 0) {
+            throw notFound();
+        }
+        String normalizedReason = report ? normalizeReportReason(reasonType) : "SPAM";
+
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        requireActiveMember(memberId);
+
+        var locked = jdbc.query(
+                "select member_id, status from content.community_comment where id = ? for update",
+                (rs, n) -> new OwnerStatus(rs.getLong("member_id"), rs.getString("status")),
+                commentId);
+        if (locked.isEmpty() || !"ACTIVE".equals(locked.get(0).status())) {
+            throw notFound();
+        }
+        if (locked.get(0).memberId().equals(memberId)) {
+            throw invalidRequest();
+        }
+
+        if (report) {
+            jdbc.update(
+                    "insert into content.community_comment_report(comment_id, member_id, reason_type, created_at) "
+                            + "values (?, ?, ?, now()) "
+                            + "on conflict(comment_id, member_id) do update set reason_type = excluded.reason_type",
+                    commentId, memberId, normalizedReason);
+        } else {
+            jdbc.update(
+                    "delete from content.community_comment_report where comment_id = ? and member_id = ?",
+                    commentId, memberId);
+        }
+
+        Integer reportCount = jdbc.queryForObject(
+                "update content.community_comment set report_count = (select count(*) from content.community_comment_report where comment_id = ?) where id = ? returning report_count",
+                Integer.class,
+                commentId, commentId);
+        return new ReportResponse(commentId, reportCount == null ? 0 : reportCount, report);
+    }
+
+    private void insertUploadedFiles(Long postId, List<CommunityS3Service.UploadResult> uploadedFiles) {
+        if (uploadedFiles == null || uploadedFiles.isEmpty()) {
+            return;
+        }
+        for (CommunityS3Service.UploadResult f : uploadedFiles) {
+            jdbc.update(
+                    "insert into content.community_post_file(post_id, original_name, file_size, file_url, s3_key, content_type, created_at) "
+                            + "values (?, ?, ?, ?, ?, ?, now())",
+                    postId, f.originalName(), f.size(), f.url(), f.key(), f.contentType());
+        }
+    }
+
     private CommunityPostResponse queryActivePost(Long postId, Long viewerId) {
         String sql = "select p.id, p.member_id, m.nickname as member_nickname, m.status as member_status, "
-                + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, "
-                + "p.created_at, p.updated_at, "
+                + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
+                + "p.shared_position_json, p.created_at, p.updated_at, "
                 + (viewerId == null
-                ? "false as liked_by_me "
-                : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me ")
+                ? "false as liked_by_me, false as reported_by_me "
+                : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me, "
+                  + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ?) as reported_by_me ")
                 + "from content.community_post p "
                 + "join content.member m on m.id = p.member_id "
                 + "where p.id = ? and p.status = 'ACTIVE'";
         var rows = viewerId == null
-                ? jdbc.query(sql, (rs, n) -> mapPost(rs, null), postId)
-                : jdbc.query(sql, (rs, n) -> mapPost(rs, viewerId), viewerId, postId);
+                ? jdbc.query(sql, (rs, n) -> mapRawPost(rs, null), postId)
+                : jdbc.query(sql, (rs, n) -> mapRawPost(rs, viewerId), viewerId, viewerId, postId);
+        if (rows.isEmpty()) {
+            throw notFound();
+        }
+        return hydratePostFiles(rows).get(0);
+    }
+
+    private CommunityCommentResponse querySingleComment(Long commentId, Long viewerId) {
+        String sql = "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.status as member_status, "
+                + "c.parent_comment_id, c.target_comment_id, c.target_member_id, "
+                + "tm.nickname as target_member_nickname, tm.status as target_member_status, "
+                + "c.content, c.status as comment_status, c.like_count, c.report_count, c.created_at, c.updated_at, "
+                + (viewerId == null
+                ? "false as liked_by_me, false as reported_by_me "
+                : "exists(select 1 from content.community_comment_like l where l.comment_id = c.id and l.member_id = ?) as liked_by_me, "
+                  + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
+                + "from content.community_comment c "
+                + "join content.member m on m.id = c.member_id "
+                + "left join content.member tm on tm.id = c.target_member_id "
+                + "where c.id = ?";
+        var rows = viewerId == null
+                ? jdbc.query(sql, (rs, n) -> mapComment(rs, null), commentId)
+                : jdbc.query(sql, (rs, n) -> mapComment(rs, viewerId), viewerId, viewerId, commentId);
         if (rows.isEmpty()) {
             throw notFound();
         }
         return rows.get(0);
+    }
+
+    private List<CommunityPostResponse> hydratePostFiles(List<CommunityPostResponse> posts) {
+        if (posts.isEmpty()) {
+            return posts;
+        }
+        List<Long> postIds = posts.stream().map(CommunityPostResponse::id).toList();
+        String placeholders = postIds.stream().map(id -> "?").collect(Collectors.joining(","));
+        List<PostFileResponse> allFiles = jdbc.query(
+                "select id, post_id, original_name, file_size, file_url, content_type, created_at "
+                        + "from content.community_post_file where post_id in (" + placeholders + ") order by id asc",
+                (rs, n) -> new PostFileResponse(
+                        rs.getLong("id"),
+                        rs.getLong("post_id"),
+                        rs.getString("original_name"),
+                        rs.getLong("file_size"),
+                        rs.getString("file_url"),
+                        rs.getString("content_type"),
+                        rs.getTimestamp("created_at").toInstant()),
+                postIds.toArray());
+
+        Map<Long, List<PostFileResponse>> byPostId = new HashMap<>();
+        for (PostFileResponse file : allFiles) {
+            byPostId.computeIfAbsent(file.postId(), k -> new ArrayList<>()).add(file);
+        }
+
+        return posts.stream()
+                .map(p -> new CommunityPostResponse(
+                        p.id(),
+                        p.memberId(),
+                        p.authorNickname(),
+                        p.authorWithdrawn(),
+                        p.category(),
+                        p.symbolTag(),
+                        p.title(),
+                        p.content(),
+                        p.likeCount(),
+                        p.commentCount(),
+                        p.reportCount(),
+                        p.likedByMe(),
+                        p.reportedByMe(),
+                        p.mine(),
+                        byPostId.getOrDefault(p.id(), List.of()),
+                        p.sharedPosition(),
+                        p.createdAt(),
+                        p.updatedAt()))
+                .toList();
     }
 
     private void requireActiveMember(Long memberId) {
@@ -441,6 +971,56 @@ public class CommunityService {
         members.lockById(memberId)
                 .filter(m -> m.getStatus() == Member.Status.ACTIVE)
                 .orElseThrow(() -> new AuthFailure("MEMBER_NOT_ACTIVE", HttpStatus.UNAUTHORIZED));
+    }
+
+    private static String normalizeSort(String sort) {
+        if (sort == null || sort.isBlank()) {
+            return "LATEST";
+        }
+        String upper = sort.strip().toUpperCase(Locale.ROOT);
+        return switch (upper) {
+            case "LATEST", "ALL" -> "LATEST";
+            case "POPULAR", "BEST" -> "POPULAR";
+            default -> throw invalidRequest();
+        };
+    }
+
+    private static String normalizeReportReason(String reasonType) {
+        if (reasonType == null || reasonType.isBlank()) {
+            return "SPAM";
+        }
+        String upper = reasonType.strip().toUpperCase(Locale.ROOT);
+        if (!REPORT_REASONS.containsKey(upper)) {
+            throw invalidRequest();
+        }
+        return upper;
+    }
+
+    private String serializeSharedPosition(SharedPositionSnapshot snapshot) {
+        if (snapshot == null) {
+            return null;
+        }
+        if (snapshot.symbol() == null || snapshot.symbol().isBlank()
+                || snapshot.side() == null || snapshot.side().isBlank()
+                || snapshot.leverage() < 1 || snapshot.leverage() > 125) {
+            throw invalidRequest();
+        }
+        try {
+            return json.writeValueAsString(snapshot);
+        } catch (JsonProcessingException e) {
+            throw invalidRequest();
+        }
+    }
+
+    private SharedPositionSnapshot deserializeSharedPosition(String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            return null;
+        }
+        try {
+            return json.readValue(rawJson, SharedPositionSnapshot.class);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
     }
 
     private static String validateCategory(String category) {
@@ -459,6 +1039,9 @@ public class CommunityService {
             return null;
         }
         String normalized = symbolTag.strip().toUpperCase(Locale.ROOT);
+        if ("ALL".equals(normalized)) {
+            return null;
+        }
         if (!normalized.matches("[A-Z0-9]{1,16}")) {
             throw invalidRequest();
         }
@@ -498,7 +1081,7 @@ public class CommunityService {
         return trimmed;
     }
 
-    private static CommunityPostResponse mapPost(ResultSet rs, Long viewerId) throws SQLException {
+    private CommunityPostResponse mapRawPost(ResultSet rs, Long viewerId) throws SQLException {
         long authorId = rs.getLong("member_id");
         String nickname = rs.getString("member_nickname");
         String memberStatus = rs.getString("member_status");
@@ -515,8 +1098,12 @@ public class CommunityService {
                 rs.getString("content"),
                 rs.getInt("like_count"),
                 rs.getInt("comment_count"),
+                rs.getInt("report_count"),
                 rs.getBoolean("liked_by_me"),
+                rs.getBoolean("reported_by_me"),
                 viewerId != null && viewerId.equals(authorId),
+                List.of(),
+                deserializeSharedPosition(rs.getString("shared_position_json")),
                 rs.getTimestamp("created_at").toInstant(),
                 rs.getTimestamp("updated_at").toInstant()
         );
@@ -528,8 +1115,28 @@ public class CommunityService {
         String memberStatus = rs.getString("member_status");
         boolean authorWithdrawn = "WITHDRAWN".equals(memberStatus) || nickname == null;
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
+
         long parentRaw = rs.getLong("parent_comment_id");
         Long parentCommentId = rs.wasNull() ? null : parentRaw;
+
+        long targetCommentRaw = rs.getLong("target_comment_id");
+        Long targetCommentId = rs.wasNull() ? null : targetCommentRaw;
+
+        long targetMemberRaw = rs.getLong("target_member_id");
+        Long targetMemberId = rs.wasNull() ? null : targetMemberRaw;
+
+        String targetNickname = null;
+        if (targetMemberId != null) {
+            String rawTargetNick = rs.getString("target_member_nickname");
+            String rawTargetStatus = rs.getString("target_member_status");
+            boolean targetWithdrawn = "WITHDRAWN".equals(rawTargetStatus) || rawTargetNick == null;
+            targetNickname = targetWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : rawTargetNick;
+        }
+
+        String commentStatus = rs.getString("comment_status");
+        boolean deleted = !"ACTIVE".equals(commentStatus);
+        String content = deleted ? DELETED_COMMENT_MASK : rs.getString("content");
+
         return new CommunityCommentResponse(
                 rs.getLong("id"),
                 rs.getLong("post_id"),
@@ -537,8 +1144,16 @@ public class CommunityService {
                 displayNickname,
                 authorWithdrawn,
                 parentCommentId,
-                rs.getString("content"),
+                targetCommentId,
+                targetMemberId,
+                targetNickname,
+                content,
+                rs.getInt("like_count"),
+                rs.getInt("report_count"),
+                rs.getBoolean("liked_by_me"),
+                rs.getBoolean("reported_by_me"),
                 viewerId != null && viewerId.equals(authorId),
+                deleted,
                 rs.getTimestamp("created_at").toInstant(),
                 rs.getTimestamp("updated_at").toInstant()
         );
@@ -551,12 +1166,15 @@ public class CommunityService {
             String symbolTag,
             String title,
             String content,
+            String sharedPositionJson,
             String status
     ) { }
 
     private record OwnerStatus(Long memberId, String status) { }
 
     private record CommentOwnerStatus(Long postId, Long memberId, String status) { }
+
+    private record CommentOwnerHierarchy(Long postId, Long memberId, Long parentCommentId, String status) { }
 
     private static AuthFailure invalidRequest() {
         return new AuthFailure("INVALID_REQUEST", HttpStatus.BAD_REQUEST);
