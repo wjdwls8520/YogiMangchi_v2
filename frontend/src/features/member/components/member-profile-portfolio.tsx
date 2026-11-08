@@ -543,6 +543,7 @@ export function MemberMyProfilePage({
                               <th className="px-4 py-3.5 text-right">청산예상가</th>
                               <th className="px-4 py-3.5 text-right">투입 증거금</th>
                               <th className="px-4 py-3.5 text-right">평가손익 (ROE)</th>
+                              <th className="px-4 py-3.5 text-right">공유</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
@@ -583,6 +584,14 @@ export function MemberMyProfilePage({
                                 <td className="px-4 py-3.5 text-right font-black text-red-500">
                                   <div>{pos.pnl}</div>
                                   <div className="text-[11px]">{pos.roe}</div>
+                                </td>
+                                <td className="px-4 py-3.5 text-right">
+                                  <Link
+                                    href={`/community/all?sharePosition=${pos.symbol.replace("USDT", "")}`}
+                                    className="inline-flex h-8 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
+                                  >
+                                    포지션 공유
+                                  </Link>
                                 </td>
                               </tr>
                             ))}
@@ -1073,6 +1082,7 @@ export function MemberMyProfilePage({
                               <th className="px-4 py-3 text-right">진입가격</th>
                               <th className="px-4 py-3 text-right">마크가격</th>
                               <th className="px-4 py-3 text-right">평가손익 (ROE)</th>
+                              <th className="px-4 py-3 text-right">공유</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
@@ -1101,6 +1111,14 @@ export function MemberMyProfilePage({
                                 </td>
                                 <td className="px-4 py-3.5 text-right font-black text-red-500">
                                   {pos.pnl} ({pos.roe})
+                                </td>
+                                <td className="px-4 py-3.5 text-right">
+                                  <Link
+                                    href={`/community/all?sharePosition=${pos.symbol.replace("USDT", "")}`}
+                                    className="inline-flex h-8 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
+                                  >
+                                    포지션 공유
+                                  </Link>
                                 </td>
                               </tr>
                             ))}

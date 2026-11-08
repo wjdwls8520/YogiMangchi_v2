@@ -188,6 +188,9 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
       assert.equal(html.includes(label), true, label);
     }
     assert.match(html, /비트코인 현물 ETF 자금 유입 확대/);
+    assert.match(html, /<select[^>]*aria-label="뉴스 카테고리 필터"/);
+    assert.match(html, /<select[^>]*aria-label="뉴스 종목 태그 필터"/);
+    assert.match(html, /<select[^>]*aria-label="뉴스 브리핑 보기 방식"/);
     assert.match(html, /미국 현물 ETF 순유입과 함께 BTC 선물 시장의 유동성이 확대되고 있습니다\./);
     assert.match(html, /BTC 선물 모의투자 이동/);
     assert.match(html, /이전 뉴스 더보기/);
@@ -326,6 +329,12 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
       </MemberProvider>,
     );
     assert.match(html, /최신글 \(LATEST\)/);
+    assert.match(html, /<select[^>]*aria-label="카테고리 필터"/);
+    assert.match(html, /<select[^>]*aria-label="종목 태그 필터"/);
+    assert.match(html, /<select[^>]*aria-label="정렬 선택"/);
+    assert.match(html, /원장 스냅샷 검증됨 ✓/);
+    assert.match(html, /BTCUSDT 무기한/);
+    assert.match(html, /📊 포지션 공유하기/);
     assert.match(html, /인기글 \(POPULAR\)/);
     assert.match(html, /새 게시글 보기/); assert.match(html, /새 글 작성/);
     assert.match(html, /게시글 등록/);
