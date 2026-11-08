@@ -26,7 +26,9 @@ export function MemberShell({
         <div className="ym-gnb-inner">
           <div className="ym-gnb-left">
             <Link href="/" className="member-logo">
-              요기망치 <span className="ym-logo-en">YOGIMANGCHI</span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/images/logo.webp" alt="요기망치 YOGIMANGCHI" className="ym-brand-logo-img" />
+              <span className="sr-only">요기망치 YOGIMANGCHI</span>
             </Link>
             <nav aria-label="회원 메뉴" className="ym-gnb-nav">
               <Link href="/">홈</Link>
@@ -102,6 +104,11 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
 
   return (
     <div className="member-fields ym-login-container">
+      <div className="ym-login-logo-wrap">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/images/logo.webp" alt="요기망치 로고" className="ym-login-logo-img" />
+      </div>
+
       <div className="ym-login-intro">
         <p className="ym-login-lead">Google 또는 Kakao 계정으로 로그인하세요.</p>
         <p className="ym-login-sub">

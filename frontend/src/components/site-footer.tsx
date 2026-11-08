@@ -13,7 +13,9 @@ export function SiteFooter() {
         <div className="site-footer-content">
           <div className="site-footer-brand">
             <p className="site-footer-title">
-              요기망치 <span>YOGIMANGCHI</span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/images/logo.webp" alt="요기망치 YOGIMANGCHI" className="ym-footer-logo-img" />
+              <span className="sr-only">요기망치 <span>YOGIMANGCHI</span></span>
             </p>
             <p>실시간 글로벌 경제·암호화폐 속보와 트레이더 커뮤니티, 10,000 USDT 선물 모의투자를 한곳에서 제공합니다.</p>
           </div>

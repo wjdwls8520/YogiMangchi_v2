@@ -3143,3 +3143,31 @@ body:has(.member-shell) .site-footer-copyright {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Official Brand Logo Image Styles (xrhub.co.kr .logo > img / .login-container-logo benchmark) */
+.ym-brand-logo-img {
+  display: block;
+  height: 34px;
+  width: auto;
+  object-fit: contain;
+}
+
+.ym-login-logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 6px;
+}
+
+.ym-login-logo-img {
+  display: block;
+  height: 38px;
+  width: auto;
+  object-fit: contain;
+}
+
+.ym-footer-logo-img {
+  display: block;
+  height: 30px;
+  width: auto;
+  object-fit: contain;
+}

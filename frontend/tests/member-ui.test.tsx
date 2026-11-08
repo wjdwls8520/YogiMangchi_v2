@@ -437,3 +437,26 @@ test("DimModal and scroll lock preserve exact scrollY position and hide scrollba
     "",
   );
 });
+
+test("MemberShell and MemberLoginView render the official /images/logo.webp brand asset", () => {
+  const client = new QueryClient();
+  try {
+    const loginHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberLoginView google="http://localhost:8080/oauth2/authorization/google" kakao="http://localhost:8080/oauth2/authorization/kakao" />
+      </MemberProvider>,
+    );
+    assert.match(loginHtml, /src="\/images\/logo\.webp"/);
+    assert.match(loginHtml, /ym-login-logo-img/);
+
+    const portalHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+    assert.match(portalHtml, /src="\/images\/logo\.webp"/);
+    assert.match(portalHtml, /ym-brand-logo-img/);
+  } finally {
+    client.clear();
+  }
+});
