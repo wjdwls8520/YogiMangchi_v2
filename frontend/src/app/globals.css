@@ -214,7 +214,6 @@
   .trading-workspace {
     @apply mb-8 bg-terminal-panel sm:mb-12;
     padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
-    padding-bottom: env(safe-area-inset-bottom);
   }
   .trading-grid {
     @apply min-w-0;
@@ -309,7 +308,6 @@
   .market-sheet-content {
     @apply mx-auto w-full max-w-3xl overflow-y-auto rounded-t-lg bg-terminal-panel;
     max-height: calc(100dvh - 2rem);
-    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
     padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
     overscroll-behavior: contain;
   }
@@ -732,20 +730,6 @@
     @apply grid gap-x-2 gap-y-1 border-b border-terminal-line py-2 last:border-b-0;
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .site-footer { @apply border-t border-terminal-line bg-terminal-panel; }
-  .site-footer-content {
-    @apply mx-auto grid max-w-screen-2xl grid-cols-2 gap-x-6 gap-y-6 px-3 py-8 text-trade-body text-terminal-muted lg:grid-cols-[minmax(0,2fr)_1fr_1fr] lg:px-5;
-    padding-bottom: calc(2rem + env(safe-area-inset-bottom));
-    padding-left: max(0.75rem, env(safe-area-inset-left));
-    padding-right: max(0.75rem, env(safe-area-inset-right));
-  }
-  .site-footer-brand { @apply col-span-2 space-y-2 lg:col-span-1; }
-  .site-footer-title { @apply flex flex-wrap items-baseline gap-x-2 text-trade-heading font-bold text-terminal-text; }
-  .site-footer-title span { @apply text-trade-meta font-medium tracking-widest text-terminal-muted; }
-  .site-footer-heading { @apply mb-3 text-trade-subheading font-semibold text-terminal-text; }
-  .site-footer-heading span { @apply ml-1 whitespace-nowrap text-trade-meta font-normal text-terminal-muted; }
-  .site-footer-info ul { @apply space-y-2; }
-  .site-footer-copyright { @apply col-span-full border-t border-terminal-line pt-5 text-trade-meta; }
   @media (width >= 40rem) {
     .wallet-overview[data-layout="grid"] dl { @apply grid-cols-2; }
     .wallet-overview[data-layout="grid"] dl > div:nth-child(odd) { @apply border-r pr-5; }
@@ -3135,33 +3119,6 @@ body:has(.member-shell) :focus-visible {
   border-radius: 8px;
 }
 
-/* Light-themed SiteFooter on content/member/portal pages */
-body:has(.member-shell) .site-footer {
-  border-top: 1px solid #DEE1E6;
-  background-color: #F5F5F7;
-  color: #6E6E73;
-}
-
-body:has(.member-shell) .site-footer-title,
-body:has(.member-shell) .site-footer-heading {
-  color: #1D1D1F;
-}
-
-body:has(.member-shell) .site-footer-copyright {
-  border-top: 1px solid #D9D9D9;
-  color: #9999A1;
-}
-
-.ym-footer-modal-btn {
-  border: 0;
-  background: transparent;
-  padding: 0 2px;
-  font-size: 11px;
-  color: #7242FF;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
 /* Official Brand Logo Image Styles (xrhub.co.kr .logo > img / .login-container-logo benchmark) */
 .ym-brand-logo-img {
   display: block;
@@ -3179,13 +3136,6 @@ body:has(.member-shell) .site-footer-copyright {
 .ym-login-logo-img {
   display: block;
   height: 38px;
-  width: auto;
-  object-fit: contain;
-}
-
-.ym-footer-logo-img {
-  display: block;
-  height: 30px;
   width: auto;
   object-fit: contain;
 }
