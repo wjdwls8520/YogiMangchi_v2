@@ -12,144 +12,237 @@ import { MemberShell, ProfileEditForm } from "./member-views";
 import { MemberWithdrawal } from "./member-withdrawal";
 import { MemberConsents } from "./member-consents";
 import { ProfileImageUploadSlot } from "./s3-upload-slot";
-import { TradingDataProvider } from "../../trading/components/trading-data-provider";
-import { MemberSimulation } from "../../trading/components/member-simulation";
 
 export function MemberAccount() {
-  const { session, snapshot } = useMember(), client = useQueryClient();
-  const [pending, setPending] = useState(false), [message, setMessage] = useState<string | null>(null), [error, setError] = useState<string | null>(null);
+  const { session, snapshot } = useMember();
+  const client = useQueryClient();
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const active = useRef(false);
   const [requestError, setRequestError] = useState<ContentApiError | null>(null);
-  const profile = useQuery({ queryKey: ["member", "own", snapshot.memberId, snapshot.generation], enabled: snapshot.phase === "ready",
-    queryFn: async ({ signal }) => parseOwnProfile(await session.request("/members/me", { signal }), snapshot.memberId!),
+
+  const profile = useQuery({
+    queryKey: ["member", "own", snapshot.memberId, snapshot.generation],
+    enabled: snapshot.phase === "ready",
+    queryFn: async ({ signal }) =>
+      parseOwnProfile(await session.request("/members/me", { signal }), snapshot.memberId!),
   });
+
   async function save(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (active.current || snapshot.phase !== "ready") return;
-    const data = new FormData(event.currentTarget), nickname = String(data.get("nickname") ?? ""), profileMessage = String(data.get("profileMessage") ?? "");
+    event.preventDefault();
+    if (active.current || snapshot.phase !== "ready") return;
+    const data = new FormData(event.currentTarget);
+    const nickname = String(data.get("nickname") ?? "");
+    const profileMessage = String(data.get("profileMessage") ?? "");
     const nicknameChanged = nickname !== profile.data?.nickname;
     const nicknameError = nicknameChanged ? nicknameIssue(nickname) : null;
-    if (nicknameError || profileMessage.length > 255) { setError(nicknameError ?? "소개는 최대 255자로 입력해 주세요."); return; }
-    active.current = true; setPending(true); setError(null); setMessage(null); setRequestError(null);
+    if (nicknameError || profileMessage.length > 255) {
+      setError(nicknameError ?? "소개는 최대 255자로 입력해 주세요.");
+      return;
+    }
+    active.current = true;
+    setPending(true);
+    setError(null);
+    setMessage(null);
+    setRequestError(null);
     try {
-      parseOwnProfile(await session.request("/members/me/profile", { method: "PATCH", body: { ...(nicknameChanged ? { nickname } : {}), profileMessage } }), snapshot.memberId!);
-      await client.invalidateQueries({ queryKey: ["member"] }); setMessage("프로필을 저장했습니다.");
-    } catch (error) { setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null); }
-    finally { active.current = false; setPending(false); }
+      parseOwnProfile(
+        await session.request("/members/me/profile", {
+          method: "PATCH",
+          body: { ...(nicknameChanged ? { nickname } : {}), profileMessage },
+        }),
+        snapshot.memberId!,
+      );
+      await client.invalidateQueries({ queryKey: ["member"] });
+      setMessage("프로필을 저장했습니다.");
+    } catch (err) {
+      setError(contentMessage(err));
+      setRequestError(err instanceof ContentApiError ? err : null);
+    } finally {
+      active.current = false;
+      setPending(false);
+    }
   }
+
   return (
     <MemberShell
-      title="내 계정 · 회원정보 수정"
-      subtitle="프로필 이미지, 닉네임, 약관 동의 버전 및 선물 모의투자 회차 원장을 한곳에서 관리합니다."
+      title="회원정보 수정"
+      subtitle="기본 프로필 이미지, 닉네임, 프로필 메시지 및 약관 동의·회원 탈퇴를 관리합니다."
       variant="default"
+      hideCardHeading
     >
-      <section className="ym-account-section" aria-label="프로필 이미지 관리">
-        <div className="ym-section-head">
-          <h2>프로필 이미지 설정</h2>
-          <span className="ym-badge-outline">S3 업로드 연동 준비</span>
-        </div>
-        <ProfileImageUploadSlot slotName="account-profile-image" />
-      </section>
-
-      {snapshot.phase !== "ready" ? (
-        <section className="ym-account-section">
-          <p role="status" className="member-message">
-            {snapshot.phase === "loading" || snapshot.phase === "authenticating"
-              ? "로그인 상태를 확인하는 중입니다."
-              : snapshot.phase === "recovering"
-                ? "세션 복구 대기 중입니다. 기존 회원 정보는 보존하며 보호 요청은 인증 확인 후 재개합니다."
-                : snapshot.phase === "error"
-                  ? "회원 연결을 확인하지 못했습니다."
-                  : snapshot.phase === "withdrawing"
-                    ? "탈퇴 진행 상태를 확인하는 중입니다. 완료 전까지 회원 기능은 중단됩니다."
-                    : "로그인이 필요합니다."}
-          </p>
-          {snapshot.phase !== "withdrawing" && (
-            <div className="member-actions">
-              <Link href="/login" className="login-button ym-btn-inline">
-                로그인
-              </Link>
-              <Link href="/signup" className="signup-button ym-btn-inline">
-                회원가입
-              </Link>
-            </div>
-          )}
-          {snapshot.phase === "error" && (
-            <div className="member-actions">
-              <button className="member-secondary" onClick={() => void session.restore().catch(() => {})}>
-                로그인 다시 확인
-              </button>
-              <MemberLogout />
-            </div>
-          )}
-        </section>
-      ) : (
-        <>
-          {profile.isPending && <p role="status" className="member-message">프로필을 불러오는 중입니다.</p>}
-          {profile.isError && (
-            <p role="alert" className="member-message">
-              {contentMessage(profile.error)}{" "}
-              <button className="account-refresh" onClick={() => void profile.refetch()}>
-                다시 조회
-              </button>
+      <div className="mx-auto max-w-2xl space-y-6">
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+              회원정보 수정
+            </h2>
+            <p className="mt-1 text-xs font-medium text-gray-500">
+              포트폴리오 조회는 내 프로필(/me), 자산·회차·주문 관리는 내 자산(/assets)에서 확인할 수 있습니다.
             </p>
-          )}
-          {profile.data && (
-            <>
-              <section className="ym-account-summary-card" aria-label="회원 계정 요약">
-                <div className="ym-account-meta">
-                  <p className="member-note">
-                    회원 #{profile.data.memberId} · {profile.data.role}
-                  </p>
-                  <strong className="ym-account-nick">{profile.data.nickname}</strong>
-                </div>
-                <div className="member-actions">
-                  <Link href={`/members/${profile.data.memberId}`} className="signup-button ym-btn-inline">
-                    공개 프로필·팔로우 보기
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/me"
+              className="inline-flex h-9 items-center justify-center rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
+            >
+              내 프로필 (/me)
+            </Link>
+            <Link
+              href="/assets"
+              className="inline-flex h-9 items-center justify-center rounded-xl bg-gray-900 px-3.5 text-xs font-bold text-white hover:bg-gray-800"
+            >
+              내 자산 (/assets)
+            </Link>
+          </div>
+        </div>
+
+        {/* V1 기본 정보 카드 (아바타 업로더 + 닉네임 + 프로필 메시지) */}
+        <section
+          className="card rounded-2xl border border-gray-200 bg-white p-6 sm:p-8 space-y-8"
+          aria-label="기본 정보"
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="flex items-center gap-2 text-lg font-black text-gray-900">
+              <span className="inline-block h-4 w-1.5 rounded-full bg-[#0058FF]" />
+              기본 정보
+            </h3>
+            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-[#0058FF]">
+              일반회원 · S3 프리뷰 지원
+            </span>
+          </div>
+
+          <div className="flex flex-col items-center justify-center">
+            <ProfileImageUploadSlot slotName="account-profile-image" />
+            <p className="mt-2 text-xs font-bold text-gray-400">
+              앨범에서 사진 선택 또는 기본 이미지로 변경
+            </p>
+          </div>
+
+          {snapshot.phase !== "ready" ? (
+            <div className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-5 space-y-4">
+              <p role="status" className="member-message text-sm font-bold text-gray-700">
+                {snapshot.phase === "loading" || snapshot.phase === "authenticating"
+                  ? "로그인 상태를 확인하는 중입니다."
+                  : snapshot.phase === "recovering"
+                    ? "세션 복구 대기 중입니다. 기존 회원 정보는 보존하며 보호 요청은 인증 확인 후 재개합니다."
+                    : snapshot.phase === "error"
+                      ? "회원 연결을 확인하지 못했습니다."
+                      : snapshot.phase === "withdrawing"
+                        ? "탈퇴 진행 상태를 확인하는 중입니다. 완료 전까지 회원 기능은 중단됩니다."
+                        : "로그인이 필요합니다."}
+              </p>
+              {snapshot.phase !== "withdrawing" && (
+                <div className="member-actions flex gap-2">
+                  <Link
+                    href="/login"
+                    className="login-button inline-flex h-10 items-center justify-center rounded-xl bg-[#0058FF] px-5 text-xs font-bold text-white"
+                  >
+                    로그인
                   </Link>
+                  <Link
+                    href="/signup"
+                    className="signup-button inline-flex h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-5 text-xs font-bold text-gray-700"
+                  >
+                    회원가입
+                  </Link>
+                </div>
+              )}
+              {snapshot.phase === "error" && (
+                <div className="member-actions flex gap-2">
+                  <button
+                    className="member-secondary rounded-xl border border-gray-300 bg-white px-4 py-2 text-xs font-bold"
+                    onClick={() => void session.restore().catch(() => {})}
+                  >
+                    로그인 다시 확인
+                  </button>
                   <MemberLogout />
                 </div>
-              </section>
+              )}
+            </div>
+          ) : (
+            <>
+              {profile.isPending && (
+                <p role="status" className="member-message text-xs text-gray-500">
+                  프로필을 불러오는 중입니다.
+                </p>
+              )}
+              {profile.isError && (
+                <p role="alert" className="member-message text-xs text-red-600">
+                  {contentMessage(profile.error)}{" "}
+                  <button className="account-refresh underline font-bold" onClick={() => void profile.refetch()}>
+                    다시 조회
+                  </button>
+                </p>
+              )}
+              {profile.data && (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between rounded-xl bg-gray-50 px-4 py-3 text-xs">
+                    <div>
+                      <span className="font-bold text-gray-500">
+                        회원 #{profile.data.memberId} · {profile.data.role}
+                      </span>
+                      <strong className="ml-2 font-black text-gray-900">
+                        {profile.data.nickname}
+                      </strong>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/members/${profile.data.memberId}`}
+                        className="font-bold text-[#0058FF] hover:underline"
+                      >
+                        공개 프로필 보기
+                      </Link>
+                      <MemberLogout />
+                    </div>
+                  </div>
 
-              <section className="ym-account-section" aria-label="기본 회원정보 수정">
-                <h2>회원정보 수정</h2>
-                <ProfileEditForm
-                  key={`${profile.data.nickname}:${profile.data.profileMessage}`}
-                  nickname={profile.data.nickname}
-                  message={profile.data.profileMessage}
-                  pending={pending}
-                  onSubmit={event => void save(event)}
-                />
-                <p className="member-note">Guest 모의투자와 회원 선물 계정은 별개이며 기록을 자동 합치지 않습니다.</p>
-              </section>
-
-              <MemberConsents />
-              {snapshot.consentStatus === "accepted" && (
-                <TradingDataProvider>
-                  <MemberSimulation />
-                </TradingDataProvider>
+                  <ProfileEditForm
+                    key={`${profile.data.nickname}:${profile.data.profileMessage}`}
+                    nickname={profile.data.nickname}
+                    message={profile.data.profileMessage}
+                    pending={pending}
+                    onSubmit={event => void save(event)}
+                  />
+                </div>
+              )}
+              {message && (
+                <p role="status" className="member-message is-available rounded-xl bg-blue-50 p-3 text-xs font-bold text-[#0058FF]">
+                  {message}
+                </p>
+              )}
+              {error && (
+                <>
+                  <p role="alert" className="member-message rounded-xl bg-red-50 p-3 text-xs font-bold text-red-600">
+                    {error}
+                  </p>
+                  <MemberErrorActions
+                    error={requestError}
+                    checking={pending || profile.isFetching}
+                    onCheck={() => void profile.refetch()}
+                  />
+                </>
               )}
             </>
           )}
-          {message && (
-            <p role="status" className="member-message is-available">
-              {message}
-            </p>
-          )}
-          {error && (
-            <>
-              <p role="alert" className="member-message">
-                {error}
-              </p>
-              <MemberErrorActions
-                error={requestError}
-                checking={pending || profile.isFetching}
-                onCheck={() => void profile.refetch()}
-              />
-            </>
-          )}
-        </>
-      )}
-      <MemberWithdrawal />
+        </section>
+
+        {/* 약관 동의 버전 관리 (로그인 시 표시) */}
+        {snapshot.phase === "ready" && profile.data && (
+          <section className="card rounded-2xl border border-gray-200 bg-white p-6 sm:p-8">
+            <MemberConsents />
+          </section>
+        )}
+
+        {/* 회원 탈퇴 섹션 */}
+        <section
+          id="withdrawal"
+          className="card rounded-2xl border border-gray-200 bg-white p-6 sm:p-8"
+        >
+          <MemberWithdrawal />
+        </section>
+      </div>
     </MemberShell>
   );
 }

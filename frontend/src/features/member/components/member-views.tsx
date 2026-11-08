@@ -5,95 +5,38 @@ import { useState, type ReactNode, type FormEventHandler } from "react";
 import { NicknameCheck } from "./nickname-check";
 import { NicknameInput } from "./nickname-input";
 import { DimModal } from "./dim-modal";
+import { V1Header } from "./v1-ui";
 export { SignupForm } from "./signup-form";
 
 export function MemberShell({
   title,
   subtitle,
   variant = "default",
+  hideCardHeading = false,
   children,
 }: {
   title: string;
   subtitle?: string;
   variant?: "auth" | "signup" | "default" | "wide" | "portal";
+  hideCardHeading?: boolean;
   children: ReactNode;
 }) {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
   return (
-    <main className={`member-shell ym-shell-${variant}`} data-shell-variant={variant}>
-      <header className="ym-gnb-header">
-        <div className="ym-gnb-inner">
-          <div className="ym-gnb-left">
-            <Link href="/" className="member-logo">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/images/logo.webp" alt="요기망치 YOGIMANGCHI" className="ym-brand-logo-img" />
-              <span className="sr-only">요기망치 YOGIMANGCHI</span>
-            </Link>
-            <nav aria-label="회원 메뉴" className="ym-gnb-nav">
-              <Link href="/">홈</Link>
-              <Link href="/news">실시간 뉴스</Link>
-              <Link href="/community">커뮤니티</Link>
-              <Link href="/trading">모의투자</Link>
-              <Link href="/account">내 계정</Link>
-            </nav>
-          </div>
-          <div className="ym-gnb-right">
-            <Link href="/trading" className="ym-gnb-SimBadge">
-              10,000 USDT 모의선물
-            </Link>
-            <Link href="/login" className="ym-gnb-login-pill">
-              로그인
-            </Link>
-            <Link href="/signup" className="ym-gnb-signup-link">
-              회원가입
-            </Link>
-            <button
-              type="button"
-              className="ym-gnb-hamburger"
-              aria-label="전체 메뉴 열기"
-              aria-expanded={mobileMenuOpen}
-              onClick={() => setMobileMenuOpen(true)}
-            >
-              ☰
-            </button>
-          </div>
-        </div>
-      </header>
+    <main className={`member-shell ym-shell-${variant} min-h-screen bg-[#F9FAFB] text-gray-900`} data-shell-variant={variant}>
+      <V1Header theme="light" />
 
-      <div className={`ym-page-container ym-container-${variant}`}>
+      <div className={`ym-page-container ym-container-${variant} mx-auto w-full max-w-[1280px] px-4 py-8 sm:px-6 md:py-12`}>
         <section className={`member-card ym-card-${variant}`}>
-          <div className="ym-card-heading">
-            <h1>{title}</h1>
-            {subtitle && <p className="ym-card-subtitle">{subtitle}</p>}
-          </div>
+          {!hideCardHeading && (
+            <div className="ym-card-heading mb-6">
+              <h1 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">{title}</h1>
+              {subtitle && <p className="ym-card-subtitle mt-1.5 text-sm font-medium text-gray-500">{subtitle}</p>}
+            </div>
+          )}
+          {hideCardHeading && <h1 className="sr-only">{title}</h1>}
           {children}
         </section>
       </div>
-
-      <DimModal
-        open={mobileMenuOpen}
-        onClose={() => setMobileMenuOpen(false)}
-        title="요기망치 전체 메뉴"
-        subtitle="원하시는 서비스 화면으로 빠르게 이동하세요."
-        maxWidth="420px"
-      >
-        <nav aria-label="모바일 전체 메뉴" className="ym-mobile-drawer-nav">
-          <Link href="/" onClick={() => setMobileMenuOpen(false)}>홈 · 실시간 마켓 포털</Link>
-          <Link href="/news" onClick={() => setMobileMenuOpen(false)}>실시간 뉴스 · 24시 코인니스형 속보</Link>
-          <Link href="/community" onClick={() => setMobileMenuOpen(false)}>커뮤니티 · 토스증권형 트레이더 피드</Link>
-          <Link href="/trading" onClick={() => setMobileMenuOpen(false)}>모의투자 · 10,000 USDT 선물 터미널</Link>
-          <Link href="/account" onClick={() => setMobileMenuOpen(false)}>내 계정 · 프로필 및 회차 관리</Link>
-          <div className="ym-mobile-drawer-auth">
-            <Link href="/login" className="login-button" onClick={() => setMobileMenuOpen(false)}>
-              로그인
-            </Link>
-            <Link href="/signup" className="signup-button" onClick={() => setMobileMenuOpen(false)}>
-              회원가입
-            </Link>
-          </div>
-        </nav>
-      </DimModal>
     </main>
   );
 }
@@ -103,30 +46,47 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
   const [helpOpen, setHelpOpen] = useState(false);
 
   return (
-    <div className="member-fields ym-login-container">
-      <div className="ym-login-logo-wrap">
+    <div className="member-fields ym-login-container mx-auto w-full max-w-md rounded-[24px] border border-gray-200 bg-white p-6 sm:p-8">
+      <div className="ym-login-logo-wrap mb-4 flex flex-col items-center text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/images/logo.webp" alt="요기망치 로고" className="ym-login-logo-img" />
+        <img src="/images/logo.webp" alt="요기망치 로고" className="ym-login-logo-img h-10 w-auto object-contain" />
+        <span className="mt-3 inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-[#0058FF]">
+          YOGIMANGCHI V1 · V2 통합 인증
+        </span>
       </div>
 
-      <div className="ym-login-intro">
-        <p className="ym-login-lead">Google 또는 Kakao 계정으로 로그인하세요.</p>
-        <p className="ym-login-sub">
-          요기망치는 별도 비밀번호를 저장하지 않고 OAuth2 인증으로 실시간 속보·커뮤니티·선물 모의투자를 연결합니다.
+      <div className="ym-login-intro mb-6 text-center">
+        <p className="ym-login-lead text-lg font-black text-gray-900">
+          Google 또는 Kakao 계정으로 간편하게 시작하세요
+        </p>
+        <p className="ym-login-sub mt-1.5 text-xs font-medium leading-relaxed text-gray-500">
+          요기망치는 별도 비밀번호를 저장하지 않고 OAuth2 인증으로 모의투자·커뮤니티·뉴스·자산을 연결합니다.
         </p>
       </div>
 
-      <div className="ym-login-primary-buttons">
-        <a className="member-primary login-button" href={google}>
-          Google로 계속하기
-        </a>
-        <a className="member-secondary ym-kakao-cta" href={kakao}>
+      <div className="ym-login-primary-buttons flex flex-col gap-3">
+        <a
+          className="member-secondary ym-kakao-cta flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#FEE500] px-5 text-sm font-bold text-[#191919] transition-colors hover:bg-[#E6CF00]"
+          href={kakao}
+        >
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#191919] text-[10px] font-black text-[#FEE500]">
+            K
+          </span>
           Kakao로 계속하기
+        </a>
+        <a
+          className="member-primary login-button flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-5 text-sm font-bold text-gray-800 transition-colors hover:bg-gray-50"
+          href={google}
+        >
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-[10px] font-black text-[#0058FF]">
+            G
+          </span>
+          Google로 계속하기
         </a>
       </div>
 
-      <div className="ym-login-option-box">
-        <label className="ym-custom-check">
+      <div className="ym-login-option-box mt-5 flex items-center justify-between gap-2 text-xs text-gray-500">
+        <label className="ym-custom-check flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
             name="rememberSession"
@@ -137,43 +97,25 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
         </label>
         <button
           type="button"
-          className="ym-text-link-btn"
+          className="ym-text-link-btn font-bold text-[#0058FF] hover:underline"
           onClick={() => setHelpOpen(true)}
         >
           이용 안내 / 도움말
         </button>
       </div>
 
-      <div className="ym-sns-divider" role="separator" aria-label="SNS 간편로그인">
-        <span>SNS 간편로그인</span>
-      </div>
-
-      <div className="ym-sns-icon-row">
-        <a
-          href={kakao}
-          className="ym-sns-circle is-kakao"
-          aria-label="카카오 간편로그인"
-          title="Kakao 간편로그인"
+      <div className="ym-login-bottom mt-6 flex flex-col gap-3 border-t border-gray-100 pt-5 text-center">
+        <Link
+          href="/signup"
+          className="signup-button flex h-11 w-full items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-xs font-bold text-gray-700 hover:bg-gray-100"
         >
-          <span aria-hidden="true">K</span>
-        </a>
-        <a
-          href={google}
-          className="ym-sns-circle is-google"
-          aria-label="구글 간편로그인"
-          title="Google 간편로그인"
-        >
-          <span aria-hidden="true">G</span>
-        </a>
-      </div>
-
-      <div className="ym-login-bottom">
-        <Link href="/signup" className="signup-button">
-          회원가입
+          신규 회원가입 약관 및 프로필 설정 안내
         </Link>
-        <p className="member-note">Guest 모의투자 기록은 회원 계정에 자동으로 합쳐지지 않습니다.</p>
-        <Link href="/trading" className="ym-guest-return-link">
-          게스트 모의투자로 돌아가기
+        <p className="member-note text-xs text-gray-400">
+          Guest 모의투자 기록은 회원 계정에 자동으로 합쳐지지 않습니다.
+        </p>
+        <Link href="/trading" className="ym-guest-return-link text-xs font-bold text-[#0058FF] hover:underline">
+          게스트 모의투자로 바로 체험하기 →
         </Link>
       </div>
 
@@ -204,8 +146,6 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
   );
 }
 
-const INTEREST_SYMBOLS = ["BTC", "ETH", "SOL", "XRP"] as const;
-
 export function ProfileEditForm({
   nickname,
   message,
@@ -218,72 +158,59 @@ export function ProfileEditForm({
   onSubmit: FormEventHandler<HTMLFormElement>;
 }) {
   const [bioLength, setBioLength] = useState(() => Array.from(message).length);
-  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(["BTC", "ETH"]);
-
-  function toggleSymbol(symbol: string) {
-    setSelectedSymbols(current =>
-      current.includes(symbol) ? current.filter(item => item !== symbol) : [...current, symbol],
-    );
-  }
 
   return (
-    <form className="member-fields ym-profile-edit-form" onSubmit={onSubmit}>
-      <fieldset disabled={pending}>
+    <form className="member-fields ym-profile-edit-form space-y-6" onSubmit={onSubmit}>
+      <fieldset disabled={pending} className="space-y-6">
         <div className="ym-field-group">
-          <span className="ym-field-title">닉네임</span>
-          <div className="ym-input-btn-row">
-            <label className="ym-input-grow">
+          <span className="ym-field-title mb-2 block text-sm font-bold text-gray-900">닉네임</span>
+          <div className="ym-input-btn-row flex gap-2">
+            <label className="ym-input-grow flex-1">
               <span className="sr-only">닉네임</span>
               <NicknameInput initialValue={nickname} />
             </label>
             <NicknameCheck />
           </div>
-          <small className="ym-helper-violet">최대 8자 · 공백·특수문자 제외</small>
+          <small className="ym-helper-violet mt-1.5 block text-xs font-medium text-gray-500">
+            최대 8자 · 공백·특수문자 제외
+          </small>
         </div>
 
         <div className="ym-field-group">
-          <label className="ym-label-block">
-            <span className="ym-field-title-row">
-              <span className="ym-field-title">소개</span>
-              <span className="ym-char-counter">{bioLength} / 255자</span>
+          <label className="ym-label-block block">
+            <span className="ym-field-title-row mb-2 flex items-center justify-between">
+              <span className="ym-field-title text-sm font-bold text-gray-900">프로필 메시지 (소개)</span>
+              <span className="ym-char-counter text-xs font-bold text-gray-400">{bioLength} / 255자</span>
             </span>
             <textarea
               name="profileMessage"
-              className="myTextarea"
+              className="myTextarea w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
               defaultValue={message}
               maxLength={255}
-              rows={4}
-              placeholder="트레이딩 관점이나 자기소개를 입력해 주세요."
+              rows={3}
+              placeholder="나를 표현하는 한 줄 메시지를 적어주세요"
               onChange={event => setBioLength(Array.from(event.currentTarget.value).length)}
             />
-            <small>최대 255자 · 비워서 저장하면 소개를 지웁니다.</small>
+            <small className="mt-1.5 block text-xs text-gray-400">
+              최대 255자 · 비워서 저장하면 소개를 지웁니다.
+            </small>
           </label>
         </div>
 
-        <div className="ym-field-group">
-          <span className="ym-field-title">관심 선물 종목 배지 설정</span>
-          <div className="ym-chip-row" role="group" aria-label="관심 선물 종목 선택">
-            {INTEREST_SYMBOLS.map(symbol => {
-              const active = selectedSymbols.includes(symbol);
-              return (
-                <button
-                  key={symbol}
-                  type="button"
-                  aria-pressed={active}
-                  className={active ? "ym-tag-chip is-active" : "ym-tag-chip"}
-                  onClick={() => toggleSymbol(symbol)}
-                >
-                  #{symbol}
-                </button>
-              );
-            })}
-          </div>
-          <small>커뮤니티 피드와 뉴스 필터에서 기본 관심 종목으로 활용됩니다.</small>
+        <div className="flex gap-3 pt-2">
+          <Link
+            href="/me"
+            className="flex h-12 flex-1 items-center justify-center rounded-2xl border border-gray-300 bg-white text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50"
+          >
+            취소
+          </Link>
+          <button
+            className="member-primary login-button flex h-12 flex-1 items-center justify-center rounded-2xl bg-[#0058FF] text-sm font-bold text-white transition-colors hover:bg-blue-700"
+            type="submit"
+          >
+            {pending ? "저장 중…" : "변경사항 저장 (프로필 저장)"}
+          </button>
         </div>
-
-        <button className="member-primary login-button" type="submit">
-          {pending ? "저장 중…" : "프로필 저장"}
-        </button>
       </fieldset>
     </form>
   );

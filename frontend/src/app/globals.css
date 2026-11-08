@@ -962,17 +962,24 @@
 @media (width >= 64rem) { .order-book-level { height:24px; min-height:24px; } .order-book-level > span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } }
 
 /* ============================================================================
-   YOGIMANGCHI V2 — CONTENT · MEMBER · PORTAL PUBLISHING DESIGN SYSTEM
+   YOGIMANGCHI V2 — V1 REVERSE-ENGINEERED CONTENT · MEMBER · PORTAL DESIGN SYSTEM
    Benchmarked from:
+   - Yogimangchi V1 (https://yogimangchi.com/)
    - Auth & Account Forms: https://www.xrhub.co.kr/login.html & signup.html
    - Main Portal & News:   https://coinness.com/
-   - Community Feed:       https://www.tossinvest.com/feed/recommended
    Invariants:
-   - Pure White (#FFFFFF) & Muted Surface (#F5F5F7 / #F8F9FB)
-   - Solid Violet Accent (#7242FF / #7F42FF / #8B6DE7)
-   - Crisp 1px solid #DEE1E6 borders, NO gradients, NO neon, NO box-shadow
+   - Pure White (#FFFFFF) & Muted Surface (#F9FAFB / #F5F5F7)
+   - Brand Accents (#0058FF / #7242FF)
+   - Crisp 1px solid #E5E7EB / #DEE1E6 borders, NO gradients, NO neon, NO box-shadow
    - Only popup dim backdrop uses opacity transition (0.2s)
    ============================================================================ */
+
+.card {
+  border-radius: 1rem;
+  border: 1px solid #E5E7EB;
+  background-color: #FFFFFF;
+  padding: 1.5rem;
+}
 
 html[ style*="scrollbar-width: none" ]::-webkit-scrollbar,
 body[data-scroll-locked="true"]::-webkit-scrollbar {
@@ -2553,38 +2560,38 @@ body:has(.member-shell) :focus-visible {
   color: #9999A1;
 }
 
-/* [Order 5] Community Board (/community) — Toss Invest Feed Layout */
-.ym-toss-feed-layout {
+/* [Order 5] Community Board (/community) — Yogimangchi V1 Community Layout */
+.ym-v1-community-layout {
   display: grid;
   grid-template-columns: 1fr;
   gap: 20px;
 }
 
 @media (width >= 64rem) {
-  .ym-toss-feed-layout {
+  .ym-v1-community-layout {
     grid-template-columns: 240px minmax(0, 1fr) 300px;
     align-items: start;
   }
 }
 
-.ym-toss-left-nav,
-.ym-toss-right-sidebar {
+.ym-v1-left-nav,
+.ym-v1-right-sidebar {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.ym-toss-nav-box,
-.ym-toss-side-card,
-.ym-toss-composer-card,
-.ym-toss-feed-card {
+.ym-v1-nav-box,
+.ym-v1-side-card,
+.ym-v1-composer-card,
+.ym-v1-feed-card {
   border: 1px solid #DEE1E6;
   border-radius: 10px;
   background-color: #FFFFFF;
   padding: 18px;
 }
 
-.ym-toss-nav-title {
+.ym-v1-nav-title {
   display: block;
   margin-bottom: 10px;
   font-size: 12px;
@@ -2592,13 +2599,13 @@ body:has(.member-shell) :focus-visible {
   color: #9999A1;
 }
 
-.ym-toss-tab-stack {
+.ym-v1-tab-stack {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.member-shell .ym-toss-nav-btn {
+.member-shell .ym-v1-nav-btn {
   justify-content: flex-start;
   width: 100%;
   min-height: 40px;
@@ -2607,7 +2614,7 @@ body:has(.member-shell) :focus-visible {
   font-size: 13px;
 }
 
-.ym-toss-search-bar {
+.ym-v1-search-bar {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) 96px;
   gap: 8px;
@@ -2747,7 +2754,7 @@ body:has(.member-shell) :focus-visible {
   cursor: pointer;
 }
 
-.ym-toss-feed-list {
+.ym-v1-feed-list {
   list-style: none;
   margin: 16px 0 0;
   padding: 0;

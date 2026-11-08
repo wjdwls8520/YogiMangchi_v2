@@ -347,9 +347,12 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
 import { MainPortal } from "../src/features/member/components/main-portal";
 import { MemberSignupPage } from "../src/features/member/components/member-auth";
 import { MemberAccount } from "../src/features/member/components/member-account";
+import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
+import { MemberAssetsPage } from "../src/features/member/components/member-assets";
+import { V1Header } from "../src/features/member/components/v1-ui";
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
 
-test("MainPortal, MemberSignupPage, MemberAccount, and CommunityBoard render xrhub/CoinNess/Toss layouts and S3 upload slots", () => {
+test("MainPortal, MemberSignupPage, MemberAccount, and CommunityBoard render V1/xrhub/CoinNess layouts and S3 upload slots", () => {
   const client = new QueryClient();
   try {
     const portalHtml = renderToStaticMarkup(
@@ -357,6 +360,11 @@ test("MainPortal, MemberSignupPage, MemberAccount, and CommunityBoard render xrh
         <MainPortal />
       </MemberProvider>,
     );
+    assert.match(portalHtml, /나의 투자 욕망을 실현할 곳/);
+    assert.match(portalHtml, /오늘의 요기 달러/);
+    assert.match(portalHtml, /환율 계산기/);
+    assert.match(portalHtml, /실시간 인기 종목 TOP 3/);
+    assert.match(portalHtml, /YOGIMANGCHI PLAYBOOK/);
     assert.match(portalHtml, /24시 실시간 속보/);
     assert.match(portalHtml, /BTC 도미넌스/);
     assert.match(portalHtml, /선물 모의투자 퀵 시뮬레이터/);
@@ -372,13 +380,46 @@ test("MainPortal, MemberSignupPage, MemberAccount, and CommunityBoard render xrh
     assert.match(signupHtml, /identity_verification_wrap/);
     assert.match(signupHtml, /소셜 계정 본인인증/);
     assert.match(signupHtml, /data-s3-slot="signup-profile-image"/);
+    assert.equal(signupHtml.includes("포지션 증거금 비중"), false);
 
     const accountHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
         <MemberAccount />
       </MemberProvider>,
     );
+    assert.match(accountHtml, /회원정보 수정/);
+    assert.match(accountHtml, /기본 정보/);
     assert.match(accountHtml, /data-s3-slot="account-profile-image"/);
+    assert.equal(accountHtml.includes("포지션 증거금 비중"), false);
+
+    const meProfileHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberMyProfilePage />
+      </MemberProvider>,
+    );
+    assert.match(meProfileHtml, /나의 포트폴리오/);
+    assert.match(meProfileHtml, /포지션 증거금 비중 \(%\)/);
+    assert.match(meProfileHtml, /롱 \/ 숏 포지션 비율/);
+    assert.match(meProfileHtml, /Followers/);
+    assert.match(meProfileHtml, /Following/);
+
+    const assetsHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberAssetsPage />
+      </MemberProvider>,
+    );
+    assert.match(assetsHtml, /내 자산/);
+    assert.match(assetsHtml, /자산 구성 및 포지션 비중 분석/);
+    assert.match(assetsHtml, /포지션 현황/);
+    assert.match(assetsHtml, /손익현황/);
+    assert.match(assetsHtml, /주문내역/);
+    assert.match(assetsHtml, /거래내역/);
+    assert.match(assetsHtml, /미체결내역/);
+
+    const darkHeaderHtml = renderToStaticMarkup(<V1Header theme="dark" />);
+    assert.match(darkHeaderHtml, /src="\/logo_dark\.png"/);
+    assert.match(darkHeaderHtml, /모의투자/);
+    assert.match(darkHeaderHtml, /대회/);
   } finally {
     client.clear();
   }

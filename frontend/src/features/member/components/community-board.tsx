@@ -1,12 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useMember } from "./member-provider";
+import { useState, type FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberShell } from "./member-views";
-import { DimModal } from "./dim-modal";
-import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
+import { useMember } from "./member-provider";
 import { contentMessage } from "../api/client";
 import {
   COMMUNITY_CATEGORIES,
@@ -25,897 +23,1219 @@ import {
   type CommunityPostPage,
   type CommunitySort,
 } from "../api/community-news";
+import { DimModal } from "./dim-modal";
+import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
+import { V1Tabs, V1Button, V1UserAvatar } from "./v1-ui";
 
-function kst(value: string) {
-  return new Date(value).toLocaleString("sv-SE", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
-}
+const V1_REPORT_REASONS = [
+  "스팸 홍보/도배글입니다.",
+  "음란물입니다.",
+  "불법정보를 포함하고 있습니다.",
+  "청소년에게 유해한 내용입니다.",
+  "욕설/생명경시/혐오/차별적 표현입니다.",
+  "개인정보 노출 게시물입니다.",
+  "불쾌한 표현이 있습니다.",
+] as const;
 
-function AuthorBadge({ memberId, nickname, withdrawn }: { memberId: number; nickname: string; withdrawn: boolean }) {
-  if (withdrawn) {
-    return <span className="member-note" data-withdrawn="true">탈퇴한회원</span>;
+const V1_CONTEST_TOP5 = [
+  { rank: 1, memberId: 7, nickname: "트레이더7", roi: "+148.60%", season: "시즌 1" },
+  { rank: 2, memberId: 11, nickname: "알파트레이더", roi: "+96.25%", season: "시즌 1" },
+  { rank: 3, memberId: 15, nickname: "퀀트매니저", roi: "+74.10%", season: "시즌 1" },
+  { rank: 4, memberId: 22, nickname: "솔라나고래", roi: "+51.80%", season: "시즌 1" },
+  { rank: 5, memberId: 31, nickname: "매크로워처", roi: "+39.45%", season: "시즌 1" },
+] as const;
+
+const SELECTABLE_CATEGORIES: readonly CommunityCategory[] = [
+  "MARKET",
+  "ANALYSIS",
+  "POSITION",
+  "FREE",
+];
+
+const SELECTABLE_SYMBOLS = SYMBOL_FILTER_TAGS.filter((s): s is "BTC" | "ETH" | "SOL" | "XRP" => Boolean(s));
+
+function AuthorLabel({
+  memberId,
+  nickname,
+  withdrawn,
+}: {
+  memberId: number | null;
+  nickname: string;
+  withdrawn: boolean;
+}) {
+  if (withdrawn || memberId === null) {
+    return (
+      <span className="member-note" data-withdrawn="true">
+        탈퇴한회원
+      </span>
+    );
   }
   return <Link href={`/members/${memberId}`}>{nickname}</Link>;
 }
 
-const TRENDING_TOPICS = [
-  { rank: 1, tag: "BTC", label: "비트코인 현물 ETF 유입 & 96K 공방", posts: 128 },
-  { rank: 2, tag: "SOL", label: "솔라나 무기한 선물 거래량 급증", posts: 84 },
-  { rank: 3, tag: "ETH", label: "이더리움 펀딩비 및 상대강도 반등", posts: 67 },
-  { rank: 4, tag: "XRP", label: "글로벌 파생상품 규제 가이드라인", posts: 41 },
-];
-
 export function CommunityBoard({
   initialPage,
-  initialComments = {},
+  initialComments,
+  initialV1Tab = "all",
+  highlightPostId,
 }: {
   initialPage?: CommunityPostPage;
   initialComments?: Record<number, CommunityComment[]>;
+  initialV1Tab?: "all" | "best" | "latest";
+  highlightPostId?: number;
 } = {}) {
   const { origin, session, snapshot } = useMember();
-  const client = useQueryClient();
+  const queryClient = useQueryClient();
 
-  const [sort, setSort] = useState<CommunitySort>("LATEST");
+  const [v1Tab, setV1Tab] = useState<"all" | "best" | "latest">(initialV1Tab);
+  const [sort, setSort] = useState<CommunitySort>(initialV1Tab === "best" ? "POPULAR" : "LATEST");
   const [category, setCategory] = useState<"" | CommunityCategory>("");
   const [symbolTag, setSymbolTag] = useState<string>("");
+  const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
-  const [submittedKeyword, setSubmittedKeyword] = useState("");
-  const [extraPosts, setExtraPosts] = useState<CommunityPost[]>([]);
-  const [nextCursor, setNextCursor] = useState<number | null | undefined>(undefined);
-  const [hasNextOverride, setHasNextOverride] = useState<boolean | undefined>(undefined);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [cursorHistory, setCursorHistory] = useState<Array<number | null>>([null]);
+  const currentCursorId = cursorHistory[cursorHistory.length - 1] ?? null;
 
-  const [newCategory, setNewCategory] = useState<CommunityCategory>("MARKET");
-  const [newSymbolTag, setNewSymbolTag] = useState<string>("BTC");
-  const [newTitle, setNewTitle] = useState("");
-  const [newContent, setNewContent] = useState("");
-  const [attachPositionBadge, setAttachPositionBadge] = useState(true);
-  const [postImages, setPostImages] = useState<SelectedS3File[]>([]);
-  const [submittingPost, setSubmittingPost] = useState(false);
+  const [openPostId, setOpenPostId] = useState<number | null>(
+    highlightPostId ?? initialPage?.items[0]?.id ?? null,
+  );
+  const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
+  const [editingComment, setEditingComment] = useState<CommunityComment | null>(null);
+  const [replyParentId, setReplyParentId] = useState<number | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
-  const [editingPostId, setEditingPostId] = useState<number | null>(null);
-  const [editCategory, setEditCategory] = useState<CommunityCategory>("MARKET");
-  const [editSymbolTag, setEditSymbolTag] = useState<string>("");
-  const [editTitle, setEditTitle] = useState("");
-  const [editContent, setEditContent] = useState("");
-  const [savingEdit, setSavingEdit] = useState(false);
-
-  const [commentsByPost, setCommentsByPost] = useState<Record<number, CommunityComment[]>>(initialComments);
-  const [commentDrafts, setCommentDrafts] = useState<Record<number, string>>({});
-  const [replyTargetByPost, setReplyTargetByPost] = useState<Record<number, number | null>>({});
-  const [busyAction, setBusyAction] = useState(false);
-  const [feedback, setFeedback] = useState<{ kind: "info" | "error"; text: string } | null>(null);
-
-  const [lightboxState, setLightboxState] = useState<{
+  // V1 모달 상태 (글쓰기 모달 / 신고 모달)
+  const [writeModalOpen, setWriteModalOpen] = useState(false);
+  const [reportTarget, setReportTarget] = useState<{
+    type: "POST" | "REPLY";
+    id: number;
     title: string;
-    subtitle: string;
-    previewUrl?: string;
-    symbol?: string | null;
   } | null>(null);
+  const [selectedReportReason, setSelectedReportReason] = useState<string>(V1_REPORT_REASONS[0]);
+  const [attachedImages, setAttachedImages] = useState<SelectedS3File[]>([]);
+  const [modalImages, setModalImages] = useState<SelectedS3File[]>([]);
+  const [attachRoeBadge, setAttachRoeBadge] = useState(true);
+  const [contestSeason, setContestSeason] = useState("SEASON_1");
 
-  const queryKey = ["community-posts", origin, snapshot.memberId, snapshot.generation, sort, category, symbolTag, submittedKeyword] as const;
+  const path = communityPostsPath({
+    category,
+    sort,
+    symbolTag: symbolTag || undefined,
+    keyword,
+    cursorId: currentCursorId,
+    size: 10,
+  });
 
-  const query = useQuery({
-    queryKey,
-    initialData: initialPage && sort === "LATEST" && !category && !symbolTag && !submittedKeyword ? initialPage : undefined,
-    queryFn: async ({ signal }) =>
-      parseCommunityPostPage(
+  const isDefaultQuery =
+    category === "" &&
+    sort === "LATEST" &&
+    symbolTag === "" &&
+    keyword === "" &&
+    currentCursorId === null;
+
+  const postsQuery = useQuery({
+    queryKey: ["community-posts", origin, path, snapshot.generation],
+    queryFn: async () =>
+      parseCommunityPostPage(await readCommunityOrPublic(origin, session, snapshot, path)),
+    initialData: isDefaultQuery ? initialPage : undefined,
+  });
+
+  const activePostId = openPostId;
+  const commentsQuery = useQuery({
+    queryKey: ["community-comments", origin, activePostId, snapshot.generation],
+    enabled: activePostId !== null,
+    queryFn: async () =>
+      parseCommunityComments(
         await readCommunityOrPublic(
           origin,
           session,
           snapshot,
-          communityPostsPath({ category, sort, symbolTag, keyword: submittedKeyword, size: 10 }),
-          signal,
+          `/community/posts/${activePostId!}/comments`,
         ),
-      ),
+      ).items,
+    initialData: activePostId !== null ? initialComments?.[activePostId] : undefined,
   });
 
-  function resetPagination() {
-    setExtraPosts([]);
-    setNextCursor(undefined);
-    setHasNextOverride(undefined);
-  }
-
-  const basePosts = query.data?.items ?? [];
-  const allPosts = [...basePosts, ...extraPosts.filter(item => !basePosts.some(base => base.id === item.id))];
-  const hasNext = hasNextOverride ?? query.data?.hasNext ?? false;
-  const cursorId = nextCursor !== undefined ? nextCursor : (query.data?.nextCursorId ?? null);
-
-  async function refreshPosts() {
-    resetPagination();
-    await client.invalidateQueries({ queryKey: ["community-posts", origin] });
-  }
-
-  async function createPost(event: React.FormEvent) {
-    event.preventDefault();
-    if (submittingPost || snapshot.phase !== "ready") return;
-    const title = newTitle.trim();
-    const content = newContent.trim();
-    if (title.length < 2 || content.length < 2) {
-      setFeedback({ kind: "error", text: "제목과 본문은 모두 2자 이상 입력해 주세요." });
-      return;
+  function requireReadyMember(): boolean {
+    if (snapshot.phase !== "ready") {
+      setFeedback("로그인 후 작성·좋아요·댓글 기능을 이용할 수 있습니다.");
+      return false;
     }
-    setSubmittingPost(true);
-    setFeedback(null);
-    try {
-      const created = parseCommunityPost(
-        await session.request("/community/posts", {
-          method: "POST",
+    return true;
+  }
+
+  const createPostMutation = useMutation({
+    mutationFn: async (payload: {
+      category: CommunityCategory;
+      symbolTag: string | null;
+      title: string;
+      content: string;
+    }) =>
+      parseCommunityPost(
+        await session.request("/community/posts", { method: "POST", body: payload }),
+      ),
+    onSuccess: created => {
+      setFeedback("게시글이 등록되었습니다.");
+      setOpenPostId(created.id);
+      setWriteModalOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
+
+  const updatePostMutation = useMutation({
+    mutationFn: async (payload: {
+      postId: number;
+      category: CommunityCategory;
+      symbolTag: string | null;
+      title: string;
+      content: string;
+    }) =>
+      parseCommunityPost(
+        await session.request(`/community/posts/${payload.postId}`, {
+          method: "PATCH",
           body: {
-            category: newCategory,
-            symbolTag: newSymbolTag || null,
-            title,
-            content,
+            category: payload.category,
+            symbolTag: payload.symbolTag,
+            title: payload.title,
+            content: payload.content,
           },
         }),
-      );
-      setNewTitle("");
-      setNewContent("");
-      setPostImages([]);
-      setFeedback({ kind: "info", text: `게시글 #${created.id}이(가) 등록되었습니다.` });
-      await refreshPosts();
-    } catch (error) {
-      setFeedback({ kind: "error", text: contentMessage(error) });
-    } finally {
-      setSubmittingPost(false);
-    }
-  }
+      ),
+    onSuccess: () => {
+      setEditingPost(null);
+      setFeedback("게시글이 수정되었습니다.");
+      void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
 
-  function startEdit(post: CommunityPost) {
-    setEditingPostId(post.id);
-    setEditCategory(post.category);
-    setEditSymbolTag(post.symbolTag ?? "");
-    setEditTitle(post.title);
-    setEditContent(post.content);
-    setFeedback(null);
-  }
+  const deletePostMutation = useMutation({
+    mutationFn: async (postId: number) =>
+      session.request(`/community/posts/${postId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      setFeedback("게시글이 삭제되었습니다.");
+      void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
 
-  async function submitEdit(postId: number) {
-    if (savingEdit || snapshot.phase !== "ready") return;
-    setSavingEdit(true);
-    setFeedback(null);
-    try {
-      await session.request(`/community/posts/${postId}`, {
-        method: "PATCH",
-        body: {
-          category: editCategory,
-          symbolTag: editSymbolTag || null,
-          title: editTitle.trim(),
-          content: editContent.trim(),
-        },
-      });
-      setEditingPostId(null);
-      setFeedback({ kind: "info", text: "게시글이 수정되었습니다." });
-      await refreshPosts();
-    } catch (error) {
-      setFeedback({ kind: "error", text: contentMessage(error) });
-    } finally {
-      setSavingEdit(false);
-    }
-  }
-
-  async function deletePost(postId: number) {
-    if (busyAction || snapshot.phase !== "ready") return;
-    setBusyAction(true);
-    setFeedback(null);
-    try {
-      await session.request(`/community/posts/${postId}`, { method: "DELETE" });
-      setFeedback({ kind: "info", text: "게시글이 삭제되었습니다." });
-      await refreshPosts();
-    } catch (error) {
-      setFeedback({ kind: "error", text: contentMessage(error) });
-    } finally {
-      setBusyAction(false);
-    }
-  }
-
-  async function toggleLike(post: CommunityPost) {
-    if (busyAction || snapshot.phase !== "ready") return;
-    setBusyAction(true);
-    setFeedback(null);
-    try {
+  const likeMutation = useMutation({
+    mutationFn: async (post: CommunityPost) =>
       parseCommunityLike(
         await session.request(`/community/posts/${post.id}/likes`, {
           method: post.likedByMe ? "DELETE" : "PUT",
         }),
-      );
-      await refreshPosts();
-    } catch (error) {
-      setFeedback({ kind: "error", text: contentMessage(error) });
-    } finally {
-      setBusyAction(false);
-    }
-  }
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
 
-  async function loadComments(postId: number) {
-    try {
-      const list = parseCommunityComments(
-        await readCommunityOrPublic(origin, session, snapshot, `/community/posts/${postId}/comments`),
-      );
-      setCommentsByPost(current => ({ ...current, [postId]: list.items }));
-    } catch (error) {
-      setFeedback({ kind: "error", text: contentMessage(error) });
-    }
-  }
-
-  async function submitComment(postId: number) {
-    const content = (commentDrafts[postId] ?? "").trim();
-    if (!content || busyAction || snapshot.phase !== "ready") return;
-    const parentCommentId = replyTargetByPost[postId] ?? null;
-    setBusyAction(true);
-    setFeedback(null);
-    try {
-      const created = parseCommunityComment(
-        await session.request(`/community/posts/${postId}/comments`, {
+  const createCommentMutation = useMutation({
+    mutationFn: async (payload: {
+      postId: number;
+      parentCommentId: number | null;
+      content: string;
+    }) =>
+      parseCommunityComment(
+        await session.request(`/community/posts/${payload.postId}/comments`, {
           method: "POST",
-          body: { content, parentCommentId },
+          body: { parentCommentId: payload.parentCommentId, content: payload.content },
         }),
-      );
-      setCommentsByPost(current => ({
-        ...current,
-        [postId]: [...(current[postId] ?? []), created],
-      }));
-      setCommentDrafts(current => ({ ...current, [postId]: "" }));
-      setReplyTargetByPost(current => ({ ...current, [postId]: null }));
-      await refreshPosts();
-    } catch (error) {
-      setFeedback({ kind: "error", text: contentMessage(error) });
-    } finally {
-      setBusyAction(false);
-    }
-  }
+      ),
+    onSuccess: (_data, variables) => {
+      setReplyParentId(null);
+      setFeedback("댓글이 등록되었습니다.");
+      void queryClient.invalidateQueries({
+        queryKey: ["community-comments", origin, variables.postId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
 
-  async function removeComment(postId: number, commentId: number) {
-    if (busyAction || snapshot.phase !== "ready") return;
-    setBusyAction(true);
-    setFeedback(null);
-    try {
-      await session.request(`/community/comments/${commentId}`, { method: "DELETE" });
-      await loadComments(postId);
-      await refreshPosts();
-    } catch (error) {
-      setFeedback({ kind: "error", text: contentMessage(error) });
-    } finally {
-      setBusyAction(false);
-    }
-  }
-
-  async function loadMore() {
-    if (!hasNext || !cursorId || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const page = parseCommunityPostPage(
-        await readCommunityOrPublic(
-          origin,
-          session,
-          snapshot,
-          communityPostsPath({ category, sort, symbolTag, keyword: submittedKeyword, cursorId, size: 10 }),
+  const updateCommentMutation = useMutation({
+    mutationFn: async (payload: { postId: number; commentId: number; content: string }) =>
+      parseCommunityComment(
+        await session.request(
+          `/community/posts/${payload.postId}/comments/${payload.commentId}`,
+          {
+            method: "PATCH",
+            body: { content: payload.content },
+          },
         ),
-      );
-      setExtraPosts(current => [...current, ...page.items]);
-      setNextCursor(page.nextCursorId);
-      setHasNextOverride(page.hasNext);
-    } catch (error) {
-      setFeedback({ kind: "error", text: contentMessage(error) });
-    } finally {
-      setLoadingMore(false);
+      ),
+    onSuccess: (_data, variables) => {
+      setEditingComment(null);
+      setFeedback("댓글이 수정되었습니다.");
+      void queryClient.invalidateQueries({
+        queryKey: ["community-comments", origin, variables.postId],
+      });
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
+
+  const deleteCommentMutation = useMutation({
+    mutationFn: async (payload: { postId: number; commentId: number }) =>
+      session.request(`/community/posts/${payload.postId}/comments/${payload.commentId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: (_data, variables) => {
+      setFeedback("댓글이 삭제되었습니다.");
+      void queryClient.invalidateQueries({
+        queryKey: ["community-comments", origin, variables.postId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
+
+  function handleV1TabChange(nextValue: string) {
+    const nextTab = (nextValue as "all" | "best" | "latest") || "all";
+    setV1Tab(nextTab);
+    if (nextTab === "best") {
+      setSort("POPULAR");
+    } else {
+      setSort("LATEST");
+    }
+    setCursorHistory([null]);
+  }
+
+  function handleSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCursorHistory([null]);
+    setKeyword(searchInput.trim());
+  }
+
+  function handleCreatePost(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!requireReadyMember()) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const postCategory = String(data.get("category") ?? "FREE") as CommunityCategory;
+    const rawSymbol = String(data.get("symbolTag") ?? "");
+    const title = String(data.get("title") ?? "").trim();
+    const content = String(data.get("content") ?? "").trim();
+    if (!title || !content) return;
+    createPostMutation.mutate(
+      {
+        category: postCategory,
+        symbolTag: rawSymbol ? rawSymbol : null,
+        title,
+        content,
+      },
+      { onSuccess: () => form.reset() },
+    );
+  }
+
+  function handleUpdatePost(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingPost || !requireReadyMember()) return;
+    const data = new FormData(event.currentTarget);
+    const postCategory = String(data.get("category") ?? editingPost.category) as CommunityCategory;
+    const rawSymbol = String(data.get("symbolTag") ?? "");
+    const title = String(data.get("title") ?? "").trim();
+    const content = String(data.get("content") ?? "").trim();
+    if (!title || !content) return;
+    updatePostMutation.mutate({
+      postId: editingPost.id,
+      category: postCategory,
+      symbolTag: rawSymbol ? rawSymbol : null,
+      title,
+      content,
+    });
+  }
+
+  function handleCreateComment(postId: number, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!requireReadyMember()) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const content = String(data.get("content") ?? "").trim();
+    if (!content) return;
+    createCommentMutation.mutate(
+      { postId, parentCommentId: replyParentId, content },
+      { onSuccess: () => form.reset() },
+    );
+  }
+
+  function handleReportSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!reportTarget) return;
+    setFeedback(
+      `신고가 접수되었습니다 (${reportTarget.type === "POST" ? "게시글" : "댓글"} #${reportTarget.id}: ${selectedReportReason})`,
+    );
+    setReportTarget(null);
+  }
+
+  const page = postsQuery.data;
+  const items = page?.items ?? [];
+  const comments = commentsQuery.data ?? [];
+  const rootComments = comments.filter(item => item.parentCommentId === null);
+  const repliesByParent = new Map<number, CommunityComment[]>();
+  for (const item of comments) {
+    if (item.parentCommentId !== null) {
+      const list = repliesByParent.get(item.parentCommentId) ?? [];
+      list.push(item);
+      repliesByParent.set(item.parentCommentId, list);
     }
   }
 
   return (
     <MemberShell
-      title="트레이더 커뮤니티"
-      subtitle="토스증권 피드 감성으로 선물 모의투자 시황 관점, 차트 분석, 포지션 수익률을 공유하고 실시간으로 소통하세요."
+      title="커뮤니티"
+      subtitle="요기망치 트레이더들과 실시간 포지션 관점과 모의투자 전략을 나누세요."
       variant="wide"
+      hideCardHeading
     >
-      <div className="ym-toss-feed-layout">
-        {/* 좌측 토스증권형 피드 탐색 사이드바 */}
-        <aside className="ym-toss-left-nav" aria-label="커뮤니티 피드 탐색">
-          <div className="ym-toss-nav-box">
-            <span className="ym-toss-nav-title">피드 스트림</span>
-            <div className="ym-toss-tab-stack" role="tablist" aria-label="커뮤니티 정렬">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sort === "LATEST"}
-                className={sort === "LATEST" ? "member-primary ym-toss-nav-btn is-active" : "member-secondary ym-toss-nav-btn"}
-                onClick={() => {
-                  setSort("LATEST");
-                  resetPagination();
-                }}
-              >
-                최신글 (LATEST)
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sort === "POPULAR"}
-                className={sort === "POPULAR" ? "member-primary ym-toss-nav-btn is-active" : "member-secondary ym-toss-nav-btn"}
-                onClick={() => {
-                  setSort("POPULAR");
-                  resetPagination();
-                }}
-              >
-                인기글 (POPULAR)
-              </button>
-            </div>
+      {/* V1 CommunityContainer 2-Column Layout (max-w-5xl lg:flex lg:items-start lg:gap-14) */}
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+              커뮤니티
+            </h2>
+            <p className="mt-1 text-sm font-medium text-gray-500">
+              전체글, 주간 인기글, 최신글을 확인하고 모의투자 관점을 공유하세요.
+            </p>
           </div>
-
-          <div className="ym-toss-nav-box">
-            <span className="ym-toss-nav-title">주제별 피드</span>
-            <div className="ym-toss-tab-stack" role="tablist" aria-label="커뮤니티 카테고리 필터">
-              {COMMUNITY_CATEGORIES.map(tab => (
-                <button
-                  key={tab.key || "ALL"}
-                  type="button"
-                  role="tab"
-                  aria-selected={category === tab.key}
-                  className={category === tab.key ? "member-primary ym-toss-nav-btn is-active" : "member-secondary ym-toss-nav-btn"}
-                  onClick={() => {
-                    setCategory(tab.key);
-                    resetPagination();
-                  }}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
+          <div className="flex items-center gap-2">
+            <V1Button
+              variant="blue"
+              size="sm"
+              onClick={() => setWriteModalOpen(true)}
+            >
+              ✎ 글쓰기 모달 열기
+            </V1Button>
+            <Link
+              href="/trading"
+              className="inline-flex h-9 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
+            >
+              모의투자 터미널 →
+            </Link>
           </div>
+        </div>
 
-          <div className="ym-toss-nav-box">
-            <span className="ym-toss-nav-title">종목 라운지</span>
-            <div className="ym-chip-row" role="group" aria-label="커뮤니티 종목 태그 필터">
-              {SYMBOL_FILTER_TAGS.map(tag => (
-                <button
-                  key={tag || "ALL_SYMBOL"}
-                  type="button"
-                  aria-pressed={symbolTag === tag}
-                  className={symbolTag === tag ? "ym-tag-chip is-active" : "ym-tag-chip"}
-                  onClick={() => {
-                    setSymbolTag(tag);
-                    resetPagination();
-                  }}
-                >
-                  {tag ? `#${tag}` : "전체 종목"}
-                </button>
-              ))}
+        <div className="lg:flex lg:items-start lg:gap-14">
+          {/* 좌측/중앙: CommunityTabs + 필터 + 인라인/모달 작성 + CommunityItem 리스트 */}
+          <div className="min-w-0 flex-1 space-y-6">
+            {/* V1 CommunityTabs (전체글 | 주간 인기글 | 최신글) */}
+            <div className="rounded-2xl border border-gray-200 bg-white px-4 pt-2 pb-4">
+              <V1Tabs
+                tabs={[
+                  { label: "전체글", value: "all" },
+                  { label: "주간 인기글", value: "best" },
+                  { label: "최신글", value: "latest" },
+                ]}
+                activeTab={v1Tab}
+                onChange={handleV1TabChange}
+                className="mb-4"
+              />
+
+              {/* 정렬 & 카테고리 & 종목 & 검색 필터 */}
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="정렬 선택">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={sort === "LATEST"}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+                        sort === "LATEST"
+                          ? "bg-gray-900 text-white"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                      onClick={() => {
+                        setSort("LATEST");
+                        setV1Tab("latest");
+                        setCursorHistory([null]);
+                      }}
+                    >
+                      최신글 (LATEST)
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={sort === "POPULAR"}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+                        sort === "POPULAR"
+                          ? "bg-gray-900 text-white"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                      onClick={() => {
+                        setSort("POPULAR");
+                        setV1Tab("best");
+                        setCursorHistory([null]);
+                      }}
+                    >
+                      인기글 (POPULAR)
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1" role="group" aria-label="종목 태그 필터">
+                    {SYMBOL_FILTER_TAGS.map(symbol => (
+                      <button
+                        key={symbol || "ALL_SYM"}
+                        type="button"
+                        aria-pressed={symbolTag === symbol}
+                        className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                          symbolTag === symbol
+                            ? "bg-[#0058FF] text-white"
+                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        }`}
+                        onClick={() => {
+                          setSymbolTag(symbol);
+                          setCursorHistory([null]);
+                        }}
+                      >
+                        {symbol ? `#${symbol}` : "전체 종목"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="카테고리 필터">
+                  {COMMUNITY_CATEGORIES.map(item => (
+                    <button
+                      key={item.key || "ALL_CAT"}
+                      type="button"
+                      aria-pressed={category === item.key}
+                      className={`rounded-lg px-3 py-1 text-xs font-bold ${
+                        category === item.key
+                          ? "bg-blue-50 text-[#0058FF]"
+                          : "text-gray-500 hover:bg-gray-100"
+                      }`}
+                      onClick={() => {
+                        setCategory(item.key);
+                        setCursorHistory([null]);
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                <form className="flex gap-2 pt-1" onSubmit={handleSearch}>
+                  <label className="flex-1">
+                    <span className="sr-only">커뮤니티 검색어</span>
+                    <input
+                      type="search"
+                      name="keyword"
+                      className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 text-xs font-medium text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:bg-white focus:outline-none"
+                      value={searchInput}
+                      onChange={event => setSearchInput(event.currentTarget.value)}
+                      placeholder="제목·본문 키워드 검색 (예: 롱, 손절, ETF)"
+                    />
+                  </label>
+                  <V1Button type="submit" variant="blue" size="sm">
+                    검색
+                  </V1Button>
+                </form>
+              </div>
             </div>
-          </div>
-        </aside>
 
-        {/* 중앙 메인 피드 스트림 */}
-        <div className="ym-toss-center-stream">
-          <form
-            className="member-search ym-toss-search-bar"
-            onSubmit={event => {
-              event.preventDefault();
-              setSubmittedKeyword(keyword.trim());
-              resetPagination();
-            }}
-          >
-            <input
-              type="search"
-              className="myInput"
-              aria-label="커뮤니티 게시글 검색"
-              placeholder="제목·본문 키워드 검색 (예: 돌파, 손절가, 펀딩비)"
-              maxLength={40}
-              value={keyword}
-              onChange={event => setKeyword(event.target.value)}
-            />
-            <button type="submit" className="member-secondary ym-inline-check-btn">
-              검색
-            </button>
-          </form>
-
-          {snapshot.phase === "ready" ? (
-            <section className="ym-toss-composer-card" aria-label="새 게시글 작성">
-              <div className="ym-composer-header">
-                <h2>새 글 작성</h2>
-                <button
-                  type="button"
-                  aria-pressed={attachPositionBadge}
-                  className={attachPositionBadge ? "ym-tag-chip is-active" : "ym-tag-chip"}
-                  onClick={() => setAttachPositionBadge(v => !v)}
-                >
-                  {attachPositionBadge ? "✓ 모의투자 수익률·포지션 배지 표시" : "+ 모의투자 수익률 배지 첨부"}
-                </button>
+            {/* 인라인 새 글 작성 카드 */}
+            <section
+              className="card rounded-2xl border border-gray-200 bg-white p-6"
+              aria-labelledby="community-write-heading"
+            >
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <h2 id="community-write-heading" className="text-base font-black text-gray-900">
+                  새 글 작성
+                </h2>
+                <label className="flex items-center gap-2 text-xs font-bold text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={attachRoeBadge}
+                    onChange={event => setAttachRoeBadge(event.currentTarget.checked)}
+                  />
+                  <span>모의투자 포지션 배지 첨부 (BTCUSDT 10x LONG · ROE +18.4%)</span>
+                </label>
               </div>
 
-              {attachPositionBadge && (
-                <div className="ym-verified-position-banner">
-                  <span className="ym-badge-violet">모의투자 인증</span>
-                  <span>
-                    요기망치 선물 모의투자 · <strong>#{newSymbolTag || "BTC"} LONG 10x (격리)</strong> 포지션 공유 태그가 함께 표시됩니다.
-                  </span>
+              <form className="space-y-4" onSubmit={handleCreatePost}>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-bold text-gray-700">카테고리</span>
+                    <select
+                      name="category"
+                      defaultValue="ANALYSIS"
+                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3 text-xs font-bold text-gray-900"
+                    >
+                      {SELECTABLE_CATEGORIES.map(item => (
+                        <option key={item} value={item}>
+                          {communityCategoryLabel(item)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-bold text-gray-700">연관 선물 종목</span>
+                    <select
+                      name="symbolTag"
+                      defaultValue="BTC"
+                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3 text-xs font-bold text-gray-900"
+                    >
+                      <option value="">종목 선택 안 함</option>
+                      {SELECTABLE_SYMBOLS.map(symbol => (
+                        <option key={symbol} value={symbol}>
+                          {symbol}USDT
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
-              )}
 
-              <form className="member-fields" onSubmit={event => void createPost(event)}>
-                <fieldset disabled={submittingPost}>
-                  <div className="ym-composer-select-row">
-                    <label>
-                      카테고리
-                      <select
-                        className="myInput"
-                        value={newCategory}
-                        onChange={event => setNewCategory(event.target.value as CommunityCategory)}
-                      >
-                        <option value="MARKET">시황·관점 (MARKET)</option>
-                        <option value="ANALYSIS">차트 분석 (ANALYSIS)</option>
-                        <option value="POSITION">포지션 공유 (POSITION)</option>
-                        <option value="FREE">자유 (FREE)</option>
-                      </select>
-                    </label>
-                    <label>
-                      종목 태그 (선택)
-                      <select
-                        className="myInput"
-                        value={newSymbolTag}
-                        onChange={event => setNewSymbolTag(event.target.value)}
-                      >
-                        <option value="">종목 미지정</option>
-                        <option value="BTC">BTC</option>
-                        <option value="ETH">ETH</option>
-                        <option value="SOL">SOL</option>
-                        <option value="XRP">XRP</option>
-                      </select>
-                    </label>
-                  </div>
-                  <label>
-                    제목
-                    <input
-                      type="text"
-                      name="title"
-                      className="myInput"
-                      minLength={2}
-                      maxLength={120}
-                      required
-                      placeholder="제목을 입력하세요 (2~120자)"
-                      value={newTitle}
-                      onChange={event => setNewTitle(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    본문
-                    <textarea
-                      name="content"
-                      className="myTextarea"
-                      rows={4}
-                      minLength={2}
-                      maxLength={4000}
-                      required
-                      placeholder="시황 관점, 진입 근거, 손절/익절 계획을 자유롭게 공유하세요 (2~4000자)"
-                      value={newContent}
-                      onChange={event => setNewContent(event.target.value)}
-                    />
-                  </label>
-
-                  <CommunityImageUploadSlot
-                    files={postImages}
-                    onChange={setPostImages}
-                    onInspectImage={file =>
-                      setLightboxState({
-                        title: file.name,
-                        subtitle: "첨부 차트·포지션 이미지 미리보기",
-                        previewUrl: file.previewUrl,
-                        symbol: newSymbolTag || "BTC",
-                      })
-                    }
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-gray-700">제목</span>
+                  <input
+                    name="title"
+                    className="h-11 w-full rounded-xl border border-gray-300 bg-white px-4 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
+                    required
+                    maxLength={120}
+                    placeholder="제목을 입력해주세요 (최대 50~120자)"
                   />
+                </label>
 
-                  <button type="submit" className="member-primary login-button">
-                    {submittingPost ? "등록 중…" : "게시글 등록"}
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-gray-700">본문</span>
+                  <textarea
+                    name="content"
+                    className="w-full rounded-xl border border-gray-300 bg-white p-4 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
+                    required
+                    maxLength={4000}
+                    rows={3}
+                    placeholder="자유롭게 이야기를 나눠보세요. (타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다.)"
+                  />
+                </label>
+
+                <CommunityImageUploadSlot
+                  files={attachedImages}
+                  onChange={setAttachedImages}
+                />
+
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-xs font-medium text-gray-400">
+                    {attachedImages.length > 0 ? `첨부 이미지 ${attachedImages.length}장 준비됨` : "이미지는 최대 4장까지 첨부 가능합니다."}
+                  </span>
+                  <button
+                    className="member-primary login-button inline-flex h-11 items-center justify-center rounded-xl bg-[#0058FF] px-6 text-sm font-bold text-white hover:bg-blue-700"
+                    type="submit"
+                    disabled={createPostMutation.isPending}
+                  >
+                    {createPostMutation.isPending ? "등록 중…" : "게시글 등록"}
                   </button>
-                </fieldset>
+                </div>
               </form>
             </section>
-          ) : (
-            <section className="ym-toss-composer-card">
-              <p className="member-message">
-                게시글 작성·좋아요·댓글 참여는 회원 로그인 후 이용할 수 있습니다.{" "}
-                <Link href="/login" className="account-refresh">
-                  로그인하러 가기
-                </Link>
-              </p>
-              <CommunityImageUploadSlot
-                files={postImages}
-                onChange={setPostImages}
-                onInspectImage={file =>
-                  setLightboxState({
-                    title: file.name,
-                    subtitle: "첨부 이미지 미리보기",
-                    previewUrl: file.previewUrl,
-                  })
-                }
-              />
-            </section>
-          )}
 
-          {feedback && (
-            <p role={feedback.kind === "error" ? "alert" : "status"} className="member-message">
-              {feedback.text}
-            </p>
-          )}
+            {feedback && (
+              <div
+                className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-bold text-[#0058FF]"
+                role="status"
+              >
+                {feedback}
+              </div>
+            )}
 
-          {query.isPending && <p role="status" className="member-message">커뮤니티 게시글을 불러오는 중입니다…</p>}
-          {query.isError && (
-            <p role="alert" className="member-message">
-              게시글 목록을 조회하지 못했습니다. {contentMessage(query.error)}{" "}
-              <button type="button" className="account-refresh" onClick={() => void query.refetch()}>
-                다시 조회
-              </button>
-            </p>
-          )}
+            {postsQuery.isLoading && (
+              <div className="card rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-500" role="status">
+                커뮤니티 게시글을 불러오는 중입니다…
+              </div>
+            )}
 
-          {!query.isPending && !query.isError && allPosts.length === 0 && (
-            <p className="member-message">조건에 해당하는 게시글이 없습니다.</p>
-          )}
+            {postsQuery.isError && (
+              <div className="card rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-600" role="alert">
+                <p>게시글 목록을 불러오지 못했습니다. ({contentMessage(postsQuery.error)})</p>
+                <V1Button
+                  variant="white"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => void postsQuery.refetch()}
+                >
+                  다시 시도
+                </V1Button>
+              </div>
+            )}
 
-          {allPosts.length > 0 && (
-            <ul className="ym-toss-feed-list" aria-label="커뮤니티 게시글 목록">
-              {allPosts.map(post => {
-                const comments = commentsByPost[post.id] ?? [];
-                const topComments = comments.filter(c => c.parentCommentId === null);
-                const repliesByParent = new Map<number, CommunityComment[]>();
-                for (const c of comments) {
-                  if (c.parentCommentId !== null) {
-                    const list = repliesByParent.get(c.parentCommentId) ?? [];
-                    list.push(c);
-                    repliesByParent.set(c.parentCommentId, list);
-                  }
-                }
-                const replyTarget = replyTargetByPost[post.id] ?? null;
+            {items.length === 0 && !postsQuery.isLoading && !postsQuery.isError && (
+              <div className="card rounded-2xl border border-gray-200 bg-white py-16 text-center text-sm text-gray-500">
+                조건에 맞는 게시글이 없습니다. 첫 번째 관점을 남겨보세요!
+              </div>
+            )}
+
+            {/* V1 CommunityItem 카드 스트림 */}
+            <div className="space-y-4">
+              {items.map(post => {
+                const isOpen = activePostId === post.id;
+                const isEditing = editingPost?.id === post.id;
 
                 return (
-                  <li key={post.id} className="ym-toss-feed-card">
-                    <article>
-                      <header className="ym-feed-card-head">
-                        <div className="ym-feed-avatar" aria-hidden="true">
-                          {post.authorWithdrawn ? "—" : post.authorNickname.slice(0, 1)}
-                        </div>
-                        <div className="ym-feed-head-meta">
-                          <p className="member-note">
-                            <strong>[{communityCategoryLabel(post.category)}]</strong>
-                            {post.symbolTag && (
-                              <>
-                                {" "}· <span className="ym-badge-violet">#{post.symbolTag}</span>
-                              </>
-                            )}
-                            {" "}· 작성자{" "}
-                            <AuthorBadge
+                  <article
+                    key={post.id}
+                    className="card rounded-2xl border border-gray-200 bg-white p-6 transition-colors"
+                  >
+                    {/* 상단: 작성자 프로필 + 시간 + 우측 더보기/수정·삭제 액션 */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <V1UserAvatar
+                          memberId={post.memberId}
+                          nickname={post.authorNickname}
+                          withdrawn={post.authorWithdrawn}
+                          size="md"
+                        />
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-gray-900">
+                            <AuthorLabel
                               memberId={post.memberId}
                               nickname={post.authorNickname}
                               withdrawn={post.authorWithdrawn}
                             />
-                            {" "}· <time dateTime={post.createdAt}>{kst(post.createdAt)} KST</time>
-                          </p>
-                          {post.category === "POSITION" && (
-                            <span className="ym-position-verified-pill">
-                              모의투자 포지션 공유 · {post.symbolTag ?? "BTC"} 격리마진
+                            <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
+                              {communityCategoryLabel(post.category)}
                             </span>
-                          )}
-                        </div>
-                      </header>
-
-                      {editingPostId === post.id ? (
-                        <div className="member-fields">
-                          <label>
-                            제목 수정
-                            <input
-                              type="text"
-                              className="myInput"
-                              value={editTitle}
-                              maxLength={120}
-                              onChange={event => setEditTitle(event.target.value)}
-                            />
-                          </label>
-                          <label>
-                            본문 수정
-                            <textarea
-                              rows={4}
-                              className="myTextarea"
-                              value={editContent}
-                              maxLength={4000}
-                              onChange={event => setEditContent(event.target.value)}
-                            />
-                          </label>
-                          <div className="member-actions">
-                            <button
-                              type="button"
-                              className="member-primary"
-                              disabled={savingEdit}
-                              onClick={() => void submitEdit(post.id)}
-                            >
-                              {savingEdit ? "저장 중…" : "수정 저장"}
-                            </button>
-                            <button
-                              type="button"
-                              className="member-secondary"
-                              onClick={() => setEditingPostId(null)}
-                            >
-                              수정 취소
-                            </button>
+                            {post.symbolTag && (
+                              <Link
+                                href="/trading"
+                                className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-[#0058FF]"
+                              >
+                                #{post.symbolTag}
+                              </Link>
+                            )}
                           </div>
+                          <p className="mt-0.5 text-xs text-gray-400">{post.createdAt}</p>
                         </div>
-                      ) : (
-                        <div className="ym-feed-card-body">
-                          <h2>{post.title}</h2>
-                          <p className="member-profile-message">{post.content}</p>
-                        </div>
-                      )}
+                      </div>
 
-                      <div className="member-actions ym-feed-action-bar">
-                        <button
-                          type="button"
-                          className={post.likedByMe ? "member-primary" : "member-secondary"}
-                          disabled={busyAction || snapshot.phase !== "ready"}
-                          aria-pressed={post.likedByMe}
-                          onClick={() => void toggleLike(post)}
-                        >
-                          좋아요 {post.likeCount}
-                        </button>
-                        <button
-                          type="button"
-                          className="member-secondary"
-                          onClick={() => void loadComments(post.id)}
-                        >
-                          댓글 {post.commentCount}개 보기
-                        </button>
-                        <button
-                          type="button"
-                          className="account-refresh"
-                          onClick={() =>
-                            setLightboxState({
-                              title: post.title,
-                              subtitle: `${communityCategoryLabel(post.category)} · ${kst(post.createdAt)} KST`,
-                              symbol: post.symbolTag,
-                            })
-                          }
-                        >
-                          포지션·차트 확대 모달
-                        </button>
-                        {post.symbolTag && (
-                          <Link href="/trading" className="account-refresh">
-                            #{post.symbolTag} 거래 화면
-                          </Link>
-                        )}
-                        {post.mine && editingPostId !== post.id && (
+                      {/* V1 ActionMenu (본인: 수정/삭제, 타인: 신고) */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {post.mine ? (
                           <>
                             <button
                               type="button"
-                              className="account-refresh"
-                              onClick={() => startEdit(post)}
+                              className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                              onClick={() => setEditingPost(isEditing ? null : post)}
                             >
-                              게시글 수정
+                              {isEditing ? "수정 취소" : "게시글 수정"}
                             </button>
                             <button
                               type="button"
-                              className="account-refresh"
-                              disabled={busyAction}
-                              onClick={() => void deletePost(post.id)}
+                              className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-100"
+                              onClick={() => {
+                                if (requireReadyMember()) deletePostMutation.mutate(post.id);
+                              }}
+                              disabled={deletePostMutation.isPending}
                             >
                               게시글 삭제
                             </button>
                           </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="rounded-lg px-2.5 py-1 text-xs font-bold text-gray-400 hover:bg-gray-100 hover:text-red-500"
+                            onClick={() =>
+                              setReportTarget({
+                                type: "POST",
+                                id: post.id,
+                                title: post.title,
+                              })
+                            }
+                          >
+                            신고
+                          </button>
                         )}
                       </div>
+                    </div>
 
-                      {(comments.length > 0 || snapshot.phase === "ready") && (
-                        <section className="ym-feed-comments-box" aria-label={`게시글 #${post.id} 댓글`}>
-                          {topComments.length > 0 && (
-                            <ul className="member-follow-list">
-                              {topComments.map(comment => (
-                                <li key={comment.id}>
-                                  <p className="member-note">
-                                    <AuthorBadge
+                    {/* 중단: 제목 + 본문 또는 수정 폼 */}
+                    {isEditing ? (
+                      <form className="mt-4 space-y-3 rounded-xl bg-gray-50 p-4" onSubmit={handleUpdatePost}>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-bold text-gray-700">카테고리</span>
+                            <select
+                              name="category"
+                              defaultValue={post.category}
+                              className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-xs font-bold"
+                            >
+                              {SELECTABLE_CATEGORIES.map(item => (
+                                <option key={item} value={item}>
+                                  {communityCategoryLabel(item)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-bold text-gray-700">종목 태그</span>
+                            <select
+                              name="symbolTag"
+                              defaultValue={post.symbolTag ?? ""}
+                              className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-xs font-bold"
+                            >
+                              <option value="">선택 안 함</option>
+                              {SELECTABLE_SYMBOLS.map(symbol => (
+                                <option key={symbol} value={symbol}>
+                                  {symbol}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-bold text-gray-700">제목</span>
+                          <input
+                            name="title"
+                            className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm"
+                            defaultValue={post.title}
+                            required
+                            maxLength={120}
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-bold text-gray-700">본문</span>
+                          <textarea
+                            name="content"
+                            className="w-full rounded-lg border border-gray-300 bg-white p-3 text-sm"
+                            defaultValue={post.content}
+                            required
+                            maxLength={4000}
+                            rows={3}
+                          />
+                        </label>
+                        <V1Button type="submit" variant="blue" size="sm" disabled={updatePostMutation.isPending}>
+                          수정 저장
+                        </V1Button>
+                      </form>
+                    ) : (
+                      <div className="mt-3">
+                        <Link href={`/community/${v1Tab}/${post.id}`} className="group block">
+                          <h3 className="text-lg font-bold text-gray-900 group-hover:text-[#0058FF]">
+                            {post.title}
+                          </h3>
+                        </Link>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
+                          {post.content}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 하단: V1 액션 바 (LikeButton + BubbleButton + 상세보기) */}
+                    <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+                            post.likedByMe
+                              ? "bg-red-50 text-red-500"
+                              : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                          }`}
+                          aria-pressed={post.likedByMe}
+                          onClick={() => {
+                            if (requireReadyMember()) likeMutation.mutate(post);
+                          }}
+                        >
+                          <span>♥</span>
+                          <span>좋아요 {post.likeCount}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100"
+                          onClick={() => setOpenPostId(isOpen ? null : post.id)}
+                        >
+                          <span>💬</span>
+                          <span>{isOpen ? `댓글 접기 (${post.commentCount})` : `댓글 ${post.commentCount}`}</span>
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/community/${v1Tab}/${post.id}`}
+                          className="text-xs font-bold text-gray-400 hover:text-gray-700"
+                        >
+                          상세보기
+                        </Link>
+                      </div>
+                    </div>
+
+                    {/* V1 CommentContainer & CommentForm */}
+                    {isOpen && (
+                      <section
+                        className="mt-4 space-y-4 border-t border-gray-100 pt-4"
+                        aria-label="댓글 및 대댓글"
+                      >
+                        <ul className="space-y-3">
+                          {rootComments.map(comment => {
+                            const replies = repliesByParent.get(comment.id) ?? [];
+                            return (
+                              <li
+                                key={comment.id}
+                                className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-3.5 text-xs"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2 font-bold text-gray-900">
+                                    <AuthorLabel
                                       memberId={comment.memberId}
                                       nickname={comment.authorNickname}
                                       withdrawn={comment.authorWithdrawn}
                                     />
-                                    {" "}· <time dateTime={comment.createdAt}>{kst(comment.createdAt)} KST</time>
-                                  </p>
-                                  <p className="member-profile-message">{comment.content}</p>
-                                  <div className="member-actions">
-                                    {snapshot.phase === "ready" && (
+                                    <span className="font-normal text-gray-400">{comment.createdAt}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      className="font-bold text-[#0058FF] hover:underline"
+                                      onClick={() =>
+                                        setReplyParentId(replyParentId === comment.id ? null : comment.id)
+                                      }
+                                    >
+                                      {replyParentId === comment.id ? "답글 취소" : "답글 달기"}
+                                    </button>
+                                    {comment.mine ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="font-bold text-gray-600 hover:underline"
+                                          onClick={() =>
+                                            setEditingComment(
+                                              editingComment?.id === comment.id ? null : comment,
+                                            )
+                                          }
+                                        >
+                                          댓글 수정
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="font-bold text-red-500 hover:underline"
+                                          onClick={() => {
+                                            if (requireReadyMember()) {
+                                              deleteCommentMutation.mutate({
+                                                postId: post.id,
+                                                commentId: comment.id,
+                                              });
+                                            }
+                                          }}
+                                        >
+                                          댓글 삭제
+                                        </button>
+                                      </>
+                                    ) : (
                                       <button
                                         type="button"
-                                        className="account-refresh"
+                                        className="text-gray-400 hover:text-red-500"
                                         onClick={() =>
-                                          setReplyTargetByPost(current => ({ ...current, [post.id]: comment.id }))
+                                          setReportTarget({
+                                            type: "REPLY",
+                                            id: comment.id,
+                                            title: comment.content.slice(0, 30),
+                                          })
                                         }
                                       >
-                                        답글 달기
-                                      </button>
-                                    )}
-                                    {comment.mine && (
-                                      <button
-                                        type="button"
-                                        className="account-refresh"
-                                        disabled={busyAction}
-                                        onClick={() => void removeComment(post.id, comment.id)}
-                                      >
-                                        댓글 삭제
+                                        신고
                                       </button>
                                     )}
                                   </div>
-                                  {(repliesByParent.get(comment.id) ?? []).length > 0 && (
-                                    <ul className="member-note ym-reply-list">
-                                      {(repliesByParent.get(comment.id) ?? []).map(reply => (
-                                        <li key={reply.id}>
-                                          ↳ <AuthorBadge memberId={reply.memberId} nickname={reply.authorNickname} withdrawn={reply.authorWithdrawn} />: {reply.content} ({kst(reply.createdAt)} KST)
-                                          {reply.mine && (
-                                            <>
-                                              {" "}
-                                              <button
-                                                type="button"
-                                                className="account-refresh"
-                                                disabled={busyAction}
-                                                onClick={() => void removeComment(post.id, reply.id)}
-                                              >
-                                                답글 삭제
-                                              </button>
-                                            </>
-                                          )}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
+                                </div>
 
-                          {snapshot.phase === "ready" && (
-                            <div className="member-search ym-comment-input-row">
-                              <input
-                                type="text"
-                                className="myInput"
-                                aria-label={`게시글 #${post.id} 댓글 입력`}
-                                maxLength={1000}
-                                placeholder={
-                                  replyTarget
-                                    ? `댓글 #${replyTarget}에 대한 답글 입력`
-                                    : "댓글을 입력하세요 (1~1000자)"
-                                }
-                                value={commentDrafts[post.id] ?? ""}
-                                onChange={event =>
-                                  setCommentDrafts(current => ({ ...current, [post.id]: event.target.value }))
-                                }
-                              />
-                              {replyTarget && (
-                                <button
-                                  type="button"
-                                  className="member-secondary"
-                                  onClick={() =>
-                                    setReplyTargetByPost(current => ({ ...current, [post.id]: null }))
-                                  }
-                                >
-                                  답글 취소
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                className="member-primary ym-inline-check-btn"
-                                disabled={busyAction}
-                                onClick={() => void submitComment(post.id)}
-                              >
-                                {replyTarget ? "답글 등록" : "댓글 등록"}
-                              </button>
-                            </div>
-                          )}
-                        </section>
-                      )}
-                    </article>
-                  </li>
+                                {editingComment?.id === comment.id ? (
+                                  <form
+                                    className="mt-2 flex gap-2"
+                                    onSubmit={event => {
+                                      event.preventDefault();
+                                      if (!requireReadyMember()) return;
+                                      const data = new FormData(event.currentTarget);
+                                      const content = String(data.get("content") ?? "").trim();
+                                      if (!content) return;
+                                      updateCommentMutation.mutate({
+                                        postId: post.id,
+                                        commentId: comment.id,
+                                        content,
+                                      });
+                                    }}
+                                  >
+                                    <input
+                                      name="content"
+                                      className="h-9 flex-1 rounded-lg border border-gray-300 bg-white px-3 text-xs"
+                                      defaultValue={comment.content}
+                                      required
+                                      maxLength={1000}
+                                    />
+                                    <V1Button type="submit" variant="blue" size="xs">
+                                      댓글 저장
+                                    </V1Button>
+                                  </form>
+                                ) : (
+                                  <p className="mt-1.5 text-sm text-gray-800">{comment.content}</p>
+                                )}
+
+                                {replies.length > 0 && (
+                                  <ul className="mt-2.5 space-y-2 border-l-2 border-gray-200 pl-3">
+                                    {replies.map(reply => (
+                                      <li key={reply.id} className="text-xs text-gray-700">
+                                        <span>
+                                          ↳{" "}
+                                          <AuthorLabel
+                                            memberId={reply.memberId}
+                                            nickname={reply.authorNickname}
+                                            withdrawn={reply.authorWithdrawn}
+                                          />
+                                          : {reply.content}
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+
+                        <form
+                          className="flex gap-2"
+                          onSubmit={event => handleCreateComment(post.id, event)}
+                        >
+                          <label className="flex-1">
+                            <span className="sr-only">
+                              {replyParentId ? `댓글 #${replyParentId}에 대한 답글` : "새 댓글"}
+                            </span>
+                            <input
+                              name="content"
+                              className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
+                              required
+                              maxLength={1000}
+                              placeholder={
+                                replyParentId
+                                  ? "답글 내용을 입력해 주세요."
+                                  : "댓글을 남겨보세요 (최대 500~1000자)"
+                              }
+                            />
+                          </label>
+                          <V1Button
+                            type="submit"
+                            variant="blue"
+                            size="sm"
+                            disabled={createCommentMutation.isPending}
+                          >
+                            {replyParentId ? "답글 등록" : "댓글 등록"}
+                          </V1Button>
+                        </form>
+                      </section>
+                    )}
+                  </article>
                 );
               })}
-            </ul>
-          )}
-
-          {hasNext && (
-            <div className="member-actions">
-              <button
-                type="button"
-                className="signup-button"
-                disabled={loadingMore}
-                onClick={() => void loadMore()}
-              >
-                {loadingMore ? "불러오는 중…" : "이전 게시글 더보기"}
-              </button>
             </div>
-          )}
+
+            {/* 페이지네이션 */}
+            <div className="flex items-center justify-between pt-2">
+              {cursorHistory.length > 1 ? (
+                <V1Button
+                  variant="white"
+                  size="sm"
+                  onClick={() => setCursorHistory(current => current.slice(0, -1))}
+                >
+                  최신 목록으로
+                </V1Button>
+              ) : (
+                <span />
+              )}
+              {page?.hasNext && page.nextCursorId !== null && (
+                <V1Button
+                  variant="white"
+                  size="sm"
+                  onClick={() => setCursorHistory(current => [...current, page.nextCursorId])}
+                >
+                  이전 게시글 더보기
+                </V1Button>
+              )}
+            </div>
+          </div>
+
+          {/* 우측 사이드바: V1 대회투자 TOP5 (Top5.tsx 100% 카피) */}
+          <aside className="mt-10 w-full shrink-0 space-y-6 lg:mt-0 lg:w-72">
+            <div className="card rounded-2xl border border-gray-200 bg-white p-6">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-lg font-bold text-gray-900">대회투자 TOP5</h2>
+                <select
+                  aria-label="대회 시즌 선택"
+                  value={contestSeason}
+                  onChange={e => setContestSeason(e.target.value)}
+                  className="h-8 rounded-lg border border-gray-200 bg-gray-50 px-2 text-xs font-bold text-gray-700"
+                >
+                  <option value="SEASON_1">정기 시즌 1</option>
+                  <option value="PRE_SEASON">프리 시즌</option>
+                </select>
+              </div>
+              <p className="mb-4 text-xs font-medium text-gray-400">
+                시즌 누적 모의투자 수익률 상위 트레이더 랭킹입니다.
+              </p>
+
+              <ul className="space-y-3">
+                {V1_CONTEST_TOP5.map(trader => (
+                  <li
+                    key={trader.rank}
+                    className="flex items-center justify-between rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-2.5"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-black ${
+                          trader.rank === 1
+                            ? "bg-[#0058FF] text-white"
+                            : "bg-gray-200 text-gray-700"
+                        }`}
+                      >
+                        {trader.rank}
+                      </span>
+                      <V1UserAvatar
+                        memberId={trader.memberId}
+                        nickname={trader.nickname}
+                        size="sm"
+                      />
+                      <Link
+                        href={`/members/${trader.memberId}`}
+                        className="text-xs font-bold text-gray-900 hover:text-[#0058FF]"
+                      >
+                        {trader.nickname}
+                      </Link>
+                    </div>
+                    <span className="text-xs font-black text-red-500">{trader.roi}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <Link
+                href="/contest"
+                className="mt-4 flex h-10 w-full items-center justify-center rounded-xl bg-gray-100 text-xs font-bold text-gray-700 hover:bg-gray-200"
+              >
+                대회 안내 보기 →
+              </Link>
+            </div>
+          </aside>
         </div>
-
-        {/* 우측 실시간 트렌드·인기 토픽 사이드바 */}
-        <aside className="ym-toss-right-sidebar" aria-label="실시간 트렌드 및 라운지 안내">
-          <div className="ym-toss-side-card">
-            <h2>실시간 급상승 토픽</h2>
-            <ol className="ym-hot-rank-list">
-              {TRENDING_TOPICS.map(item => (
-                <li key={item.rank} className="ym-hot-rank-item">
-                  <span className="ym-rank-num">{item.rank}</span>
-                  <div className="ym-rank-body">
-                    <button
-                      type="button"
-                      className="ym-rank-title-btn"
-                      onClick={() => {
-                        setSymbolTag(item.tag);
-                        resetPagination();
-                      }}
-                    >
-                      #{item.tag} · {item.label}
-                    </button>
-                    <span className="ym-rank-meta">실시간 게시글 {item.posts}건</span>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </div>
-
-          <div className="ym-toss-side-card">
-            <h2>요기망치 커뮤니티 운영 원칙</h2>
-            <ul className="ym-side-rule-list">
-              <li>모의투자 관점과 손절/익절 근거를 서로 존중하며 토론합니다.</li>
-              <li>탈퇴한 회원의 작성글·댓글은 ‘탈퇴한회원’ 표기로 보존됩니다.</li>
-              <li>실제 금전 대여·리딩방 유도는 엄격히 금지됩니다.</li>
-            </ul>
-            <Link href="/trading" className="login-button">
-              10,000 USDT 모의투자 바로가기
-            </Link>
-          </div>
-        </aside>
       </div>
 
-      {/* 이미지·포지션 라이트박스 딤 모달 */}
+      {/* V1 우측 하단 플로팅 글쓰기 버튼 (FloatMenu.tsx 100% 카피) */}
+      <div className="fixed bottom-6 right-6 z-30">
+        <button
+          type="button"
+          onClick={() => setWriteModalOpen(true)}
+          aria-label="글쓰기 모달 열기"
+          className="flex items-center justify-center rounded-full bg-[#0058FF] p-5 text-white transition-colors hover:bg-blue-700"
+        >
+          <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+            />
+          </svg>
+        </button>
+      </div>
+
+      {/* V1 WriteModal (글쓰기 모달) */}
       <DimModal
-        open={lightboxState !== null}
-        onClose={() => setLightboxState(null)}
-        title={lightboxState?.title ?? "차트·포지션 상세 보기"}
-        subtitle={lightboxState?.subtitle}
-        footer={
-          <div className="ym-modal-actions">
-            {lightboxState?.symbol && (
-              <Link
-                href="/trading"
-                className="login-button ym-btn-inline"
-                onClick={() => setLightboxState(null)}
-              >
-                #{lightboxState.symbol} 선물 모의투자 이동
-              </Link>
-            )}
-            <button
-              type="button"
-              className="signup-button ym-btn-inline"
-              onClick={() => setLightboxState(null)}
-            >
-              닫기
-            </button>
-          </div>
-        }
+        open={writeModalOpen}
+        onClose={() => setWriteModalOpen(false)}
+        title="글쓰기"
+        subtitle="타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다."
       >
-        {lightboxState && (
-          <div className="ym-lightbox-body">
-            {lightboxState.previewUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={lightboxState.previewUrl} alt={lightboxState.title} className="ym-lightbox-img" />
-            ) : (
-              <div className="ym-lightbox-placeholder" data-s3-slot="community-post-images">
-                <span className="ym-badge-violet">
-                  #{lightboxState.symbol ?? "BTC"} PERPETUAL FUTURES
-                </span>
-                <strong>{lightboxState.title}</strong>
-                <p>요기망치 선물 모의투자 격리마진 스냅샷 · S3 이미지 스토리지 연동 슬롯</p>
-              </div>
-            )}
+        <form className="space-y-4" onSubmit={handleCreatePost}>
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              name="category"
+              defaultValue="FREE"
+              className="h-10 rounded-xl border border-gray-300 bg-white px-3 text-xs font-bold"
+            >
+              {SELECTABLE_CATEGORIES.map(item => (
+                <option key={item} value={item}>
+                  {communityCategoryLabel(item)}
+                </option>
+              ))}
+            </select>
+            <select
+              name="symbolTag"
+              defaultValue="BTC"
+              className="h-10 rounded-xl border border-gray-300 bg-white px-3 text-xs font-bold"
+            >
+              <option value="">종목 선택 안 함</option>
+              {SELECTABLE_SYMBOLS.map(symbol => (
+                <option key={symbol} value={symbol}>
+                  {symbol}USDT
+                </option>
+              ))}
+            </select>
           </div>
-        )}
+          <input
+            name="title"
+            required
+            maxLength={50}
+            placeholder="제목을 입력해주세요"
+            className="h-11 w-full rounded-xl border border-gray-300 px-4 text-sm font-bold text-gray-900"
+          />
+          <textarea
+            name="content"
+            required
+            maxLength={2000}
+            rows={5}
+            placeholder="자유롭게 이야기를 나눠보세요. (타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다.)"
+            className="w-full rounded-xl border border-gray-300 p-4 text-sm text-gray-900"
+          />
+          <CommunityImageUploadSlot
+            files={modalImages}
+            onChange={setModalImages}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <V1Button variant="gray" size="sm" onClick={() => setWriteModalOpen(false)}>
+              취소
+            </V1Button>
+            <V1Button type="submit" variant="blue" size="sm" disabled={createPostMutation.isPending}>
+              등록하기
+            </V1Button>
+          </div>
+        </form>
+      </DimModal>
+
+      {/* V1 ReportModal (신고 모달) */}
+      <DimModal
+        open={reportTarget !== null}
+        onClose={() => setReportTarget(null)}
+        title={reportTarget?.type === "REPLY" ? "댓글 신고하기" : "게시글 신고하기"}
+        subtitle="신고 사유를 선택해 주세요. 허위 신고 시 활동이 제한될 수 있습니다."
+      >
+        <form className="space-y-3" onSubmit={handleReportSubmit}>
+          <div className="space-y-2">
+            {V1_REPORT_REASONS.map(reason => (
+              <label
+                key={reason}
+                className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-xs font-bold ${
+                  selectedReportReason === reason
+                    ? "border-[#0058FF] bg-blue-50 text-[#0058FF]"
+                    : "border-gray-200 bg-white text-gray-700"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="reportReason"
+                  value={reason}
+                  checked={selectedReportReason === reason}
+                  onChange={() => setSelectedReportReason(reason)}
+                />
+                <span>{reason}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <V1Button variant="gray" size="sm" onClick={() => setReportTarget(null)}>
+              취소
+            </V1Button>
+            <V1Button type="submit" variant="red" size="sm">
+              신고 접수
+            </V1Button>
+          </div>
+        </form>
       </DimModal>
     </MemberShell>
   );

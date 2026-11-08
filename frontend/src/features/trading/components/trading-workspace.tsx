@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { MarketChartPanel } from "./market-chart-panel";
 import { OrderPanel } from "./order-panel";
 import { TradingDataProvider } from "./trading-data-provider";
 import { GuestHeaderAction } from "./guest-access";
 import { MemberHeaderAction } from "../../member/components/member-provider";
+import { V1Header } from "../../member/components/v1-ui";
 
 export function TradingWorkspace() {
   return (
@@ -11,26 +11,15 @@ export function TradingWorkspace() {
       <a href="#trading-main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-10 focus:bg-terminal-panel focus:px-4 focus:py-3">
         Trading 본문으로 바로가기
       </a>
-      <header className="trading-brand-header">
-        <div className="trading-brand-bar">
-          <p className="trading-brand-name">
-            <span className="trading-brand-mark" aria-hidden="true">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                <path d="m8 4 4-1 8 8-1 4-3 1-8-8V4Z" fill="currentColor" />
-                <path d="m11 11-7 8" stroke="currentColor" strokeWidth="3" strokeLinecap="square" />
-              </svg>
-            </span>
-            요기망치 <span className="trading-brand-latin">YOGIMANGCHI</span>
-          </p>
-          <p className="trading-header-product">선물 모의투자</p>
-          <nav aria-label="서비스 메뉴" className="flex items-center gap-3 text-trade-body text-terminal-secondary">
-            <Link href="/news">실시간 뉴스</Link>
-            <Link href="/community">커뮤니티</Link>
-          </nav>
-          <GuestHeaderAction />
-          <MemberHeaderAction />
-        </div>
-      </header>
+      <V1Header
+        theme="dark"
+        rightExtra={
+          <div className="flex items-center gap-2">
+            <GuestHeaderAction />
+            <MemberHeaderAction />
+          </div>
+        }
+      />
       <main id="trading-main" tabIndex={-1} className="trading-workspace">
         <div className="trading-page-intro">
           <h1 className="sr-only">선물 모의투자</h1>
