@@ -70,9 +70,7 @@
 
 @layer components {
   .member-shell { @apply mx-auto min-h-[70vh] max-w-3xl px-4 py-5 sm:px-6 sm:py-8; }
-  .member-shell > header { @apply mb-6 flex flex-wrap items-center justify-between gap-4; }
   .member-logo { @apply text-xl font-bold text-terminal-text; }
-  .member-shell nav { @apply flex gap-4 text-sm text-terminal-secondary; }
   .member-card { @apply rounded-sm border border-terminal-line bg-terminal-panel p-4 sm:p-6; }
   .member-card h1 { @apply mb-6 text-xl font-bold; }
   .member-card h2 { @apply mb-3 text-base font-semibold; }
@@ -130,7 +128,6 @@
   .member-follow-list li { @apply py-3; }
   .member-follow-list a { @apply font-semibold text-terminal-text; }
   .member-session-action { @apply flex shrink-0 items-center gap-3 text-xs text-terminal-secondary; }
-  .member-session-action a { @apply text-brand-600; }
 }
 
 @layer components {
@@ -995,167 +992,6 @@ body:has(.member-shell) :focus-visible {
   color: #1D1D1F;
 }
 
-.member-shell > .ym-gnb-header {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  width: 100%;
-  min-height: 76px;
-  margin: 0;
-  padding: 0 20px;
-  background-color: #FFFFFF;
-  border-bottom: 1px solid #DEE1E6;
-  box-shadow: none;
-}
-
-.ym-gnb-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  max-width: 1440px;
-  min-height: 76px;
-  margin: 0 auto;
-}
-
-.ym-gnb-left {
-  display: flex;
-  align-items: center;
-  gap: 36px;
-  min-width: 0;
-}
-
-.member-shell .member-logo {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: #1D1D1F;
-  text-decoration: none;
-}
-
-.ym-logo-en {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #7242FF;
-}
-
-.member-shell .ym-gnb-nav {
-  display: none;
-  align-items: center;
-  gap: 28px;
-}
-
-.member-shell .ym-gnb-nav a {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-height: 76px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #6E6E73;
-  text-decoration: none;
-}
-
-.member-shell .ym-gnb-nav a:hover {
-  color: #1D1D1F;
-}
-
-.member-shell .ym-gnb-nav a:hover::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background-color: #7F42FF;
-}
-
-.ym-gnb-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.ym-gnb-SimBadge {
-  display: none;
-  align-items: center;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid #DEE1E6;
-  border-radius: 100px;
-  background-color: #F8F9FB;
-  font-size: 12px;
-  font-weight: 700;
-  color: #7242FF;
-  text-decoration: none;
-}
-
-.ym-gnb-login-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 38px;
-  padding: 0 20px;
-  border: 1px solid #1D1D1F;
-  border-radius: 100px;
-  background-color: #FFFFFF;
-  font-size: 14px;
-  font-weight: 600;
-  color: #1D1D1F;
-  text-decoration: none;
-}
-
-.ym-gnb-login-pill:hover {
-  border-color: #7242FF;
-  color: #7242FF;
-}
-
-.ym-gnb-signup-link {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  height: 38px;
-  padding: 0 16px;
-  border: 1px solid #7242FF;
-  border-radius: 100px;
-  background-color: #7242FF;
-  font-size: 13px;
-  font-weight: 700;
-  color: #FFFFFF;
-  text-decoration: none;
-}
-
-.ym-gnb-hamburger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid #DEE1E6;
-  border-radius: 8px;
-  background-color: #FFFFFF;
-  font-size: 18px;
-  color: #1D1D1F;
-  cursor: pointer;
-}
-
-@media (width >= 56rem) {
-  .member-shell .ym-gnb-nav {
-    display: flex;
-  }
-  .ym-gnb-SimBadge,
-  .ym-gnb-signup-link {
-    display: inline-flex;
-  }
-  .ym-gnb-hamburger {
-    display: none;
-  }
-}
 
 /* Page Containers & Card Variants */
 .ym-page-container {

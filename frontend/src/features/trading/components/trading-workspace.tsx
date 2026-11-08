@@ -2,7 +2,6 @@ import { MarketChartPanel } from "./market-chart-panel";
 import { OrderPanel } from "./order-panel";
 import { TradingDataProvider } from "./trading-data-provider";
 import { GuestHeaderAction } from "./guest-access";
-import { MemberHeaderAction } from "../../member/components/member-provider";
 import { V1Header } from "../../member/components/v1-ui";
 
 export function TradingWorkspace() {
@@ -13,12 +12,7 @@ export function TradingWorkspace() {
       </a>
       <V1Header
         theme="dark"
-        rightExtra={
-          <div className="flex items-center gap-2">
-            <GuestHeaderAction />
-            <MemberHeaderAction />
-          </div>
-        }
+        rightExtra={<GuestHeaderAction />}
       />
       <main id="trading-main" tabIndex={-1} className="trading-workspace">
         <div className="trading-page-intro">
