@@ -8,6 +8,7 @@ export interface SelectedS3File {
   sizeBytes: number;
   mimeType: string;
   previewUrl: string;
+  rawFile?: File;
 }
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -60,6 +61,7 @@ export function ProfileImageUploadSlot({
       sizeBytes: file.size,
       mimeType: file.type,
       previewUrl,
+      rawFile: file,
     });
   }
 
@@ -164,6 +166,7 @@ export function CommunityImageUploadSlot({
         sizeBytes: file.size,
         mimeType: file.type,
         previewUrl,
+        rawFile: file,
       });
     }
     onChange(next);

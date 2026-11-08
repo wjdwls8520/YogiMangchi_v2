@@ -153,7 +153,9 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
     complete: () => authenticate("/auth/login/complete"),
     signup: (body: { nickname: string; profileMessage: string; termAgree: boolean; privateAgree: boolean; termsVersion: string; privacyVersion: string }) => authenticate("/auth/signup", body),
     authorized,
-    request(path: string, options: Parameters<typeof contentJson>[2] = {}) {
+    request(path: string, options: {
+      method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; access?: string; csrf?: string; body?: object | FormData; signal?: AbortSignal;
+    } = {}) {
       return authorized(current => contentJson(origin, path, { ...options, access: current.accessToken }, transport), !options.method || options.method === "GET");
     },
     withdraw(body: { acknowledged: boolean; confirmation: string; policyVersion: string }) {

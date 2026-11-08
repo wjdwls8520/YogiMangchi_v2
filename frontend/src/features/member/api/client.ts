@@ -30,18 +30,22 @@ export function oauthUrl(origin: string, provider: "google" | "kakao") {
   return `${contentOrigin(origin)}/oauth2/authorization/${provider}`;
 }
 export async function contentJson(origin: string, path: string, options: {
-  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; access?: string; csrf?: string; body?: object; signal?: AbortSignal;
+  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; access?: string; csrf?: string; body?: object | FormData; signal?: AbortSignal;
 } = {}, transport: typeof fetch = fetch): Promise<unknown> {
-  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout)|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?|news(?:\/[0-9]+)?|community\/(?:posts(?:\/[0-9]+(?:\/(?:likes|comments))?)?|comments\/[0-9]+))(?:\?[^#]*)?$/.test(path)
+  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout)|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?|news(?:\/[0-9]+)?|community\/(?:posts(?:\/latest-check|\/[0-9]+(?:\/(?:likes|reports|comments(?:\/[0-9]+(?:\/(?:likes|reports))?)?))?)?|comments\/[0-9]+(?:\/(?:likes|reports))?|report-reasons|ux\/subscribe\/feed))(?:\?[^#]*)?$/.test(path)
     || path.includes("..") || path.includes("\\")) throw new ContentApiError(400);
   const cookie = path.startsWith("/auth/") || path === "/members/me/withdrawal";
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   try {
     const response = await transport(`${contentOrigin(origin)}/api/v1${path}`, {
       method: options.method ?? "GET", credentials: cookie ? "include" : "omit", cache: "no-store", redirect: "error",
       signal: AbortSignal.any([AbortSignal.timeout(10_000), ...(options.signal ? [options.signal] : [])]),
-      headers: { ...(options.access ? { Authorization: `Bearer ${options.access}` } : {}),
-        ...(options.csrf ? { "X-CSRF-TOKEN": options.csrf } : {}), ...(options.body ? { "Content-Type": "application/json" } : {}) },
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      headers: {
+        ...(options.access ? { Authorization: `Bearer ${options.access}` } : {}),
+        ...(options.csrf ? { "X-CSRF-TOKEN": options.csrf } : {}),
+        ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
+      },
+      body: options.body ? (isFormData ? (options.body as FormData) : JSON.stringify(options.body)) : undefined,
     });
     if (!response.ok) {
       let code: string | undefined;

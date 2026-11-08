@@ -40,6 +40,33 @@ export type NewsPage = {
   nextCursorId: number | null;
 };
 
+export type CommunityPostFile = {
+  id: number;
+  postId: number;
+  originalName: string;
+  size: number;
+  url: string;
+  contentType: string;
+  createdAt: string;
+};
+
+export type SharedPositionSnapshot = {
+  id: string;
+  marketLabel: "모의투자 선물" | "시즌 1 대회" | string;
+  symbol: "BTC" | "ETH" | "SOL" | "XRP" | string;
+  pair: string;
+  side: "LONG" | "SHORT";
+  leverage: number;
+  entryPrice: string;
+  markPrice: string;
+  liquidationPrice: string;
+  roePct: string;
+  pnlUsdt: string;
+  positive: boolean;
+  showPnlAmount?: boolean;
+  verified?: boolean;
+};
+
 export type CommunityPost = {
   id: number;
   memberId: number;
@@ -51,8 +78,12 @@ export type CommunityPost = {
   content: string;
   likeCount: number;
   commentCount: number;
+  reportCount?: number;
   likedByMe: boolean;
+  reportedByMe?: boolean;
   mine: boolean;
+  files?: CommunityPostFile[];
+  sharedPosition?: SharedPositionSnapshot | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -69,6 +100,29 @@ export type CommunityLikeResult = {
   likedByMe: boolean;
 };
 
+export type CommunityCommentLikeResult = {
+  commentId: number;
+  likeCount: number;
+  likedByMe: boolean;
+};
+
+export type CommunityReportResult = {
+  targetId: number;
+  reportCount: number;
+  reportedByMe: boolean;
+};
+
+export type CommunityReportReason = {
+  code: string;
+  description: string;
+};
+
+export type LatestPostsCheck = {
+  newPostCount: number;
+  latestPostId: number | null;
+  items: CommunityPost[];
+};
+
 export type CommunityComment = {
   id: number;
   postId: number;
@@ -76,8 +130,16 @@ export type CommunityComment = {
   authorNickname: string;
   authorWithdrawn: boolean;
   parentCommentId: number | null;
+  targetCommentId?: number | null;
+  targetMemberId?: number | null;
+  targetNickname?: string | null;
   content: string;
+  likeCount?: number;
+  reportCount?: number;
+  likedByMe?: boolean;
+  reportedByMe?: boolean;
   mine: boolean;
+  deleted?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -144,6 +206,42 @@ export function parseNewsPage(value: unknown): NewsPage {
   };
 }
 
+export function parseCommunityPostFile(value: unknown): CommunityPostFile {
+  const row = obj(value);
+  return {
+    id: posInt(row.id),
+    postId: posInt(row.postId),
+    originalName: str(row.originalName, 260),
+    size: nonNegInt(row.size),
+    url: str(row.url, 2000),
+    contentType: str(row.contentType, 120),
+    createdAt: iso(row.createdAt),
+  };
+}
+
+export function parseSharedPositionSnapshot(value: unknown): SharedPositionSnapshot {
+  const row = obj(value);
+  const side = row.side;
+  if (side !== "LONG" && side !== "SHORT") return fail();
+  if (typeof row.positive !== "boolean") return fail();
+  return {
+    id: str(row.id, 100),
+    marketLabel: str(row.marketLabel, 60),
+    symbol: str(row.symbol, 20),
+    pair: str(row.pair, 30),
+    side,
+    leverage: posInt(row.leverage),
+    entryPrice: str(row.entryPrice, 60),
+    markPrice: str(row.markPrice, 60),
+    liquidationPrice: str(row.liquidationPrice, 60),
+    roePct: str(row.roePct, 40),
+    pnlUsdt: str(row.pnlUsdt, 60),
+    positive: row.positive,
+    showPnlAmount: typeof row.showPnlAmount === "boolean" ? row.showPnlAmount : true,
+    verified: typeof row.verified === "boolean" ? row.verified : true,
+  };
+}
+
 export function parseCommunityPost(value: unknown): CommunityPost {
   const row = obj(value);
   const category = row.category;
@@ -162,8 +260,12 @@ export function parseCommunityPost(value: unknown): CommunityPost {
     content: str(row.content, 10000),
     likeCount: nonNegInt(row.likeCount),
     commentCount: nonNegInt(row.commentCount),
+    reportCount: typeof row.reportCount === "number" ? nonNegInt(row.reportCount) : 0,
     likedByMe: row.likedByMe,
+    reportedByMe: typeof row.reportedByMe === "boolean" ? row.reportedByMe : false,
     mine: row.mine,
+    files: Array.isArray(row.files) ? row.files.map(parseCommunityPostFile) : [],
+    sharedPosition: row.sharedPosition ? parseSharedPositionSnapshot(row.sharedPosition) : null,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
@@ -189,11 +291,53 @@ export function parseCommunityLike(value: unknown): CommunityLikeResult {
   };
 }
 
+export function parseCommentLike(value: unknown): CommunityCommentLikeResult {
+  const row = obj(value);
+  if (typeof row.likedByMe !== "boolean") return fail();
+  return {
+    commentId: posInt(row.commentId),
+    likeCount: nonNegInt(row.likeCount),
+    likedByMe: row.likedByMe,
+  };
+}
+
+export function parseCommunityReport(value: unknown): CommunityReportResult {
+  const row = obj(value);
+  if (typeof row.reportedByMe !== "boolean") return fail();
+  return {
+    targetId: posInt(row.targetId),
+    reportCount: nonNegInt(row.reportCount),
+    reportedByMe: row.reportedByMe,
+  };
+}
+
+export function parseReportReasons(value: unknown): CommunityReportReason[] {
+  if (!Array.isArray(value)) return fail();
+  return value.map(item => {
+    const row = obj(item);
+    return {
+      code: str(row.code, 60),
+      description: str(row.description, 200),
+    };
+  });
+}
+
+export function parseLatestPostsCheck(value: unknown): LatestPostsCheck {
+  const row = obj(value);
+  if (!Array.isArray(row.items)) return fail();
+  return {
+    newPostCount: nonNegInt(row.newPostCount),
+    latestPostId: row.latestPostId === null || row.latestPostId === undefined ? null : posInt(row.latestPostId),
+    items: row.items.map(parseCommunityPost),
+  };
+}
+
 export function parseCommunityComment(value: unknown): CommunityComment {
   const row = obj(value);
   if (typeof row.authorWithdrawn !== "boolean" || typeof row.mine !== "boolean") return fail();
   const authorWithdrawn = row.authorWithdrawn;
   const authorNickname = authorWithdrawn ? "탈퇴한회원" : str(row.authorNickname, 40);
+  const deleted = typeof row.deleted === "boolean" ? row.deleted : false;
   return {
     id: posInt(row.id),
     postId: posInt(row.postId),
@@ -201,8 +345,16 @@ export function parseCommunityComment(value: unknown): CommunityComment {
     authorNickname,
     authorWithdrawn,
     parentCommentId: row.parentCommentId === null || row.parentCommentId === undefined ? null : posInt(row.parentCommentId),
-    content: str(row.content, 2000),
+    targetCommentId: row.targetCommentId === null || row.targetCommentId === undefined ? null : posInt(row.targetCommentId),
+    targetMemberId: row.targetMemberId === null || row.targetMemberId === undefined ? null : posInt(row.targetMemberId),
+    targetNickname: optStr(row.targetNickname, 40),
+    content: deleted && (typeof row.content !== "string" || row.content.length === 0) ? "삭제된 댓글입니다." : str(row.content, 2000),
+    likeCount: typeof row.likeCount === "number" ? nonNegInt(row.likeCount) : 0,
+    reportCount: typeof row.reportCount === "number" ? nonNegInt(row.reportCount) : 0,
+    likedByMe: typeof row.likedByMe === "boolean" ? row.likedByMe : false,
+    reportedByMe: typeof row.reportedByMe === "boolean" ? row.reportedByMe : false,
     mine: row.mine,
+    deleted,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };

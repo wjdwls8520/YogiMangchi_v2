@@ -19,14 +19,25 @@ import { ContentApiError, contentJson, contentMessage } from "../src/features/me
 import {
   communityPostsPath,
   newsPath,
+  parseCommentLike,
   parseCommunityComments,
   parseCommunityLike,
   parseCommunityPostPage,
+  parseCommunityReport,
+  parseLatestPostsCheck,
   parseNewsPage,
+  parseReportReasons,
   readCommunityOrPublic,
 } from "../src/features/member/api/community-news";
 import { NewsFeed } from "../src/features/member/components/news-feed";
 import { CommunityBoard } from "../src/features/member/components/community-board";
+import { MainPortal } from "../src/features/member/components/main-portal";
+import { MemberSignupPage } from "../src/features/member/components/member-auth";
+import { MemberAccount } from "../src/features/member/components/member-account";
+import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
+import { V1Header } from "../src/features/member/components/v1-ui";
+import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
+
 test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
   const html = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending={false}/></MemberProvider>);
   assert.match(html, /disabled=""[^>]*>동의하고 가입하기/);
@@ -353,12 +364,214 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
   }
 });
 
-import { MainPortal } from "../src/features/member/components/main-portal";
-import { MemberSignupPage } from "../src/features/member/components/member-auth";
-import { MemberAccount } from "../src/features/member/components/member-account";
-import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
-import { V1Header } from "../src/features/member/components/v1-ui";
-import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
+test("Community API binding supports FormData multipart, S3 files, sharedPosition, comment likes/mentions, deleted parent comment masking, reports, and latest-check", async () => {
+  const form = new FormData();
+  form.append("category", "ANALYSIS");
+  form.append("title", "S3 멀티파트 테스트");
+  form.append("content", "차트 이미지 첨부 본문");
+
+  let capturedContentType: string | null = "not-checked";
+  let capturedBodyIsFormData = false;
+  await contentJson(
+    "http://localhost:8080",
+    "/community/posts",
+    { method: "POST", access: "tok", body: form },
+    async (_url, init) => {
+      const headers = new Headers(init?.headers);
+      capturedContentType = headers.get("Content-Type");
+      capturedBodyIsFormData = init?.body instanceof FormData;
+      return Response.json({
+        id: 55,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        category: "ANALYSIS",
+        symbolTag: "BTC",
+        title: "S3 멀티파트 테스트",
+        content: "차트 이미지 첨부 본문",
+        likeCount: 0,
+        commentCount: 0,
+        reportCount: 0,
+        likedByMe: false,
+        reportedByMe: false,
+        mine: true,
+        files: [],
+        sharedPosition: null,
+        createdAt: "2026-11-08T10:00:00Z",
+        updatedAt: "2026-11-08T10:00:00Z",
+      });
+    },
+  );
+  assert.equal(capturedContentType, null);
+  assert.equal(capturedBodyIsFormData, true);
+
+  for (const allowedPath of [
+    "/community/posts/latest-check?sincePostId=21",
+    "/community/ux/subscribe/feed",
+    "/community/report-reasons",
+    "/community/posts/21/reports",
+    "/community/posts/21/comments/301",
+    "/community/posts/21/comments/301/likes",
+    "/community/posts/21/comments/301/reports",
+    "/community/comments/301",
+    "/community/comments/301/likes",
+    "/community/comments/301/reports",
+  ]) {
+    const res = await contentJson("http://localhost:8080", allowedPath, {}, async () =>
+      Response.json({ ok: true }),
+    );
+    assert.deepEqual(res, { ok: true }, allowedPath);
+  }
+
+  assert.deepEqual(
+    parseCommentLike({ commentId: 302, likeCount: 9, likedByMe: true }),
+    { commentId: 302, likeCount: 9, likedByMe: true },
+  );
+  assert.deepEqual(
+    parseCommunityReport({ targetId: 21, reportCount: 2, reportedByMe: true }),
+    { targetId: 21, reportCount: 2, reportedByMe: true },
+  );
+  assert.deepEqual(
+    parseReportReasons([
+      { code: "SPAM", description: "스팸 홍보/도배글입니다." },
+      { code: "ABUSE", description: "욕설/생명경시/혐오/차별적 표현입니다." },
+    ]),
+    [
+      { code: "SPAM", description: "스팸 홍보/도배글입니다." },
+      { code: "ABUSE", description: "욕설/생명경시/혐오/차별적 표현입니다." },
+    ],
+  );
+
+  const latestChecked = parseLatestPostsCheck({
+    newPostCount: 1,
+    latestPostId: 77,
+    items: [
+      {
+        id: 77,
+        memberId: 15,
+        authorNickname: "퀀트매니저",
+        authorWithdrawn: false,
+        category: "POSITION",
+        symbolTag: "SOL",
+        title: "SOL 20배 대회 포지션 스냅샷 및 S3 차트 공유",
+        content: "돌파 구간에서 롱 포지션 유지 중입니다.",
+        likeCount: 12,
+        commentCount: 3,
+        reportCount: 1,
+        likedByMe: false,
+        reportedByMe: true,
+        mine: false,
+        files: [
+          {
+            id: 901,
+            postId: 77,
+            originalName: "sol-breakout-chart.png",
+            size: 124800,
+            url: "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/community/77/sol-breakout-chart.png",
+            contentType: "image/png",
+            createdAt: "2026-11-08T11:00:00Z",
+          },
+        ],
+        sharedPosition: {
+          id: "POS_SOL_LONG_20X",
+          marketLabel: "시즌 1 대회",
+          symbol: "SOL",
+          pair: "SOLUSDT",
+          side: "LONG",
+          leverage: 20,
+          entryPrice: "176.20",
+          markPrice: "184.50",
+          liquidationPrice: "168.10",
+          roePct: "+94.21%",
+          pnlUsdt: "+471.05 USDT",
+          positive: true,
+          showPnlAmount: true,
+          verified: true,
+        },
+        createdAt: "2026-11-08T11:00:00Z",
+        updatedAt: "2026-11-08T11:00:00Z",
+      },
+    ],
+  });
+  assert.equal(latestChecked.newPostCount, 1);
+  assert.equal(latestChecked.latestPostId, 77);
+  assert.equal(latestChecked.items[0].files?.length, 1);
+  assert.equal(latestChecked.items[0].sharedPosition?.pair, "SOLUSDT");
+
+  const commentsWithDeletedAndMention = parseCommunityComments({
+    items: [
+      {
+        id: 401,
+        postId: 77,
+        memberId: 22,
+        authorNickname: "솔라나고래",
+        authorWithdrawn: false,
+        parentCommentId: null,
+        targetCommentId: null,
+        targetMemberId: null,
+        targetNickname: null,
+        content: "삭제된 댓글입니다.",
+        likeCount: 0,
+        reportCount: 0,
+        likedByMe: false,
+        reportedByMe: false,
+        mine: false,
+        deleted: true,
+        createdAt: "2026-11-08T11:01:00Z",
+        updatedAt: "2026-11-08T11:02:00Z",
+      },
+      {
+        id: 402,
+        postId: 77,
+        memberId: 31,
+        authorNickname: "매크로워처",
+        authorWithdrawn: false,
+        parentCommentId: 401,
+        targetCommentId: 401,
+        targetMemberId: 22,
+        targetNickname: "솔라나고래",
+        content: "타겟 멘션 대댓글이 정상적으로 유지됩니다.",
+        likeCount: 7,
+        reportCount: 1,
+        likedByMe: true,
+        reportedByMe: true,
+        mine: false,
+        deleted: false,
+        createdAt: "2026-11-08T11:03:00Z",
+        updatedAt: "2026-11-08T11:03:00Z",
+      },
+    ],
+  });
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialPage={{
+            items: latestChecked.items,
+            hasNext: false,
+            nextCursorId: null,
+          }}
+          initialComments={{ 77: commentsWithDeletedAndMention.items }}
+        />
+      </MemberProvider>,
+    );
+    assert.match(html, /data-shared-position="POS_SOL_LONG_20X"/);
+    assert.match(html, /SOLUSDT 무기한/);
+    assert.match(html, /\+94\.21%/);
+    assert.match(html, /\(\+471\.05 USDT\)/);
+    assert.match(html, /data-post-files="77"/);
+    assert.match(html, /sol-breakout-chart\.png/);
+    assert.match(html, /data-deleted-comment="true">삭제된 댓글입니다\.<\/p>/);
+    assert.match(html, /data-mention="솔라나고래">@솔라나고래<\/span>/);
+    assert.match(html, /타겟 멘션 대댓글이 정상적으로 유지됩니다\./);
+    assert.match(html, /♥ 7/);
+    assert.match(html, /신고 취소/);
+  } finally {
+    client.clear();
+  }
+});
 
 test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1Header render unified V1/xrhub/CoinNess layouts, 4-tab My Page, and auth button rules", async () => {
   const client = new QueryClient();

@@ -5,36 +5,44 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberShell } from "./member-views";
 import { useMember } from "./member-provider";
-import { contentMessage } from "../api/client";
+import { contentJson, contentMessage, contentOrigin } from "../api/client";
 import {
   COMMUNITY_CATEGORIES,
   SYMBOL_FILTER_TAGS,
   communityCategoryLabel,
   communityPostsPath,
+  parseCommentLike,
   parseCommunityComment,
   parseCommunityComments,
   parseCommunityLike,
   parseCommunityPost,
   parseCommunityPostPage,
+  parseCommunityReport,
+  parseLatestPostsCheck,
+  parseReportReasons,
   readCommunityOrPublic,
   type CommunityCategory,
   type CommunityComment,
   type CommunityPost,
   type CommunityPostPage,
+  type CommunityReportReason,
   type CommunitySort,
+  type SharedPositionSnapshot,
 } from "../api/community-news";
 import { DimModal } from "./dim-modal";
 import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
 import { V1Tabs, V1Button, V1UserAvatar } from "./v1-ui";
 
-const V1_REPORT_REASONS = [
-  "스팸 홍보/도배글입니다.",
-  "음란물입니다.",
-  "불법정보를 포함하고 있습니다.",
-  "청소년에게 유해한 내용입니다.",
-  "욕설/생명경시/혐오/차별적 표현입니다.",
-  "개인정보 노출 게시물입니다.",
-  "불쾌한 표현이 있습니다.",
+export type { SharedPositionSnapshot };
+
+export const V1_REPORT_REASONS: readonly CommunityReportReason[] = [
+  { code: "SPAM", description: "스팸 홍보/도배글입니다." },
+  { code: "SEXUAL", description: "음란물입니다." },
+  { code: "ILLEGAL", description: "불법정보를 포함하고 있습니다." },
+  { code: "YOUTH_HARMFUL", description: "청소년에게 유해한 내용입니다." },
+  { code: "ABUSE", description: "욕설/생명경시/혐오/차별적 표현입니다." },
+  { code: "PRIVACY", description: "개인정보 노출 게시물입니다." },
+  { code: "INAPPROPRIATE", description: "불쾌한 표현이 있습니다." },
 ] as const;
 
 const V1_CONTEST_TOP5 = [
@@ -54,22 +62,6 @@ const SELECTABLE_CATEGORIES: readonly CommunityCategory[] = [
 
 const SELECTABLE_SYMBOLS = SYMBOL_FILTER_TAGS.filter((s): s is "BTC" | "ETH" | "SOL" | "XRP" => Boolean(s));
 
-export interface SharedPositionSnapshot {
-  id: string;
-  marketLabel: "모의투자 선물" | "시즌 1 대회";
-  symbol: "BTC" | "ETH" | "SOL" | "XRP";
-  pair: string;
-  side: "LONG" | "SHORT";
-  leverage: number;
-  entryPrice: string;
-  markPrice: string;
-  liquidationPrice: string;
-  roePct: string;
-  pnlUsdt: string;
-  positive: boolean;
-  showPnlAmount?: boolean;
-}
-
 export const SHAREABLE_POSITIONS: readonly SharedPositionSnapshot[] = [
   {
     id: "POS_BTC_LONG_10X",
@@ -84,6 +76,8 @@ export const SHAREABLE_POSITIONS: readonly SharedPositionSnapshot[] = [
     roePct: "+18.42%",
     pnlUsdt: "+184.20 USDT",
     positive: true,
+    showPnlAmount: true,
+    verified: true,
   },
   {
     id: "POS_ETH_SHORT_5X",
@@ -98,6 +92,8 @@ export const SHAREABLE_POSITIONS: readonly SharedPositionSnapshot[] = [
     roePct: "+10.83%",
     pnlUsdt: "+54.15 USDT",
     positive: true,
+    showPnlAmount: true,
+    verified: true,
   },
   {
     id: "POS_SOL_LONG_20X",
@@ -112,6 +108,8 @@ export const SHAREABLE_POSITIONS: readonly SharedPositionSnapshot[] = [
     roePct: "+94.21%",
     pnlUsdt: "+471.05 USDT",
     positive: true,
+    showPnlAmount: true,
+    verified: true,
   },
   {
     id: "POS_XRP_SHORT_10X",
@@ -126,6 +124,8 @@ export const SHAREABLE_POSITIONS: readonly SharedPositionSnapshot[] = [
     roePct: "-4.15%",
     pnlUsdt: "-20.75 USDT",
     positive: false,
+    showPnlAmount: true,
+    verified: true,
   },
 ] as const;
 
@@ -144,6 +144,7 @@ export function SharedPositionCard({
   snapshot: SharedPositionSnapshot;
   showPnlAmount?: boolean;
 }) {
+  const displayPnlAmount = snapshot.showPnlAmount !== undefined ? snapshot.showPnlAmount && showPnlAmount : showPnlAmount;
   return (
     <div
       className="mt-3 rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4"
@@ -178,7 +179,7 @@ export function SharedPositionCard({
           >
             {snapshot.roePct}
           </strong>
-          {showPnlAmount && (
+          {displayPnlAmount && (
             <span
               className={`text-xs font-bold ${
                 snapshot.positive ? "text-[#E12343]" : "text-[#1763B6]"
@@ -261,8 +262,14 @@ export function CommunityBoard({
     highlightPostId ?? initialPage?.items[0]?.id ?? null,
   );
   const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
+  const [editDeleteFileIds, setEditDeleteFileIds] = useState<number[]>([]);
+  const [editNewImages, setEditNewImages] = useState<SelectedS3File[]>([]);
+
   const [editingComment, setEditingComment] = useState<CommunityComment | null>(null);
   const [replyParentId, setReplyParentId] = useState<number | null>(null);
+  const [replyTargetCommentId, setReplyTargetCommentId] = useState<number | null>(null);
+  const [replyTargetMemberId, setReplyTargetMemberId] = useState<number | null>(null);
+  const [replyTargetNickname, setReplyTargetNickname] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   // V1 모달 상태 (글쓰기 모달 / 신고 모달)
@@ -278,9 +285,13 @@ export function CommunityBoard({
   const [reportTarget, setReportTarget] = useState<{
     type: "POST" | "REPLY";
     id: number;
+    postId?: number;
     title: string;
   } | null>(null);
-  const [selectedReportReason, setSelectedReportReason] = useState<string>(V1_REPORT_REASONS[0]);
+  const [selectedReasonCode, setSelectedReasonCode] = useState<string>(V1_REPORT_REASONS[0].code);
+  const [selectedReportReason, setSelectedReportReason] = useState<string>(
+    V1_REPORT_REASONS[0].description,
+  );
   const [attachedImages, setAttachedImages] = useState<SelectedS3File[]>([]);
   const [modalImages, setModalImages] = useState<SelectedS3File[]>([]);
   const [contestSeason, setContestSeason] = useState("SEASON_1");
@@ -310,6 +321,9 @@ export function CommunityBoard({
   const feedTopRef = useRef<HTMLDivElement>(null);
   const [pendingNewPostsCount, setPendingNewPostsCount] = useState<number>(1);
   const [prependedPosts, setPrependedPosts] = useState<CommunityPost[]>([]);
+  const [latestCheckedItems, setLatestCheckedItems] = useState<CommunityPost[]>([]);
+  const latestPostIdRef = useRef<number>(0);
+  const myCreatedPostIdsRef = useRef<Set<number>>(new Set());
 
   const path = communityPostsPath({
     category,
@@ -350,6 +364,19 @@ export function CommunityBoard({
     initialData: activePostId !== null ? initialComments?.[activePostId] : undefined,
   });
 
+  const reportReasonsQuery = useQuery({
+    queryKey: ["community-report-reasons", origin],
+    enabled: reportTarget !== null,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () =>
+      parseReportReasons(await contentJson(origin, "/community/report-reasons")),
+  });
+
+  const reportReasons =
+    reportReasonsQuery.data && reportReasonsQuery.data.length > 0
+      ? reportReasonsQuery.data
+      : V1_REPORT_REASONS;
+
   function requireReadyMember(): boolean {
     if (snapshot.phase !== "ready") {
       setFeedback("로그인 후 작성·좋아요·댓글 기능을 이용할 수 있습니다.");
@@ -364,11 +391,43 @@ export function CommunityBoard({
       symbolTag: string | null;
       title: string;
       content: string;
-    }) =>
-      parseCommunityPost(
-        await session.request("/community/posts", { method: "POST", body: payload }),
-      ),
+      sharedPosition?: SharedPositionSnapshot | null;
+      files?: SelectedS3File[];
+    }) => {
+      const rawFiles = (payload.files ?? []).filter(
+        (item): item is SelectedS3File & { rawFile: File } => Boolean(item.rawFile),
+      );
+      if (rawFiles.length > 0) {
+        const formData = new FormData();
+        formData.append("category", payload.category);
+        if (payload.symbolTag) formData.append("symbolTag", payload.symbolTag);
+        formData.append("title", payload.title);
+        formData.append("content", payload.content);
+        if (payload.sharedPosition) {
+          formData.append("sharedPosition", JSON.stringify(payload.sharedPosition));
+        }
+        for (const item of rawFiles) {
+          formData.append("files", item.rawFile);
+        }
+        return parseCommunityPost(
+          await session.request("/community/posts", { method: "POST", body: formData }),
+        );
+      }
+      return parseCommunityPost(
+        await session.request("/community/posts", {
+          method: "POST",
+          body: {
+            category: payload.category,
+            symbolTag: payload.symbolTag,
+            title: payload.title,
+            content: payload.content,
+            ...(payload.sharedPosition ? { sharedPosition: payload.sharedPosition } : {}),
+          },
+        }),
+      );
+    },
     onSuccess: created => {
+      myCreatedPostIdsRef.current.add(created.id);
       setFeedback("게시글이 등록되었습니다.");
       setOpenPostId(created.id);
       setWriteModalOpen(false);
@@ -384,8 +443,36 @@ export function CommunityBoard({
       symbolTag: string | null;
       title: string;
       content: string;
-    }) =>
-      parseCommunityPost(
+      sharedPosition?: SharedPositionSnapshot | null;
+      deleteFileIds?: number[];
+      files?: SelectedS3File[];
+    }) => {
+      const rawFiles = (payload.files ?? []).filter(
+        (item): item is SelectedS3File & { rawFile: File } => Boolean(item.rawFile),
+      );
+      if (rawFiles.length > 0) {
+        const formData = new FormData();
+        formData.append("category", payload.category);
+        if (payload.symbolTag) formData.append("symbolTag", payload.symbolTag);
+        formData.append("title", payload.title);
+        formData.append("content", payload.content);
+        if (payload.sharedPosition) {
+          formData.append("sharedPosition", JSON.stringify(payload.sharedPosition));
+        }
+        for (const fileId of payload.deleteFileIds ?? []) {
+          formData.append("deleteFileIds", String(fileId));
+        }
+        for (const item of rawFiles) {
+          formData.append("files", item.rawFile);
+        }
+        return parseCommunityPost(
+          await session.request(`/community/posts/${payload.postId}`, {
+            method: "PATCH",
+            body: formData,
+          }),
+        );
+      }
+      return parseCommunityPost(
         await session.request(`/community/posts/${payload.postId}`, {
           method: "PATCH",
           body: {
@@ -393,11 +480,20 @@ export function CommunityBoard({
             symbolTag: payload.symbolTag,
             title: payload.title,
             content: payload.content,
+            ...(payload.sharedPosition !== undefined
+              ? { sharedPosition: payload.sharedPosition }
+              : {}),
+            ...(payload.deleteFileIds && payload.deleteFileIds.length > 0
+              ? { deleteFileIds: payload.deleteFileIds }
+              : {}),
           },
         }),
-      ),
+      );
+    },
     onSuccess: () => {
       setEditingPost(null);
+      setEditDeleteFileIds([]);
+      setEditNewImages([]);
       setFeedback("게시글이 수정되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
     },
@@ -427,20 +523,111 @@ export function CommunityBoard({
     onError: error => setFeedback(contentMessage(error)),
   });
 
+  const commentLikeMutation = useMutation({
+    mutationFn: async (payload: { postId: number; comment: CommunityComment }) =>
+      parseCommentLike(
+        await session.request(`/community/comments/${payload.comment.id}/likes`, {
+          method: payload.comment.likedByMe ? "DELETE" : "PUT",
+        }),
+      ),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: ["community-comments", origin, variables.postId],
+      });
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
+
+  const reportMutation = useMutation({
+    mutationFn: async (payload: {
+      type: "POST" | "REPLY";
+      id: number;
+      postId?: number;
+      reasonType: string;
+      reason: string;
+    }) => {
+      const endpoint =
+        payload.type === "POST"
+          ? `/community/posts/${payload.id}/reports`
+          : `/community/comments/${payload.id}/reports`;
+      return parseCommunityReport(
+        await session.request(endpoint, {
+          method: "PUT",
+          body: { reasonType: payload.reasonType, reason: payload.reason },
+        }),
+      );
+    },
+    onSuccess: (_data, variables) => {
+      setFeedback(
+        `신고가 접수되었습니다 (${variables.type === "POST" ? "게시글" : "댓글"} #${variables.id}: ${variables.reason})`,
+      );
+      setReportTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      if (variables.postId) {
+        void queryClient.invalidateQueries({
+          queryKey: ["community-comments", origin, variables.postId],
+        });
+      } else if (activePostId !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: ["community-comments", origin, activePostId],
+        });
+      }
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
+
+  const cancelReportMutation = useMutation({
+    mutationFn: async (payload: { type: "POST" | "REPLY"; id: number; postId?: number }) => {
+      const endpoint =
+        payload.type === "POST"
+          ? `/community/posts/${payload.id}/reports`
+          : `/community/comments/${payload.id}/reports`;
+      return parseCommunityReport(
+        await session.request(endpoint, { method: "DELETE" }),
+      );
+    },
+    onSuccess: (_data, variables) => {
+      setFeedback(
+        `${variables.type === "POST" ? "게시글" : "댓글"} #${variables.id} 신고가 취소되었습니다.`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      if (variables.postId) {
+        void queryClient.invalidateQueries({
+          queryKey: ["community-comments", origin, variables.postId],
+        });
+      } else if (activePostId !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: ["community-comments", origin, activePostId],
+        });
+      }
+    },
+    onError: error => setFeedback(contentMessage(error)),
+  });
+
   const createCommentMutation = useMutation({
     mutationFn: async (payload: {
       postId: number;
       parentCommentId: number | null;
+      targetCommentId?: number | null;
+      targetMemberId?: number | null;
       content: string;
     }) =>
       parseCommunityComment(
         await session.request(`/community/posts/${payload.postId}/comments`, {
           method: "POST",
-          body: { parentCommentId: payload.parentCommentId, content: payload.content },
+          body: {
+            parentCommentId: payload.parentCommentId,
+            ...(payload.targetCommentId ? { targetCommentId: payload.targetCommentId } : {}),
+            ...(payload.targetMemberId ? { targetMemberId: payload.targetMemberId } : {}),
+            content: payload.content,
+          },
         }),
       ),
     onSuccess: (_data, variables) => {
       setReplyParentId(null);
+      setReplyTargetCommentId(null);
+      setReplyTargetMemberId(null);
+      setReplyTargetNickname(null);
       setFeedback("댓글이 등록되었습니다.");
       void queryClient.invalidateQueries({
         queryKey: ["community-comments", origin, variables.postId],
@@ -507,6 +694,7 @@ export function CommunityBoard({
     event.preventDefault();
     if (!requireReadyMember()) return;
     const form = event.currentTarget;
+    const isModalForm = form.dataset.formSource === "modal";
     const data = new FormData(form);
     const sharedPositionId = String(data.get("sharedPositionId") ?? "");
     const showPnlAmount = data.get("showPnlAmount") !== null;
@@ -523,12 +711,25 @@ export function CommunityBoard({
     const title = String(data.get("title") ?? "").trim();
     const content = String(data.get("content") ?? "").trim();
     if (!title || !content) return;
+
+    const sharedPositionPayload: SharedPositionSnapshot | null = matchedPosition
+      ? {
+          ...matchedPosition,
+          showPnlAmount,
+          verified: true,
+        }
+      : null;
+
+    const selectedFiles = isModalForm ? modalImages : attachedImages;
+
     createPostMutation.mutate(
       {
         category: postCategory,
         symbolTag: rawSymbol ? rawSymbol : null,
         title,
         content,
+        sharedPosition: sharedPositionPayload,
+        files: selectedFiles,
       },
       {
         onSuccess: created => {
@@ -540,6 +741,11 @@ export function CommunityBoard({
                 showPnlAmount,
               },
             }));
+          }
+          if (isModalForm) {
+            setModalImages([]);
+          } else {
+            setAttachedImages([]);
           }
           form.reset();
         },
@@ -562,6 +768,9 @@ export function CommunityBoard({
       symbolTag: rawSymbol ? rawSymbol : null,
       title,
       content,
+      sharedPosition: editingPost.sharedPosition,
+      deleteFileIds: editDeleteFileIds,
+      files: editNewImages,
     });
   }
 
@@ -573,18 +782,27 @@ export function CommunityBoard({
     const content = String(data.get("content") ?? "").trim();
     if (!content) return;
     createCommentMutation.mutate(
-      { postId, parentCommentId: replyParentId, content },
+      {
+        postId,
+        parentCommentId: replyParentId,
+        targetCommentId: replyTargetCommentId,
+        targetMemberId: replyTargetMemberId,
+        content,
+      },
       { onSuccess: () => form.reset() },
     );
   }
 
   function handleReportSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!reportTarget) return;
-    setFeedback(
-      `신고가 접수되었습니다 (${reportTarget.type === "POST" ? "게시글" : "댓글"} #${reportTarget.id}: ${selectedReportReason})`,
-    );
-    setReportTarget(null);
+    if (!reportTarget || !requireReadyMember()) return;
+    reportMutation.mutate({
+      type: reportTarget.type,
+      id: reportTarget.id,
+      postId: reportTarget.postId,
+      reasonType: selectedReasonCode,
+      reason: selectedReportReason,
+    });
   }
 
   const page = postsQuery.data;
@@ -596,45 +814,108 @@ export function CommunityBoard({
     ...serverItems,
   ];
 
+  const highestPostId = items.reduce((max, item) => (item.id > max ? item.id : max), 0);
+  useEffect(() => {
+    latestPostIdRef.current = highestPostId;
+  }, [highestPostId]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "hidden") return;
-      setPendingNewPostsCount(prev => (prev === 0 ? 1 : prev));
-    }, 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
 
-  function handleLoadNewPosts() {
+    let es: EventSource | null = null;
+    if (typeof window.EventSource === "function") {
+      try {
+        es = new window.EventSource(`${contentOrigin(origin)}/api/v1/community/ux/subscribe/feed`);
+        const onPostCreated = (event: MessageEvent) => {
+          try {
+            const payload = JSON.parse(String(event.data ?? "{}")) as {
+              postId?: number;
+              authorId?: number;
+            };
+            if (payload.postId && myCreatedPostIdsRef.current.has(payload.postId)) return;
+            if (payload.authorId && snapshot.memberId && payload.authorId === snapshot.memberId) {
+              return;
+            }
+            setPendingNewPostsCount(prev => prev + 1);
+          } catch {
+            setPendingNewPostsCount(prev => prev + 1);
+          }
+        };
+        es.addEventListener("UX_COMMUNITY_POST_CREATED", onPostCreated as EventListener);
+      } catch {
+        es = null;
+      }
+    }
+
+    const timer = window.setInterval(async () => {
+      if (document.visibilityState === "hidden") return;
+      const sinceId = latestPostIdRef.current;
+      if (sinceId <= 0) return;
+      try {
+        const search = new URLSearchParams({ sincePostId: String(sinceId) });
+        if (category) search.set("category", category);
+        if (symbolTag) search.set("symbolTag", symbolTag);
+        const checked = parseLatestPostsCheck(
+          await readCommunityOrPublic(
+            origin,
+            session,
+            snapshot,
+            `/community/posts/latest-check?${search.toString()}`,
+          ),
+        );
+        if (checked.newPostCount > 0) {
+          setPendingNewPostsCount(checked.newPostCount);
+          setLatestCheckedItems(checked.items);
+        }
+      } catch {
+        // Ignore background latest-check errors and keep SSE / manual refresh working.
+      }
+    }, 30_000);
+
+    return () => {
+      if (es) es.close();
+      window.clearInterval(timer);
+    };
+  }, [origin, session, snapshot, category, symbolTag]);
+
+  async function handleLoadNewPosts() {
     setCursorHistory([null]);
-    setPrependedPosts(prev => {
-      const existingIds = new Set([...prev, ...serverItems].map(p => p.id));
-      const previewId = 9000 + prev.length + 1;
-      if (existingIds.has(previewId)) return prev;
-      const nowText = new Date().toISOString().slice(0, 16).replace("T", " ");
-      const livePost: CommunityPost = {
-        id: previewId,
-        memberId: 11,
-        authorNickname: "알파트레이더",
-        authorWithdrawn: false,
-        category: "MARKET",
-        symbolTag: "BTC",
-        title: "BTC 선물 주요 매물대 돌파 관점 및 펀딩비 실시간 체크",
-        content:
-          "단기 저항 구간 돌파 이후 미결제약정(OI)이 동반 상승 중입니다. 추격 진입보다 눌림목 분할 접근이 유효해 보입니다.",
-        likeCount: 3,
-        commentCount: 0,
-        likedByMe: false,
-        mine: false,
-        createdAt: nowText,
-        updatedAt: nowText,
-      };
-      return [livePost, ...prev];
-    });
+    if (latestCheckedItems.length > 0) {
+      setPrependedPosts(prev => {
+        const existingIds = new Set([...prev, ...serverItems].map(p => p.id));
+        const fresh = latestCheckedItems.filter(item => !existingIds.has(item.id));
+        return [...fresh, ...prev];
+      });
+      setLatestCheckedItems([]);
+    } else if (latestPostIdRef.current > 0) {
+      try {
+        const search = new URLSearchParams({ sincePostId: String(latestPostIdRef.current) });
+        if (category) search.set("category", category);
+        if (symbolTag) search.set("symbolTag", symbolTag);
+        const checked = parseLatestPostsCheck(
+          await readCommunityOrPublic(
+            origin,
+            session,
+            snapshot,
+            `/community/posts/latest-check?${search.toString()}`,
+          ),
+        );
+        if (checked.items.length > 0) {
+          setPrependedPosts(prev => {
+            const existingIds = new Set([...prev, ...serverItems].map(p => p.id));
+            const fresh = checked.items.filter(item => !existingIds.has(item.id));
+            return [...fresh, ...prev];
+          });
+        }
+      } catch {
+        // Fallback to postsQuery.refetch() below
+      }
+    }
     setPendingNewPostsCount(0);
     void postsQuery.refetch();
     feedTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
   const comments = commentsQuery.data ?? [];
   const rootComments = comments.filter(item => item.parentCommentId === null);
   const repliesByParent = new Map<number, CommunityComment[]>();
@@ -825,6 +1106,7 @@ export function CommunityBoard({
 
               <form
                 id="community-inline-write-form"
+                data-form-source="inline"
                 className="space-y-4"
                 onSubmit={handleCreatePost}
               >
@@ -986,7 +1268,7 @@ export function CommunityBoard({
               >
                 <button
                   type="button"
-                  onClick={handleLoadNewPosts}
+                  onClick={() => void handleLoadNewPosts()}
                   className="inline-flex items-center gap-2 rounded-full border border-blue-400 bg-[#0058FF] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700"
                 >
                   <span aria-hidden="true">↑</span>
@@ -1041,14 +1323,18 @@ export function CommunityBoard({
                         </div>
                       </div>
 
-                      {/* V1 ActionMenu (본인: 수정/삭제, 타인: 신고) */}
+                      {/* V1 ActionMenu (본인: 수정/삭제, 타인: 신고 / 신고 취소) */}
                       <div className="flex flex-wrap items-center gap-1.5">
                         {post.mine ? (
                           <>
                             <button
                               type="button"
                               className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-50"
-                              onClick={() => setEditingPost(isEditing ? null : post)}
+                              onClick={() => {
+                                setEditingPost(isEditing ? null : post);
+                                setEditDeleteFileIds([]);
+                                setEditNewImages([]);
+                              }}
                             >
                               {isEditing ? "수정 취소" : "게시글 수정"}
                             </button>
@@ -1063,6 +1349,19 @@ export function CommunityBoard({
                               게시글 삭제
                             </button>
                           </>
+                        ) : post.reportedByMe ? (
+                          <button
+                            type="button"
+                            className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-100"
+                            onClick={() => {
+                              if (requireReadyMember()) {
+                                cancelReportMutation.mutate({ type: "POST", id: post.id });
+                              }
+                            }}
+                            disabled={cancelReportMutation.isPending}
+                          >
+                            신고 취소
+                          </button>
                         ) : (
                           <button
                             type="button"
@@ -1136,6 +1435,45 @@ export function CommunityBoard({
                             rows={3}
                           />
                         </label>
+                        {post.files && post.files.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="block text-xs font-bold text-gray-700">
+                              기존 첨부 이미지 ({post.files.length}장)
+                            </span>
+                            <ul className="flex flex-wrap gap-2">
+                              {post.files.map(file => {
+                                const markedForDelete = editDeleteFileIds.includes(file.id);
+                                return (
+                                  <li
+                                    key={file.id}
+                                    className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs"
+                                  >
+                                    <span className={markedForDelete ? "line-through text-gray-400" : "text-gray-700"}>
+                                      {file.originalName}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="font-bold text-red-500 hover:underline"
+                                      onClick={() =>
+                                        setEditDeleteFileIds(prev =>
+                                          prev.includes(file.id)
+                                            ? prev.filter(id => id !== file.id)
+                                            : [...prev, file.id],
+                                        )
+                                      }
+                                    >
+                                      {markedForDelete ? "삭제 취소" : "삭제 선택"}
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        )}
+                        <CommunityImageUploadSlot
+                          files={editNewImages}
+                          onChange={setEditNewImages}
+                        />
                         <V1Button type="submit" variant="blue" size="sm" disabled={updatePostMutation.isPending}>
                           수정 저장
                         </V1Button>
@@ -1151,6 +1489,14 @@ export function CommunityBoard({
                           {post.content}
                         </p>
                         {(() => {
+                          if (post.sharedPosition) {
+                            return (
+                              <SharedPositionCard
+                                snapshot={post.sharedPosition}
+                                showPnlAmount={post.sharedPosition.showPnlAmount ?? true}
+                              />
+                            );
+                          }
                           const customShared = sharedPositionsByPostId[post.id];
                           if (customShared) {
                             return (
@@ -1170,6 +1516,30 @@ export function CommunityBoard({
                           }
                           return null;
                         })()}
+                        {post.files && post.files.length > 0 && (
+                          <ul
+                            className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3"
+                            aria-label="게시글 첨부 이미지"
+                            data-post-files={post.id}
+                          >
+                            {post.files.map(file => (
+                              <li
+                                key={file.id}
+                                className="overflow-hidden rounded-xl border border-gray-200 bg-gray-50"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={file.url}
+                                  alt={file.originalName}
+                                  className="h-40 w-full object-cover"
+                                />
+                                <div className="truncate px-2.5 py-1.5 text-[11px] font-medium text-gray-500">
+                                  {file.originalName}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
                     )}
 
@@ -1221,6 +1591,7 @@ export function CommunityBoard({
                         <ul className="space-y-3">
                           {rootComments.map(comment => {
                             const replies = repliesByParent.get(comment.id) ?? [];
+                            const isDeletedParent = Boolean(comment.deleted);
                             return (
                               <li
                                 key={comment.id}
@@ -1235,63 +1606,124 @@ export function CommunityBoard({
                                     />
                                     <span className="font-normal text-gray-400">{comment.createdAt}</span>
                                   </div>
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      type="button"
-                                      className="font-bold text-[#0058FF] hover:underline"
-                                      onClick={() =>
-                                        setReplyParentId(replyParentId === comment.id ? null : comment.id)
-                                      }
-                                    >
-                                      {replyParentId === comment.id ? "답글 취소" : "답글 달기"}
-                                    </button>
-                                    {comment.mine ? (
-                                      <>
-                                        <button
-                                          type="button"
-                                          className="font-bold text-gray-600 hover:underline"
-                                          onClick={() =>
-                                            setEditingComment(
-                                              editingComment?.id === comment.id ? null : comment,
-                                            )
+                                  {!isDeletedParent && (
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        aria-pressed={Boolean(comment.likedByMe)}
+                                        className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold ${
+                                          comment.likedByMe
+                                            ? "bg-red-50 text-red-500"
+                                            : "text-gray-500 hover:bg-gray-100"
+                                        }`}
+                                        onClick={() => {
+                                          if (requireReadyMember()) {
+                                            commentLikeMutation.mutate({
+                                              postId: post.id,
+                                              comment,
+                                            });
                                           }
-                                        >
-                                          댓글 수정
-                                        </button>
+                                        }}
+                                      >
+                                        ♥ {comment.likeCount ?? 0}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="font-bold text-[#0058FF] hover:underline"
+                                        onClick={() => {
+                                          if (
+                                            replyParentId === comment.id &&
+                                            replyTargetCommentId === comment.id
+                                          ) {
+                                            setReplyParentId(null);
+                                            setReplyTargetCommentId(null);
+                                            setReplyTargetMemberId(null);
+                                            setReplyTargetNickname(null);
+                                          } else {
+                                            setReplyParentId(comment.id);
+                                            setReplyTargetCommentId(comment.id);
+                                            setReplyTargetMemberId(comment.memberId);
+                                            setReplyTargetNickname(comment.authorNickname);
+                                          }
+                                        }}
+                                      >
+                                        {replyParentId === comment.id &&
+                                        replyTargetCommentId === comment.id
+                                          ? "답글 취소"
+                                          : "답글 달기"}
+                                      </button>
+                                      {comment.mine ? (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="font-bold text-gray-600 hover:underline"
+                                            onClick={() =>
+                                              setEditingComment(
+                                                editingComment?.id === comment.id ? null : comment,
+                                              )
+                                            }
+                                          >
+                                            댓글 수정
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="font-bold text-red-500 hover:underline"
+                                            onClick={() => {
+                                              if (requireReadyMember()) {
+                                                deleteCommentMutation.mutate({
+                                                  postId: post.id,
+                                                  commentId: comment.id,
+                                                });
+                                              }
+                                            }}
+                                          >
+                                            댓글 삭제
+                                          </button>
+                                        </>
+                                      ) : comment.reportedByMe ? (
                                         <button
                                           type="button"
                                           className="font-bold text-red-500 hover:underline"
                                           onClick={() => {
                                             if (requireReadyMember()) {
-                                              deleteCommentMutation.mutate({
+                                              cancelReportMutation.mutate({
+                                                type: "REPLY",
+                                                id: comment.id,
                                                 postId: post.id,
-                                                commentId: comment.id,
                                               });
                                             }
                                           }}
                                         >
-                                          댓글 삭제
+                                          신고 취소
                                         </button>
-                                      </>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        className="text-gray-400 hover:text-red-500"
-                                        onClick={() =>
-                                          setReportTarget({
-                                            type: "REPLY",
-                                            id: comment.id,
-                                            title: comment.content.slice(0, 30),
-                                          })
-                                        }
-                                      >
-                                        신고
-                                      </button>
-                                    )}
-                                  </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="text-gray-400 hover:text-red-500"
+                                          onClick={() =>
+                                            setReportTarget({
+                                              type: "REPLY",
+                                              id: comment.id,
+                                              postId: post.id,
+                                              title: comment.content.slice(0, 30),
+                                            })
+                                          }
+                                        >
+                                          신고
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
 
-                                {editingComment?.id === comment.id ? (
+                                {isDeletedParent ? (
+                                  <p
+                                    className="mt-1.5 text-sm italic text-gray-400"
+                                    data-deleted-comment="true"
+                                  >
+                                    삭제된 댓글입니다.
+                                  </p>
+                                ) : editingComment?.id === comment.id ? (
                                   <form
                                     className="mt-2 flex gap-2"
                                     onSubmit={event => {
@@ -1326,15 +1758,108 @@ export function CommunityBoard({
                                   <ul className="mt-2.5 space-y-2 border-l-2 border-gray-200 pl-3">
                                     {replies.map(reply => (
                                       <li key={reply.id} className="text-xs text-gray-700">
-                                        <span>
-                                          ↳{" "}
-                                          <AuthorLabel
-                                            memberId={reply.memberId}
-                                            nickname={reply.authorNickname}
-                                            withdrawn={reply.authorWithdrawn}
-                                          />
-                                          : {reply.content}
-                                        </span>
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <span>
+                                            ↳{" "}
+                                            <AuthorLabel
+                                              memberId={reply.memberId}
+                                              nickname={reply.authorNickname}
+                                              withdrawn={reply.authorWithdrawn}
+                                            />
+                                            :{" "}
+                                            {reply.targetNickname && (
+                                              <span
+                                                className="mr-1 rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-[#0058FF]"
+                                                data-mention={reply.targetNickname}
+                                              >
+                                                @{reply.targetNickname}
+                                              </span>
+                                            )}
+                                            {reply.content}
+                                          </span>
+                                          {!reply.deleted && (
+                                            <div className="flex items-center gap-1.5">
+                                              <button
+                                                type="button"
+                                                aria-pressed={Boolean(reply.likedByMe)}
+                                                className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold ${
+                                                  reply.likedByMe
+                                                    ? "bg-red-50 text-red-500"
+                                                    : "text-gray-500 hover:bg-gray-100"
+                                                }`}
+                                                onClick={() => {
+                                                  if (requireReadyMember()) {
+                                                    commentLikeMutation.mutate({
+                                                      postId: post.id,
+                                                      comment: reply,
+                                                    });
+                                                  }
+                                                }}
+                                              >
+                                                ♥ {reply.likeCount ?? 0}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="font-bold text-[#0058FF] hover:underline"
+                                                onClick={() => {
+                                                  setReplyParentId(comment.id);
+                                                  setReplyTargetCommentId(reply.id);
+                                                  setReplyTargetMemberId(reply.memberId);
+                                                  setReplyTargetNickname(reply.authorNickname);
+                                                }}
+                                              >
+                                                답글 달기
+                                              </button>
+                                              {reply.mine ? (
+                                                <button
+                                                  type="button"
+                                                  className="font-bold text-red-500 hover:underline"
+                                                  onClick={() => {
+                                                    if (requireReadyMember()) {
+                                                      deleteCommentMutation.mutate({
+                                                        postId: post.id,
+                                                        commentId: reply.id,
+                                                      });
+                                                    }
+                                                  }}
+                                                >
+                                                  삭제
+                                                </button>
+                                              ) : reply.reportedByMe ? (
+                                                <button
+                                                  type="button"
+                                                  className="font-bold text-red-500 hover:underline"
+                                                  onClick={() => {
+                                                    if (requireReadyMember()) {
+                                                      cancelReportMutation.mutate({
+                                                        type: "REPLY",
+                                                        id: reply.id,
+                                                        postId: post.id,
+                                                      });
+                                                    }
+                                                  }}
+                                                >
+                                                  신고 취소
+                                                </button>
+                                              ) : (
+                                                <button
+                                                  type="button"
+                                                  className="text-gray-400 hover:text-red-500"
+                                                  onClick={() =>
+                                                    setReportTarget({
+                                                      type: "REPLY",
+                                                      id: reply.id,
+                                                      postId: post.id,
+                                                      title: reply.content.slice(0, 30),
+                                                    })
+                                                  }
+                                                >
+                                                  신고
+                                                </button>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
                                       </li>
                                     ))}
                                   </ul>
@@ -1359,7 +1884,9 @@ export function CommunityBoard({
                               maxLength={1000}
                               placeholder={
                                 replyParentId
-                                  ? "답글 내용을 입력해 주세요."
+                                  ? replyTargetNickname
+                                    ? `@${replyTargetNickname} 님에게 답글 내용을 입력해 주세요.`
+                                    : "답글 내용을 입력해 주세요."
                                   : "댓글을 남겨보세요 (최대 500~1000자)"
                               }
                             />
@@ -1494,7 +2021,7 @@ export function CommunityBoard({
         title="글쓰기"
         subtitle="타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다."
       >
-        <form className="space-y-4" onSubmit={handleCreatePost}>
+        <form data-form-source="modal" className="space-y-4" onSubmit={handleCreatePost}>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <select
               name="category"
@@ -1607,11 +2134,11 @@ export function CommunityBoard({
       >
         <form className="space-y-3" onSubmit={handleReportSubmit}>
           <div className="space-y-2">
-            {V1_REPORT_REASONS.map(reason => (
+            {reportReasons.map(reason => (
               <label
-                key={reason}
+                key={reason.code}
                 className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-xs font-bold ${
-                  selectedReportReason === reason
+                  selectedReasonCode === reason.code
                     ? "border-[#0058FF] bg-blue-50 text-[#0058FF]"
                     : "border-gray-200 bg-white text-gray-700"
                 }`}
@@ -1619,11 +2146,14 @@ export function CommunityBoard({
                 <input
                   type="radio"
                   name="reportReason"
-                  value={reason}
-                  checked={selectedReportReason === reason}
-                  onChange={() => setSelectedReportReason(reason)}
+                  value={reason.code}
+                  checked={selectedReasonCode === reason.code}
+                  onChange={() => {
+                    setSelectedReasonCode(reason.code);
+                    setSelectedReportReason(reason.description);
+                  }}
                 />
-                <span>{reason}</span>
+                <span>{reason.description}</span>
               </label>
             ))}
           </div>
@@ -1631,8 +2161,8 @@ export function CommunityBoard({
             <V1Button variant="gray" size="sm" onClick={() => setReportTarget(null)}>
               취소
             </V1Button>
-            <V1Button type="submit" variant="red" size="sm">
-              신고 접수
+            <V1Button type="submit" variant="red" size="sm" disabled={reportMutation.isPending}>
+              {reportMutation.isPending ? "접수 중…" : "신고 접수"}
             </V1Button>
           </div>
         </form>
