@@ -327,7 +327,7 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     );
     assert.match(html, /최신글 \(LATEST\)/);
     assert.match(html, /인기글 \(POPULAR\)/);
-    assert.match(html, /새 글 작성/);
+    assert.match(html, /새 게시글 보기/); assert.match(html, /새 글 작성/);
     assert.match(html, /게시글 등록/);
     assert.match(html, /BTC 10배 롱 포지션 진입 및 손절가 공유/);
     assert.match(html, /좋아요 5/);

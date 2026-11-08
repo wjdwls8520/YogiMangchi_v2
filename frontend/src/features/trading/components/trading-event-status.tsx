@@ -76,7 +76,7 @@ export function TradingEventStatus({ initialEvents, defaultOpen = false }: { ini
         </li>)}
       </ul>}
       <div className="guest-dialog-actions">
-        <button type="button" className="account-refresh" disabled={eventsQuery.isFetching} onClick={() => void eventsQuery.refetch()}>새로고침</button>
+
         <button type="button" className="guest-cancel" onClick={() => dialog.current?.close()}>닫기</button>
       </div>
     </dialog>

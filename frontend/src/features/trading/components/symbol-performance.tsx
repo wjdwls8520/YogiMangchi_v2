@@ -23,11 +23,11 @@ export function SymbolPerformance({ roundId }: { roundId?: number }) {
       <label>시작 · 로컬 시각<input type="datetime-local" value={from} onChange={event => setFrom(event.target.value)} /></label>
       <label>종료 · 로컬 시각<input type="datetime-local" value={before} onChange={event => setBefore(event.target.value)} /></label>
       <button className="account-refresh" disabled={!valid || query.isFetching}>기간 적용</button>
-      <button className="account-refresh" type="button" disabled={query.isFetching} onClick={() => void query.refetch()}>새로고침</button>
+
     </form>
     {!valid && <p role="alert">종료 시각은 시작 시각보다 뒤여야 합니다.</p>}
     {query.isPending && <p role="status">서버 성과를 조회 중입니다.</p>}
-    {query.isError && <p role="alert">성과를 조회하지 못했습니다. 새로고침으로 다시 시도해 주세요.</p>}
+    {query.isError && <p role="alert">성과를 조회하지 못했습니다. 잠시 후 다시 확인해 주세요.</p>}
     {data && <><p>서버 전체 범위 집계 · LONG/SHORT 합산 · 실제 체결 {totals!.fillCount}건</p>
       <p>조회 기간: {new Date(data.scope.fromInclusive).toLocaleString("ko-KR")} 이상 ~ {new Date(data.scope.beforeExclusive).toLocaleString("ko-KR")} 미만 · 기준 {new Date(data.capturedAt).toLocaleString("ko-KR")}</p>
       <dl>{[["체결 거래대금", totals!.turnover], ["Gross PnL · 수수료 전", totals!.grossRealizedPnl], ["수수료", totals!.fees], ["순손익 · Gross − 수수료", totals!.economicTradingPnl], ["정산 조정 · 투자 수익 제외", totals!.settlementAdjustment], ["현금 변동 · 순손익 + 정산 조정", totals!.cashTradingPnl], ["재시작 자금 조정 · 투자 수익 제외", data.capitalAdjustment]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{formatDecimal(value)} USDT</dd></div>)}</dl>

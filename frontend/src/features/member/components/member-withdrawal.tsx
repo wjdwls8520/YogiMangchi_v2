@@ -60,11 +60,22 @@ export function MemberWithdrawal() {
       if (session.getSnapshot().phase === "withdrawing") { setReceipt("UNCERTAIN"); dialog.current?.close(); }
     } finally { active.current = false; setPending(false); }
   }
-  return <section className="member-simulation" aria-label="회원 탈퇴">
-    {snapshot.phase === "ready" && <button type="button" className="account-refresh" onClick={() => {
-      const intent = readWithdrawalIntent(); setOwner(snapshot.memberId); setReceipt(null); failures.current = 0; setReady((ready && owner === snapshot.memberId) || (!!intent?.returned && intent.memberId === snapshot.memberId)); clearWithdrawalIntent();
-      setAcknowledged(false); setConfirmation(""); setError(null); dialog.current?.showModal();
-    }}>회원 탈퇴</button>}
+  return <section className="member-simulation space-y-3" aria-label="회원 탈퇴">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h3 className="flex items-center gap-2 text-base font-black text-gray-900">
+          <span className="inline-block h-4 w-1.5 rounded-full bg-gray-400" />
+          계정 관리 및 회원 탈퇴
+        </h3>
+        <p className="mt-1 text-xs text-gray-500">
+          회원 탈퇴 시 진행 중인 주문·포지션이 관리상 종료되며 개인정보가 파기됩니다.
+        </p>
+      </div>
+      {snapshot.phase === "ready" && <button type="button" className="account-refresh inline-flex h-9 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3.5 text-xs font-bold text-red-600 transition-colors hover:bg-red-100" onClick={() => {
+        const intent = readWithdrawalIntent(); setOwner(snapshot.memberId); setReceipt(null); failures.current = 0; setReady((ready && owner === snapshot.memberId) || (!!intent?.returned && intent.memberId === snapshot.memberId)); clearWithdrawalIntent();
+        setAcknowledged(false); setConfirmation(""); setError(null); dialog.current?.showModal();
+      }}>회원 탈퇴</button>}
+    </div>
     {((receipt && (snapshot.memberId === null || owner === snapshot.memberId)) || snapshot.phase === "withdrawing") && <><h2>탈퇴 진행 상태</h2><p className="member-message" role="status">{receipt === "COMPLETED" ? "Trading 정리와 개인정보 제거가 완료되었습니다. 같은 소셜 계정으로 새로 가입할 수 있으며 이전 회원 ID·회차·자산은 복구하거나 이전하지 않습니다."
       : receipt === "NOT_REQUESTED" ? "서버에서 접수된 탈퇴 요청을 찾지 못했습니다. 로그인 상태를 다시 확인한 뒤 시도해 주세요."
       : receipt === "UNCERTAIN" ? "탈퇴 요청 결과를 확인하지 못했습니다. 새 요청을 반복하지 않고 서버의 진행 상태를 확인합니다."

@@ -95,7 +95,7 @@ export function mutationMessage(error: unknown) {
   if (!(error instanceof TradingApiError)) return unconfirmedMutationMessage;
   if (error.code && ["ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ORDER_SIZE_LIMIT_EXCEEDED", "POSITION_LIMIT_REACHED", "PENDING_LIMIT_REACHED", "POSITION_LIQUIDATION"].includes(error.code)) return orderReason(error.code);
   if (error.code && businessMessages[error.code]) return businessMessages[error.code];
-  if (error.status === 401 || error.status === 403) return "계정 인증을 확인할 수 없습니다. 계정 조회를 새로고침해 주세요. 주문은 새 계정으로 재전송하지 않습니다.";
+  if (error.status === 401 || error.status === 403) return "계정 인증을 확인할 수 없습니다. 계정 상태를 다시 확인해 주세요. 주문은 새 계정으로 재전송하지 않습니다.";
   if (uncertainMutation(error)) return unconfirmedMutationMessage;
   return "요청을 처리하지 못했습니다. 입력과 최신 계정 상태를 확인해 주세요.";
 }

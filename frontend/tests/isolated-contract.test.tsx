@@ -267,7 +267,7 @@ test("TradingEventStatus opens the 최근 알림 내역 dialog and renders recen
     assert.match(html, /<dialog[^>]*\sopen=""/);
     assert.match(html, /지정가 주문이 체결되었습니다/);
     assert.match(html, /포지션이 강제청산되었습니다/);
-    assert.match(html, />새로고침<\/button>/);
+    assert.doesNotMatch(html, />새로고침<\/button>/);
     assert.match(html, />닫기<\/button>/);
   } finally {
     client.clear();

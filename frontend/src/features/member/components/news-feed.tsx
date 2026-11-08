@@ -341,7 +341,7 @@ export function NewsFeed({
                         <button
                           type="button"
                           className="ym-text-link-btn"
-                          onClick={() => setSelectedDetail(item)}
+                          onClick={() => void inspectArticle(item.id, item)}
                         >
                           뉴스 상세 모달 보기
                         </button>
@@ -350,20 +350,13 @@ export function NewsFeed({
                       <details className="ym-news-details">
                         <summary>뉴스 본문 전체 보기</summary>
                         <p className="member-profile-message">{item.content}</p>
-                        <div className="member-actions">
-                          <button
-                            type="button"
-                            className="account-refresh"
-                            onClick={() => void inspectArticle(item.id, item)}
-                          >
-                            최신 원문 다시 불러오기 (단건 원문 새로고침)
-                          </button>
-                          {item.symbolTag && (
+                        {item.symbolTag && (
+                          <div className="member-actions">
                             <Link href="/trading" className="account-refresh">
                               {item.symbolTag} 선물 거래 바로가기 ({item.symbolTag} 선물 모의투자 이동)
                             </Link>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </details>
                     </article>
                   </li>

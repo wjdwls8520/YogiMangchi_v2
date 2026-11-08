@@ -44,7 +44,7 @@ export function preflightOrder(form: OpenForm, side: OpenForm["side"], ready: bo
     const estimate = estimatedOrder(quantity, price, form.leverage);
     if (availableBalance == null || !estimate) throw new Error("Unavailable balance");
     return decimalUnits(estimate.margin) > decimalUnits(availableBalance) ? balanceIssue(form.type) : null;
-  } catch { return { kind: "unavailable", message: "사용 가능한 잔액을 확인할 수 없습니다. 계정을 새로고침해 주세요." }; }
+  } catch { return { kind: "unavailable", message: "사용 가능한 잔액을 확인할 수 없습니다. 계정 상태를 다시 확인해 주세요." }; }
 }
 export function orderRejection(code: string | undefined, command: TradingCommand): OrderIssue | null {
   if (command.kind !== "open") return null;

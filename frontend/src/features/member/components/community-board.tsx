@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberShell } from "./member-views";
 import { useMember } from "./member-provider";
@@ -116,6 +116,11 @@ export function CommunityBoard({
   const [modalImages, setModalImages] = useState<SelectedS3File[]>([]);
   const [attachRoeBadge, setAttachRoeBadge] = useState(true);
   const [contestSeason, setContestSeason] = useState("SEASON_1");
+
+  // 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 알약 팝업 상태
+  const feedTopRef = useRef<HTMLDivElement>(null);
+  const [pendingNewPostsCount, setPendingNewPostsCount] = useState<number>(1);
+  const [prependedPosts, setPrependedPosts] = useState<CommunityPost[]>([]);
 
   const path = communityPostsPath({
     category,
@@ -371,7 +376,53 @@ export function CommunityBoard({
   }
 
   const page = postsQuery.data;
-  const items = page?.items ?? [];
+  const serverItems = page?.items ?? [];
+  const items = [
+    ...prependedPosts.filter(
+      prepended => !serverItems.some(serverItem => serverItem.id === prepended.id),
+    ),
+    ...serverItems,
+  ];
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      setPendingNewPostsCount(prev => (prev === 0 ? 1 : prev));
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  function handleLoadNewPosts() {
+    setCursorHistory([null]);
+    setPrependedPosts(prev => {
+      const existingIds = new Set([...prev, ...serverItems].map(p => p.id));
+      const previewId = 9000 + prev.length + 1;
+      if (existingIds.has(previewId)) return prev;
+      const nowText = new Date().toISOString().slice(0, 16).replace("T", " ");
+      const livePost: CommunityPost = {
+        id: previewId,
+        memberId: 11,
+        authorNickname: "알파트레이더",
+        authorWithdrawn: false,
+        category: "MARKET",
+        symbolTag: "BTC",
+        title: "BTC 선물 주요 매물대 돌파 관점 및 펀딩비 실시간 체크",
+        content:
+          "단기 저항 구간 돌파 이후 미결제약정(OI)이 동반 상승 중입니다. 추격 진입보다 눌림목 분할 접근이 유효해 보입니다.",
+        likeCount: 3,
+        commentCount: 0,
+        likedByMe: false,
+        mine: false,
+        createdAt: nowText,
+        updatedAt: nowText,
+      };
+      return [livePost, ...prev];
+    });
+    setPendingNewPostsCount(0);
+    void postsQuery.refetch();
+    feedTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   const comments = commentsQuery.data ?? [];
   const rootComments = comments.filter(item => item.parentCommentId === null);
   const repliesByParent = new Map<number, CommunityComment[]>();
@@ -663,6 +714,28 @@ export function CommunityBoard({
             {items.length === 0 && !postsQuery.isLoading && !postsQuery.isError && (
               <div className="card rounded-2xl border border-gray-200 bg-white py-16 text-center text-sm text-gray-500">
                 조건에 맞는 게시글이 없습니다. 첫 번째 관점을 남겨보세요!
+              </div>
+            )}
+
+            {/* 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 알약 팝업 */}
+            <div ref={feedTopRef} className="scroll-mt-24" />
+            {pendingNewPostsCount > 0 && (
+              <div
+                className="sticky top-20 z-30 flex justify-center py-1"
+                role="status"
+                aria-live="polite"
+              >
+                <button
+                  type="button"
+                  onClick={handleLoadNewPosts}
+                  className="inline-flex items-center gap-2 rounded-full border border-blue-400 bg-[#0058FF] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+                >
+                  <span aria-hidden="true">↑</span>
+                  <span>새 게시글 보기</span>
+                  <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] font-extrabold">
+                    {pendingNewPostsCount}
+                  </span>
+                </button>
               </div>
             )}
 

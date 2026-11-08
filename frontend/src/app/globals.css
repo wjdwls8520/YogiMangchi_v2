@@ -110,9 +110,8 @@
   .policy-dialog-header h2 { @apply m-0; }
   .policy-dialog-actions { @apply border-t border-terminal-line; }
   .policy-dialog-actions p { @apply basis-full text-xs text-terminal-muted; }
-  .member-consent-banner { @apply border-b border-brand-100 bg-brand-50 px-4 py-3 text-sm leading-relaxed; }
-  .member-consent-banner a { @apply ml-3 text-brand-700 underline; }
-  .member-simulation { @apply mt-8 min-w-0 border-t border-terminal-line pt-6; }
+  .member-consent-banner { @apply border-b border-blue-100 bg-blue-50 px-6 py-2.5 text-xs leading-relaxed text-gray-800; }
+  .member-simulation { @apply min-w-0; }
   .member-round-summary { @apply my-4 grid grid-cols-2 gap-4; }
   .member-round-summary dt { @apply mb-1 text-xs text-terminal-muted; }
   .member-round-summary dd { @apply text-sm font-semibold tabular-nums; overflow-wrap: anywhere; }
@@ -1756,11 +1755,41 @@ body:has(.member-shell) :focus-visible {
 }
 
 .member-shell .member-simulation {
-  margin-top: 24px;
-  padding: 20px;
-  border: 1px solid #DEE1E6;
-  border-radius: 8px;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+}
+
+#policy-consents details {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
   background-color: #FFFFFF;
+}
+
+#policy-consents summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1F2937;
+  user-select: none;
+}
+
+#policy-consents .policy-original {
+  margin-top: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid #F3F4F6;
+  border-radius: 8px;
+  background-color: #F9FAFB;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #4B5563;
+  white-space: pre-wrap;
 }
 
 .member-shell .member-round-summary {
