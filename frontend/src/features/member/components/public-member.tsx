@@ -22,9 +22,11 @@ export function PublicMember({ memberId }: { memberId: number }) {
   const [keyword, setKeyword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mainTab, setMainTab] = useState<"portfolio" | "community">("portfolio");
+  const [mainTab, setMainTab] = useState<"mock-assets" | "contest-assets" | "portfolio" | "community">("portfolio");
+  const [ledgerTab, setLedgerTab] = useState<"positions" | "pnl" | "orders" | "trades" | "open-orders">("positions");
+  const [contestTab, setContestTab] = useState<"live" | "ended">("live");
   const [portfolioTab, setPortfolioTab] = useState<"mock" | "contest">("mock");
-  const [communityTab, setCommunityTab] = useState<"posts" | "replies">("posts");
+  const [communityTab, setCommunityTab] = useState<"posts" | "replies" | "liked-posts" | "liked-replies" | "reports">("posts");
   const active = useRef(false);
 
   const identity = [snapshot.memberId, snapshot.generation] as const;
@@ -307,72 +309,159 @@ export function PublicMember({ memberId }: { memberId: number }) {
             </div>
           </div>
 
-          {/* 우측: V1 포트폴리오 (모의투자 | 대회) & 커뮤니티 (작성한 게시글 | 작성한 댓글) */}
+          {/* 우측: 통합 4대 탭 (본인 로그인 시 4탭 전체, 타인/비로그인 시 포트폴리오 + 커뮤니티활동 2탭만 노출) */}
           <div className="space-y-6 lg:col-span-8">
-            <div className="rounded-2xl border border-gray-200 bg-white px-6 pt-2">
-              <V1Tabs
-                tabs={[
-                  { label: "포트폴리오", value: "portfolio" },
-                  { label: "커뮤니티 활동", value: "community" },
-                ]}
-                activeTab={mainTab}
-                onChange={val => setMainTab(val as "portfolio" | "community")}
-              />
-            </div>
+            {(() => {
+              const isOwner =
+                snapshot.phase === "ready" &&
+                Boolean(summary.data?.mine || snapshot.memberId === memberId);
+              const visibleMainTabs = isOwner
+                ? [
+                    { label: "내 모의투자 자산", value: "mock-assets" },
+                    { label: "시즌별 대회 자산", value: "contest-assets" },
+                    { label: "포트폴리오", value: "portfolio" },
+                    { label: "커뮤니티활동", value: "community" },
+                  ]
+                : [
+                    { label: "포트폴리오", value: "portfolio" },
+                    { label: "커뮤니티활동", value: "community" },
+                  ];
+              const effectiveTab =
+                !isOwner && (mainTab === "mock-assets" || mainTab === "contest-assets")
+                  ? "portfolio"
+                  : mainTab;
 
-            {mainTab === "portfolio" ? (
-              <V1FolderTabs
-                tabs={[
-                  { id: "mock", label: "모의투자 (선물)" },
-                  { id: "contest", label: "대회" },
-                ]}
-                activeId={portfolioTab}
-                onChange={id => setPortfolioTab(id as "mock" | "contest")}
-              >
-                {portfolioTab === "mock" ? (
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
-                        <h3 className="text-sm font-black text-gray-900">포지션 증거금 비중 (%)</h3>
-                        <p className="mt-2 text-xs text-gray-500">
-                          BTCUSDT (65%) · ETHUSDT (35%) 중심으로 격리마진 운용 중입니다.
-                        </p>
-                      </div>
-                      <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
-                        <h3 className="text-sm font-black text-gray-900">롱 / 숏 비율</h3>
-                        <div className="mt-3 flex justify-between text-xs font-bold">
-                          <span className="text-red-500">LONG 75%</span>
-                          <span className="text-blue-600">SHORT 25%</span>
-                        </div>
-                        <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-gray-200">
-                          <div className="h-full bg-red-500" style={{ width: "75%" }} />
-                          <div className="h-full bg-blue-600" style={{ width: "25%" }} />
-                        </div>
-                      </div>
-                    </div>
+              return (
+                <>
+                  <div className="rounded-2xl border border-gray-200 bg-white px-6 pt-2">
+                    <V1Tabs
+                      tabs={visibleMainTabs}
+                      activeTab={effectiveTab}
+                      onChange={val =>
+                        setMainTab(val as "mock-assets" | "contest-assets" | "portfolio" | "community")
+                      }
+                    />
                   </div>
-                ) : (
-                  <div className="py-10 text-center text-xs font-bold text-gray-400">
-                    참여한 모의투자 대회 시즌 기록이 없습니다.
-                  </div>
-                )}
-              </V1FolderTabs>
-            ) : (
-              <V1FolderTabs
-                tabs={[
-                  { id: "posts", label: "작성한 게시글" },
-                  { id: "replies", label: "작성한 댓글" },
-                ]}
-                activeId={communityTab}
-                onChange={id => setCommunityTab(id as "posts" | "replies")}
-              >
-                <div className="py-8 text-center text-xs font-medium text-gray-500">
-                  {communityTab === "posts"
-                    ? "커뮤니티에서 작성한 공개 게시글을 확인합니다."
-                    : "커뮤니티에서 작성한 공개 댓글을 확인합니다."}
-                </div>
-              </V1FolderTabs>
-            )}
+
+                  {effectiveTab === "mock-assets" && isOwner && (
+                    <V1FolderTabs
+                      tabs={[
+                        { id: "positions", label: "포지션 현황" },
+                        { id: "pnl", label: "손익현황" },
+                        { id: "orders", label: "주문내역" },
+                        { id: "trades", label: "거래내역" },
+                        { id: "open-orders", label: "미체결내역" },
+                      ]}
+                      activeId={ledgerTab}
+                      onChange={id =>
+                        setLedgerTab(id as "positions" | "pnl" | "orders" | "trades" | "open-orders")
+                      }
+                    >
+                      <div className="py-6 text-xs font-bold text-gray-600">
+                        내 모의투자 자산 원장 ({ledgerTab})을 확인합니다. 상세 회차 초기화는{" "}
+                        <Link href="/me" className="text-[#0058FF] underline">
+                          마이페이지(/me)
+                        </Link>
+                        에서 관리할 수 있습니다.
+                      </div>
+                    </V1FolderTabs>
+                  )}
+
+                  {effectiveTab === "contest-assets" && isOwner && (
+                    <V1FolderTabs
+                      tabs={[
+                        { id: "live", label: "진행 시즌 실시간 대회 자산" },
+                        { id: "ended", label: "종료된 시즌 대회 자산" },
+                      ]}
+                      activeId={contestTab}
+                      onChange={id => setContestTab(id as "live" | "ended")}
+                    >
+                      <div className="py-6 text-xs font-bold text-gray-600">
+                        {contestTab === "live"
+                          ? "내 시즌별 대회 실시간 자산 내역을 확인합니다."
+                          : "종료된 시즌의 대회 자산 및 정산 이력을 확인합니다."}
+                      </div>
+                    </V1FolderTabs>
+                  )}
+
+                  {effectiveTab === "portfolio" && (
+                    <V1FolderTabs
+                      tabs={[
+                        { id: "mock", label: "모의투자 (선물)" },
+                        { id: "contest", label: "시즌 대회" },
+                      ]}
+                      activeId={portfolioTab}
+                      onChange={id => setPortfolioTab(id as "mock" | "contest")}
+                    >
+                      {portfolioTab === "mock" ? (
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
+                              <h3 className="text-sm font-black text-gray-900">포지션 증거금 비중 (%)</h3>
+                              <p className="mt-2 text-xs text-gray-500">
+                                BTCUSDT (65%) · ETHUSDT (35%) 중심으로 격리마진 운용 중입니다.
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
+                              <h3 className="text-sm font-black text-gray-900">롱 / 숏 비율</h3>
+                              <div className="mt-3 flex justify-between text-xs font-bold">
+                                <span className="text-red-500">LONG 75%</span>
+                                <span className="text-blue-600">SHORT 25%</span>
+                              </div>
+                              <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-gray-200">
+                                <div className="h-full bg-red-500" style={{ width: "75%" }} />
+                                <div className="h-full bg-blue-600" style={{ width: "25%" }} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          참여한 모의투자 대회 시즌 기록이 없습니다.
+                        </div>
+                      )}
+                    </V1FolderTabs>
+                  )}
+
+                  {effectiveTab === "community" && (
+                    <V1FolderTabs
+                      tabs={
+                        isOwner
+                          ? [
+                              { id: "posts", label: "게시글" },
+                              { id: "replies", label: "댓글" },
+                              { id: "liked-posts", label: "좋아요" },
+                              { id: "liked-replies", label: "좋아요 댓글" },
+                              { id: "reports", label: "신고내역" },
+                            ]
+                          : [
+                              { id: "posts", label: "게시글" },
+                              { id: "replies", label: "댓글" },
+                            ]
+                      }
+                      activeId={communityTab}
+                      onChange={id =>
+                        setCommunityTab(
+                          id as "posts" | "replies" | "liked-posts" | "liked-replies" | "reports",
+                        )
+                      }
+                    >
+                      <div className="py-8 text-center text-xs font-medium text-gray-500">
+                        {communityTab === "posts"
+                          ? "커뮤니티에서 작성한 공개 게시글을 확인합니다."
+                          : communityTab === "replies"
+                            ? "커뮤니티에서 작성한 공개 댓글을 확인합니다."
+                            : communityTab === "liked-posts"
+                              ? "내가 좋아요를 누른 게시글 목록을 확인합니다."
+                              : communityTab === "liked-replies"
+                                ? "내가 좋아요를 누른 댓글 목록을 확인합니다."
+                                : "내가 접수한 신고 내역 및 처리 상태를 확인합니다."}
+                      </div>
+                    </V1FolderTabs>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>

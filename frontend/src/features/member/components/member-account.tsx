@@ -79,7 +79,7 @@ export function MemberAccount() {
               회원정보 수정
             </h2>
             <p className="mt-1 text-xs font-medium text-gray-500">
-              포트폴리오 조회는 내 프로필(/me), 자산·회차·주문 관리는 내 자산(/assets)에서 확인할 수 있습니다.
+              자산·포트폴리오·커뮤니티 활동 조회는 마이페이지(/me)에서 확인할 수 있습니다.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -87,13 +87,7 @@ export function MemberAccount() {
               href="/me"
               className="inline-flex h-9 items-center justify-center rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
             >
-              내 프로필 (/me)
-            </Link>
-            <Link
-              href="/assets"
-              className="inline-flex h-9 items-center justify-center rounded-xl bg-gray-900 px-3.5 text-xs font-bold text-white hover:bg-gray-800"
-            >
-              내 자산 (/assets)
+              마이페이지 (/me)
             </Link>
           </div>
         </div>
@@ -140,12 +134,6 @@ export function MemberAccount() {
                     className="login-button inline-flex h-10 items-center justify-center rounded-xl bg-[#0058FF] px-5 text-xs font-bold text-white"
                   >
                     로그인
-                  </Link>
-                  <Link
-                    href="/signup"
-                    className="signup-button inline-flex h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-5 text-xs font-bold text-gray-700"
-                  >
-                    회원가입
                   </Link>
                 </div>
               )}

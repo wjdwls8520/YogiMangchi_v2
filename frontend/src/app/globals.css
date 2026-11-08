@@ -1906,28 +1906,32 @@ body:has(.member-shell) :focus-visible {
 .ym-chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
 }
 
 .ym-tag-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: auto !important;
   height: 36px;
   min-height: 36px;
   padding: 0 14px;
-  border: 1px solid #DEE1E6;
-  border-radius: 100px;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
   background-color: #FFFFFF;
-  font-size: 13px;
-  font-weight: 600;
-  color: #6E6E73;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4B5563;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
 .ym-tag-chip.is-active {
-  border-color: #7242FF;
-  background-color: #7242FF;
+  border-color: #0058FF;
+  background-color: #0058FF;
   color: #FFFFFF;
 }
 
@@ -2174,20 +2178,27 @@ body:has(.member-shell) :focus-visible {
 }
 
 .ym-filter-pill {
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid #DEE1E6;
-  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto !important;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
   background-color: #FFFFFF;
   font-size: 12px;
-  font-weight: 600;
-  color: #6E6E73;
+  font-weight: 700;
+  color: #4B5563;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
 .ym-filter-pill.is-active {
-  border-color: #7242FF;
-  background-color: #7242FF;
+  border-color: #111827;
+  background-color: #111827;
   color: #FFFFFF;
 }
 

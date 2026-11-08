@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { useDimScrollLock } from "./dim-modal";
+import { useOptionalMember } from "./member-provider";
 
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -574,17 +575,26 @@ export function V1Header({
   rightExtra?: ReactNode;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const memberCtx = useOptionalMember();
+  const isLoggedIn = memberCtx?.snapshot.phase === "ready";
   const isDark = theme === "dark";
 
   useDimScrollLock(isMenuOpen);
+
+  const headerPillClass = cn(
+    "inline-flex h-9 items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
+    isDark
+      ? "bg-white text-gray-900 hover:bg-gray-200"
+      : "bg-gray-900 text-white hover:bg-gray-800",
+  );
 
   return (
     <>
       <header
         className={cn(
           isDark
-            ? "trading-brand-header sticky left-0 top-0 z-50 w-full border-b border-white/10 bg-[#0B0E11]/95 text-white backdrop-blur-md transition-colors duration-300"
-            : "ym-gnb-header sticky left-0 top-0 z-50 w-full border-b border-gray-100 bg-white/80 text-gray-900 backdrop-blur-md transition-colors duration-300",
+            ? "trading-brand-header sticky left-0 top-0 z-50 w-full border-b border-white/10 bg-[#0B0E11]/95 text-white backdrop-blur-md transition-colors duration-200"
+            : "ym-gnb-header sticky left-0 top-0 z-50 w-full border-b border-gray-100 bg-white/80 text-gray-900 backdrop-blur-md transition-colors duration-200",
         )}
       >
         <div className="ym-gnb-inner relative m-auto flex max-w-[1280px] items-center justify-between px-6 py-3">
@@ -660,79 +670,21 @@ export function V1Header({
               >
                 실시간 뉴스
               </Link>
-              <Link
-                href="/me"
-                className={cn(
-                  "py-2 transition-colors",
-                  isDark ? "text-gray-200 hover:text-white" : "text-gray-700 hover:text-[#0058FF]",
-                )}
-              >
-                프로필
-              </Link>
             </nav>
           </div>
 
-          {/* 3. 오른쪽 유틸리티 영역 */}
+          {/* 3. 오른쪽 유틸리티 영역: 로그인 시 마이페이지(/me), 비로그인 시 로그인(/login) 100% 동일 크기 */}
           <div className="ym-gnb-right flex items-center gap-2 sm:gap-3 text-sm">
             {rightExtra ? (
-              <>
-                <Link
-                  href="/assets"
-                  className="hidden sm:flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold text-gray-200 transition-colors hover:bg-white/20"
-                >
-                  <svg className="h-3.5 w-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-                    />
-                  </svg>
-                  자산
-                </Link>
-                {rightExtra}
-              </>
+              rightExtra
+            ) : isLoggedIn ? (
+              <Link href="/me" className={headerPillClass}>
+                마이페이지
+              </Link>
             ) : (
-              <>
-                <Link
-                  href="/assets"
-                  className="flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200"
-                >
-                  <svg className="h-3.5 w-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-                    />
-                  </svg>
-                  자산
-                </Link>
-                <Link
-                  href="/me"
-                  className="hidden sm:flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="/user_default.png"
-                    alt="프로필"
-                    className="h-5 w-5 rounded-full object-cover"
-                  />
-                  <span>마이</span>
-                </Link>
-                <Link
-                  href="/login"
-                  className="ym-gnb-login-pill rounded-xl bg-[#0058FF] px-3.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
-                >
-                  로그인
-                </Link>
-                <Link
-                  href="/signup"
-                  className="ym-gnb-signup-link hidden lg:inline-flex text-xs font-bold text-gray-500 hover:text-gray-900"
-                >
-                  회원가입
-                </Link>
-              </>
+              <Link href="/login" className={headerPillClass}>
+                로그인
+              </Link>
             )}
 
             {/* 모바일 햄버거 버튼 */}
@@ -791,30 +743,30 @@ export function V1Header({
                 실시간 뉴스 · 시황/속보
               </Link>
               <Link href="/me" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                내 프로필 · 포트폴리오
-              </Link>
-              <Link href="/assets" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                내 자산 · 포지션/손익/주문
+                마이페이지 · 자산/포트폴리오
               </Link>
               <Link href="/me/settings" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 회원정보 수정
               </Link>
             </nav>
             <div className="mt-6 flex flex-col gap-2 border-t border-gray-100 pt-4">
-              <Link
-                href="/login"
-                className="flex h-11 items-center justify-center rounded-xl bg-[#0058FF] text-sm font-bold text-white"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                로그인
-              </Link>
-              <Link
-                href="/signup"
-                className="flex h-11 items-center justify-center rounded-xl border border-gray-300 bg-white text-sm font-bold text-gray-700"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                회원가입
-              </Link>
+              {isLoggedIn ? (
+                <Link
+                  href="/me"
+                  className="inline-flex h-9 w-full items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  마이페이지
+                </Link>
+              ) : (
+                <Link
+                  href="/login"
+                  className="inline-flex h-9 w-full items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  로그인
+                </Link>
+              )}
             </div>
           </aside>
         </div>

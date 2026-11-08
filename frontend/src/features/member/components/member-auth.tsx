@@ -21,25 +21,59 @@ export function MemberLogin() {
       subtitle="요기망치 계정으로 실시간 속보·커뮤니티·선물 모의투자를 이용하세요"
       variant="auth"
     >
-      {snapshot.phase === "ready" && !snapshot.recovery && (
+      {snapshot.phase === "ready" && !snapshot.recovery ? (
         <p className="member-message">
-          로그인되어 있습니다. <Link href="/account">내 계정으로 이동</Link>하거나 아래에서 로그인 상태를 다시 확인할 수 있습니다.
+          로그인되어 있습니다. <Link href="/me">마이페이지로 이동</Link>하거나 <Link href="/">메인 페이지로 이동</Link>할 수 있습니다.
         </p>
+      ) : (
+        <MemberLoginView google={oauthUrl(origin, "google")} kakao={oauthUrl(origin, "kakao")} />
       )}
-      <MemberLoginView google={oauthUrl(origin, "google")} kakao={oauthUrl(origin, "kakao")} />
     </MemberShell>
   );
 }
 
+function useSafeRouter() {
+  try {
+    return useRouter();
+  } catch {
+    return null;
+  }
+}
+
 export function MemberSignupPage() {
   const { origin, snapshot } = useMember();
+  const router = useSafeRouter();
   const [notice, setNotice] = useState<string | null>(null);
   const google = oauthUrl(origin, "google");
   const kakao = oauthUrl(origin, "kakao");
 
+  useEffect(() => {
+    if (snapshot.phase === "ready") {
+      if (router) {
+        router.replace("/");
+      } else if (typeof window !== "undefined") {
+        window.location.replace("/");
+      }
+    }
+  }, [snapshot.phase, router]);
+
   function handlePreviewSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setNotice("상단 Google 또는 Kakao 본인확인을 먼저 완료하면 입력하신 닉네임과 약관 동의로 즉시 가입이 완료됩니다.");
+  }
+
+  if (snapshot.phase === "ready") {
+    return (
+      <MemberShell
+        title="회원가입"
+        subtitle="이미 로그인되어 있어 메인 페이지로 이동합니다."
+        variant="signup"
+      >
+        <p role="status" className="member-message">
+          이미 로그인되어 있습니다. 메인 페이지로 자동 이동합니다.
+        </p>
+      </MemberShell>
+    );
   }
 
   return (
@@ -48,12 +82,6 @@ export function MemberSignupPage() {
       subtitle="소셜 본인확인 후 닉네임과 프로필, 필수 약관 동의를 설정하세요."
       variant="signup"
     >
-      {snapshot.phase === "ready" && (
-        <p className="member-message">
-          이미 로그인되어 있습니다. <Link href="/account">내 계정 관리</Link>에서 프로필을 수정할 수 있습니다.
-        </p>
-      )}
-
       <div className="identity_verification_wrap" aria-label="소셜 계정 본인인증">
         <div className="ym-verify-icon" aria-hidden="true">
           ✓
@@ -79,11 +107,6 @@ export function MemberSignupPage() {
       )}
 
       <SignupForm onSubmit={handlePreviewSubmit} pending={false} />
-
-      <div className="ym-signup-footer-links">
-        <span>이미 계정이 있으신가요?</span>
-        <Link href="/login">로그인 페이지로 이동</Link>
-      </div>
     </MemberShell>
   );
 }

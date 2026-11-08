@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyn
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Link from "next/link";
 import { ContentApiError, contentMessage, contentOrigin } from "../api/client";
-import { createMemberSession, type MemberSession } from "../api/session";
+import { createMemberSession, initialMember, type MemberSession } from "../api/session";
 import { MemberRecoveryStatus } from "./member-recovery-status";
 import { MemberConsentGate } from "./member-consents";
 import { bindMemberActivity } from "../api/activity";
@@ -48,9 +48,29 @@ export function useMember() {
   const snapshot = useSyncExternalStore(context.session.subscribe, context.session.getSnapshot, context.session.getSnapshot);
   return { ...context, snapshot };
 }
+const noopSubscribe = () => () => {};
+const getInitialMember = () => initialMember;
+export function useOptionalMember() {
+  const context = useContext(Context);
+  const snapshot = useSyncExternalStore(
+    context ? context.session.subscribe : noopSubscribe,
+    context ? context.session.getSnapshot : getInitialMember,
+    context ? context.session.getSnapshot : getInitialMember,
+  );
+  return context ? { ...context, snapshot } : null;
+}
 export function MemberHeaderAction() {
   const { snapshot } = useMember();
-  return <div className="member-session-action"><Link href={snapshot.memberId !== null ? "/account" : "/login"}>{snapshot.memberId !== null ? "내 계정" : "로그인"}</Link></div>;
+  return (
+    <div className="member-session-action">
+      <Link
+        href={snapshot.phase === "ready" ? "/me" : "/login"}
+        className="inline-flex h-9 items-center justify-center rounded-full bg-white px-4 text-sm font-semibold text-gray-900 transition-colors hover:bg-gray-200"
+      >
+        {snapshot.phase === "ready" ? "마이페이지" : "로그인"}
+      </Link>
+    </div>
+  );
 }
 export function MemberLogout() {
   const { session, snapshot, announce } = useMember();

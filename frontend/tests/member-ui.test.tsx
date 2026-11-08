@@ -348,12 +348,32 @@ import { MainPortal } from "../src/features/member/components/main-portal";
 import { MemberSignupPage } from "../src/features/member/components/member-auth";
 import { MemberAccount } from "../src/features/member/components/member-account";
 import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
-import { MemberAssetsPage } from "../src/features/member/components/member-assets";
 import { V1Header } from "../src/features/member/components/v1-ui";
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
 
-test("MainPortal, MemberSignupPage, MemberAccount, and CommunityBoard render V1/xrhub/CoinNess layouts and S3 upload slots", () => {
+test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1Header render unified V1/xrhub/CoinNess layouts, 4-tab My Page, and auth button rules", async () => {
   const client = new QueryClient();
+  const epoch = Date.now();
+  const loggedInSession = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "트레이더7",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await loggedInSession.restore();
+
   try {
     const portalHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
@@ -371,16 +391,27 @@ test("MainPortal, MemberSignupPage, MemberAccount, and CommunityBoard render V1/
     assert.match(portalHtml, /선물 모의투자 시작하기/);
     assert.match(portalHtml, /실시간 커뮤니티 HOT/);
     assert.match(portalHtml, /data-s3-slot="news-thumbnail"/);
+    assert.equal(portalHtml.includes('href="/signup"'), false);
+    assert.equal(portalHtml.includes('href="/assets"'), false);
 
-    const signupHtml = renderToStaticMarkup(
+    const signupAnonHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
         <MemberSignupPage />
       </MemberProvider>,
     );
-    assert.match(signupHtml, /identity_verification_wrap/);
-    assert.match(signupHtml, /소셜 계정 본인인증/);
-    assert.match(signupHtml, /data-s3-slot="signup-profile-image"/);
-    assert.equal(signupHtml.includes("포지션 증거금 비중"), false);
+    assert.match(signupAnonHtml, /identity_verification_wrap/);
+    assert.match(signupAnonHtml, /소셜 계정 본인인증/);
+    assert.match(signupAnonHtml, /data-s3-slot="signup-profile-image"/);
+
+    const signupLoggedInHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <MemberSignupPage />
+      </MemberProvider>,
+    );
+    assert.match(signupLoggedInHtml, /이미 로그인되어 있습니다\. 메인 페이지로 자동 이동합니다/);
+    assert.equal(signupLoggedInHtml.includes("동의하고 가입하기"), false);
+    assert.equal(signupLoggedInHtml.includes('href="/login"'), false);
+    assert.equal(signupLoggedInHtml.includes('href="/signup"'), false);
 
     const accountHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
@@ -390,36 +421,56 @@ test("MainPortal, MemberSignupPage, MemberAccount, and CommunityBoard render V1/
     assert.match(accountHtml, /회원정보 수정/);
     assert.match(accountHtml, /기본 정보/);
     assert.match(accountHtml, /data-s3-slot="account-profile-image"/);
-    assert.equal(accountHtml.includes("포지션 증거금 비중"), false);
+    assert.equal(accountHtml.includes('href="/signup"'), false);
+    assert.equal(accountHtml.includes('href="/assets"'), false);
 
-    const meProfileHtml = renderToStaticMarkup(
+    // 비로그인 시 마이페이지(/me): 오직 2탭(포트폴리오, 커뮤니티활동)만 노출, 자산 2탭 숨김
+    const meAnonHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
         <MemberMyProfilePage />
       </MemberProvider>,
     );
-    assert.match(meProfileHtml, /나의 포트폴리오/);
-    assert.match(meProfileHtml, /포지션 증거금 비중 \(%\)/);
-    assert.match(meProfileHtml, /롱 \/ 숏 포지션 비율/);
-    assert.match(meProfileHtml, /Followers/);
-    assert.match(meProfileHtml, /Following/);
+    assert.match(meAnonHtml, /마이페이지/);
+    assert.match(meAnonHtml, /포트폴리오/);
+    assert.match(meAnonHtml, /커뮤니티활동/);
+    assert.equal(meAnonHtml.includes("내 모의투자 자산"), false);
+    assert.equal(meAnonHtml.includes("시즌별 대회 자산"), false);
+    assert.match(meAnonHtml, /포지션 증거금 비중 \(%\)/);
+    assert.match(meAnonHtml, /롱 \/ 숏 포지션 비율/);
 
-    const assetsHtml = renderToStaticMarkup(
-      <MemberProvider client={client}>
-        <MemberAssetsPage />
+    // 로그인 시 마이페이지(/me): 4대 메인 탭 전체 노출 + 모의투자 5탭 원장 기본 노출
+    const meLoggedInHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <MemberMyProfilePage />
       </MemberProvider>,
     );
-    assert.match(assetsHtml, /내 자산/);
-    assert.match(assetsHtml, /자산 구성 및 포지션 비중 분석/);
-    assert.match(assetsHtml, /포지션 현황/);
-    assert.match(assetsHtml, /손익현황/);
-    assert.match(assetsHtml, /주문내역/);
-    assert.match(assetsHtml, /거래내역/);
-    assert.match(assetsHtml, /미체결내역/);
+    assert.match(meLoggedInHtml, /내 모의투자 자산/);
+    assert.match(meLoggedInHtml, /시즌별 대회 자산/);
+    assert.match(meLoggedInHtml, /포트폴리오/);
+    assert.match(meLoggedInHtml, /커뮤니티활동/);
+    assert.match(meLoggedInHtml, /포지션 현황/);
+    assert.match(meLoggedInHtml, /손익현황/);
+    assert.match(meLoggedInHtml, /주문내역/);
+    assert.match(meLoggedInHtml, /거래내역/);
+    assert.match(meLoggedInHtml, /미체결내역/);
+    assert.equal(meLoggedInHtml.includes('href="/login"'), false);
+    assert.equal(meLoggedInHtml.includes('href="/signup"'), false);
 
-    const darkHeaderHtml = renderToStaticMarkup(<V1Header theme="dark" />);
-    assert.match(darkHeaderHtml, /src="\/logo_dark\.png"/);
-    assert.match(darkHeaderHtml, /모의투자/);
-    assert.match(darkHeaderHtml, /대회/);
+    // 헤더 비로그인 vs 로그인 버튼 규격 100% 동일 검증
+    const anonHeaderHtml = renderToStaticMarkup(<V1Header theme="dark" />);
+    assert.match(anonHeaderHtml, /src="\/logo_dark\.png"/);
+    assert.match(anonHeaderHtml, /href="\/login"[^>]*>로그인<\/a>/);
+    assert.equal(anonHeaderHtml.includes('href="/signup"'), false);
+
+    const loggedInHeaderHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <V1Header theme="light" />
+      </MemberProvider>,
+    );
+    assert.match(loggedInHeaderHtml, /href="\/me"[^>]*>마이페이지<\/a>/);
+    assert.equal(loggedInHeaderHtml.includes('href="/login"'), false);
+    assert.equal(loggedInHeaderHtml.includes('href="/signup"'), false);
+    assert.equal(loggedInHeaderHtml.includes('href="/assets"'), false);
   } finally {
     client.clear();
   }

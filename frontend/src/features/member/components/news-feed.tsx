@@ -123,14 +123,18 @@ export function NewsFeed({
       subtitle="글로벌 거시경제(연준 금리·물가·환율), 주요 암호화폐 시황, 온체인 수급 및 규제 동향을 실시간으로 확인하고 모의투자 전략에 참고하세요."
       variant="wide"
     >
-      {/* 상단 뷰 모드 전환 & 필터 바 */}
-      <div className="ym-news-filter-panel">
-        <div className="ym-news-filter-top">
-          <div className="ym-breaking-controls" role="group" aria-label="뉴스 보기 모드">
+      {/* 상단 뷰 모드 전환 & 필터 바 (한 줄 컴팩트 규격 통일) */}
+      <div className="ym-news-filter-panel rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
+        <div className="ym-news-filter-top flex flex-wrap items-center justify-between gap-3">
+          <div className="ym-breaking-controls flex flex-wrap items-center gap-1.5" role="group" aria-label="뉴스 보기 모드">
             <button
               type="button"
               aria-pressed={viewMode === "ALL"}
-              className={viewMode === "ALL" ? "ym-filter-pill is-active" : "ym-filter-pill"}
+              className={`ym-filter-pill inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors ${
+                viewMode === "ALL"
+                  ? "bg-gray-900 text-white is-active"
+                  : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              }`}
               onClick={() => setViewMode("ALL")}
             >
               전체 뉴스·속보
@@ -138,7 +142,11 @@ export function NewsFeed({
             <button
               type="button"
               aria-pressed={viewMode === "HEADLINE"}
-              className={viewMode === "HEADLINE" ? "ym-filter-pill is-active" : "ym-filter-pill"}
+              className={`ym-filter-pill inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors ${
+                viewMode === "HEADLINE"
+                  ? "bg-gray-900 text-white is-active"
+                  : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              }`}
               onClick={() => setViewMode("HEADLINE")}
             >
               중요 헤드라인
@@ -146,7 +154,7 @@ export function NewsFeed({
           </div>
 
           <form
-            className="member-search ym-news-search-form"
+            className="member-search ym-news-search-form flex items-center gap-2"
             onSubmit={event => {
               event.preventDefault();
               setSubmittedKeyword(keyword.trim());
@@ -155,27 +163,34 @@ export function NewsFeed({
           >
             <input
               type="search"
-              className="myInput"
+              className="h-9 rounded-lg border border-gray-200 bg-gray-50 px-3.5 text-xs font-medium text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:bg-white focus:outline-none"
               aria-label="뉴스 키워드 검색"
               placeholder="키워드 검색 (예: ETF, 연준, 금리, BTC)"
               maxLength={40}
               value={keyword}
               onChange={event => setKeyword(event.target.value)}
             />
-            <button type="submit" className="member-secondary ym-inline-check-btn">
+            <button
+              type="submit"
+              className="ym-inline-check-btn inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-[#0058FF] px-3.5 text-xs font-bold text-white whitespace-nowrap hover:bg-blue-700"
+            >
               뉴스 검색
             </button>
           </form>
         </div>
 
-        <div className="member-actions ym-chip-row" role="tablist" aria-label="뉴스 카테고리 필터">
+        <div className="ym-chip-row flex flex-wrap items-center gap-1.5" role="tablist" aria-label="뉴스 카테고리 필터">
           {NEWS_CATEGORIES.map(tab => (
             <button
               key={tab.key || "ALL"}
               type="button"
               role="tab"
               aria-selected={category === tab.key}
-              className={category === tab.key ? "member-primary ym-tag-chip is-active" : "member-secondary ym-tag-chip"}
+              className={`ym-tag-chip inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors ${
+                category === tab.key
+                  ? "bg-[#0058FF] text-white is-active"
+                  : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              }`}
               onClick={() => {
                 setCategory(tab.key);
                 resetPagination();
@@ -186,13 +201,17 @@ export function NewsFeed({
           ))}
         </div>
 
-        <div className="member-actions ym-chip-row" role="group" aria-label="뉴스 종목 태그 필터">
+        <div className="ym-chip-row flex flex-wrap items-center gap-1.5" role="group" aria-label="뉴스 종목 태그 필터">
           {SYMBOL_FILTER_TAGS.map(tag => (
             <button
               key={tag || "ALL_SYMBOL"}
               type="button"
               aria-pressed={symbolTag === tag}
-              className={symbolTag === tag ? "member-primary ym-tag-chip is-active" : "member-secondary ym-tag-chip"}
+              className={`ym-tag-chip inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors ${
+                symbolTag === tag
+                  ? "bg-gray-900 text-white is-active"
+                  : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              }`}
               onClick={() => {
                 setSymbolTag(tag);
                 resetPagination();

@@ -105,14 +105,8 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
       </div>
 
       <div className="ym-login-bottom mt-6 flex flex-col gap-3 border-t border-gray-100 pt-5 text-center">
-        <Link
-          href="/signup"
-          className="signup-button flex h-11 w-full items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-xs font-bold text-gray-700 hover:bg-gray-100"
-        >
-          신규 회원가입 약관 및 프로필 설정 안내
-        </Link>
         <p className="member-note text-xs text-gray-400">
-          Guest 모의투자 기록은 회원 계정에 자동으로 합쳐지지 않습니다.
+          최초 소셜 로그인 시 약관 동의 및 닉네임 설정 단계로 자동 연결됩니다. Guest 모의투자 기록은 회원 계정에 자동으로 합쳐지지 않습니다.
         </p>
         <Link href="/trading" className="ym-guest-return-link text-xs font-bold text-[#0058FF] hover:underline">
           게스트 모의투자로 바로 체험하기 →

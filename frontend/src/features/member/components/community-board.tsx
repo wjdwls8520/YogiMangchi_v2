@@ -434,18 +434,60 @@ export function CommunityBoard({
                 className="mb-4"
               />
 
-              {/* 정렬 & 카테고리 & 종목 & 검색 필터 */}
-              <div className="space-y-3">
+              {/* 정렬 & 카테고리 & 종목 & 검색 필터 (한 줄 컴팩트 규격 통일) */}
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="카테고리 필터">
+                  {COMMUNITY_CATEGORIES.map(item => (
+                    <button
+                      key={item.key || "ALL_CAT"}
+                      type="button"
+                      aria-pressed={category === item.key}
+                      className={`ym-tag-chip inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors ${
+                        category === item.key
+                          ? "bg-[#0058FF] text-white is-active"
+                          : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                      }`}
+                      onClick={() => {
+                        setCategory(item.key);
+                        setCursorHistory([null]);
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="정렬 선택">
+                  <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="종목 태그 필터">
+                    {SYMBOL_FILTER_TAGS.map(symbol => (
+                      <button
+                        key={symbol || "ALL_SYM"}
+                        type="button"
+                        aria-pressed={symbolTag === symbol}
+                        className={`ym-tag-chip inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors ${
+                          symbolTag === symbol
+                            ? "bg-gray-900 text-white is-active"
+                            : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                        }`}
+                        onClick={() => {
+                          setSymbolTag(symbol);
+                          setCursorHistory([null]);
+                        }}
+                      >
+                        {symbol ? `#${symbol}` : "전체 종목"}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="정렬 선택">
                     <button
                       type="button"
                       role="tab"
                       aria-selected={sort === "LATEST"}
-                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+                      className={`inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors ${
                         sort === "LATEST"
                           ? "bg-gray-900 text-white"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                       }`}
                       onClick={() => {
                         setSort("LATEST");
@@ -459,10 +501,10 @@ export function CommunityBoard({
                       type="button"
                       role="tab"
                       aria-selected={sort === "POPULAR"}
-                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+                      className={`inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors ${
                         sort === "POPULAR"
                           ? "bg-gray-900 text-white"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                       }`}
                       onClick={() => {
                         setSort("POPULAR");
@@ -473,48 +515,6 @@ export function CommunityBoard({
                       인기글 (POPULAR)
                     </button>
                   </div>
-
-                  <div className="flex flex-wrap gap-1" role="group" aria-label="종목 태그 필터">
-                    {SYMBOL_FILTER_TAGS.map(symbol => (
-                      <button
-                        key={symbol || "ALL_SYM"}
-                        type="button"
-                        aria-pressed={symbolTag === symbol}
-                        className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-                          symbolTag === symbol
-                            ? "bg-[#0058FF] text-white"
-                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                        }`}
-                        onClick={() => {
-                          setSymbolTag(symbol);
-                          setCursorHistory([null]);
-                        }}
-                      >
-                        {symbol ? `#${symbol}` : "전체 종목"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="카테고리 필터">
-                  {COMMUNITY_CATEGORIES.map(item => (
-                    <button
-                      key={item.key || "ALL_CAT"}
-                      type="button"
-                      aria-pressed={category === item.key}
-                      className={`rounded-lg px-3 py-1 text-xs font-bold ${
-                        category === item.key
-                          ? "bg-blue-50 text-[#0058FF]"
-                          : "text-gray-500 hover:bg-gray-100"
-                      }`}
-                      onClick={() => {
-                        setCategory(item.key);
-                        setCursorHistory([null]);
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
                 </div>
 
                 <form className="flex gap-2 pt-1" onSubmit={handleSearch}>
