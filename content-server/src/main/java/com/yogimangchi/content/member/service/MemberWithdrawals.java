@@ -1,6 +1,7 @@
 package com.yogimangchi.content.member.service;
 
 import com.yogimangchi.content.auth.repository.RefreshSessionRepository;
+import com.yogimangchi.content.community.CommunityS3Service;
 import com.yogimangchi.content.error.AuthFailure;
 import com.yogimangchi.content.member.repository.MemberRepository;
 import java.time.Instant;
@@ -15,8 +16,9 @@ public class MemberWithdrawals {
     private final MemberRepository members;
     private final RefreshSessionRepository refresh;
     private final JdbcTemplate jdbc;
-    public MemberWithdrawals(MemberRepository members,RefreshSessionRepository refresh,JdbcTemplate jdbc) {
-        this.members=members; this.refresh=refresh; this.jdbc=jdbc;
+    private final CommunityS3Service s3;
+    public MemberWithdrawals(MemberRepository members,RefreshSessionRepository refresh,JdbcTemplate jdbc,CommunityS3Service s3) {
+        this.members=members; this.refresh=refresh; this.jdbc=jdbc; this.s3=s3;
     }
     @Transactional(timeout=5)
     public Result request(Long memberId,com.yogimangchi.content.member.dto.WithdrawalRequest body,com.yogimangchi.content.auth.oauth.VerifiedIdentity proof) {
@@ -56,6 +58,9 @@ public class MemberWithdrawals {
         jdbc.update("delete from content.oauth_identity where member_id=?",memberId);
         jdbc.update("delete from content.refresh_session where member_id=?",memberId);
         jdbc.update("delete from content.member_consent_history where member_id=?",memberId);
+        if(member.getProfileImgS3Key()!=null && !member.getProfileImgS3Key().isBlank()) {
+            s3.registerAfterCommitDelete(List.of(member.getProfileImgS3Key()),"MEMBER_WITHDRAWN");
+        }
         member.withdraw(Instant.now());
         jdbc.update("update content.member_withdrawal set status='COMPLETED',completed_at=now() where member_id=? and status='PENDING'",memberId);
     }

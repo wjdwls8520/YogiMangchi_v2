@@ -16,6 +16,7 @@ import org.springframework.http.*;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping(value="/api/v1/members",produces="application/json")
@@ -58,10 +59,32 @@ public class MemberController {
     @GetMapping("/nickname/availability")
     @Operation(summary="Check nickname availability",description="Public.1-8 Unicode code points in Letter/Number categories (L/N), matching Frontend Unicode u regex. Spaces/punctuation/emoji/control/invisible separators rejected400. Availability is advisory; signup/profile changes still enforce DB uniqueness and can return409. Legacy9-12-character nicknames remain readable/login-capable but cannot be submitted as new nickname input.")
     public NicknameAvailability available(@RequestParam String nickname) { return new NicknameAvailability(profiles.nicknameAvailable(nickname)); }
-    @PatchMapping("/me/profile")
+    @PatchMapping(value="/me/profile",consumes=MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name="memberBearer")
-    @Operation(summary="Change own nickname or profile message",description="Bearer only; memberId comes from verified JWT. A provided nickname must be1-8 Unicode Letter/Number code points (L/N). Omitted/null nickname preserves legacy9-12-character names, including on message-only changes. Messages up to255 characters; empty clears, omitted/null preserves. 400 invalid,401 inactive/invalid credential,409 duplicate nickname or lock contention. Retained older messages above255 are not silently truncated: submit a valid replacement when editing. No image upload in this endpoint.")
+    @Operation(summary="Change own nickname, profile message, or reset profile image (JSON)",description="Bearer only; memberId comes from verified JWT. A provided nickname must be1-8 Unicode Letter/Number code points (L/N). Omitted/null nickname preserves legacy9-12-character names, including on message-only changes. Messages up to255 characters; empty clears, omitted/null preserves. resetProfileImage=true clears custom avatar and schedules S3 deletion.")
     public ResponseEntity<MemberProfileResponse> update(@AuthenticationPrincipal Jwt jwt,@Valid @RequestBody UpdateProfileRequest body) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(profiles.change(Long.valueOf(jwt.getSubject()),body));
+    }
+    @RequestMapping(value="/me/profile",method={RequestMethod.PATCH,RequestMethod.POST},consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    @SecurityRequirement(name="memberBearer")
+    @Operation(summary="Change own profile with optional S3 profile image upload or reset (Multipart)",description="Supports multipart form fields nickname, profileMessage (or profileMsg), resetProfileImage, type (upload|reset), and image file part profileImage (or file).")
+    public ResponseEntity<MemberProfileResponse> updateMultipart(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required=false) String nickname,
+            @RequestParam(required=false) String profileMessage,
+            @RequestParam(required=false) String profileMsg,
+            @RequestParam(required=false) String type,
+            @RequestParam(required=false) Boolean resetProfileImage,
+            @RequestPart(name="request",required=false) @Valid UpdateProfileRequest requestPart,
+            @RequestPart(name="profileImage",required=false) MultipartFile profileImage,
+            @RequestPart(name="file",required=false) MultipartFile file) {
+        MultipartFile effectiveFile = (profileImage != null && !profileImage.isEmpty()) ? profileImage : file;
+        String effectiveMessage = profileMessage != null ? profileMessage : profileMsg;
+        UpdateProfileRequest effectiveRequest = requestPart != null
+                ? requestPart
+                : new UpdateProfileRequest(nickname,effectiveMessage,resetProfileImage);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(profiles.change(Long.valueOf(jwt.getSubject()),effectiveRequest,effectiveFile,type));
     }
 }

@@ -120,6 +120,7 @@ public class CommunityService {
             Long id,
             Long memberId,
             String authorNickname,
+            String authorProfileImgUrl,
             boolean authorWithdrawn,
             String category,
             String symbolTag,
@@ -135,7 +136,30 @@ public class CommunityService {
             SharedPositionSnapshot sharedPosition,
             Instant createdAt,
             Instant updatedAt
-    ) { }
+    ) {
+        public CommunityPostResponse(
+                Long id,
+                Long memberId,
+                String authorNickname,
+                boolean authorWithdrawn,
+                String category,
+                String symbolTag,
+                String title,
+                String content,
+                int likeCount,
+                int commentCount,
+                int reportCount,
+                boolean likedByMe,
+                boolean reportedByMe,
+                boolean mine,
+                List<PostFileResponse> files,
+                SharedPositionSnapshot sharedPosition,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, memberId, authorNickname, null, authorWithdrawn, category, symbolTag, title, content,
+                    likeCount, commentCount, reportCount, likedByMe, reportedByMe, mine, files, sharedPosition, createdAt, updatedAt);
+        }
+    }
 
     public record CommunityPostPageResponse(
             List<CommunityPostResponse> items,
@@ -166,6 +190,7 @@ public class CommunityService {
             Long postId,
             Long memberId,
             String authorNickname,
+            String authorProfileImgUrl,
             boolean authorWithdrawn,
             Long parentCommentId,
             Long targetCommentId,
@@ -180,7 +205,30 @@ public class CommunityService {
             boolean deleted,
             Instant createdAt,
             Instant updatedAt
-    ) { }
+    ) {
+        public CommunityCommentResponse(
+                Long id,
+                Long postId,
+                Long memberId,
+                String authorNickname,
+                boolean authorWithdrawn,
+                Long parentCommentId,
+                Long targetCommentId,
+                Long targetMemberId,
+                String targetNickname,
+                String content,
+                int likeCount,
+                int reportCount,
+                boolean likedByMe,
+                boolean reportedByMe,
+                boolean mine,
+                boolean deleted,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, postId, memberId, authorNickname, null, authorWithdrawn, parentCommentId, targetCommentId,
+                    targetMemberId, targetNickname, content, likeCount, reportCount, likedByMe, reportedByMe, mine, deleted, createdAt, updatedAt);
+        }
+    }
 
     public record CommunityCommentListResponse(
             List<CommunityCommentResponse> items
@@ -259,7 +307,7 @@ public class CommunityService {
         }
 
         StringBuilder sql = new StringBuilder(
-                "select p.id, p.member_id, m.nickname as member_nickname, m.status as member_status, "
+                "select p.id, p.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
                         + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
                         + "p.shared_position_json, p.created_at, p.updated_at, "
                         + (viewerId == null
@@ -400,6 +448,7 @@ public class CommunityService {
                 created.id(),
                 created.memberId(),
                 created.authorNickname(),
+                created.authorProfileImgUrl(),
                 created.authorWithdrawn(),
                 created.category(),
                 created.symbolTag(),
@@ -629,7 +678,7 @@ public class CommunityService {
             throw notFound();
         }
 
-        String sql = "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.status as member_status, "
+        String sql = "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
                 + "c.parent_comment_id, c.target_comment_id, c.target_member_id, "
                 + "tm.nickname as target_member_nickname, tm.status as target_member_status, "
                 + "c.content, c.status as comment_status, c.like_count, c.report_count, c.created_at, c.updated_at, "
@@ -897,7 +946,7 @@ public class CommunityService {
     }
 
     private CommunityPostResponse queryActivePost(Long postId, Long viewerId) {
-        String sql = "select p.id, p.member_id, m.nickname as member_nickname, m.status as member_status, "
+        String sql = "select p.id, p.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
                 + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
                 + "p.shared_position_json, p.created_at, p.updated_at, "
                 + (viewerId == null
@@ -917,7 +966,7 @@ public class CommunityService {
     }
 
     private CommunityCommentResponse querySingleComment(Long commentId, Long viewerId) {
-        String sql = "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.status as member_status, "
+        String sql = "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
                 + "c.parent_comment_id, c.target_comment_id, c.target_member_id, "
                 + "tm.nickname as target_member_nickname, tm.status as target_member_status, "
                 + "c.content, c.status as comment_status, c.like_count, c.report_count, c.created_at, c.updated_at, "
@@ -967,6 +1016,7 @@ public class CommunityService {
                         p.id(),
                         p.memberId(),
                         p.authorNickname(),
+                        p.authorProfileImgUrl(),
                         p.authorWithdrawn(),
                         p.category(),
                         p.symbolTag(),
@@ -1108,10 +1158,12 @@ public class CommunityService {
         String memberStatus = rs.getString("member_status");
         boolean authorWithdrawn = "WITHDRAWN".equals(memberStatus) || nickname == null;
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
+        String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
         return new CommunityPostResponse(
                 rs.getLong("id"),
                 authorId,
                 displayNickname,
+                displayProfileImgUrl,
                 authorWithdrawn,
                 rs.getString("category"),
                 rs.getString("symbol_tag"),
@@ -1136,6 +1188,7 @@ public class CommunityService {
         String memberStatus = rs.getString("member_status");
         boolean authorWithdrawn = "WITHDRAWN".equals(memberStatus) || nickname == null;
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
+        String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
 
         long parentRaw = rs.getLong("parent_comment_id");
         Long parentCommentId = rs.wasNull() ? null : parentRaw;
@@ -1163,6 +1216,7 @@ public class CommunityService {
                 rs.getLong("post_id"),
                 authorId,
                 displayNickname,
+                displayProfileImgUrl,
                 authorWithdrawn,
                 parentCommentId,
                 targetCommentId,

@@ -658,21 +658,27 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
 
     @Test
     void rootDotEnvS3LiveUploadAndImmediateDeleteWhenConfigured() throws Exception {
-        List<Path> candidates = List.of(
-                Path.of(".env"),
-                Path.of("../.env"),
-                Path.of("../../../.env"),
-                Path.of("../../../../.env")
-        );
-        Path envPath = candidates.stream().filter(Files::isRegularFile).findFirst().orElse(null);
-        Properties props = new Properties();
-        if (envPath != null) {
-            props = PropertiesLoaderUtils.loadProperties(new FileSystemResource(envPath));
+        String bucket = "";
+        String access = "";
+        String secret = "";
+        String region = "ap-northeast-2";
+        if (Boolean.getBoolean("yogimangchi.s3.liveTest")) {
+            List<Path> candidates = List.of(
+                    Path.of(".env"),
+                    Path.of("../.env"),
+                    Path.of("../../../.env"),
+                    Path.of("../../../../.env")
+            );
+            Path envPath = candidates.stream().filter(Files::isRegularFile).findFirst().orElse(null);
+            Properties props = new Properties();
+            if (envPath != null) {
+                props = PropertiesLoaderUtils.loadProperties(new FileSystemResource(envPath));
+            }
+            bucket = props.getProperty("S3_BUCKET", "").strip();
+            access = props.getProperty("S3_ACCESS", "").strip();
+            secret = props.getProperty("S3_SECRET", "").strip();
+            region = props.getProperty("S3_REGION", "ap-northeast-2").strip();
         }
-        String bucket = props.getProperty("S3_BUCKET", "").strip();
-        String access = props.getProperty("S3_ACCESS", "").strip();
-        String secret = props.getProperty("S3_SECRET", "").strip();
-        String region = props.getProperty("S3_REGION", "ap-northeast-2").strip();
 
         CommunityS3Service service = new CommunityS3Service(bucket, access, secret, region);
         try {
@@ -688,6 +694,10 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
             } finally {
                 boolean deleted = service.deleteByKeyQuietly(item.key());
                 assertThat(deleted).isTrue();
+                if (!Boolean.getBoolean("yogimangchi.s3.liveTest")) {
+                    assertThat(service.realS3PutCount()).isZero();
+                    assertThat(service.realS3DeleteCount()).isZero();
+                }
                 log.info("S3 upload & immediate delete probe completed: realS3={}, region={}, key={}, deleted={}",
                         service.isRealS3Configured(), service.region(), item.key(), deleted);
             }

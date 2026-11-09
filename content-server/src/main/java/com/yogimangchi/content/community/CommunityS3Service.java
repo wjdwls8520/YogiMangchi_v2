@@ -4,6 +4,8 @@ import com.yogimangchi.content.error.AuthFailure;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -13,13 +15,20 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -37,6 +46,9 @@ public class CommunityS3Service {
     public static final long MAX_SINGLE_FILE_SIZE = 5L * 1024 * 1024;
     public static final long MAX_GIF_FILE_SIZE = 3L * 1024 * 1024;
     public static final long MAX_TOTAL_FILE_SIZE = 20L * 1024 * 1024;
+    public static final String POST_PREFIX = "community/post";
+    public static final String PROFILE_PREFIX = "member/profile";
+
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
             "image/jpeg",
             "image/jpg",
@@ -61,18 +73,46 @@ public class CommunityS3Service {
             String contentType
     ) { }
 
+    private record PendingCleanupRow(
+            long id,
+            String s3Key,
+            int attemptCount,
+            int maxAttempts
+    ) { }
+
     private final String bucket;
     private final String region;
     private final S3Client s3Client;
+    private final JdbcTemplate jdbc;
+    private final TransactionTemplate requiresNewTx;
     private final Set<String> simulatedStore = ConcurrentHashMap.newKeySet();
+    private final Set<String> simulatedDeleteFailureKeys = ConcurrentHashMap.newKeySet();
+    private final AtomicInteger realS3PutCounter = new AtomicInteger();
+    private final AtomicInteger realS3DeleteCounter = new AtomicInteger();
 
+    public CommunityS3Service(String bucket, String accessKey, String secretKey, String region) {
+        this(bucket, accessKey, secretKey, region, null, null);
+    }
+
+    @Autowired
     public CommunityS3Service(
             @Value("${content.s3.bucket:}") String bucket,
             @Value("${content.s3.access-key:}") String accessKey,
             @Value("${content.s3.secret-key:}") String secretKey,
-            @Value("${content.s3.region:ap-northeast-2}") String region) {
+            @Value("${content.s3.region:ap-northeast-2}") String region,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager txManager) {
         this.bucket = bucket == null ? "" : bucket.strip();
         this.region = (region == null || region.isBlank()) ? "ap-northeast-2" : region.strip();
+        this.jdbc = jdbc;
+        if (txManager != null) {
+            TransactionTemplate tpl = new TransactionTemplate(txManager);
+            tpl.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            tpl.setTimeout(3);
+            this.requiresNewTx = tpl;
+        } else {
+            this.requiresNewTx = null;
+        }
         String trimmedAccess = accessKey == null ? "" : accessKey.strip();
         String trimmedSecret = secretKey == null ? "" : secretKey.strip();
         if (!this.bucket.isEmpty() && !trimmedAccess.isEmpty() && !trimmedSecret.isEmpty()) {
@@ -91,6 +131,34 @@ public class CommunityS3Service {
         if (s3Client != null) {
             s3Client.close();
         }
+    }
+
+    public int realS3PutCount() {
+        return realS3PutCounter.get();
+    }
+
+    public int realS3DeleteCount() {
+        return realS3DeleteCounter.get();
+    }
+
+    public void failSimulatedDeleteForKey(String key) {
+        if (key != null && !key.isBlank()) {
+            simulatedDeleteFailureKeys.add(key);
+        }
+    }
+
+    public void clearSimulatedDeleteFailures() {
+        simulatedDeleteFailureKeys.clear();
+    }
+
+    public UploadResult validateAndUploadProfileImage(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw invalidRequest();
+        }
+        validateImageFile(file);
+        UploadResult uploaded = uploadSingleImage(file, PROFILE_PREFIX);
+        registerRollbackCleanup(List.of(uploaded.key()));
+        return uploaded;
     }
 
     public List<UploadResult> validateAndUploadPostImages(List<MultipartFile> files, int existingRemainingCount) {
@@ -120,7 +188,7 @@ public class CommunityS3Service {
         List<String> uploadedKeys = new ArrayList<>(nonEmpty.size());
         try {
             for (MultipartFile file : nonEmpty) {
-                UploadResult result = uploadSingleImage(file, "community/post");
+                UploadResult result = uploadSingleImage(file, POST_PREFIX);
                 uploaded.add(result);
                 uploadedKeys.add(result.key());
             }
@@ -128,7 +196,7 @@ public class CommunityS3Service {
             return uploaded;
         } catch (RuntimeException failure) {
             for (String key : uploadedKeys) {
-                deleteByKeyQuietly(key);
+                deleteOrEnqueueRetry(key, "UPLOAD_BATCH_ABORT");
             }
             throw failure;
         }
@@ -198,6 +266,7 @@ public class CommunityS3Service {
                     .contentLength(size)
                     .build();
             try (InputStream is = file.getInputStream()) {
+                realS3PutCounter.incrementAndGet();
                 s3Client.putObject(putReq, RequestBody.fromInputStream(is, size));
             } catch (IOException e) {
                 log.warn("Failed to read multipart image stream for S3 upload");
@@ -224,8 +293,13 @@ public class CommunityS3Service {
         if (key == null || key.isBlank()) {
             return false;
         }
+        if (simulatedDeleteFailureKeys.contains(key)) {
+            log.warn("Simulated S3 delete failure triggered for key={}", key);
+            return false;
+        }
         if (s3Client != null) {
             try {
+                realS3DeleteCounter.incrementAndGet();
                 s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
                 return true;
             } catch (Exception e) {
@@ -234,6 +308,96 @@ public class CommunityS3Service {
             }
         }
         return simulatedStore.remove(key);
+    }
+
+    public void deleteOrEnqueueRetry(String key, String reason) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        String effectiveReason = (reason == null || reason.isBlank()) ? "CLEANUP" : reason;
+        boolean deleted = deleteByKeyQuietly(key);
+        if (deleted) {
+            if (jdbc != null) {
+                runInIndependentTx(() -> jdbc.update(
+                        "update content.s3_cleanup_task set status = 'COMPLETED', completed_at = now(), last_error = null "
+                                + "where s3_key = ? and status <> 'COMPLETED'",
+                        key));
+            }
+            return;
+        }
+        if (jdbc != null) {
+            runInIndependentTx(() -> jdbc.update(
+                    "insert into content.s3_cleanup_task(s3_key, reason, status, attempt_count, max_attempts, next_attempt_at, last_error, created_at) "
+                            + "values (?, ?, 'PENDING', 1, 5, now(), 'Initial S3 delete failed', now()) "
+                            + "on conflict(s3_key) do update "
+                            + "set status = 'PENDING', "
+                            + "    reason = excluded.reason, "
+                            + "    attempt_count = least(content.s3_cleanup_task.attempt_count + 1, content.s3_cleanup_task.max_attempts), "
+                            + "    next_attempt_at = now(), "
+                            + "    last_error = excluded.last_error",
+                    key, effectiveReason));
+        }
+    }
+
+    private void runInIndependentTx(Runnable action) {
+        try {
+            if (requiresNewTx != null) {
+                requiresNewTx.executeWithoutResult(status -> action.run());
+            } else {
+                action.run();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to record S3 cleanup task in DB: {}", e.getMessage());
+        }
+    }
+
+    @Scheduled(
+            fixedDelayString = "${content.s3.cleanup-retry-delay-ms:60000}",
+            initialDelayString = "${content.s3.cleanup-initial-delay-ms:30000}"
+    )
+    public void retryPendingDeletionsScheduled() {
+        retryPendingDeletions(Instant.now());
+    }
+
+    public int retryPendingDeletions(Instant now) {
+        if (jdbc == null) {
+            return 0;
+        }
+        Instant effectiveNow = now == null ? Instant.now() : now;
+        List<PendingCleanupRow> rows = jdbc.query(
+                "select id, s3_key, attempt_count, max_attempts from content.s3_cleanup_task "
+                        + "where status = 'PENDING' and next_attempt_at <= ? "
+                        + "order by next_attempt_at asc, id asc limit 20",
+                (rs, n) -> new PendingCleanupRow(
+                        rs.getLong("id"),
+                        rs.getString("s3_key"),
+                        rs.getInt("attempt_count"),
+                        rs.getInt("max_attempts")),
+                Timestamp.from(effectiveNow));
+
+        int resolvedCount = 0;
+        for (PendingCleanupRow row : rows) {
+            if (deleteByKeyQuietly(row.s3Key())) {
+                jdbc.update(
+                        "update content.s3_cleanup_task set status = 'COMPLETED', completed_at = now(), last_error = null where id = ?",
+                        row.id());
+                resolvedCount++;
+            } else {
+                int newAttempt = row.attemptCount() + 1;
+                if (newAttempt >= row.maxAttempts()) {
+                    jdbc.update(
+                            "update content.s3_cleanup_task set status = 'FAILED', attempt_count = ?, last_error = 'Max retry attempts reached' where id = ?",
+                            newAttempt, row.id());
+                } else {
+                    jdbc.update(
+                            "update content.s3_cleanup_task set status = 'PENDING', attempt_count = ?, "
+                                    + "next_attempt_at = now() + make_interval(secs => least(3600, 10 * power(2, least(? + 1, 6)))::int), "
+                                    + "last_error = 'Retry S3 delete failed' where id = ?",
+                            newAttempt, row.attemptCount(), row.id());
+                }
+            }
+        }
+        return resolvedCount;
     }
 
     public boolean isRealS3Configured() {
@@ -255,7 +419,7 @@ public class CommunityS3Service {
                 public void afterCompletion(int status) {
                     if (status != STATUS_COMMITTED) {
                         for (String key : copy) {
-                            deleteByKeyQuietly(key);
+                            deleteOrEnqueueRetry(key, "TX_ROLLBACK");
                         }
                     }
                 }
@@ -264,24 +428,29 @@ public class CommunityS3Service {
     }
 
     public void registerAfterCommitDelete(List<String> keys) {
+        registerAfterCommitDelete(keys, "AFTER_COMMIT_DELETE");
+    }
+
+    public void registerAfterCommitDelete(List<String> keys, String reason) {
         if (keys == null || keys.isEmpty()) {
             return;
         }
         List<String> copy = List.copyOf(keys);
+        String effectiveReason = (reason == null || reason.isBlank()) ? "AFTER_COMMIT_DELETE" : reason;
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCompletion(int status) {
                     if (status == STATUS_COMMITTED) {
                         for (String key : copy) {
-                            deleteByKeyQuietly(key);
+                            deleteOrEnqueueRetry(key, effectiveReason);
                         }
                     }
                 }
             });
         } else {
             for (String key : copy) {
-                deleteByKeyQuietly(key);
+                deleteOrEnqueueRetry(key, effectiveReason);
             }
         }
     }

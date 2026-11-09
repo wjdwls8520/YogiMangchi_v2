@@ -12,6 +12,8 @@ public class Member {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) private Long id;
     @Column(length=12,unique=true) private String nickname;
     @Column(nullable=false,length=300) private String profileMessage;
+    @Column(name="profile_img_url",length=1000) private String profileImgUrl;
+    @Column(name="profile_img_s3_key",length=512) private String profileImgS3Key;
     @Enumerated(EnumType.STRING) @Column(nullable=false,length=16) private Status status;
     @Enumerated(EnumType.STRING) @Column(nullable=false,length=16) private Role role;
     private Instant termsAgreedAt;
@@ -33,7 +35,7 @@ public class Member {
     public void withdraw(Instant now) {
         if(status==Status.WITHDRAWN) return;
         status=Status.WITHDRAWN; nickname=null; withdrawnAt=java.util.Objects.requireNonNull(now);
-        profileMessage="";termsAgreedAt=null;privacyAgreedAt=null;
+        profileMessage="";profileImgUrl=null;profileImgS3Key=null;termsAgreedAt=null;privacyAgreedAt=null;
     }
     public void changeBasicProfile(String nickname,String message) {
         if(status!=Status.ACTIVE || nickname!=null && !NicknamePolicy.isValid(nickname) || message==null || message.length()>255 || message.indexOf('\0')>=0)
@@ -42,8 +44,15 @@ public class Member {
         if(nickname!=null) this.nickname=nickname;
         this.profileMessage=message;
     }
+    public void changeProfileImage(String profileImgUrl,String profileImgS3Key) {
+        if(status!=Status.ACTIVE) throw new IllegalArgumentException("Inactive member cannot change profile image");
+        this.profileImgUrl=profileImgUrl;
+        this.profileImgS3Key=profileImgS3Key;
+    }
     public String getNickname() { return nickname; }
     public String getProfileMessage() { return profileMessage; }
+    public String getProfileImgUrl() { return profileImgUrl; }
+    public String getProfileImgS3Key() { return profileImgS3Key; }
     public Status getStatus() { return status; }
     public Role getRole() { return role; }
     public Instant getCreatedAt() { return createdAt; }
