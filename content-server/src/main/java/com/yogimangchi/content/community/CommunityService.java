@@ -348,7 +348,7 @@ public class CommunityService {
         }
         Long newCount = jdbc.queryForObject(countSql.toString(), Long.class, countParams.toArray());
 
-        CommunityPostPageResponse topPage = listPosts(normalizedCategory, "LATEST", normalizedSymbol, null, null, 5, viewerId);
+        CommunityPostPageResponse topPage = listPosts(normalizedCategory, "LATEST", normalizedSymbol, null, null, 10, viewerId);
         List<CommunityPostResponse> freshItems = sincePostId == null
                 ? topPage.items()
                 : topPage.items().stream().filter(p -> p.id() > sincePostId).toList();
@@ -396,6 +396,26 @@ public class CommunityService {
         insertUploadedFiles(postId, uploadedFiles);
 
         CommunityPostResponse created = queryActivePost(postId, memberId);
+        CommunityPostResponse publicSnapshot = new CommunityPostResponse(
+                created.id(),
+                created.memberId(),
+                created.authorNickname(),
+                created.authorWithdrawn(),
+                created.category(),
+                created.symbolTag(),
+                created.title(),
+                created.content(),
+                created.likeCount(),
+                created.commentCount(),
+                created.reportCount(),
+                false,
+                false,
+                false,
+                created.files(),
+                created.sharedPosition(),
+                created.createdAt(),
+                created.updatedAt()
+        );
         uxSse.publishPostCreatedAfterCommit(new CommunityUxSseService.PostCreatedUxEvent(
                 created.id(),
                 created.title(),
@@ -403,7 +423,8 @@ public class CommunityService {
                 created.authorNickname(),
                 created.category(),
                 created.symbolTag(),
-                created.createdAt()
+                created.createdAt(),
+                publicSnapshot
         ));
         return created;
     }

@@ -22,7 +22,8 @@ public class CommunityUxSseService {
             String authorNickname,
             String category,
             String symbolTag,
-            Instant createdAt
+            Instant createdAt,
+            CommunityService.CommunityPostResponse post
     ) { }
 
     private final Set<SseEmitter> emitters = ConcurrentHashMap.newKeySet();

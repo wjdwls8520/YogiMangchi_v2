@@ -587,6 +587,73 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reportCount").value(0))
                 .andExpect(jsonPath("$.reportedByMe").value(false));
+
+        // 9. Verify 10-item cursor pagination (LATEST and POPULAR) without duplicates or omissions
+        List<Long> bulkPostIds = new java.util.ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            var bulkBody = mvc.perform(post("/api/v1/community/posts")
+                            .header("Authorization", authorBearer)
+                            .contentType("application/json")
+                            .content(json.writeValueAsString(Map.of(
+                                    "category", "MARKET",
+                                    "symbolTag", "SOL",
+                                    "title", "SOL 10개 단위 무한스크롤 커서 테스트 #" + i,
+                                    "content", "10개 단위 커서 기반 페이지네이션 검증 본문 #" + i))))
+                    .andExpect(status().isCreated())
+                    .andReturn().getResponse().getContentAsString();
+            bulkPostIds.add(json.readTree(bulkBody).path("id").asLong());
+        }
+
+        // latest-check returns up to 10 newest items
+        mvc.perform(get("/api/v1/community/posts/latest-check")
+                        .param("sincePostId", "0")
+                        .param("category", "MARKET")
+                        .param("symbolTag", "SOL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.newPostCount").value(12))
+                .andExpect(jsonPath("$.items.length()").value(10));
+
+        // Page 1 (default size=10, LATEST) -> 10 items, hasNext=true
+        var latestPage1 = json.readTree(mvc.perform(get("/api/v1/community/posts")
+                        .param("category", "MARKET")
+                        .param("symbolTag", "SOL")
+                        .param("sort", "LATEST"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(10))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursorId").isNumber())
+                .andReturn().getResponse().getContentAsString());
+        long latestCursor = latestPage1.path("nextCursorId").asLong();
+
+        // Page 2 (cursorId=latestCursor, LATEST) -> remaining 2 items, hasNext=false
+        mvc.perform(get("/api/v1/community/posts")
+                        .param("category", "MARKET")
+                        .param("symbolTag", "SOL")
+                        .param("sort", "LATEST")
+                        .param("cursorId", Long.toString(latestCursor)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.hasNext").value(false));
+
+        // POPULAR sort 10-item cursor pagination
+        var popularPage1 = json.readTree(mvc.perform(get("/api/v1/community/posts")
+                        .param("category", "MARKET")
+                        .param("symbolTag", "SOL")
+                        .param("sort", "POPULAR"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(10))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andReturn().getResponse().getContentAsString());
+        long popularCursor = popularPage1.path("nextCursorId").asLong();
+
+        mvc.perform(get("/api/v1/community/posts")
+                        .param("category", "MARKET")
+                        .param("symbolTag", "SOL")
+                        .param("sort", "POPULAR")
+                        .param("cursorId", Long.toString(popularCursor)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.hasNext").value(false));
     }
 
     @Test
