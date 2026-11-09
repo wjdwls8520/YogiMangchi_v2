@@ -12,7 +12,9 @@ export interface SelectedS3File {
 }
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_GIF_BYTES = 3 * 1024 * 1024;
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"];
+const COMMUNITY_ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -148,8 +150,16 @@ export function CommunityImageUploadSlot({
         setError("이미지는 게시글당 최대 4장까지 첨부할 수 있습니다.");
         break;
       }
-      if (!ALLOWED_MIME.includes(file.type)) {
-        setError("JPG, PNG, WEBP 형식의 이미지만 첨부할 수 있습니다.");
+      if (file.type.startsWith("video/")) {
+        setError("동영상 파일은 아직 업로드할 수 없습니다. (이미지 및 3MB 이하 GIF만 가능)");
+        continue;
+      }
+      if (!COMMUNITY_ALLOWED_MIME.includes(file.type)) {
+        setError("JPG, PNG, WEBP 또는 GIF(움짤) 형식의 이미지만 첨부할 수 있습니다.");
+        continue;
+      }
+      if (file.type === "image/gif" && file.size > MAX_GIF_BYTES) {
+        setError("GIF 움짤은 쾌적한 환경을 위해 3MB 이하만 첨부할 수 있습니다.");
         continue;
       }
       if (file.size > MAX_FILE_BYTES) {
@@ -192,11 +202,13 @@ export function CommunityImageUploadSlot({
           id={inputId}
           type="file"
           multiple
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/jpeg,image/png,image/webp,image/gif"
           className="sr-only"
           onChange={handleSelect}
         />
-        <span className="ym-s3-caption">JPG, PNG, WEBP · 장당 최대 5MB (S3 업로드 슬롯)</span>
+        <span className="ym-s3-caption">
+          JPG, PNG, WEBP(최대 5MB) · GIF 움짤(최대 3MB) · 동영상 업로드 불가
+        </span>
       </div>
 
       {error && (
