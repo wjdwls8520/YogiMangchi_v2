@@ -22,7 +22,7 @@ public class SecurityConfig {
             a.requestMatchers(HttpMethod.GET,"/.well-known/jwks.json","/api/v1/auth/csrf","/api/v1/auth/flow","/api/v1/policies/current","/api/v1/policies/{type:TERMS|PRIVACY}/{version}").permitAll();
             a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout","/api/v1/news/{newsId:[0-9]+}/reactions").permitAll();
             a.requestMatchers(HttpMethod.GET,"/api/v1/members/me","/api/v1/members/me/consents","/api/v1/members/me/withdrawal").authenticated();
-            a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/consents").authenticated();
+            a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/consents","/api/v1/members/me/profile").authenticated();
             a.requestMatchers(HttpMethod.PATCH,"/api/v1/members/me/profile").authenticated();
             a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/withdrawal").authenticated();
             a.requestMatchers(HttpMethod.PUT,"/api/v1/members/{memberId:[0-9]+}/follows").authenticated();

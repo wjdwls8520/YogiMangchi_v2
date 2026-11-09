@@ -48,9 +48,9 @@ public class MemberFollows {
         active(memberId);
         String owner=followers ? "following_id" : "follower_id",other=followers ? "follower_id" : "following_id";
         String search=keyword==null ? "" : keyword.strip();
-        var rows=jdbc.query("select f.id,m.id member_id,m.nickname,m.profile_message,f.created_at from content.member_follow f join content.member m on m.id=f."+other
+        var rows=jdbc.query("select f.id,m.id member_id,m.nickname,m.profile_message,m.profile_img_url,f.created_at from content.member_follow f join content.member m on m.id=f."+other
                 +" where f."+owner+"=? and f.active and m.status='ACTIVE' and f.id<? and position(lower(?) in lower(m.nickname))>0 order by f.id desc limit ?",
-                (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),r.getTimestamp("created_at").toInstant())),
+                (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),r.getString("profile_img_url"),r.getTimestamp("created_at").toInstant())),
                 memberId,cursorId==null ? Long.MAX_VALUE : cursorId,search,limit+1);
         boolean hasNext=rows.size()>limit; var page=rows.subList(0,Math.min(limit,rows.size()));
         Long next=hasNext ? page.get(page.size()-1).id() : null;

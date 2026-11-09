@@ -16,6 +16,6 @@ public class MemberQueries {
         Long id;
         try { id=Long.valueOf(subject); } catch(NumberFormatException failure) { throw AuthFailure.unauthorized(); }
         var member=members.findById(id).filter(m -> m.getStatus()==Member.Status.ACTIVE).orElseThrow(AuthFailure::unauthorized);
-        return new MemberProfileResponse(member.getId(),member.getNickname(),member.getProfileMessage(),member.getRole().name(),member.getCreatedAt());
+        return new MemberProfileResponse(member.getId(),member.getNickname(),member.getProfileMessage(),member.getProfileImgUrl(),member.getRole().name(),member.getCreatedAt());
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.content.auth.dto.SignupRequest;
 import com.yogimangchi.content.auth.oauth.VerifiedIdentity;
 import com.yogimangchi.content.auth.service.AuthService;
+import com.yogimangchi.content.community.CommunityS3Service;
 import com.yogimangchi.content.member.dto.UpdateProfileRequest;
 import com.yogimangchi.content.member.entity.OAuthIdentity.Provider;
 import com.yogimangchi.content.member.service.MemberProfiles;
@@ -11,15 +12,20 @@ import com.yogimangchi.content.support.*;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpMethod;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -29,11 +35,17 @@ class MemberProfileIntegrationTests extends TestEnvironment {
     @Autowired MockMvc mvc;
     @Autowired AuthService auth;
     @Autowired MemberProfiles profiles;
+    @Autowired CommunityS3Service s3;
     @Autowired JdbcTemplate jdbc;
+    @Autowired PlatformTransactionManager txManager;
     @Autowired ObjectMapper json;
     @Autowired JwtEncoder encoder;
     AuthService.Issued own,other;
-    @BeforeEach void members() { own=member(); other=member(); }
+    @BeforeEach void members() {
+        s3.clearSimulatedDeleteFailures();
+        own=member();
+        other=member();
+    }
 
     @Test void publicProfileExcludesPrivateIdentityAndMeStillRequiresBearer() throws Exception {
         mvc.perform(get("/api/v1/members/"+own.access().memberId())).andExpect(status().isOk())
@@ -107,6 +119,134 @@ class MemberProfileIntegrationTests extends TestEnvironment {
         String token=encoder.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).build(),claims)).getTokenValue();
         mvc.perform(patch("/api/v1/members/me/profile").header("Authorization","Bearer "+token).contentType("application/json").content("{\"profileMessage\":\"test\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test void profileImageUploadReplacementResetAndCommunityAuthorAvatarProjectionWorkWithoutRealS3() throws Exception {
+        Long memberId = own.access().memberId();
+
+        // 1. Upload initial profile image via multipart PATCH
+        var avatar1 = new MockMultipartFile("profileImage", "avatar-1.png", "image/png", new byte[]{1, 2, 3, 4, 5});
+        var uploadedBody1 = mvc.perform(multipart(HttpMethod.PATCH, "/api/v1/members/me/profile")
+                        .file(avatar1)
+                        .param("profileMessage", "첫 프로필 이미지")
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.memberId").value(memberId))
+                .andExpect(jsonPath("$.profileMessage").value("첫 프로필 이미지"))
+                .andExpect(jsonPath("$.profileImgUrl").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+
+        String url1 = json.readTree(uploadedBody1).path("profileImgUrl").asText();
+        String key1 = jdbc.queryForObject("select profile_img_s3_key from content.member where id = ?", String.class, memberId);
+        assertThat(key1).startsWith("member/profile/").endsWith(".png");
+        assertThat(url1).endsWith(key1);
+        assertThat(s3.isSimulatedKeyPresent(key1)).isTrue();
+
+        // Verify /me and public profile return profileImgUrl
+        mvc.perform(get("/api/v1/members/me").header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileImgUrl").value(url1));
+        mvc.perform(get("/api/v1/members/" + memberId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileImgUrl").value(url1));
+
+        // Verify community post and comment include authorProfileImgUrl without N+1 queries
+        var postResp = mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", bearer())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of(
+                                "category", "FREE",
+                                "title", "프로필 이미지 연동 게시글",
+                                "content", "작성자 프로필 이미지가 함께 반환됩니다."))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.authorProfileImgUrl").value(url1))
+                .andReturn().getResponse().getContentAsString();
+        long postId = json.readTree(postResp).path("id").asLong();
+
+        mvc.perform(post("/api/v1/community/posts/" + postId + "/comments")
+                        .header("Authorization", bearer())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("content", "댓글 프로필 이미지 확인"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.authorProfileImgUrl").value(url1));
+
+        // 2. Replace profile image -> old S3 key is deleted after commit
+        var avatar2 = new MockMultipartFile("file", "avatar-2.webp", "image/webp", new byte[]{9, 8, 7, 6});
+        var uploadedBody2 = mvc.perform(multipart(HttpMethod.POST, "/api/v1/members/me/profile")
+                        .file(avatar2)
+                        .param("type", "upload")
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileImgUrl").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+
+        String url2 = json.readTree(uploadedBody2).path("profileImgUrl").asText();
+        String key2 = jdbc.queryForObject("select profile_img_s3_key from content.member where id = ?", String.class, memberId);
+        assertThat(key2).startsWith("member/profile/").endsWith(".webp").isNotEqualTo(key1);
+        assertThat(url2).endsWith(key2);
+        assertThat(s3.isSimulatedKeyPresent(key1)).isFalse();
+        assertThat(s3.isSimulatedKeyPresent(key2)).isTrue();
+
+        // 3. Reset profile image to default -> S3 key is deleted after commit and DB columns cleared
+        mvc.perform(patch("/api/v1/members/me/profile")
+                        .header("Authorization", bearer())
+                        .contentType("application/json")
+                        .content("{\"resetProfileImage\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileImgUrl").isEmpty());
+
+        assertThat(s3.isSimulatedKeyPresent(key2)).isFalse();
+        assertThat(jdbc.queryForObject("select profile_img_s3_key from content.member where id = ?", String.class, memberId)).isNull();
+        assertThat(s3.realS3PutCount()).isZero();
+        assertThat(s3.realS3DeleteCount()).isZero();
+    }
+
+    @Test void transactionRollbackDeletesUploadedS3ObjectAndQueuesDurableRetryWhenDeleteFails() {
+        TransactionTemplate tx = new TransactionTemplate(txManager);
+
+        // Case 1: Transaction rolls back and S3 delete succeeds immediately
+        AtomicReference<String> rolledBackKeyRef = new AtomicReference<>();
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            var file = new MockMultipartFile("profileImage", "rollback-1.png", "image/png", new byte[]{1, 2, 3});
+            var uploaded = s3.validateAndUploadProfileImage(file);
+            rolledBackKeyRef.set(uploaded.key());
+            assertThat(s3.isSimulatedKeyPresent(uploaded.key())).isTrue();
+            throw new RuntimeException("Simulated DB failure after S3 upload");
+        })).isInstanceOf(RuntimeException.class);
+
+        String rolledBackKey = rolledBackKeyRef.get();
+        assertThat(rolledBackKey).isNotBlank();
+        assertThat(s3.isSimulatedKeyPresent(rolledBackKey)).isFalse();
+
+        // Case 2: Transaction rolls back AND S3 delete fails -> recorded as PENDING in s3_cleanup_task, then resolved by retry worker
+        AtomicReference<String> retryKeyRef = new AtomicReference<>();
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            var file = new MockMultipartFile("profileImage", "rollback-retry.png", "image/png", new byte[]{4, 5, 6});
+            var uploaded = s3.validateAndUploadProfileImage(file);
+            retryKeyRef.set(uploaded.key());
+            s3.failSimulatedDeleteForKey(uploaded.key());
+            throw new RuntimeException("Simulated DB failure with S3 delete outage");
+        })).isInstanceOf(RuntimeException.class);
+
+        String retryKey = retryKeyRef.get();
+        assertThat(s3.isSimulatedKeyPresent(retryKey)).isTrue();
+        assertThat(jdbc.queryForObject(
+                "select status from content.s3_cleanup_task where s3_key = ?",
+                String.class, retryKey)).isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject(
+                "select reason from content.s3_cleanup_task where s3_key = ?",
+                String.class, retryKey)).isEqualTo("TX_ROLLBACK");
+
+        // Clear simulated outage and run retry worker -> key is purged and task marked COMPLETED
+        s3.clearSimulatedDeleteFailures();
+        int resolved = s3.retryPendingDeletions(Instant.now().plusSeconds(60));
+        assertThat(resolved).isGreaterThanOrEqualTo(1);
+        assertThat(s3.isSimulatedKeyPresent(retryKey)).isFalse();
+        assertThat(jdbc.queryForObject(
+                "select status from content.s3_cleanup_task where s3_key = ?",
+                String.class, retryKey)).isEqualTo("COMPLETED");
+        assertThat(s3.realS3PutCount()).isZero();
+        assertThat(s3.realS3DeleteCount()).isZero();
     }
 
     private AuthService.Issued member() {
