@@ -702,7 +702,10 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         mvc.perform(get("/api/v1/news/stream"))
                 .andExpect(status().isOk());
 
-        // 2. Ingest official RSS 2.0 XML (Google News RSS format with <source>, HTML description, media:content)
+        // 2. Ingest official RSS 2.0 XML (Google News RSS format with <source>, HTML description, media:content, plus a >6h old item that must be skipped for BREAKING)
+        String recentPub1 = Instant.now().minusSeconds(300).toString();
+        String recentPub2 = Instant.now().minusSeconds(900).toString();
+        String stalePub = Instant.now().minus(Duration.ofHours(8)).toString();
         String sampleRssXml = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
@@ -711,7 +714,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                     <item>
                       <title>비트코인 9만8천달러 저항 돌파 강세… 선물 매수 수급 급등 - 한경글로벌</title>
                       <link>https://news.example.com/articles/btc-breakout-98k</link>
-                      <pubDate>Mon, 09 Nov 2026 12:00:00 GMT</pubDate>
+                      <published>%s</published>
                       <description>&lt;p&gt;비트코인 현물 및 무기한 선물 시장에서 매수세가 강하게 유입되며 단기 저항선을 돌파했습니다.&lt;/p&gt;</description>
                       <source url="https://news.example.com">한경글로벌</source>
                       <media:content url="https://cdn.example.com/thumb/btc-98k.jpg" type="image/jpeg"/>
@@ -719,18 +722,25 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                     <item>
                       <title>이더리움 고래 지갑 스테이킹 물량 확대… 온체인 수수료 개선 - 코인데스크코리아</title>
                       <link>https://news.example.com/articles/eth-whale-staking</link>
-                      <pubDate>Mon, 09 Nov 2026 11:30:00 GMT</pubDate>
+                      <published>%s</published>
                       <description>&lt;div&gt;이더리움 메인넷 고래 지갑들의 스테이킹 예치량이 꾸준히 증가하며 유통 물량 감소세가 나타나고 있습니다.&lt;/div&gt;</description>
                       <source url="https://coindesk.example.com">코인데스크코리아</source>
                     </item>
+                    <item>
+                      <title>8시간 지난 오래된 속보는 BREAKING 수집에서 자동 스킵 - 데일리브리핑</title>
+                      <link>https://news.example.com/articles/stale-8h-flash</link>
+                      <published>%s</published>
+                      <description>6시간을 초과한 오래된 속보 아이템입니다.</description>
+                      <source url="https://news.example.com">데일리브리핑</source>
+                    </item>
                   </channel>
                 </rss>
-                """;
+                """.formatted(recentPub1, recentPub2, stalePub);
 
         var firstBatch = newsIngestion.ingestRssXml(sampleRssXml, "BREAKING", "COIN_FLASH", 10);
         assertThat(firstBatch).hasSize(2);
 
-        // Latest item in feed (BTC) should have stripped " - 한경글로벌" from title, extracted sourceName, symbolTag=BTC, BULLISH sentiment, aiSummary
+        // Latest item in feed (BTC) should have stripped " - 한경글로벌" from title, extracted sourceName, symbolTag=BTC, BULLISH sentiment, aiSummary, and clean non-duplicated content
         var btcItem = firstBatch.stream().filter(i -> "BTC".equals(i.symbolTag())).findFirst().orElseThrow();
         assertThat(btcItem.title()).isEqualTo("비트코인 9만8천달러 저항 돌파 강세… 선물 매수 수급 급등");
         assertThat(btcItem.sourceName()).isEqualTo("한경글로벌");
@@ -738,7 +748,10 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         assertThat(btcItem.thumbnailUrl()).isEqualTo("https://cdn.example.com/thumb/btc-98k.jpg");
         assertThat(btcItem.sentiment()).isEqualTo("BULLISH");
         assertThat(btcItem.aiSummary()).startsWith("[AI 강세 분석]").contains("#BTC");
-        assertThat(btcItem.content()).contains("공개 RSS 메타데이터 기반 요약 브리핑");
+        assertThat(btcItem.content()).isNotBlank()
+                .doesNotContain("공개 RSS 메타데이터 기반 요약 브리핑")
+                .doesNotContain(btcItem.summary())
+                .doesNotContain(btcItem.aiSummary());
 
         var ethItem = firstBatch.stream().filter(i -> "ETH".equals(i.symbolTag())).findFirst().orElseThrow();
         assertThat(ethItem.category()).isEqualTo("ONCHAIN");
@@ -792,7 +805,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.bullCount").value(1))
                 .andExpect(jsonPath("$.bearCount").value(1));
 
-        // 7. Highlights endpoint returns mustReadBreaking, popularByViews, popularByReactions, keywordIssues, recommendedNewsroom, sentimentSummary
+        // 7. Highlights endpoint returns mustReadBreaking, popularByViews, popularByReactions, keywordIssues, recommendedNewsroom, sentimentSummary, liveStatus
         mvc.perform(get("/api/v1/news/highlights"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.mustReadBreaking").isArray())
@@ -802,7 +815,8 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.keywordIssues.length()").value(3))
                 .andExpect(jsonPath("$.recommendedNewsroom").isArray())
                 .andExpect(jsonPath("$.sentimentSummary.bullPct").isNumber())
-                .andExpect(jsonPath("$.sentimentSummary.bearPct").isNumber());
+                .andExpect(jsonPath("$.sentimentSummary.bearPct").isNumber())
+                .andExpect(jsonPath("$.liveStatus.retentionHours").value(6));
     }
 
     private AuthService.Issued signup() {

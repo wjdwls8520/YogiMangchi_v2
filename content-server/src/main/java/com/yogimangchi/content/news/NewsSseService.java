@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -16,6 +17,39 @@ public class NewsSseService {
     private static final long SSE_TIMEOUT_MS = 30L * 60 * 1000;
 
     private final Set<SseEmitter> emitters = ConcurrentHashMap.newKeySet();
+    private volatile NewsService.NewsLiveStatus liveStatus;
+
+    public NewsSseService(
+            @Value("${content.news.collector.enabled:true}") boolean collectorEnabled,
+            @Value("${content.news.collector.breaking-retention-hours:6}") int retentionHours) {
+        int effectiveHours = Math.max(1, Math.min(24, retentionHours));
+        this.liveStatus = new NewsService.NewsLiveStatus(
+                collectorEnabled,
+                collectorEnabled,
+                effectiveHours,
+                collectorEnabled ? Instant.now() : null
+        );
+    }
+
+    public NewsService.NewsLiveStatus currentLiveStatus() {
+        return liveStatus;
+    }
+
+    public void updateLiveStatus(NewsService.NewsLiveStatus updated) {
+        if (updated == null) {
+            return;
+        }
+        this.liveStatus = updated;
+        for (SseEmitter emitter : emitters) {
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("NEWS_LIVE_STATUS")
+                        .data(updated, MediaType.APPLICATION_JSON));
+            } catch (Exception e) {
+                emitters.remove(emitter);
+            }
+        }
+    }
 
     public SseEmitter subscribe() {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
@@ -30,7 +64,11 @@ public class NewsSseService {
         try {
             emitter.send(SseEmitter.event()
                     .name("CONNECTED")
-                    .data(Map.of("status", "CONNECTED", "timestamp", Instant.now().toString()), MediaType.APPLICATION_JSON));
+                    .data(Map.of(
+                            "status", "CONNECTED",
+                            "timestamp", Instant.now().toString(),
+                            "liveStatus", liveStatus
+                    ), MediaType.APPLICATION_JSON));
         } catch (IOException e) {
             emitters.remove(emitter);
         }

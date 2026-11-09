@@ -79,13 +79,21 @@ public class NewsService {
             String dominantSentiment
     ) { }
 
+    public record NewsLiveStatus(
+            boolean live,
+            boolean collectorEnabled,
+            int retentionHours,
+            Instant lastCollectedAt
+    ) { }
+
     public record NewsHighlightsResponse(
             List<NewsItemResponse> mustReadBreaking,
             List<NewsItemResponse> popularByViews,
             List<NewsItemResponse> popularByReactions,
             List<KeywordIssueItem> keywordIssues,
             List<NewsItemResponse> recommendedNewsroom,
-            SentimentSummary sentimentSummary
+            SentimentSummary sentimentSummary,
+            NewsLiveStatus liveStatus
     ) { }
 
     private final JdbcTemplate jdbc;
@@ -303,7 +311,8 @@ public class NewsService {
                 popularByReactions,
                 keywordIssues,
                 recommendedNewsroom,
-                sentimentSummary
+                sentimentSummary,
+                sse.currentLiveStatus()
         );
     }
 

@@ -34,7 +34,8 @@ public final class NewsAnalyzer {
             String category,
             String symbolTag,
             String sentiment,
-            String aiSummary
+            String aiSummary,
+            String articleContent
     ) { }
 
     private NewsAnalyzer() { }
@@ -48,7 +49,8 @@ public final class NewsAnalyzer {
         String category = classifyCategory(combined, subCategory);
         String sentiment = classifySentiment(safeTitle.toLowerCase(Locale.ROOT), safeSummary.toLowerCase(Locale.ROOT));
         String aiSummary = buildAiSummary(category, subCategory, symbolTag, sentiment);
-        return new AnalysisResult(category, symbolTag, sentiment, aiSummary);
+        String articleContent = buildArticleContent(category, section, subCategory, symbolTag, sentiment);
+        return new AnalysisResult(category, symbolTag, sentiment, aiSummary, articleContent);
     }
 
     public static String extractSymbolTag(String lowerCombined) {
@@ -169,6 +171,25 @@ public final class NewsAnalyzer {
         }
         String result = prefix + body;
         return result.length() > 400 ? result.substring(0, 400) : result;
+    }
+
+    public static String buildArticleContent(String category, String section, String subCategory, String symbolTag, String sentiment) {
+        String symbolLabel = symbolTag != null ? symbolTag + " " : "주요 종목 ";
+        if ("BREAKING".equals(section)) {
+            if ("ECONOMY_FLASH".equals(subCategory)) {
+                return "거시 지표 발표 및 정책 발언 직후 나스닥 선물과 코인 선물 간 단기 변동성이 확대될 수 있으니 고배율 포지션의 청산가 여유폭을 점검하세요.";
+            }
+            return switch (sentiment == null ? "NEUTRAL" : sentiment) {
+                case "BULLISH" -> symbolLabel + "단기 매수 수급 유입 구간으로 주요 저항선 돌파 시 거래량 동반 여부와 무기한 선물 펀딩비 과열 여부를 실시간 확인하세요.";
+                case "BEARISH" -> symbolLabel + "단기 매물 출회 및 변동성 확대 구간으로 직전 지지선 방어 여부와 격리마진 손절 라인을 즉시 점검하세요.";
+                default -> symbolLabel + "현·선물 호가창 유동성과 미결제약정(OI) 증감을 함께 확인하며 단기 방향성 돌파에 대비하세요.";
+            };
+        }
+        return switch (subCategory == null ? "CRYPTO" : subCategory) {
+            case "STOCKS" -> "뉴욕증시 주요 지수와 AI·반도체 빅테크 섹터의 실적 흐름은 글로벌 위험자산 투자심리를 가늠하는 핵심 선행 지표로 작용하고 있습니다. 미 정규장 개장 전후 나스닥 100 선물 흐름과 디지털 자산 시장 간 동조화 강도를 비교하며 포지션 비중을 조절할 필요가 있습니다.";
+            case "FX_RATES" -> "미국채 10년물 실질금리와 달러 인덱스(DXY), 원·달러 환율의 방향성은 글로벌 유동성 여건과 위험자산 자금 유입 속도를 결정짓는 핵심 변수입니다. 통화정책 경로에 대한 금리 선물 시장의 기대 변화를 주시하며 거시 변동성 구간에서의 레버리지 리스크를 관리해야 합니다.";
+            default -> "디지털 자산 시장은 기관 현물 수급과 파생상품 미결제약정(OI) 변화가 맞물리며 중기 추세 탐색을 이어가고 있습니다. 온체인 장기 보유 지갑의 물량 이동 추이와 주요국 규제·인프라 정비 흐름을 함께 점검하며 분할 대응 전략을 유지하시기 바랍니다.";
+        };
     }
 
     public static String computeExternalHash(String title, String sourceUrl) {

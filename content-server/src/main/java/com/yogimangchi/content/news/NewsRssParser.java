@@ -137,26 +137,29 @@ public final class NewsRssParser {
     }
 
     private static String buildSummary(String title, String cleanedDesc, String sourceName, String subCategory) {
+        boolean isBreaking = "COIN_FLASH".equals(subCategory) || "ECONOMY_FLASH".equals(subCategory);
+        int maxLen = isBreaking ? 110 : 160;
+
         String normTitle = NewsAnalyzer.normalizeTitleForHash(title);
         String normDesc = NewsAnalyzer.normalizeTitleForHash(cleanedDesc);
         if (cleanedDesc.length() >= 24 && !normDesc.equals(normTitle) && !normTitle.contains(normDesc)) {
             if (cleanedDesc.startsWith(title)) {
                 String remainder = cleanedDesc.substring(title.length()).replaceFirst("^[\\s\\-·:]+", "").strip();
                 if (remainder.length() >= 20) {
-                    return truncate(remainder, 180);
+                    return truncate(remainder, maxLen);
                 }
             } else {
-                return truncate(cleanedDesc, 180);
+                return truncate(cleanedDesc, maxLen);
             }
         }
-        String contextLabel = switch (subCategory == null ? "" : subCategory) {
-            case "ECONOMY_FLASH" -> "글로벌 거시경제 및 통화정책 관련 실시간 속보입니다.";
-            case "STOCKS" -> "해외 주요 증시 및 빅테크·지수 동향 관련 주요 뉴스입니다.";
-            case "FX_RATES" -> "외환 시장 환율 및 글로벌 국채 금리 동향 브리핑입니다.";
-            case "CRYPTO" -> "디지털 자산 생태계 및 기관·온체인 시장 주요 소식입니다.";
-            default -> "가상자산 시장 수급 및 주요 종목 변동성 관련 실시간 속보입니다.";
+        String synthesized = switch (subCategory == null ? "" : subCategory) {
+            case "ECONOMY_FLASH" -> sourceName + " 긴급 타전으로 주요 거시 지표 및 정책 발언 직후 글로벌 달러와 나스닥·코인 선물이 즉각 반응하고 있습니다.";
+            case "STOCKS" -> sourceName + " 보도에 따르면 글로벌 빅테크 실적과 월가 기관 수급 변화가 뉴욕증시 및 위험자산 전반의 투자심리를 주도하고 있습니다.";
+            case "FX_RATES" -> sourceName + " 외환·채권 보도에 따르면 미국채 수익률과 원·달러 환율 흐름에 따라 글로벌 위험자산 유동성 여건이 재조정되고 있습니다.";
+            case "CRYPTO" -> sourceName + " 시황 보도에 따르면 주요 디지털 자산의 기관 수급과 온체인 활동 지표를 중심으로 중기 방향성 탐색이 이어지고 있습니다.";
+            default -> sourceName + " 속보에 따르면 주요 거래소 현·선물 호가창 거래대금 유입과 함께 단기 변동성이 빠르게 확대되고 있습니다.";
         };
-        return truncate(title + " — " + sourceName + " 보도 기반 " + contextLabel, 180);
+        return truncate(synthesized, maxLen);
     }
 
     private static String extractLink(Element item) {

@@ -51,6 +51,29 @@ public class ContentRetentionCleanupService {
                         + "select member_id from content.member_trading_provision where status in ('COMPLETED','CANCELED') and next_attempt_at < ? order by next_attempt_at asc, member_id asc limit ? for update skip locked"
                         + ")",
                 cutoff, batchSize);
+        Timestamp breakingCutoff = Timestamp.from(effectiveNow.minus(Duration.ofHours(6)));
+        jdbc.update(
+                "delete from content.news_article where id in ("
+                        + "select id from content.news_article "
+                        + "where section = 'BREAKING' and id > 20 "
+                        + "and external_hash is not null and external_hash not like 'seed-%' and published_at < ? "
+                        + "order by published_at asc, id asc limit ? for update skip locked"
+                        + ")",
+                breakingCutoff, batchSize);
+        jdbc.update(
+                "delete from content.news_article where id in ("
+                        + "select id from content.news_article "
+                        + "where id > 20 and external_hash is not null and external_hash not like 'seed-%' and published_at < ? "
+                        + "order by published_at asc, id asc limit ? for update skip locked"
+                        + ")",
+                cutoff, batchSize);
+        jdbc.update(
+                "delete from content.news_article where id in ("
+                        + "select id from content.news_article "
+                        + "where id > 20 and external_hash is not null and external_hash not like 'seed-%' "
+                        + "order by id desc offset 1000 limit ? for update skip locked"
+                        + ")",
+                batchSize);
         return new ContentPurgeResult(purgedRefreshSessions, purgedProvisions);
     }
 }
