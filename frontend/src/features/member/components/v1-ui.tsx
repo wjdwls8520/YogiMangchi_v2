@@ -198,6 +198,7 @@ export function V1Tabs({
     ? "text-white border-white"
     : "text-gray-900 border-gray-900";
   const finalActiveColor = activeColor || defaultActiveColor;
+  const resolvedSize = size;
 
   return (
     <div
@@ -218,25 +219,25 @@ export function V1Tabs({
             onClick={() => onChange(tab.value)}
             className={cn(
               "relative transition-colors shrink-0",
-              size === "sm"
+              resolvedSize === "sm"
                 ? "pt-1.5 pb-1.5 text-[12px]"
                 : "pt-2.5 pb-2.5 sm:pt-3 sm:pb-3 text-[13px] sm:text-base",
               fullWidth
                 ? "flex-1 text-center"
-                : size === "sm"
+                : resolvedSize === "sm"
                   ? "min-w-[56px] whitespace-nowrap text-center px-2"
                   : "min-w-[72px] sm:min-w-[112px] whitespace-nowrap text-center px-3 sm:px-4",
               isActive
                 ? cn(
                     "font-black",
-                    variant === "underline" && (size === "sm" ? "border-b-2" : "border-b-[3px]"),
+                    variant === "underline" && (resolvedSize === "sm" ? "border-b-2" : "border-b-[3px]"),
                     currentTabColor || finalActiveColor,
                   )
                 : cn(
                     "font-bold",
                     isDark ? "text-white/40 hover:text-white/70" : "text-gray-400 hover:text-gray-600",
                     variant === "underline" &&
-                      (size === "sm" ? "border-b-2 border-transparent" : "border-b-[3px] border-transparent"),
+                      (resolvedSize === "sm" ? "border-b-2 border-transparent" : "border-b-[3px] border-transparent"),
                   ),
               tabClassName,
             )}
@@ -612,10 +613,10 @@ export function V1Header({
           {/* 2. 중앙 네비게이션 (PC 전용) */}
           <nav aria-label="서비스 메뉴" className="ym-gnb-nav hidden md:flex items-center gap-7">
             {[
+              { href: "/news", label: "실시간 뉴스" },
               { href: "/trading", label: "모의투자" },
               { href: "/contest", label: "대회" },
               { href: "/community", label: "커뮤니티" },
-              { href: "/news", label: "실시간 뉴스" },
             ].map(item => (
               <Link
                 key={item.href}
@@ -689,6 +690,9 @@ export function V1Header({
               <Link href="/" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 홈 · 메인 대시보드
               </Link>
+              <Link href="/news" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
+                실시간 뉴스 · 시황/속보
+              </Link>
               <Link href="/trading" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 모의투자 · 선물 터미널
               </Link>
@@ -697,9 +701,6 @@ export function V1Header({
               </Link>
               <Link href="/community" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 커뮤니티 · 전체/인기/최신글
-              </Link>
-              <Link href="/news" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                실시간 뉴스 · 시황/속보
               </Link>
               <Link href="/me" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 마이페이지 · 자산/포트폴리오
