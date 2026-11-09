@@ -199,6 +199,14 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
       assert.equal(html.includes(label), true, label);
     }
     assert.match(html, /비트코인 현물 ETF 자금 유입 확대/);
+    assert.match(html, /aria-label="실시간 뉴스 섹션 메뉴"/);
+    assert.match(html, /속보/);
+    assert.match(html, /뉴스룸/);
+    assert.match(html, /코인 속보/);
+    assert.match(html, /경제 속보/);
+    assert.match(html, /지금 꼭 봐야할 속보/);
+    assert.match(html, /인기 속보/);
+    assert.match(html, /키워드로 보는 이슈/);
     assert.match(html, /<select[^>]*aria-label="뉴스 카테고리 필터"/);
     assert.match(html, /<select[^>]*aria-label="뉴스 종목 태그 필터"/);
     assert.match(html, /<select[^>]*aria-label="뉴스 브리핑 보기 방식"/);
@@ -207,6 +215,19 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /이전 뉴스 더보기/);
     assert.match(html, /href="\/news">실시간 뉴스/);
     assert.match(html, /href="\/community">커뮤니티/);
+
+    const newsroomHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialSection="NEWSROOM" />
+      </MemberProvider>,
+    );
+    assert.match(newsroomHtml, /전체/);
+    assert.match(newsroomHtml, /암호화폐/);
+    assert.match(newsroomHtml, /해외증시/);
+    assert.match(newsroomHtml, /환율\/금리/);
+    assert.match(newsroomHtml, /최신 뉴스/);
+    assert.match(newsroomHtml, /많이 본 뉴스/);
+    assert.match(newsroomHtml, /data-s3-slot="news-thumbnail"/);
   } finally {
     client.clear();
   }

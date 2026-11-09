@@ -40,16 +40,101 @@ function kstTimeOnly(value: string) {
   });
 }
 
+const BREAKING_MUST_READ = [
+  {
+    id: 901,
+    title: "美 나스닥 지수 장중 2%대 상승",
+    timeAgo: "31분 전",
+    badge: null as string | null,
+  },
+  {
+    id: 902,
+    title: '"美 암호화폐 규제 지연, 토큰화 기업 해외 진출 가속화"',
+    timeAgo: "56분 전",
+    badge: null as string | null,
+  },
+  {
+    id: 903,
+    title: "유럽 37개 금융기관, 유로화 스테이블코인 공동 발행 추진",
+    timeAgo: "48분 전",
+    badge: "XRP -2.6%",
+  },
+] as const;
+
+const POPULAR_BREAKING_BY_QUOTE = [
+  { rank: 1, title: '트럼프 "UAE의 WLFI 투자 관련 아는 바 없어...아들들이 처리"', timeAgo: "7시간 전" },
+  { rank: 2, title: "BTC $75,000 상회 · 선물 미결제약정 동반 급증", timeAgo: "18시간 전" },
+  { rank: 3, title: '트럼프 "가족 암호화폐 사업 상황 잘 몰라...중단 요구 못해"', timeAgo: "14시간 전" },
+  { rank: 4, title: "BTC $74,000 단기 지지선 테스트 후 반등 시도", timeAgo: "10시간 전" },
+] as const;
+
+const POPULAR_BREAKING_BY_REACTION = [
+  { rank: 1, title: "비트코인 현물 ETF 일일 순유입 5억 달러 돌파", timeAgo: "3시간 전" },
+  { rank: 2, title: "미 연준 금리 동결 시사 및 기술주 중심 위험자산 강세", timeAgo: "5시간 전" },
+  { rank: 3, title: "솔라나(SOL) DEX 일간 거래량 사상 최고치 경신", timeAgo: "9시간 전" },
+  { rank: 4, title: "이더리움 레이어2 스테이블코인 시가총액 140억 달러 돌파", timeAgo: "12시간 전" },
+] as const;
+
+const KEYWORD_ISSUES = [
+  {
+    tag: "#클래리티법",
+    headline: '"美 암호화폐 규제 지연, 토큰화 기업 해외 진출 가속화"',
+    timeAgo: "56분 전",
+  },
+  {
+    tag: "#현물ETF",
+    headline: '"블랙록·피델리티 비트코인 현물 ETF 기관 순유입세 지속"',
+    timeAgo: "1시간 전",
+  },
+  {
+    tag: "#FOMC금리",
+    headline: '"미 국채 금리 안정세 속 나스닥·가상자산 동반 반등"',
+    timeAgo: "2시간 전",
+  },
+] as const;
+
+const NEWSROOM_FEATURED_CARDS = [
+  {
+    id: 801,
+    title: "젠레이어, AI 에이전트 간 분쟁 해결 위한 온체인 중재 인프라 개발",
+    badge: "GenLayer",
+    sub: "AI · ONCHAIN",
+  },
+  {
+    id: 802,
+    title: "미라, 차세대 영지식 검증 플랫폼 '스털링' 공식 공개",
+    badge: "MIRA",
+    sub: "INFRA · ZK",
+  },
+  {
+    id: 803,
+    title: "엘뱅크랩스, Pre-IPO 시장 보고서 발표...토큰화 투자 상품 동향 분석",
+    badge: "Pre-IPO",
+    sub: "REPORT · RWA",
+  },
+] as const;
+
 export function NewsFeed({
   initialPage,
   initialCategory = "",
   initialSymbolTag = "",
+  initialSection = "BREAKING",
 }: {
   initialPage?: NewsPage;
   initialCategory?: "" | NewsCategory;
   initialSymbolTag?: string;
+  initialSection?: "BREAKING" | "NEWSROOM";
 } = {}) {
   const { origin } = useMember();
+  const [sectionTab, setSectionTab] = useState<"BREAKING" | "NEWSROOM">(initialSection);
+  const [breakingSubTab, setBreakingSubTab] = useState<"COIN" | "ECONOMY">("COIN");
+  const [popularMode, setPopularMode] = useState<"QUOTE" | "REACTION">("QUOTE");
+  const [issueIndex, setIssueIndex] = useState(0);
+  const [quickChip, setQuickChip] = useState<"" | "WATCH" | "MENTION" | "VOLUME">("");
+
+  const [newsroomTab, setNewsroomTab] = useState<"ALL" | "CRYPTO" | "STOCKS" | "FX_RATES">("ALL");
+  const [newsroomSort, setNewsroomSort] = useState<"LATEST" | "POPULAR">("LATEST");
+
   const [viewMode, setViewMode] = useState<"ALL" | "HEADLINE">("ALL");
   const [category, setCategory] = useState<"" | NewsCategory>(initialCategory);
   const [symbolTag, setSymbolTag] = useState<string>(initialSymbolTag);
@@ -65,9 +150,21 @@ export function NewsFeed({
 
   const query = useQuery({
     queryKey: ["public-news", origin, category, symbolTag, submittedKeyword],
-    initialData: initialPage && category === initialCategory && symbolTag === initialSymbolTag && !submittedKeyword ? initialPage : undefined,
+    initialData:
+      initialPage &&
+      category === initialCategory &&
+      symbolTag === initialSymbolTag &&
+      !submittedKeyword
+        ? initialPage
+        : undefined,
     queryFn: async ({ signal }) =>
-      parseNewsPage(await contentJson(origin, newsPath({ category, symbolTag, keyword: submittedKeyword, size: 10 }), { signal })),
+      parseNewsPage(
+        await contentJson(
+          origin,
+          newsPath({ category, symbolTag, keyword: submittedKeyword, size: 10 }),
+          { signal },
+        ),
+      ),
   });
 
   function resetPagination() {
@@ -77,8 +174,42 @@ export function NewsFeed({
   }
 
   const baseItems = query.data?.items ?? [];
-  const allItems = [...baseItems, ...extraItems.filter(item => !baseItems.some(base => base.id === item.id))];
-  const visibleItems = viewMode === "HEADLINE" ? allItems.filter((_, idx) => idx % 2 === 0 || allItems.length <= 2) : allItems;
+  const allItems = [
+    ...baseItems,
+    ...extraItems.filter(item => !baseItems.some(base => base.id === item.id)),
+  ];
+
+  // 서브탭 필터링 (결과가 비어있으면 전체 항목 fallback)
+  const subFilteredItems = (() => {
+    if (sectionTab === "BREAKING") {
+      if (breakingSubTab === "ECONOMY") {
+        const matched = allItems.filter(
+          item => item.category === "MACRO" || item.category === "REGULATION",
+        );
+        return matched.length > 0 ? matched : allItems;
+      }
+      return allItems;
+    }
+    if (newsroomTab === "CRYPTO") {
+      const matched = allItems.filter(
+        item => item.category === "CRYPTO" || item.category === "ONCHAIN",
+      );
+      return matched.length > 0 ? matched : allItems;
+    }
+    if (newsroomTab === "STOCKS" || newsroomTab === "FX_RATES") {
+      const matched = allItems.filter(
+        item => item.category === "MACRO" || item.category === "REGULATION",
+      );
+      return matched.length > 0 ? matched : allItems;
+    }
+    return allItems;
+  })();
+
+  const visibleItems =
+    viewMode === "HEADLINE"
+      ? subFilteredItems.filter((_, idx) => idx % 2 === 0 || subFilteredItems.length <= 2)
+      : subFilteredItems;
+
   const hasNext = hasNextOverride ?? query.data?.hasNext ?? false;
   const cursorId = nextCursor !== undefined ? nextCursor : (query.data?.nextCursorId ?? null);
 
@@ -87,7 +218,10 @@ export function NewsFeed({
     setLoadingMore(true);
     try {
       const page = parseNewsPage(
-        await contentJson(origin, newsPath({ category, symbolTag, keyword: submittedKeyword, cursorId, size: 10 })),
+        await contentJson(
+          origin,
+          newsPath({ category, symbolTag, keyword: submittedKeyword, cursorId, size: 10 }),
+        ),
       );
       setExtraItems(current => [...current, ...page.items]);
       setNextCursor(page.nextCursorId);
@@ -117,237 +251,779 @@ export function NewsFeed({
     setReactions(current => ({ ...current, [id]: kind }));
   }
 
+  const activeIssue = KEYWORD_ISSUES[issueIndex % KEYWORD_ISSUES.length];
+  const popularBreakingList =
+    popularMode === "QUOTE" ? POPULAR_BREAKING_BY_QUOTE : POPULAR_BREAKING_BY_REACTION;
+
   return (
     <MemberShell
-      title="실시간 코인·세계 경제 뉴스"
-      subtitle="글로벌 거시경제(연준 금리·물가·환율), 주요 암호화폐 시황, 온체인 수급 및 규제 동향을 실시간으로 확인하고 모의투자 전략에 참고하세요."
+      title="실시간 뉴스"
+      subtitle="글로벌 거시경제(연준 금리·물가·환율), 주요 암호화폐 시황, 온체인 수급 및 규제 동향을 실시간으로 확인하세요."
       variant="wide"
+      hideCardHeading
     >
-      {/* 상단 셀렉트박스 3열 필터 & 키워드 검색 바 (글쓰기 팝업 셀렉트박스 스타일 통일) */}
-      <div className="ym-news-filter-panel rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-1 block text-[11px] font-bold text-gray-500">뉴스 카테고리</span>
-            <select
-              aria-label="뉴스 카테고리 필터"
-              value={category}
-              onChange={event => {
-                setCategory(event.target.value as "" | NewsCategory);
-                resetPagination();
-              }}
-              className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-            >
-              {NEWS_CATEGORIES.map(tab => (
-                <option key={tab.key || "ALL"} value={tab.key}>
-                  {tab.key === "" ? "전체 카테고리" : tab.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="mb-1 block text-[11px] font-bold text-gray-500">연관 선물 종목</span>
-            <select
-              aria-label="뉴스 종목 태그 필터"
-              value={symbolTag}
-              onChange={event => {
-                setSymbolTag(event.target.value);
-                resetPagination();
-              }}
-              className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-            >
-              {SYMBOL_FILTER_TAGS.map(tag => (
-                <option key={tag || "ALL_SYMBOL"} value={tag}>
-                  {tag ? `#${tag} (${tag}USDT)` : "전체 종목"}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="mb-1 block text-[11px] font-bold text-gray-500">브리핑 보기 방식</span>
-            <select
-              aria-label="뉴스 브리핑 보기 방식"
-              value={viewMode}
-              onChange={event => setViewMode(event.target.value as "ALL" | "HEADLINE")}
-              className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-            >
-              <option value="ALL">전체 뉴스·속보</option>
-              <option value="HEADLINE">중요 헤드라인</option>
-            </select>
-          </label>
-        </div>
-
-        <form
-          className="member-search ym-news-search-form flex items-center gap-2 pt-0.5"
-          onSubmit={event => {
-            event.preventDefault();
-            setSubmittedKeyword(keyword.trim());
-            resetPagination();
-          }}
+      <div className="mx-auto max-w-6xl lg:flex lg:items-start lg:gap-8">
+        {/* 좌측 Aside: 속보 / 뉴스룸 메인 섹션 탭 네비게이션 */}
+        <aside
+          aria-label="실시간 뉴스 섹션 메뉴"
+          className="mb-6 w-full shrink-0 space-y-4 lg:sticky lg:top-24 lg:mb-0 lg:w-56"
         >
-          <input
-            type="search"
-            className="h-10 flex-1 rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-medium text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
-            aria-label="뉴스 키워드 검색"
-            placeholder="키워드 검색 (예: ETF, 연준, 금리, BTC)"
-            maxLength={40}
-            value={keyword}
-            onChange={event => setKeyword(event.target.value)}
-          />
-          <button
-            type="submit"
-            className="ym-inline-check-btn inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white whitespace-nowrap transition-colors hover:bg-blue-700"
-          >
-            뉴스 검색
-          </button>
-        </form>
-      </div>
-
-      {query.isPending && <p role="status" className="member-message">실시간 뉴스 피드를 불러오는 중입니다…</p>}
-      {query.isError && (
-        <p role="alert" className="member-message">
-          뉴스 피드를 조회하지 못했습니다. {contentMessage(query.error)}{" "}
-          <button type="button" className="account-refresh" onClick={() => void query.refetch()}>
-            다시 조회
-          </button>
-        </p>
-      )}
-      {detailError && <p role="alert" className="member-message">{detailError}</p>}
-
-      {!query.isPending && !query.isError && visibleItems.length === 0 && (
-        <p className="member-message">선택한 조건에 해당하는 뉴스가 없습니다.</p>
-      )}
-
-      {/* 코인니스형 2단 뉴스룸 구성 */}
-      <div className="ym-coinness-news-grid">
-        {/* 좌측: 24시 실시간 속보 타임라인 요약 */}
-        <aside className="ym-news-timeline-rail" aria-label="24시 실시간 속보 브리핑">
-          <div className="ym-col-header">
-            <div className="ym-col-title-wrap">
-              <span className="ym-live-dot" aria-hidden="true" />
-              <h2>24시 타임라인</h2>
+          <div className="rounded-2xl border border-gray-200 bg-white p-3">
+            <div className="mb-2 px-2 pt-1">
+              <span className="text-[11px] font-extrabold tracking-wider text-gray-400 uppercase">
+                NEWS DESK
+              </span>
+              <h2 className="text-base font-black text-gray-900">실시간 뉴스</h2>
             </div>
-            <span className="ym-sub-badge">KST</span>
+
+            <div className="space-y-1.5" role="tablist" aria-label="속보 및 뉴스룸 전환">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sectionTab === "BREAKING"}
+                onClick={() => setSectionTab("BREAKING")}
+                className={`flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-left transition-colors ${
+                  sectionTab === "BREAKING"
+                    ? "bg-[#0058FF] text-white"
+                    : "bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-black">
+                    <span>⚡</span>
+                    <span>속보</span>
+                  </div>
+                  <p
+                    className={`mt-0.5 text-[11px] font-medium ${
+                      sectionTab === "BREAKING" ? "text-blue-100" : "text-gray-400"
+                    }`}
+                  >
+                    24시 실시간 속보
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                    sectionTab === "BREAKING"
+                      ? "bg-white/20 text-white"
+                      : "bg-red-50 text-red-500"
+                  }`}
+                >
+                  LIVE
+                </span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sectionTab === "NEWSROOM"}
+                onClick={() => setSectionTab("NEWSROOM")}
+                className={`flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-left transition-colors ${
+                  sectionTab === "NEWSROOM"
+                    ? "bg-[#0058FF] text-white"
+                    : "bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-black">
+                    <span>📰</span>
+                    <span>뉴스룸</span>
+                  </div>
+                  <p
+                    className={`mt-0.5 text-[11px] font-medium ${
+                      sectionTab === "NEWSROOM" ? "text-blue-100" : "text-gray-400"
+                    }`}
+                  >
+                    심층 취재·주요 뉴스
+                  </p>
+                </div>
+              </button>
+            </div>
           </div>
 
-          <ol className="ym-timeline-list">
-            {visibleItems.map(item => (
-              <li key={`rail-${item.id}`} className="ym-timeline-item">
-                <div className="ym-timeline-meta">
-                  <time className="ym-timeline-time" dateTime={item.publishedAt}>
-                    {kstTimeOnly(item.publishedAt)}
-                  </time>
-                  {item.symbolTag && <span className="ym-badge-violet">#{item.symbolTag}</span>}
-                </div>
-                <button
-                  type="button"
-                  className="ym-timeline-headline-btn"
-                  onClick={() => setSelectedDetail(item)}
-                >
-                  {item.title}
-                </button>
-              </li>
-            ))}
-          </ol>
-
-          <div className="ym-news-sentiment-box" aria-label="시장 뉴스 센티먼트 요약">
-            <h3>실시간 뉴스 투자 심리</h3>
-            <div className="ym-sentiment-meter">
-              <div className="ym-sentiment-bar-bull" style={{ width: "68%" }}>
+          {/* 실시간 뉴스 투자 심리 카드 */}
+          <div
+            className="rounded-2xl border border-gray-200 bg-white p-4"
+            aria-label="시장 뉴스 센티먼트 요약"
+          >
+            <h3 className="text-xs font-black text-gray-900">실시간 뉴스 투자 심리</h3>
+            <div className="mt-2.5 flex h-6 overflow-hidden rounded-lg text-[11px] font-extrabold text-white">
+              <div
+                className="flex items-center justify-center bg-[#2EBD85]"
+                style={{ width: "68%" }}
+              >
                 강세 68%
               </div>
-              <div className="ym-sentiment-bar-bear" style={{ width: "32%" }}>
+              <div
+                className="flex items-center justify-center bg-[#F6465D]"
+                style={{ width: "32%" }}
+              >
                 약세 32%
               </div>
             </div>
-            <p className="member-note">
+            <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
               현물 ETF 자금 유입 및 거시 금리 동결 기조로 단기 매수 심리가 우위를 보이고 있습니다.
             </p>
+            <Link
+              href="/trading"
+              className="mt-3 flex h-9 w-full items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-xs font-bold text-gray-700 hover:bg-gray-100"
+            >
+              선물 모의투자 터미널 →
+            </Link>
           </div>
         </aside>
 
-        {/* 우측/중앙: 뉴스 아티클 카드 리스트 */}
-        <div className="ym-news-main-stream">
-          {visibleItems.length > 0 && (
-            <ul className="ym-news-card-list" aria-label="뉴스 목록">
-              {visibleItems.map(item => {
-                const userReaction = reactions[item.id];
-                const bullCount = 34 + (item.id % 19) + (userReaction === "bull" ? 1 : 0);
-                const bearCount = 9 + (item.id % 7) + (userReaction === "bear" ? 1 : 0);
+        {/* 중앙 메인 컨텐츠 영역 */}
+        <div className="min-w-0 flex-1 space-y-5">
+          {sectionTab === "BREAKING" ? (
+            /* ==================== [탭 1] 속보 (CoinNess /news 스타일) ==================== */
+            <>
+              {/* 상단 헤더: 속보 | 코인 속보 | 경제 속보 New + 기사제보 */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-baseline gap-4">
+                  <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+                    속보
+                  </h2>
+                  <div className="flex items-center gap-3" role="tablist" aria-label="속보 분야 탭">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={breakingSubTab === "COIN"}
+                      onClick={() => setBreakingSubTab("COIN")}
+                      className={`text-sm font-extrabold transition-colors ${
+                        breakingSubTab === "COIN"
+                          ? "text-gray-900"
+                          : "text-gray-400 hover:text-gray-700"
+                      }`}
+                    >
+                      코인 속보
+                    </button>
+                    <span className="text-gray-300" aria-hidden="true">
+                      |
+                    </span>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={breakingSubTab === "ECONOMY"}
+                      onClick={() => setBreakingSubTab("ECONOMY")}
+                      className={`inline-flex items-center gap-1.5 text-sm font-extrabold transition-colors ${
+                        breakingSubTab === "ECONOMY"
+                          ? "text-gray-900"
+                          : "text-gray-400 hover:text-gray-700"
+                      }`}
+                    >
+                      <span>경제 속보</span>
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-extrabold text-emerald-600">
+                        New
+                      </span>
+                    </button>
+                  </div>
+                </div>
 
-                return (
-                  <li key={item.id} className="ym-news-card">
-                    <article>
-                      <div className="ym-news-card-top">
-                        <div className="ym-news-thumb" data-s3-slot="news-thumbnail">
-                          <span className="ym-thumb-symbol">#{item.symbolTag ?? "MACRO"}</span>
-                          <span className="ym-thumb-cat">{newsCategoryLabel(item.category)}</span>
-                        </div>
-                        <div className="ym-news-card-content">
-                          <p className="member-note">
-                            <strong>[{newsCategoryLabel(item.category)}]</strong>
-                            {item.symbolTag && (
-                              <>
-                                {" "}· <span className="ym-badge-violet">#{item.symbolTag}</span>
-                              </>
-                            )}
-                            {" "}· 출처 {item.sourceName} ·{" "}
-                            <time dateTime={item.publishedAt}>{kst(item.publishedAt)} KST</time>
+                <Link
+                  href="/community"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 text-xs font-bold text-gray-600 hover:bg-gray-50"
+                >
+                  <span aria-hidden="true">✈</span>
+                  <span>기사제보</span>
+                </Link>
+              </div>
+
+              {/* 지금 꼭 봐야할 속보 + 인기 속보 2단 하이라이트 박스 */}
+              <div className="grid grid-cols-1 gap-6 rounded-2xl border border-gray-200 bg-white p-6 lg:grid-cols-2">
+                {/* 좌측: 지금 꼭 봐야할 속보 */}
+                <div>
+                  <h3 className="mb-3 text-sm font-black text-gray-900">지금 꼭 봐야할 속보</h3>
+                  <div className="space-y-3">
+                    <div
+                      onClick={() => {
+                        if (visibleItems[0]) setSelectedDetail(visibleItems[0]);
+                      }}
+                      className="cursor-pointer rounded-xl bg-[#F7F8FA] p-4 transition-colors hover:bg-gray-100"
+                    >
+                      <p className="text-sm font-bold text-gray-900">
+                        {BREAKING_MUST_READ[0].title}
+                      </p>
+                      <span className="mt-2 block text-xs font-medium text-gray-400">
+                        {BREAKING_MUST_READ[0].timeAgo}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {BREAKING_MUST_READ.slice(1).map(card => (
+                        <div
+                          key={card.id}
+                          onClick={() => {
+                            if (visibleItems[0]) setSelectedDetail(visibleItems[0]);
+                          }}
+                          className="cursor-pointer rounded-xl bg-[#F7F8FA] p-3.5 transition-colors hover:bg-gray-100"
+                        >
+                          <p className="line-clamp-2 text-xs font-bold leading-relaxed text-gray-900">
+                            {card.title}
                           </p>
-                          <h2>{item.title}</h2>
-                          <p className="member-profile-message">{item.summary}</p>
+                          <div className="mt-2 flex items-center gap-2 text-[11px] font-medium text-gray-400">
+                            {card.badge && (
+                              <span className="font-extrabold text-[#0058FF]">{card.badge}</span>
+                            )}
+                            <span>{card.timeAgo}</span>
+                          </div>
                         </div>
-                      </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
 
-                      <div className="ym-news-reaction-row">
-                        <div className="ym-sentiment-group" role="group" aria-label="뉴스 강세 약세 반응">
-                          <button
-                            type="button"
-                            aria-pressed={userReaction === "bull"}
-                            className={userReaction === "bull" ? "ym-sentiment-btn is-bull-active" : "ym-sentiment-btn"}
-                            onClick={() => toggleReaction(item.id, "bull")}
-                          >
-                            ▲ 강세 {bullCount}
-                          </button>
-                          <button
-                            type="button"
-                            aria-pressed={userReaction === "bear"}
-                            className={userReaction === "bear" ? "ym-sentiment-btn is-bear-active" : "ym-sentiment-btn"}
-                            onClick={() => toggleReaction(item.id, "bear")}
-                          >
-                            ▼ 약세 {bearCount}
-                          </button>
-                        </div>
+                {/* 우측: 인기 속보 */}
+                <div className="flex flex-col justify-between">
+                  <div>
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-sm font-black text-gray-900">인기 속보</h3>
+                      <div className="flex items-center gap-2 text-xs font-bold">
                         <button
                           type="button"
-                          className="ym-text-link-btn"
-                          onClick={() => void inspectArticle(item.id, item)}
+                          onClick={() => setPopularMode("QUOTE")}
+                          className={
+                            popularMode === "QUOTE"
+                              ? "text-gray-900"
+                              : "text-gray-400 hover:text-gray-700"
+                          }
                         >
-                          뉴스 상세 모달 보기
+                          인용글 많은
+                        </button>
+                        <span className="text-gray-300" aria-hidden="true">
+                          |
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPopularMode("REACTION")}
+                          className={
+                            popularMode === "REACTION"
+                              ? "text-gray-900"
+                              : "text-gray-400 hover:text-gray-700"
+                          }
+                        >
+                          반응 많은
                         </button>
                       </div>
+                    </div>
 
-                      <details className="ym-news-details">
-                        <summary>뉴스 본문 전체 보기</summary>
-                        <p className="member-profile-message">{item.content}</p>
-                        {item.symbolTag && (
-                          <div className="member-actions">
-                            <Link href="/trading" className="account-refresh">
-                              {item.symbolTag} 선물 거래 바로가기 ({item.symbolTag} 선물 모의투자 이동)
-                            </Link>
+                    <ol className="space-y-3">
+                      {popularBreakingList.map(item => (
+                        <li
+                          key={item.rank}
+                          className="flex items-center justify-between gap-3 text-xs"
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <span className="w-4 shrink-0 font-black text-gray-400">
+                              {item.rank}
+                            </span>
+                            <span className="truncate font-bold text-gray-800">{item.title}</span>
                           </div>
-                        )}
-                      </details>
-                    </article>
-                  </li>
-                );
-              })}
-            </ul>
+                          <span className="shrink-0 text-[11px] font-medium text-gray-400">
+                            · {item.timeAgo}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-center gap-1.5" aria-hidden="true">
+                    <span
+                      className={`h-1.5 rounded-full ${
+                        popularMode === "QUOTE" ? "w-4 bg-gray-400" : "w-1.5 bg-gray-200"
+                      }`}
+                    />
+                    <span
+                      className={`h-1.5 rounded-full ${
+                        popularMode === "REACTION" ? "w-4 bg-gray-400" : "w-1.5 bg-gray-200"
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 키워드로 보는 이슈 바 */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#F7F8FA] px-4 py-3 text-xs">
+                <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+                  <span className="font-extrabold text-gray-600">키워드로 보는 이슈</span>
+                  <span className="text-gray-300" aria-hidden="true">
+                    |
+                  </span>
+                  <span className="font-extrabold text-red-500">{activeIssue.tag}</span>
+                  <strong className="truncate font-bold text-gray-900">
+                    {activeIssue.headline}
+                  </strong>
+                  <span className="text-gray-400">{activeIssue.timeAgo}</span>
+                </div>
+                <div className="flex items-center gap-2 text-gray-500">
+                  <span className="font-bold">
+                    {(issueIndex % KEYWORD_ISSUES.length) + 1} / {KEYWORD_ISSUES.length}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="이전 이슈 키워드"
+                    onClick={() =>
+                      setIssueIndex(
+                        prev => (prev - 1 + KEYWORD_ISSUES.length) % KEYWORD_ISSUES.length,
+                      )
+                    }
+                    className="rounded px-1.5 py-0.5 hover:bg-gray-200"
+                  >
+                    ∧
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="다음 이슈 키워드"
+                    onClick={() => setIssueIndex(prev => (prev + 1) % KEYWORD_ISSUES.length)}
+                    className="rounded px-1.5 py-0.5 hover:bg-gray-200"
+                  >
+                    ∨
+                  </button>
+                </div>
+              </div>
+
+              {/* 퀵 필터 알약 칩 바 */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setQuickChip(prev => (prev === "WATCH" ? "" : "WATCH"))}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-bold transition-colors ${
+                      quickChip === "WATCH"
+                        ? "border-gray-900 bg-gray-900 text-white"
+                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    <span>★</span>
+                    <span>관심 코인</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickChip(prev => (prev === "MENTION" ? "" : "MENTION"))}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-bold transition-colors ${
+                      quickChip === "MENTION"
+                        ? "border-gray-900 bg-gray-900 text-white"
+                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    <span>🎙</span>
+                    <span>많이 언급된 코인</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickChip(prev => (prev === "VOLUME" ? "" : "VOLUME"))}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-bold transition-colors ${
+                      quickChip === "VOLUME"
+                        ? "border-gray-900 bg-gray-900 text-white"
+                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    <span>📊</span>
+                    <span>거래 많은 코인</span>
+                  </button>
+                </div>
+                <span className="text-xs font-medium text-gray-400">
+                  24시간 실시간 업데이트 · KST 기준
+                </span>
+              </div>
+            </>
+          ) : (
+            /* ==================== [탭 2] 뉴스룸 (CoinNess /article 스타일) ==================== */
+            <>
+              <div>
+                <h2 className="mb-4 text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+                  뉴스룸
+                </h2>
+
+                {/* 상단 추천 헤드라인 3열 카드 */}
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {NEWSROOM_FEATURED_CARDS.map(card => (
+                    <div
+                      key={card.id}
+                      onClick={() => {
+                        if (visibleItems[0]) setSelectedDetail(visibleItems[0]);
+                      }}
+                      className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white p-3.5 transition-colors hover:border-gray-300"
+                    >
+                      <p className="line-clamp-2 text-xs font-bold leading-relaxed text-gray-900">
+                        {card.title}
+                      </p>
+                      <div className="flex h-14 w-20 shrink-0 flex-col items-center justify-center rounded-xl bg-slate-900 px-2 text-center text-white">
+                        <span className="text-[11px] font-black">{card.badge}</span>
+                        <span className="mt-0.5 text-[9px] font-semibold text-gray-300">
+                          {card.sub}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 중앙 세그먼트 탭 바: 전체 | 암호화폐 | 해외증시 | 환율/금리 */}
+              <div
+                className="mx-auto grid max-w-xl grid-cols-4 gap-1 rounded-2xl bg-[#F2F4F7] p-1.5"
+                role="tablist"
+                aria-label="뉴스룸 분야 탭"
+              >
+                {(
+                  [
+                    { key: "ALL", label: "전체" },
+                    { key: "CRYPTO", label: "암호화폐" },
+                    { key: "STOCKS", label: "해외증시" },
+                    { key: "FX_RATES", label: "환율/금리" },
+                  ] as const
+                ).map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={newsroomTab === tab.key}
+                    onClick={() => setNewsroomTab(tab.key)}
+                    className={`rounded-xl py-2 text-xs font-bold transition-colors sm:text-sm ${
+                      newsroomTab === tab.key
+                        ? "bg-white text-gray-900"
+                        : "text-gray-500 hover:text-gray-800"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 최신 뉴스 | 많이 본 뉴스 알약 정렬 버튼 */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewsroomSort("LATEST")}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${
+                    newsroomSort === "LATEST"
+                      ? "bg-gray-800 text-white"
+                      : "text-gray-500 hover:text-gray-900"
+                  }`}
+                >
+                  최신 뉴스
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewsroomSort("POPULAR")}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${
+                    newsroomSort === "POPULAR"
+                      ? "bg-gray-800 text-white"
+                      : "text-gray-500 hover:text-gray-900"
+                  }`}
+                >
+                  많이 본 뉴스
+                </button>
+              </div>
+            </>
           )}
 
+          {/* 공통 셀렉트박스 3열 상세 필터 & 키워드 검색 바 */}
+          <div className="ym-news-filter-panel space-y-3 rounded-2xl border border-gray-200 bg-white p-4">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold text-gray-500">
+                  뉴스 카테고리
+                </span>
+                <select
+                  aria-label="뉴스 카테고리 필터"
+                  value={category}
+                  onChange={event => {
+                    setCategory(event.target.value as "" | NewsCategory);
+                    resetPagination();
+                  }}
+                  className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                >
+                  {NEWS_CATEGORIES.map(tab => (
+                    <option key={tab.key || "ALL"} value={tab.key}>
+                      {tab.key === "" ? "전체 카테고리" : tab.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold text-gray-500">
+                  연관 선물 종목
+                </span>
+                <select
+                  aria-label="뉴스 종목 태그 필터"
+                  value={symbolTag}
+                  onChange={event => {
+                    setSymbolTag(event.target.value);
+                    resetPagination();
+                  }}
+                  className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                >
+                  {SYMBOL_FILTER_TAGS.map(tag => (
+                    <option key={tag || "ALL_SYMBOL"} value={tag}>
+                      {tag ? `#${tag} (${tag}USDT)` : "전체 종목"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold text-gray-500">
+                  브리핑 보기 방식
+                </span>
+                <select
+                  aria-label="뉴스 브리핑 보기 방식"
+                  value={viewMode}
+                  onChange={event => setViewMode(event.target.value as "ALL" | "HEADLINE")}
+                  className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                >
+                  <option value="ALL">전체 뉴스·속보</option>
+                  <option value="HEADLINE">중요 헤드라인</option>
+                </select>
+              </label>
+            </div>
+
+            <form
+              className="member-search ym-news-search-form flex items-center gap-2 pt-0.5"
+              onSubmit={event => {
+                event.preventDefault();
+                setSubmittedKeyword(keyword.trim());
+                resetPagination();
+              }}
+            >
+              <input
+                type="search"
+                className="h-10 flex-1 rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-medium text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
+                aria-label="뉴스 키워드 검색"
+                placeholder="키워드 검색 (예: ETF, 연준, 금리, BTC)"
+                maxLength={40}
+                value={keyword}
+                onChange={event => setKeyword(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="ym-inline-check-btn inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white whitespace-nowrap transition-colors hover:bg-blue-700"
+              >
+                뉴스 검색
+              </button>
+            </form>
+          </div>
+
+          {query.isPending && (
+            <p role="status" className="member-message">
+              실시간 뉴스 피드를 불러오는 중입니다…
+            </p>
+          )}
+          {query.isError && (
+            <p role="alert" className="member-message">
+              뉴스 피드를 조회하지 못했습니다. {contentMessage(query.error)}{" "}
+              <button
+                type="button"
+                className="account-refresh"
+                onClick={() => void query.refetch()}
+              >
+                다시 조회
+              </button>
+            </p>
+          )}
+          {detailError && (
+            <p role="alert" className="member-message">
+              {detailError}
+            </p>
+          )}
+
+          {!query.isPending && !query.isError && visibleItems.length === 0 && (
+            <p className="member-message">선택한 조건에 해당하는 뉴스가 없습니다.</p>
+          )}
+
+          {/* 메인 리스트: 속보 타임라인 vs 뉴스룸 아티클 리스트 */}
+          {visibleItems.length > 0 &&
+            (sectionTab === "BREAKING" ? (
+              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                <div className="border-b border-gray-200 bg-[#F7F8FA] px-5 py-3 text-xs font-bold text-gray-700">
+                  📅 오늘, 2026년 11월 10일 화요일
+                </div>
+
+                <ul className="divide-y divide-gray-100" aria-label=" 실시간 속보 목록">
+                  {visibleItems.map(item => {
+                    const userReaction = reactions[item.id];
+                    const bullCount = 34 + (item.id % 19) + (userReaction === "bull" ? 1 : 0);
+                    const bearCount = 9 + (item.id % 7) + (userReaction === "bear" ? 1 : 0);
+
+                    return (
+                      <li key={item.id} className="p-5 transition-colors hover:bg-gray-50/50">
+                        <article className="flex items-start gap-4">
+                          <time
+                            dateTime={item.publishedAt}
+                            className="mt-0.5 shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-bold text-gray-600"
+                          >
+                            {kstTimeOnly(item.publishedAt)}
+                          </time>
+
+                          <div className="min-w-0 flex-1">
+                            <h3
+                              onClick={() => void inspectArticle(item.id, item)}
+                              className="cursor-pointer text-[15px] font-bold text-gray-900 hover:text-[#0058FF]"
+                            >
+                              {item.title}
+                            </h3>
+                            <p className="mt-1.5 text-sm leading-relaxed text-gray-600">
+                              {item.summary}
+                            </p>
+                            <p className="mt-1 text-xs leading-relaxed text-gray-500">
+                              {item.content}
+                            </p>
+
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void inspectArticle(item.id, item)}
+                                className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-1 text-[11px] font-extrabold text-[#5B44F2] hover:bg-indigo-100"
+                              >
+                                <span>✦</span>
+                                <span>AI 분석</span>
+                              </button>
+
+                              <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
+                                {newsCategoryLabel(item.category)}
+                              </span>
+
+                              {item.symbolTag && (
+                                <>
+                                  <span className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] font-extrabold text-gray-800">
+                                    #{item.symbolTag}
+                                  </span>
+                                  <Link
+                                    href="/trading"
+                                    className="rounded-md bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold text-[#0058FF] hover:underline"
+                                  >
+                                    {item.symbolTag} 선물 거래 바로가기 ({item.symbolTag} 선물 모의투자 이동)
+                                  </Link>
+                                </>
+                              )}
+                            </div>
+
+                            <div className="mt-3 flex items-center justify-between">
+                              <div
+                                className="flex items-center gap-3 text-xs font-bold text-gray-400"
+                                role="group"
+                                aria-label="뉴스 강세 약세 반응"
+                              >
+                                <button
+                                  type="button"
+                                  aria-pressed={userReaction === "bull"}
+                                  onClick={() => toggleReaction(item.id, "bull")}
+                                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 transition-colors ${
+                                    userReaction === "bull"
+                                      ? "bg-emerald-50 text-[#2EBD85]"
+                                      : "hover:bg-gray-100 hover:text-gray-700"
+                                  }`}
+                                >
+                                  <span>📈</span>
+                                  <span>{bullCount}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-pressed={userReaction === "bear"}
+                                  onClick={() => toggleReaction(item.id, "bear")}
+                                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 transition-colors ${
+                                    userReaction === "bear"
+                                      ? "bg-red-50 text-[#F6465D]"
+                                      : "hover:bg-gray-100 hover:text-gray-700"
+                                  }`}
+                                >
+                                  <span>📉</span>
+                                  <span>{bearCount}</span>
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => void inspectArticle(item.id, item)}
+                                className="text-xs font-bold text-gray-400 hover:text-gray-700"
+                              >
+                                뉴스 상세 모달 보기 →
+                              </button>
+                            </div>
+                          </div>
+                        </article>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                <ul className="divide-y divide-gray-100" aria-label="뉴스룸 기사 목록">
+                  {visibleItems.map(item => (
+                    <li key={item.id} className="p-5 transition-colors hover:bg-gray-50/60">
+                      <article className="flex items-start justify-between gap-5">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                            <time
+                              dateTime={item.publishedAt}
+                              className="rounded bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600"
+                            >
+                              {kstTimeOnly(item.publishedAt)}
+                            </time>
+                            <span>2026년 11월 10일 화요일</span>
+                            <span>·</span>
+                            <span className="font-bold text-gray-500">
+                              {newsCategoryLabel(item.category)}
+                            </span>
+                            {item.symbolTag && (
+                              <span className="font-bold text-[#0058FF]">#{item.symbolTag}</span>
+                            )}
+                          </div>
+
+                          <h3
+                            onClick={() => void inspectArticle(item.id, item)}
+                            className="mt-1.5 cursor-pointer text-base font-bold text-gray-900 hover:text-[#0058FF]"
+                          >
+                            {item.title}
+                          </h3>
+                          <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-gray-500">
+                            {item.summary} {item.content}
+                          </p>
+
+                          <div className="mt-2.5 flex flex-wrap items-center gap-3 text-xs">
+                            <span className="font-medium text-gray-400">
+                              출처 {item.sourceName}
+                            </span>
+                            {item.symbolTag && (
+                              <Link
+                                href="/trading"
+                                className="font-bold text-[#0058FF] hover:underline"
+                              >
+                                {item.symbolTag} 선물 모의투자 이동 →
+                              </Link>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void inspectArticle(item.id, item)}
+                              className="font-bold text-gray-500 hover:text-gray-900"
+                            >
+                              뉴스 상세 모달 보기
+                            </button>
+                          </div>
+                        </div>
+
+                        <div
+                          data-s3-slot="news-thumbnail"
+                          onClick={() => void inspectArticle(item.id, item)}
+                          className="flex h-20 w-28 shrink-0 cursor-pointer flex-col justify-between rounded-xl border border-gray-200 bg-slate-900 p-2.5 text-white sm:h-22 sm:w-36"
+                        >
+                          <span className="text-[11px] font-black text-blue-400">
+                            #{item.symbolTag ?? "MACRO"}
+                          </span>
+                          <span className="truncate text-[10px] font-bold text-gray-300">
+                            {newsCategoryLabel(item.category)}
+                          </span>
+                        </div>
+                      </article>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+
           {hasNext && (
-            <div className="member-actions">
+            <div className="member-actions pt-2">
               <button
                 type="button"
                 className="signup-button"
@@ -394,7 +1070,9 @@ export function NewsFeed({
       >
         {selectedDetail && (
           <div className="ym-modal-prose">
-            <p><strong>요약:</strong> {selectedDetail.summary}</p>
+            <p>
+              <strong>요약:</strong> {selectedDetail.summary}
+            </p>
             <p>{selectedDetail.content}</p>
           </div>
         )}
