@@ -897,6 +897,11 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     assert.equal(loggedInHeaderHtml.includes("테마 전환"), false);
     assert.equal(loggedInHeaderHtml.includes("알림 열기"), false);
     assert.equal(loggedInHeaderHtml.includes("내 프로필 아바타"), false);
+    const newsIdx = loggedInHeaderHtml.indexOf('href="/news"');
+    const tradingIdx = loggedInHeaderHtml.indexOf('href="/trading"');
+    const contestIdx = loggedInHeaderHtml.indexOf('href="/contest"');
+    const communityIdx = loggedInHeaderHtml.indexOf('href="/community"');
+    assert.equal(newsIdx > 0 && newsIdx < tradingIdx && tradingIdx < contestIdx && contestIdx < communityIdx, true);
   } finally {
     client.clear();
   }
