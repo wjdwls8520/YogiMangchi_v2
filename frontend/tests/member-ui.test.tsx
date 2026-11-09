@@ -268,9 +268,13 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /비트코인 현물 ETF 자금 유입 확대/);
     assert.match(html, /aria-label="실시간 뉴스 섹션 메뉴"/);
     assert.match(html, /속보/);
+    assert.match(html, /최근 6시간 실시간 속보/);
+    assert.match(html, /data-live-status="on"/);
     assert.match(html, /뉴스룸/);
     assert.match(html, /코인 속보/);
     assert.match(html, /경제 속보/);
+    assert.match(html, /최신순/);
+    assert.match(html, /오래된순/);
     assert.match(html, /지금 꼭 봐야할 속보/);
     assert.match(html, /인기 속보/);
     assert.match(html, /키워드로 보는 이슈/);
@@ -288,6 +292,24 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /이전 뉴스 더보기/);
     assert.match(html, /href="\/news">실시간 뉴스/);
     assert.match(html, /href="\/community">커뮤니티/);
+    assert.equal(
+      html.indexOf("비트코인 현물 ETF 자금 유입 확대") <
+        html.indexOf("미 연준 금리 동결 시사 및 달러 인덱스 보합"),
+      true,
+    );
+
+    const oldestBreakingHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialBreakingSort="OLDEST" initialLiveActive={false} />
+      </MemberProvider>,
+    );
+    assert.match(oldestBreakingHtml, /data-live-status="off"/);
+    assert.match(oldestBreakingHtml, /OFF/);
+    assert.equal(
+      oldestBreakingHtml.indexOf("미 연준 금리 동결 시사 및 달러 인덱스 보합") <
+        oldestBreakingHtml.indexOf("비트코인 현물 ETF 자금 유입 확대"),
+      true,
+    );
 
     const toastNewsHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
@@ -308,7 +330,14 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(newsroomHtml, /환율\/금리/);
     assert.match(newsroomHtml, /최신 뉴스/);
     assert.match(newsroomHtml, /많이 본 뉴스/);
-    assert.match(newsroomHtml, /data-s3-slot="news-thumbnail"/);
+    assert.match(newsroomHtml, /오래된 순/);
+    assert.equal((newsroomHtml.match(/data-s3-slot="news-thumbnail"/g) ?? []).length, 1);
+    assert.equal((newsroomHtml.match(/data-newsroom-hashtags="true"/g) ?? []).length, 2);
+    assert.equal(
+      newsroomHtml.indexOf('data-newsroom-hashtags="true"') <
+        newsroomHtml.indexOf("출처 Yogimangchi Market Desk"),
+      true,
+    );
   } finally {
     client.clear();
   }

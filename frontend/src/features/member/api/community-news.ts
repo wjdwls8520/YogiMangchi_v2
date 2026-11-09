@@ -77,6 +77,13 @@ export type NewsSentimentSummary = {
   dominantSentiment: NewsSentiment;
 };
 
+export type NewsLiveStatus = {
+  live: boolean;
+  collectorEnabled: boolean;
+  retentionHours: number;
+  lastCollectedAt: string | null;
+};
+
 export type NewsHighlights = {
   mustReadBreaking: NewsItem[];
   popularByViews: NewsItem[];
@@ -84,6 +91,7 @@ export type NewsHighlights = {
   keywordIssues: NewsKeywordIssueItem[];
   recommendedNewsroom: NewsItem[];
   sentimentSummary: NewsSentimentSummary;
+  liveStatus?: NewsLiveStatus;
 };
 
 export type CommunityPostFile = {
@@ -301,6 +309,27 @@ export function parseNewsReaction(value: unknown): NewsReactionResult {
   };
 }
 
+export function parseNewsLiveStatus(value: unknown): NewsLiveStatus {
+  const row = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const collectorEnabled =
+    typeof row.collectorEnabled === "boolean" ? row.collectorEnabled : true;
+  const live = typeof row.live === "boolean" ? row.live : collectorEnabled;
+  const retentionHours =
+    typeof row.retentionHours === "number" && Number.isFinite(row.retentionHours)
+      ? Math.max(1, Math.trunc(row.retentionHours))
+      : 6;
+  const lastCollectedAt =
+    typeof row.lastCollectedAt === "string" && Number.isFinite(Date.parse(row.lastCollectedAt))
+      ? row.lastCollectedAt
+      : null;
+  return {
+    live,
+    collectorEnabled,
+    retentionHours,
+    lastCollectedAt,
+  };
+}
+
 export function parseNewsHighlights(value: unknown): NewsHighlights {
   const row = obj(value);
   const parseList = (list: unknown): NewsItem[] =>
@@ -349,6 +378,7 @@ export function parseNewsHighlights(value: unknown): NewsHighlights {
       bearPct: typeof rawSummary.bearPct === "number" ? nonNegInt(rawSummary.bearPct) : 50,
       dominantSentiment,
     },
+    liveStatus: parseNewsLiveStatus(row.liveStatus),
   };
 }
 
@@ -512,11 +542,13 @@ export function parseCommunityComments(value: unknown): CommunityCommentList {
   return { items: row.items.map(parseCommunityComment) };
 }
 
+export type NewsSort = "LATEST" | "OLDEST" | "POPULAR";
+
 export function newsPath(params: {
   category?: string;
   section?: NewsSection | string;
   subCategory?: NewsSubCategory | string;
-  sort?: "LATEST" | "POPULAR";
+  sort?: NewsSort;
   symbolTag?: string;
   keyword?: string;
   cursorId?: number | null;
