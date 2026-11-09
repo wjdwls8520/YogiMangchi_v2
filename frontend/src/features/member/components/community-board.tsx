@@ -1277,6 +1277,7 @@ export function CommunityBoard({
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3">
                         <V1UserAvatar
+                          src={post.authorProfileImgUrl}
                           memberId={post.memberId}
                           nickname={post.authorNickname}
                           withdrawn={post.authorWithdrawn}

@@ -98,6 +98,9 @@ test("member DTOs validate identity and cursor while public profiles discard pri
   assert.throws(() => parseAccess({ ...access(), accessToken: "provider-token" }));
   const profile = { memberId: 1, nickname: "회원", profileMessage: "", createdAt: new Date(epoch).toISOString(), role: "ADMIN", email: "private@example.test" };
   assert.equal("email" in parseProfile(profile), false); assert.equal("role" in parseProfile(profile), false);
+  assert.equal(parseProfile({ ...profile, profileImgUrl: "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/1/avatar.png" }).profileImgUrl, "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/1/avatar.png");
+  assert.equal(parseOwnProfile({ ...profile, profileImgUrl: "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/1/avatar.png" }, 1).profileImgUrl, "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/1/avatar.png");
+  assert.equal(parseProfile({ ...profile, profileImgUrl: null }).profileImgUrl, null);
   assert.throws(() => parseOwnProfile(profile, 2));
   assert.equal(parseFlow({ status: "LOGIN_READY", provider: "KAKAO", email: "test@example.test" }).status, "LOGIN_READY");
   assert.equal("email" in parseFlow({ status: "LOGIN_READY", provider: "KAKAO", email: "test@example.test" }), false);

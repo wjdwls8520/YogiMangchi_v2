@@ -22,6 +22,7 @@ type ProfileResponse = {
   memberId?: number;
   nickname?: string;
   profileMessage?: string | null;
+  profileImgUrl?: string | null;
   profileImageUrl?: string | null;
   followerCount?: number;
   followingCount?: number;
@@ -341,7 +342,7 @@ export function MemberMyProfilePage({
                 memberId: member.memberId ?? 7,
                 nickname,
                 profileMsg,
-                profileImgUrl: profileQuery.data?.profileImageUrl,
+                profileImgUrl: profileQuery.data?.profileImgUrl ?? profileQuery.data?.profileImageUrl,
                 role: "USER",
                 followerCount,
                 followingCount,
