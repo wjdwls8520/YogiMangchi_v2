@@ -761,14 +761,31 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         var duplicateBatch = newsIngestion.ingestRssXml(sampleRssXml, "BREAKING", "COIN_FLASH", 10);
         assertThat(duplicateBatch).isEmpty();
 
-        // 4. Filter by section & subCategory & sort
-        mvc.perform(get("/api/v1/news")
+        // 4. Filter by section & subCategory & sort (LATEST by published_at DESC, OLDEST by published_at ASC, POPULAR)
+        var latestBreakingBody = mvc.perform(get("/api/v1/news")
                         .param("section", "BREAKING")
                         .param("subCategory", "COIN_FLASH")
+                        .param("sort", "LATEST")
                         .param("size", "5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].section").value("BREAKING"))
-                .andExpect(jsonPath("$.items[0].subCategory").value("COIN_FLASH"));
+                .andExpect(jsonPath("$.items[0].subCategory").value("COIN_FLASH"))
+                .andReturn().getResponse().getContentAsString();
+        var latestBreakingItems = json.readTree(latestBreakingBody).path("items");
+        assertThat(Instant.parse(latestBreakingItems.get(0).path("publishedAt").asText()))
+                .isAfterOrEqualTo(Instant.parse(latestBreakingItems.get(1).path("publishedAt").asText()));
+
+        var oldestBreakingBody = mvc.perform(get("/api/v1/news")
+                        .param("section", "BREAKING")
+                        .param("subCategory", "COIN_FLASH")
+                        .param("sort", "OLDEST")
+                        .param("size", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].section").value("BREAKING"))
+                .andReturn().getResponse().getContentAsString();
+        var oldestBreakingItems = json.readTree(oldestBreakingBody).path("items");
+        assertThat(Instant.parse(oldestBreakingItems.get(0).path("publishedAt").asText()))
+                .isBeforeOrEqualTo(Instant.parse(oldestBreakingItems.get(1).path("publishedAt").asText()));
 
         mvc.perform(get("/api/v1/news")
                         .param("section", "NEWSROOM")

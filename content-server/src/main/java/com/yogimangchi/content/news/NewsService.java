@@ -18,7 +18,7 @@ public class NewsService {
     private static final Set<String> CATEGORIES = Set.of("CRYPTO", "MACRO", "ONCHAIN", "REGULATION");
     private static final Set<String> SECTIONS = Set.of("BREAKING", "NEWSROOM");
     private static final Set<String> SUB_CATEGORIES = Set.of("COIN_FLASH", "ECONOMY_FLASH", "CRYPTO", "STOCKS", "FX_RATES");
-    private static final Set<String> SORTS = Set.of("LATEST", "POPULAR");
+    private static final Set<String> SORTS = Set.of("LATEST", "OLDEST", "POPULAR");
 
     static final String SELECT_COLUMNS =
             "id, category, section, sub_category, title, summary, content, source_name, source_url, "
@@ -174,9 +174,34 @@ public class NewsService {
 
         StringBuilder sql = new StringBuilder("select ")
                 .append(SELECT_COLUMNS)
-                .append(" from content.news_article where id < ?");
+                .append(" from content.news_article where 1 = 1");
         List<Object> params = new ArrayList<>();
-        params.add(cursorId == null ? Long.MAX_VALUE : cursorId);
+
+        if (cursorId != null) {
+            if ("OLDEST".equals(normalizedSort)) {
+                sql.append(" and (published_at > coalesce((select c.published_at from content.news_article c where c.id = ?), TIMESTAMPTZ '-infinity') "
+                        + "or (published_at = coalesce((select c.published_at from content.news_article c where c.id = ?), TIMESTAMPTZ '-infinity') and id > ?))");
+                params.add(cursorId);
+                params.add(cursorId);
+                params.add(cursorId);
+            } else if ("POPULAR".equals(normalizedSort)) {
+                sql.append(" and ((bull_count + bear_count + view_count) < coalesce((select c.bull_count + c.bear_count + c.view_count from content.news_article c where c.id = ?), 2147483647) "
+                        + "or ((bull_count + bear_count + view_count) = coalesce((select c.bull_count + c.bear_count + c.view_count from content.news_article c where c.id = ?), 2147483647) "
+                        + "and (published_at < coalesce((select c.published_at from content.news_article c where c.id = ?), TIMESTAMPTZ 'infinity') "
+                        + "or (published_at = coalesce((select c.published_at from content.news_article c where c.id = ?), TIMESTAMPTZ 'infinity') and id < ?))))");
+                params.add(cursorId);
+                params.add(cursorId);
+                params.add(cursorId);
+                params.add(cursorId);
+                params.add(cursorId);
+            } else {
+                sql.append(" and (published_at < coalesce((select c.published_at from content.news_article c where c.id = ?), TIMESTAMPTZ 'infinity') "
+                        + "or (published_at = coalesce((select c.published_at from content.news_article c where c.id = ?), TIMESTAMPTZ 'infinity') and id < ?))");
+                params.add(cursorId);
+                params.add(cursorId);
+                params.add(cursorId);
+            }
+        }
 
         if (normalizedCategory != null) {
             sql.append(" and category = ?");
@@ -200,9 +225,11 @@ public class NewsService {
             params.add(search);
         }
         if ("POPULAR".equals(normalizedSort)) {
-            sql.append(" order by (bull_count + bear_count + view_count) desc, id desc limit ?");
+            sql.append(" order by (bull_count + bear_count + view_count) desc, published_at desc, id desc limit ?");
+        } else if ("OLDEST".equals(normalizedSort)) {
+            sql.append(" order by published_at asc, id asc limit ?");
         } else {
-            sql.append(" order by id desc limit ?");
+            sql.append(" order by published_at desc, id desc limit ?");
         }
         params.add(limit + 1);
 
@@ -279,27 +306,27 @@ public class NewsService {
         List<NewsItemResponse> mustReadBreaking = jdbc.query(
                 "select " + SELECT_COLUMNS + " from content.news_article "
                         + "where section = 'BREAKING' "
-                        + "order by (bull_count + bear_count + view_count) desc, id desc limit 3",
+                        + "order by published_at desc, id desc limit 3",
                 NewsService::mapRow);
 
         List<NewsItemResponse> popularByViews = jdbc.query(
                 "select " + SELECT_COLUMNS + " from content.news_article "
-                        + "order by view_count desc, id desc limit 4",
+                        + "order by view_count desc, published_at desc, id desc limit 4",
                 NewsService::mapRow);
 
         List<NewsItemResponse> popularByReactions = jdbc.query(
                 "select " + SELECT_COLUMNS + " from content.news_article "
-                        + "order by (bull_count + bear_count) desc, id desc limit 4",
+                        + "order by (bull_count + bear_count) desc, published_at desc, id desc limit 4",
                 NewsService::mapRow);
 
         List<NewsItemResponse> recommendedNewsroom = jdbc.query(
                 "select " + SELECT_COLUMNS + " from content.news_article "
                         + "where section = 'NEWSROOM' "
-                        + "order by (bull_count + bear_count + view_count) desc, id desc limit 3",
+                        + "order by (bull_count + bear_count + view_count) desc, published_at desc, id desc limit 3",
                 NewsService::mapRow);
 
         List<NewsItemResponse> recentPool = jdbc.query(
-                "select " + SELECT_COLUMNS + " from content.news_article order by id desc limit 40",
+                "select " + SELECT_COLUMNS + " from content.news_article order by published_at desc, id desc limit 40",
                 NewsService::mapRow);
 
         List<KeywordIssueItem> keywordIssues = buildKeywordIssues(recentPool);

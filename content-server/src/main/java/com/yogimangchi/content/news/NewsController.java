@@ -27,7 +27,7 @@ public class NewsController {
     @GetMapping
     @Operation(
             summary = "List crypto and macro news feed",
-            description = "Public. Optional filters: category (CRYPTO/MACRO/ONCHAIN/REGULATION), section (BREAKING/NEWSROOM), subCategory (COIN_FLASH/ECONOMY_FLASH/CRYPTO/STOCKS/FX_RATES), sort (LATEST/POPULAR), symbolTag, keyword (up to 40 code points, case-insensitive literal match on title/summary), cursorId, size (1..30, default 10)."
+            description = "Public. Optional filters: category (CRYPTO/MACRO/ONCHAIN/REGULATION), section (BREAKING/NEWSROOM), subCategory (COIN_FLASH/ECONOMY_FLASH/CRYPTO/STOCKS/FX_RATES), sort (LATEST/OLDEST/POPULAR), symbolTag, keyword (up to 40 code points, case-insensitive literal match on title/summary), cursorId, size (1..30, default 10)."
     )
     public ResponseEntity<NewsService.NewsPageResponse> list(
             @RequestParam(required = false) String category,
