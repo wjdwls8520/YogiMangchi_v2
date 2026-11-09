@@ -25,7 +25,9 @@ import {
   parseCommunityPostPage,
   parseCommunityReport,
   parseLatestPostsCheck,
+  parseNewsHighlights,
   parseNewsPage,
+  parseNewsReaction,
   parseReportReasons,
   readCommunityOrPublic,
 } from "../src/features/member/api/community-news";
@@ -158,16 +160,55 @@ test("MemberConsents displays consented policy versions, agreed timestamps, and 
 test("NewsFeed renders category/symbol filters, expandable article content, and trading shortcut links", async () => {
   const path = newsPath({ category: "CRYPTO", symbolTag: "BTC", keyword: "ETF", cursorId: 12, size: 10 });
   assert.equal(path, "/news?category=CRYPTO&symbolTag=BTC&keyword=ETF&cursorId=12&size=10");
+  assert.equal(
+    newsPath({ section: "NEWSROOM", subCategory: "CRYPTO", sort: "POPULAR", size: 10 }),
+    "/news?section=NEWSROOM&subCategory=CRYPTO&sort=POPULAR&size=10",
+  );
+
+  for (const allowedNewsPath of ["/news/highlights", "/news/stream", "/news/10/reactions"]) {
+    const res = await contentJson("http://localhost:8080", allowedNewsPath, {}, async () =>
+      Response.json({ ok: true }),
+    );
+    assert.deepEqual(res, { ok: true }, allowedNewsPath);
+  }
+
+  assert.deepEqual(
+    parseNewsReaction({
+      newsId: 10,
+      reaction: "BULL",
+      bullCount: 45,
+      bearCount: 12,
+      bullPct: 79,
+      bearPct: 21,
+    }),
+    {
+      newsId: 10,
+      reaction: "BULL",
+      bullCount: 45,
+      bearCount: 12,
+      bullPct: 79,
+      bearPct: 21,
+    },
+  );
 
   const rawPage = {
     items: [
       {
         id: 10,
         category: "CRYPTO",
+        section: "BREAKING",
+        subCategory: "COIN_FLASH",
         title: "비트코인 현물 ETF 자금 유입 확대",
         summary: "기관 중심 순유입이 이어지며 선물 미결제약정이 증가했습니다.",
         content: "미국 현물 ETF 순유입과 함께 BTC 선물 시장의 유동성이 확대되고 있습니다.",
         sourceName: "Yogimangchi Market Desk",
+        sourceUrl: "https://www.coindesk.com/markets/btc-etf-inflows",
+        thumbnailUrl: "https://images.coindesk.com/btc-etf-thumb.jpg",
+        aiSummary: "기관 ETF 자금 유입 확대로 BTC 단기 매수 우위 지속",
+        sentiment: "BULLISH",
+        bullCount: 52,
+        bearCount: 11,
+        viewCount: 180,
         symbolTag: "BTC",
         publishedAt: "2026-11-01T09:00:00Z",
       },
@@ -187,12 +228,38 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
   };
   const page = parseNewsPage(rawPage);
   assert.equal(page.items.length, 2);
+  assert.equal(page.items[0].aiSummary, "기관 ETF 자금 유입 확대로 BTC 단기 매수 우위 지속");
+  assert.equal(page.items[0].sourceUrl, "https://www.coindesk.com/markets/btc-etf-inflows");
+
+  const parsedHighlights = parseNewsHighlights({
+    mustReadBreaking: [rawPage.items[0]],
+    popularByViews: [rawPage.items[0]],
+    popularByReactions: [rawPage.items[0]],
+    keywordIssues: [
+      {
+        keyword: "현물ETF",
+        label: "비트코인 현물 ETF 순유입",
+        articleCount: 4,
+        sentiment: "BULLISH",
+        articles: [rawPage.items[0]],
+      },
+    ],
+    recommendedNewsroom: [rawPage.items[0]],
+    sentimentSummary: {
+      totalBullVotes: 74,
+      totalBearVotes: 26,
+      bullPct: 74,
+      bearPct: 26,
+      dominantSentiment: "BULLISH",
+    },
+  });
+  assert.equal(parsedHighlights.sentimentSummary.bullPct, 74);
 
   const client = new QueryClient();
   try {
     const html = renderToStaticMarkup(
       <MemberProvider client={client}>
-        <NewsFeed initialPage={page} />
+        <NewsFeed initialPage={page} initialHighlights={parsedHighlights} />
       </MemberProvider>,
     );
     for (const label of ["코인 시황 (CRYPTO)", "거시·세계 경제 (MACRO)", "온체인·수급 (ONCHAIN)", "규제·정책 (REGULATION)", "#BTC", "#ETH", "#SOL", "#XRP"]) {
@@ -207,6 +274,12 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /지금 꼭 봐야할 속보/);
     assert.match(html, /인기 속보/);
     assert.match(html, /키워드로 보는 이슈/);
+    assert.match(html, /강세 74%/);
+    assert.match(html, /✦ AI 분석: 기관 ETF 자금 유입 확대로 BTC 단기 매수 우위 지속/);
+    assert.match(html, /원문 기사 보기 ↗/);
+    assert.match(html, /href="https:\/\/www\.coindesk\.com\/markets\/btc-etf-inflows"/);
+    assert.match(html, /data-infinite-scroll="news-sentinel"/);
+    assert.equal(html.includes("새 실시간 속보"), false);
     assert.match(html, /<select[^>]*aria-label="뉴스 카테고리 필터"/);
     assert.match(html, /<select[^>]*aria-label="뉴스 종목 태그 필터"/);
     assert.match(html, /<select[^>]*aria-label="뉴스 브리핑 보기 방식"/);
@@ -215,6 +288,14 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /이전 뉴스 더보기/);
     assert.match(html, /href="\/news">실시간 뉴스/);
     assert.match(html, /href="\/community">커뮤니티/);
+
+    const toastNewsHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialPendingNewNewsCount={2} />
+      </MemberProvider>,
+    );
+    assert.match(toastNewsHtml, /fixed left-1\/2 top-20/);
+    assert.match(toastNewsHtml, /새 실시간 속보 2건 보기/);
 
     const newsroomHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
@@ -368,7 +449,8 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     assert.match(html, /BTCUSDT 무기한/);
     assert.match(html, /📊 포지션 공유하기/);
     assert.match(html, /인기글 \(POPULAR\)/);
-    assert.match(html, /새 게시글 보기/);
+    assert.equal(html.includes("새 게시글 보기"), false);
+    assert.match(html, /data-infinite-scroll="community-sentinel"/);
     assert.equal(html.includes('id="community-inline-write-form"'), false);
     assert.equal(html.includes('aria-label="댓글 및 대댓글"'), false);
     assert.match(html, /BTC 10배 롱 포지션 진입 및 손절가 공유/);
@@ -382,6 +464,15 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     assert.match(html, /<span class="member-note" data-withdrawn="true">탈퇴한회원<\/span>/);
     assert.equal(html.includes("옛날닉네임"), false);
     assert.equal(html.includes("/members/99"), false);
+
+    const toastHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard initialPage={postPage} initialPendingNewPostsCount={3} />
+      </MemberProvider>,
+    );
+    assert.match(toastHtml, /fixed left-1\/2 top-20/);
+    assert.match(toastHtml, /새 게시글 보기/);
+    assert.match(toastHtml, />3</);
 
     const detailHtml = renderToStaticMarkup(
       <MemberProvider session={session} client={client}>

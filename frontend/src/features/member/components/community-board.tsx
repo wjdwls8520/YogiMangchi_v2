@@ -240,11 +240,13 @@ export function CommunityBoard({
   initialComments,
   initialV1Tab = "all",
   highlightPostId,
+  initialPendingNewPostsCount = 0,
 }: {
   initialPage?: CommunityPostPage;
   initialComments?: Record<number, CommunityComment[]>;
   initialV1Tab?: "all" | "best" | "latest";
   highlightPostId?: number;
+  initialPendingNewPostsCount?: number;
 } = {}) {
   const { origin, session, snapshot } = useMember();
   const queryClient = useQueryClient();
@@ -255,8 +257,13 @@ export function CommunityBoard({
   const [symbolTag, setSymbolTag] = useState<string>("");
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
-  const [cursorHistory, setCursorHistory] = useState<Array<number | null>>([null]);
-  const currentCursorId = cursorHistory[cursorHistory.length - 1] ?? null;
+  const [extraPosts, setExtraPosts] = useState<CommunityPost[]>([]);
+  const [nextCursorOverride, setNextCursorOverride] = useState<number | null | undefined>(
+    undefined,
+  );
+  const [hasNextOverride, setHasNextOverride] = useState<boolean | undefined>(undefined);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   const isDetailView = typeof highlightPostId === "number" && Number.isFinite(highlightPostId);
   const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
@@ -311,7 +318,9 @@ export function CommunityBoard({
 
   // 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 알약 팝업 상태
   const feedTopRef = useRef<HTMLDivElement>(null);
-  const [pendingNewPostsCount, setPendingNewPostsCount] = useState<number>(1);
+  const [pendingNewPostsCount, setPendingNewPostsCount] = useState<number>(
+    initialPendingNewPostsCount,
+  );
   const [prependedPosts, setPrependedPosts] = useState<CommunityPost[]>([]);
   const [latestCheckedItems, setLatestCheckedItems] = useState<CommunityPost[]>([]);
   const latestPostIdRef = useRef<number>(0);
@@ -322,16 +331,12 @@ export function CommunityBoard({
     sort,
     symbolTag: symbolTag || undefined,
     keyword,
-    cursorId: currentCursorId,
+    cursorId: null,
     size: 10,
   });
 
   const isDefaultQuery =
-    category === "" &&
-    sort === "LATEST" &&
-    symbolTag === "" &&
-    keyword === "" &&
-    currentCursorId === null;
+    category === "" && sort === "LATEST" && symbolTag === "" && keyword === "";
 
   const postsQuery = useQuery({
     queryKey: ["community-posts", origin, path, snapshot.generation],
@@ -692,6 +697,12 @@ export function CommunityBoard({
     onError: error => setFeedback(contentMessage(error)),
   });
 
+  function resetFeedPagination() {
+    setExtraPosts([]);
+    setNextCursorOverride(undefined);
+    setHasNextOverride(undefined);
+  }
+
   function handleV1TabChange(nextValue: string) {
     const nextTab = (nextValue as "all" | "best" | "latest") || "all";
     setV1Tab(nextTab);
@@ -700,12 +711,12 @@ export function CommunityBoard({
     } else {
       setSort("LATEST");
     }
-    setCursorHistory([null]);
+    resetFeedPagination();
   }
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setCursorHistory([null]);
+    resetFeedPagination();
     setKeyword(searchInput.trim());
   }
 
@@ -819,12 +830,68 @@ export function CommunityBoard({
 
   const page = postsQuery.data;
   const serverItems = page?.items ?? [];
-  const items = [
-    ...prependedPosts.filter(
-      prepended => !serverItems.some(serverItem => serverItem.id === prepended.id),
-    ),
-    ...serverItems,
-  ];
+  const items = (() => {
+    const seen = new Set<number>();
+    const merged: CommunityPost[] = [];
+    for (const item of [...prependedPosts, ...serverItems, ...extraPosts]) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        merged.push(item);
+      }
+    }
+    return merged;
+  })();
+
+  const hasNext = hasNextOverride ?? page?.hasNext ?? false;
+  const nextCursorId =
+    nextCursorOverride !== undefined ? nextCursorOverride : (page?.nextCursorId ?? null);
+
+  async function loadMorePosts() {
+    if (isDetailView || !hasNext || nextCursorId === null || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const nextPath = communityPostsPath({
+        category,
+        sort,
+        symbolTag: symbolTag || undefined,
+        keyword,
+        cursorId: nextCursorId,
+        size: 10,
+      });
+      const nextPage = parseCommunityPostPage(
+        await readCommunityOrPublic(origin, session, snapshot, nextPath),
+      );
+      setExtraPosts(prev => {
+        const existingIds = new Set(
+          [...prependedPosts, ...serverItems, ...prev].map(post => post.id),
+        );
+        const fresh = nextPage.items.filter(item => !existingIds.has(item.id));
+        return [...prev, ...fresh];
+      });
+      setNextCursorOverride(nextPage.nextCursorId);
+      setHasNextOverride(nextPage.hasNext);
+    } catch (error) {
+      setFeedback(contentMessage(error));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isDetailView || !hasNext || nextCursorId === null) return;
+    const node = loadMoreSentinelRef.current;
+    if (!node || typeof window.IntersectionObserver !== "function") return;
+    const observer = new window.IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          void loadMorePosts();
+        }
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  });
 
   const highestPostId = items.reduce((max, item) => (item.id > max ? item.id : max), 0);
   useEffect(() => {
@@ -843,10 +910,22 @@ export function CommunityBoard({
             const payload = JSON.parse(String(event.data ?? "{}")) as {
               postId?: number;
               authorId?: number;
+              category?: string;
+              symbolTag?: string | null;
+              post?: unknown;
             };
             if (payload.postId && myCreatedPostIdsRef.current.has(payload.postId)) return;
-            if (payload.authorId && snapshot.memberId && payload.authorId === snapshot.memberId) {
-              return;
+            if (category && payload.category && payload.category !== category) return;
+            if (symbolTag && payload.symbolTag !== symbolTag) return;
+            if (payload.post) {
+              try {
+                const parsed = parseCommunityPost(payload.post);
+                setLatestCheckedItems(prev =>
+                  prev.some(item => item.id === parsed.id) ? prev : [parsed, ...prev],
+                );
+              } catch {
+                // Ignore malformed SSE post snapshot
+              }
             }
             setPendingNewPostsCount(prev => prev + 1);
           } catch {
@@ -891,10 +970,9 @@ export function CommunityBoard({
   }, [origin, session, snapshot, category, symbolTag]);
 
   async function handleLoadNewPosts() {
-    setCursorHistory([null]);
     if (latestCheckedItems.length > 0) {
       setPrependedPosts(prev => {
-        const existingIds = new Set([...prev, ...serverItems].map(p => p.id));
+        const existingIds = new Set([...prev, ...serverItems, ...extraPosts].map(p => p.id));
         const fresh = latestCheckedItems.filter(item => !existingIds.has(item.id));
         return [...fresh, ...prev];
       });
@@ -914,7 +992,7 @@ export function CommunityBoard({
         );
         if (checked.items.length > 0) {
           setPrependedPosts(prev => {
-            const existingIds = new Set([...prev, ...serverItems].map(p => p.id));
+            const existingIds = new Set([...prev, ...serverItems, ...extraPosts].map(p => p.id));
             const fresh = checked.items.filter(item => !existingIds.has(item.id));
             return [...fresh, ...prev];
           });
@@ -925,6 +1003,9 @@ export function CommunityBoard({
     }
     setPendingNewPostsCount(0);
     void postsQuery.refetch();
+    if (typeof window !== "undefined" && typeof window.scrollTo === "function") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
     feedTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -1048,7 +1129,7 @@ export function CommunityBoard({
                         value={category}
                         onChange={event => {
                           setCategory(event.currentTarget.value as "" | CommunityCategory);
-                          setCursorHistory([null]);
+                          resetFeedPagination();
                         }}
                         className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
                       >
@@ -1069,7 +1150,7 @@ export function CommunityBoard({
                         value={symbolTag}
                         onChange={event => {
                           setSymbolTag(event.currentTarget.value);
-                          setCursorHistory([null]);
+                          resetFeedPagination();
                         }}
                         className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
                       >
@@ -1092,7 +1173,7 @@ export function CommunityBoard({
                           const nextSort = event.currentTarget.value as "LATEST" | "POPULAR";
                           setSort(nextSort);
                           setV1Tab(nextSort === "POPULAR" ? "best" : "latest");
-                          setCursorHistory([null]);
+                          resetFeedPagination();
                         }}
                         className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
                       >
@@ -1159,18 +1240,18 @@ export function CommunityBoard({
               </div>
             )}
 
-            {/* 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 알약 팝업 (피드 전용) */}
+            {/* 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 토스트 팝업 (피드 전용, 레이아웃 자리 미차지) */}
             <div ref={feedTopRef} className="scroll-mt-24" />
             {!isDetailView && pendingNewPostsCount > 0 && (
               <div
-                className="sticky top-20 z-30 flex justify-center py-1"
+                className="pointer-events-none fixed left-1/2 top-20 z-40 -translate-x-1/2"
                 role="status"
                 aria-live="polite"
               >
                 <button
                   type="button"
                   onClick={() => void handleLoadNewPosts()}
-                  className="inline-flex items-center gap-2 rounded-full border border-blue-400 bg-[#0058FF] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+                  className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-blue-400 bg-[#0058FF] px-4 py-2 text-xs font-bold text-white shadow-lg transition-all hover:bg-blue-700"
                 >
                   <span aria-hidden="true">↑</span>
                   <span>새 게시글 보기</span>
@@ -1834,27 +1915,26 @@ export function CommunityBoard({
               })}
             </div>
 
-            {/* 페이지네이션 (피드 전용) */}
+            {/* 10개 단위 커서 기반 무한스크롤 센티넬 & 보조 더보기 버튼 (피드 전용) */}
             {!isDetailView && (
-              <div className="flex items-center justify-between pt-2">
-                {cursorHistory.length > 1 ? (
-                  <V1Button
-                    variant="white"
-                    size="sm"
-                    onClick={() => setCursorHistory(current => current.slice(0, -1))}
-                  >
-                    최신 목록으로
-                  </V1Button>
-                ) : (
-                  <span />
+              <div
+                ref={loadMoreSentinelRef}
+                data-infinite-scroll="community-sentinel"
+                className="flex flex-col items-center justify-center gap-2 pt-2"
+              >
+                {loadingMore && (
+                  <p role="status" className="text-xs font-bold text-gray-500">
+                    다음 게시글 10개를 불러오는 중…
+                  </p>
                 )}
-                {page?.hasNext && page.nextCursorId !== null && (
+                {hasNext && nextCursorId !== null && (
                   <V1Button
                     variant="white"
                     size="sm"
-                    onClick={() => setCursorHistory(current => [...current, page.nextCursorId])}
+                    disabled={loadingMore}
+                    onClick={() => void loadMorePosts()}
                   >
-                    이전 게시글 더보기
+                    {loadingMore ? "다음 게시글 10개를 불러오는 중…" : "이전 게시글 더보기"}
                   </V1Button>
                 )}
               </div>

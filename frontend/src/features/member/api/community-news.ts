@@ -2,6 +2,9 @@ import { ContentApiError, contentJson } from "./client";
 import type { MemberSession, MemberSnapshot } from "./session";
 
 export type NewsCategory = "CRYPTO" | "MACRO" | "ONCHAIN" | "REGULATION";
+export type NewsSection = "BREAKING" | "NEWSROOM";
+export type NewsSubCategory = "COIN_FLASH" | "ECONOMY_FLASH" | "CRYPTO" | "STOCKS" | "FX_RATES";
+export type NewsSentiment = "BULLISH" | "BEARISH" | "NEUTRAL";
 export type CommunityCategory = "MARKET" | "ANALYSIS" | "POSITION" | "FREE";
 export type CommunitySort = "LATEST" | "POPULAR";
 
@@ -26,10 +29,19 @@ export const SYMBOL_FILTER_TAGS = ["", "BTC", "ETH", "SOL", "XRP"] as const;
 export type NewsItem = {
   id: number;
   category: NewsCategory;
+  section?: NewsSection;
+  subCategory?: NewsSubCategory;
   title: string;
   summary: string;
   content: string;
   sourceName: string;
+  sourceUrl?: string | null;
+  thumbnailUrl?: string | null;
+  aiSummary?: string | null;
+  sentiment?: NewsSentiment;
+  bullCount?: number;
+  bearCount?: number;
+  viewCount?: number;
   symbolTag: string | null;
   publishedAt: string;
 };
@@ -38,6 +50,40 @@ export type NewsPage = {
   items: NewsItem[];
   hasNext: boolean;
   nextCursorId: number | null;
+};
+
+export type NewsReactionResult = {
+  newsId: number;
+  reaction: "BULL" | "BEAR" | string;
+  bullCount: number;
+  bearCount: number;
+  bullPct: number;
+  bearPct: number;
+};
+
+export type NewsKeywordIssueItem = {
+  keyword: string;
+  label: string;
+  articleCount: number;
+  sentiment: NewsSentiment;
+  articles: NewsItem[];
+};
+
+export type NewsSentimentSummary = {
+  totalBullVotes: number;
+  totalBearVotes: number;
+  bullPct: number;
+  bearPct: number;
+  dominantSentiment: NewsSentiment;
+};
+
+export type NewsHighlights = {
+  mustReadBreaking: NewsItem[];
+  popularByViews: NewsItem[];
+  popularByReactions: NewsItem[];
+  keywordIssues: NewsKeywordIssueItem[];
+  recommendedNewsroom: NewsItem[];
+  sentimentSummary: NewsSentimentSummary;
 };
 
 export type CommunityPostFile = {
@@ -184,13 +230,50 @@ export function parseNewsItem(value: unknown): NewsItem {
   const row = obj(value);
   const category = row.category;
   if (category !== "CRYPTO" && category !== "MACRO" && category !== "ONCHAIN" && category !== "REGULATION") return fail();
+  const rawSection = row.section;
+  const section: NewsSection =
+    rawSection === "BREAKING" || rawSection === "NEWSROOM" ? rawSection : "BREAKING";
+  const rawSub = row.subCategory;
+  const subCategory: NewsSubCategory =
+    rawSub === "COIN_FLASH" ||
+    rawSub === "ECONOMY_FLASH" ||
+    rawSub === "CRYPTO" ||
+    rawSub === "STOCKS" ||
+    rawSub === "FX_RATES"
+      ? rawSub
+      : category === "MACRO" || category === "REGULATION"
+        ? "ECONOMY_FLASH"
+        : "COIN_FLASH";
+  const rawSentiment = row.sentiment;
+  const sentiment: NewsSentiment =
+    rawSentiment === "BULLISH" || rawSentiment === "BEARISH" || rawSentiment === "NEUTRAL"
+      ? rawSentiment
+      : "NEUTRAL";
   return {
     id: posInt(row.id),
     category,
+    section,
+    subCategory,
     title: str(row.title, 300),
     summary: str(row.summary, 1000),
     content: str(row.content, 20000),
     sourceName: str(row.sourceName, 120),
+    sourceUrl:
+      typeof row.sourceUrl === "string" && row.sourceUrl.trim().length > 0
+        ? str(row.sourceUrl, 2000)
+        : null,
+    thumbnailUrl:
+      typeof row.thumbnailUrl === "string" && row.thumbnailUrl.trim().length > 0
+        ? str(row.thumbnailUrl, 2000)
+        : null,
+    aiSummary:
+      typeof row.aiSummary === "string" && row.aiSummary.trim().length > 0
+        ? str(row.aiSummary, 2000)
+        : null,
+    sentiment,
+    bullCount: typeof row.bullCount === "number" ? nonNegInt(row.bullCount) : 0,
+    bearCount: typeof row.bearCount === "number" ? nonNegInt(row.bearCount) : 0,
+    viewCount: typeof row.viewCount === "number" ? nonNegInt(row.viewCount) : 0,
     symbolTag: optStr(row.symbolTag, 20),
     publishedAt: iso(row.publishedAt),
   };
@@ -203,6 +286,69 @@ export function parseNewsPage(value: unknown): NewsPage {
     items: row.items.map(parseNewsItem),
     hasNext: row.hasNext,
     nextCursorId: row.nextCursorId === null || row.nextCursorId === undefined ? null : posInt(row.nextCursorId),
+  };
+}
+
+export function parseNewsReaction(value: unknown): NewsReactionResult {
+  const row = obj(value);
+  return {
+    newsId: posInt(row.newsId),
+    reaction: typeof row.reaction === "string" ? str(row.reaction, 20) : "BULL",
+    bullCount: nonNegInt(row.bullCount),
+    bearCount: nonNegInt(row.bearCount),
+    bullPct: typeof row.bullPct === "number" ? nonNegInt(row.bullPct) : 50,
+    bearPct: typeof row.bearPct === "number" ? nonNegInt(row.bearPct) : 50,
+  };
+}
+
+export function parseNewsHighlights(value: unknown): NewsHighlights {
+  const row = obj(value);
+  const parseList = (list: unknown): NewsItem[] =>
+    Array.isArray(list) ? list.map(parseNewsItem) : [];
+  const rawIssues = Array.isArray(row.keywordIssues) ? row.keywordIssues : [];
+  const keywordIssues: NewsKeywordIssueItem[] = rawIssues.map(item => {
+    const issue = obj(item);
+    const s = issue.sentiment;
+    const sentiment: NewsSentiment =
+      s === "BULLISH" || s === "BEARISH" || s === "NEUTRAL" ? s : "NEUTRAL";
+    const kw = str(issue.keyword, 60);
+    return {
+      keyword: kw,
+      label:
+        typeof issue.label === "string" && issue.label.length > 0
+          ? str(issue.label, 120)
+          : kw,
+      articleCount: typeof issue.articleCount === "number" ? nonNegInt(issue.articleCount) : 0,
+      sentiment,
+      articles: parseList(issue.articles),
+    };
+  });
+  const rawSummary =
+    row.sentimentSummary && typeof row.sentimentSummary === "object"
+      ? (row.sentimentSummary as Record<string, unknown>)
+      : {};
+  const dom = rawSummary.dominantSentiment;
+  const dominantSentiment: NewsSentiment =
+    dom === "BULLISH" || dom === "BEARISH" || dom === "NEUTRAL" ? dom : "NEUTRAL";
+  return {
+    mustReadBreaking: parseList(row.mustReadBreaking),
+    popularByViews: parseList(row.popularByViews),
+    popularByReactions: parseList(row.popularByReactions),
+    keywordIssues,
+    recommendedNewsroom: parseList(row.recommendedNewsroom),
+    sentimentSummary: {
+      totalBullVotes:
+        typeof rawSummary.totalBullVotes === "number"
+          ? nonNegInt(rawSummary.totalBullVotes)
+          : 0,
+      totalBearVotes:
+        typeof rawSummary.totalBearVotes === "number"
+          ? nonNegInt(rawSummary.totalBearVotes)
+          : 0,
+      bullPct: typeof rawSummary.bullPct === "number" ? nonNegInt(rawSummary.bullPct) : 50,
+      bearPct: typeof rawSummary.bearPct === "number" ? nonNegInt(rawSummary.bearPct) : 50,
+      dominantSentiment,
+    },
   };
 }
 
@@ -366,9 +512,21 @@ export function parseCommunityComments(value: unknown): CommunityCommentList {
   return { items: row.items.map(parseCommunityComment) };
 }
 
-export function newsPath(params: { category?: string; symbolTag?: string; keyword?: string; cursorId?: number | null; size?: number } = {}): string {
+export function newsPath(params: {
+  category?: string;
+  section?: NewsSection | string;
+  subCategory?: NewsSubCategory | string;
+  sort?: "LATEST" | "POPULAR";
+  symbolTag?: string;
+  keyword?: string;
+  cursorId?: number | null;
+  size?: number;
+} = {}): string {
   const search = new URLSearchParams();
   if (params.category) search.set("category", params.category);
+  if (params.section) search.set("section", params.section);
+  if (params.subCategory) search.set("subCategory", params.subCategory);
+  if (params.sort) search.set("sort", params.sort);
   if (params.symbolTag) search.set("symbolTag", params.symbolTag);
   if (params.keyword?.trim()) search.set("keyword", params.keyword.trim());
   if (params.cursorId) search.set("cursorId", String(params.cursorId));
