@@ -125,6 +125,7 @@ export type CommunityPost = {
   id: number;
   memberId: number;
   authorNickname: string;
+  authorProfileImgUrl?: string | null;
   authorWithdrawn: boolean;
   category: CommunityCategory;
   symbolTag: string | null;
@@ -182,6 +183,7 @@ export type CommunityComment = {
   postId: number;
   memberId: number;
   authorNickname: string;
+  authorProfileImgUrl?: string | null;
   authorWithdrawn: boolean;
   parentCommentId: number | null;
   targetCommentId?: number | null;
@@ -425,10 +427,12 @@ export function parseCommunityPost(value: unknown): CommunityPost {
   if (typeof row.authorWithdrawn !== "boolean" || typeof row.likedByMe !== "boolean" || typeof row.mine !== "boolean") return fail();
   const authorWithdrawn = row.authorWithdrawn;
   const authorNickname = authorWithdrawn ? "탈퇴한회원" : str(row.authorNickname, 40);
+  const authorProfileImgUrl = authorWithdrawn ? null : optStr(row.authorProfileImgUrl, 1000);
   return {
     id: posInt(row.id),
     memberId: posInt(row.memberId),
     authorNickname,
+    ...(row.authorProfileImgUrl !== undefined ? { authorProfileImgUrl } : {}),
     authorWithdrawn,
     category,
     symbolTag: optStr(row.symbolTag, 20),
@@ -513,12 +517,14 @@ export function parseCommunityComment(value: unknown): CommunityComment {
   if (typeof row.authorWithdrawn !== "boolean" || typeof row.mine !== "boolean") return fail();
   const authorWithdrawn = row.authorWithdrawn;
   const authorNickname = authorWithdrawn ? "탈퇴한회원" : str(row.authorNickname, 40);
+  const authorProfileImgUrl = authorWithdrawn ? null : optStr(row.authorProfileImgUrl, 1000);
   const deleted = typeof row.deleted === "boolean" ? row.deleted : false;
   return {
     id: posInt(row.id),
     postId: posInt(row.postId),
     memberId: posInt(row.memberId),
     authorNickname,
+    ...(row.authorProfileImgUrl !== undefined ? { authorProfileImgUrl } : {}),
     authorWithdrawn,
     parentCommentId: row.parentCommentId === null || row.parentCommentId === undefined ? null : posInt(row.parentCommentId),
     targetCommentId: row.targetCommentId === null || row.targetCommentId === undefined ? null : posInt(row.targetCommentId),

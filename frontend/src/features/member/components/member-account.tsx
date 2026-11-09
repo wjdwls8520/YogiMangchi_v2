@@ -11,7 +11,7 @@ import { useMember, MemberLogout } from "./member-provider";
 import { MemberShell, ProfileEditForm } from "./member-views";
 import { MemberWithdrawal } from "./member-withdrawal";
 import { MemberConsents } from "./member-consents";
-import { ProfileImageUploadSlot } from "./s3-upload-slot";
+import { ProfileImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
 
 export function MemberAccount() {
   const { session, snapshot } = useMember();
@@ -21,6 +21,8 @@ export function MemberAccount() {
   const [error, setError] = useState<string | null>(null);
   const active = useRef(false);
   const [requestError, setRequestError] = useState<ContentApiError | null>(null);
+  const [selectedProfileImage, setSelectedProfileImage] = useState<SelectedS3File | null>(null);
+  const [resetProfileImage, setResetProfileImage] = useState(false);
 
   const profile = useQuery({
     queryKey: ["member", "own", snapshot.memberId, snapshot.generation],
@@ -47,14 +49,46 @@ export function MemberAccount() {
     setMessage(null);
     setRequestError(null);
     try {
-      parseOwnProfile(
-        await session.request("/members/me/profile", {
-          method: "PATCH",
-          body: { ...(nicknameChanged ? { nickname } : {}), profileMessage },
-        }),
-        snapshot.memberId!,
-      );
+      if (selectedProfileImage?.rawFile) {
+        const formData = new FormData();
+        if (nicknameChanged) formData.append("nickname", nickname);
+        formData.append("profileMessage", profileMessage);
+        formData.append("profileImage", selectedProfileImage.rawFile);
+        parseOwnProfile(
+          await session.request("/members/me/profile", {
+            method: "PATCH",
+            body: formData,
+          }),
+          snapshot.memberId!,
+        );
+      } else if (resetProfileImage) {
+        parseOwnProfile(
+          await session.request("/members/me/profile", {
+            method: "PATCH",
+            body: {
+              ...(nicknameChanged ? { nickname } : {}),
+              profileMessage,
+              resetProfileImage: true,
+            },
+          }),
+          snapshot.memberId!,
+        );
+      } else {
+        parseOwnProfile(
+          await session.request("/members/me/profile", {
+            method: "PATCH",
+            body: { ...(nicknameChanged ? { nickname } : {}), profileMessage },
+          }),
+          snapshot.memberId!,
+        );
+      }
+      setSelectedProfileImage(null);
+      setResetProfileImage(false);
       await client.invalidateQueries({ queryKey: ["member"] });
+      await client.invalidateQueries({ queryKey: ["community"] });
+      await client.invalidateQueries({ queryKey: ["community-posts"] });
+      await client.invalidateQueries({ queryKey: ["community-post-detail"] });
+      await client.invalidateQueries({ queryKey: ["community-comments"] });
       setMessage("프로필을 저장했습니다.");
     } catch (err) {
       setError(contentMessage(err));
@@ -108,7 +142,22 @@ export function MemberAccount() {
           </div>
 
           <div className="flex flex-col items-center justify-center">
-            <ProfileImageUploadSlot slotName="account-profile-image" />
+            <ProfileImageUploadSlot
+              slotName="account-profile-image"
+              currentImageUrl={profile.data?.profileImgUrl ?? null}
+              memberId={profile.data?.memberId ?? snapshot.memberId}
+              nickname={profile.data?.nickname}
+              selectedFile={selectedProfileImage}
+              resetRequested={resetProfileImage}
+              onSelectFile={file => {
+                setSelectedProfileImage(file);
+                if (file) setResetProfileImage(false);
+              }}
+              onRequestReset={reset => {
+                setResetProfileImage(reset);
+                if (reset) setSelectedProfileImage(null);
+              }}
+            />
             <p className="mt-2 text-xs font-bold text-gray-400">
               앨범에서 사진 선택 또는 기본 이미지로 변경
             </p>

@@ -129,6 +129,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                 memberId,
                 nickname: displayNickname,
                 profileMsg: currentProfile?.profileMessage || "등록된 소개가 없습니다.",
+                profileImgUrl: currentProfile?.profileImgUrl,
                 role: "USER",
                 followerCount: summary.data?.followerCount ?? 0,
                 followingCount: summary.data?.followingCount ?? 0,
@@ -269,7 +270,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                 <ul className="member-follow-list divide-y divide-gray-100">
                   {entries?.map(entry => (
                     <li key={entry.memberId} className="flex items-center gap-3 py-2.5">
-                      <V1UserAvatar memberId={entry.memberId} nickname={entry.nickname} size="sm" />
+                      <V1UserAvatar src={entry.profileImgUrl} memberId={entry.memberId} nickname={entry.nickname} size="sm" />
                       <div className="min-w-0 flex-1">
                         <Link
                           href={`/members/${entry.memberId}`}

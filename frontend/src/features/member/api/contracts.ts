@@ -31,9 +31,25 @@ export function parseFlow(value: unknown) {
   return { status: data.status as "SIGNUP_REQUIRED" | "LOGIN_READY" | "WITHDRAWAL_PENDING", provider: data.provider as "GOOGLE" | "KAKAO",
     accountHint: separator > 0 ? `${email[0]}***${email.slice(separator)}` : "확인된 소셜 계정" };
 }
-export function parseProfile(value: unknown) {
+export function parseProfile(value: unknown): {
+  memberId: number;
+  nickname: string;
+  profileMessage: string;
+  profileImgUrl?: string | null;
+  createdAt: string;
+} {
   const data = row(value);
-  return { memberId: id(data.memberId), nickname: text(data.nickname, 16), profileMessage: text(data.profileMessage, 300, true), createdAt: instant(data.createdAt) };
+  const profileImgUrl =
+    data.profileImgUrl === null || data.profileImgUrl === undefined
+      ? null
+      : text(data.profileImgUrl, 1000, true) || null;
+  return {
+    memberId: id(data.memberId),
+    nickname: text(data.nickname, 16),
+    profileMessage: text(data.profileMessage, 300, true),
+    ...(data.profileImgUrl !== undefined ? { profileImgUrl } : {}),
+    createdAt: instant(data.createdAt),
+  };
 }
 export type MemberProfile = ReturnType<typeof parseProfile>;
 export function parseOwnProfile(value: unknown, memberId: number) {
@@ -54,7 +70,17 @@ export function parseFollowPage(value: unknown) {
   if (!Array.isArray(data.content) || data.content.length > 10) return invalid();
   const content = data.content.map(value => {
     const entry = row(value);
-    return { memberId: id(entry.memberId), nickname: text(entry.nickname, 16), profileMessage: text(entry.profileMessage, 300, true), followedAt: instant(entry.followedAt) };
+    const profileImgUrl =
+      entry.profileImgUrl === null || entry.profileImgUrl === undefined
+        ? null
+        : text(entry.profileImgUrl, 1000, true) || null;
+    return {
+      memberId: id(entry.memberId),
+      nickname: text(entry.nickname, 16),
+      profileMessage: text(entry.profileMessage, 300, true),
+      ...(entry.profileImgUrl !== undefined ? { profileImgUrl } : {}),
+      followedAt: instant(entry.followedAt),
+    };
   });
   if (new Set(content.map(entry => entry.memberId)).size !== content.length) return invalid();
   const hasNext = boolean(data.hasNext), nextCursorId = data.nextCursorId === null ? null : id(data.nextCursorId);

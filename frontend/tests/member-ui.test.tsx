@@ -401,6 +401,7 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
         id: 21,
         memberId: 7,
         authorNickname: "트레이더7",
+        authorProfileImgUrl: "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/7/avatar.png",
         authorWithdrawn: false,
         category: "POSITION",
         symbolTag: "BTC",
@@ -417,6 +418,7 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
         id: 20,
         memberId: 99,
         authorNickname: "옛날닉네임",
+        authorProfileImgUrl: "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/99/old.png",
         authorWithdrawn: true,
         category: "FREE",
         symbolTag: null,
@@ -490,6 +492,10 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     assert.match(html, /게시글 수정/);
     assert.match(html, /게시글 삭제/);
     assert.match(html, /href="\/members\/7">트레이더7<\/a>/);
+    assert.equal(postPage.items[0].authorProfileImgUrl, "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/7/avatar.png");
+    assert.equal(postPage.items[1].authorProfileImgUrl, null);
+    assert.match(html, /src="https:\/\/s3\.ap-northeast-2\.amazonaws\.com\/yogimangchi\/profile\/7\/avatar\.png"/);
+    assert.equal(html.includes("old.png"), false);
     assert.match(html, /<span class="member-note" data-withdrawn="true">탈퇴한회원<\/span>/);
     assert.equal(html.includes("옛날닉네임"), false);
     assert.equal(html.includes("/members/99"), false);

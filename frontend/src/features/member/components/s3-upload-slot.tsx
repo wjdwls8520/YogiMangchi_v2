@@ -15,7 +15,7 @@ export interface SelectedS3File {
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_GIF_BYTES = 3 * 1024 * 1024;
-const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"];
+const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const COMMUNITY_ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 function formatBytes(bytes: number): string {
@@ -74,16 +74,32 @@ export function ProfileImageUploadSlot({
   slotName,
   initialLabel = "기본 프로필 아바타",
   compact = false,
+  currentImageUrl = null,
+  memberId = null,
+  nickname,
+  selectedFile,
+  resetRequested = false,
+  onSelectFile,
+  onRequestReset,
 }: {
   slotName: "signup-profile-image" | "account-profile-image";
   initialLabel?: string;
   compact?: boolean;
+  currentImageUrl?: string | null;
+  memberId?: number | null;
+  nickname?: string;
+  selectedFile?: SelectedS3File | null;
+  resetRequested?: boolean;
+  onSelectFile?: (file: SelectedS3File | null) => void;
+  onRequestReset?: (reset: boolean) => void;
 }) {
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<SelectedS3File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+  const activeSelected = selectedFile !== undefined ? selectedFile : selected;
+  void memberId;
 
   function reportError(message: string) {
     setError(message);
@@ -103,7 +119,14 @@ export function ProfileImageUploadSlot({
     }
     if (!ALLOWED_MIME.includes(file.type)) {
       reportError(
-        `[${file.name}] 지원하지 않는 파일 형식입니다. JPG, PNG, WEBP 형식의 이미지만 등록할 수 있습니다.`,
+        `[${file.name}] 지원하지 않는 파일 형식입니다. JPG, PNG, WEBP, GIF 형식의 이미지만 등록할 수 있습니다.`,
+      );
+      event.target.value = "";
+      return;
+    }
+    if (file.type === "image/gif" && file.size > MAX_GIF_BYTES) {
+      reportError(
+        `[${file.name} (${formatBytes(file.size)})] GIF 움짤은 최대 3MB 이하만 첨부할 수 있습니다.`,
       );
       event.target.value = "";
       return;
@@ -115,28 +138,35 @@ export function ProfileImageUploadSlot({
       event.target.value = "";
       return;
     }
-    if (selected?.previewUrl.startsWith("blob:")) {
-      URL.revokeObjectURL(selected.previewUrl);
+    if (activeSelected?.previewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(activeSelected.previewUrl);
     }
     const previewUrl =
       typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
         ? URL.createObjectURL(file)
         : "";
-    setSelected({
+    const nextSelected: SelectedS3File = {
       id: `${file.name}-${file.size}`,
       name: file.name,
       sizeBytes: file.size,
       mimeType: file.type,
       previewUrl,
       rawFile: file,
-    });
+    };
+    setSelected(nextSelected);
+    onSelectFile?.(nextSelected);
+    onRequestReset?.(false);
   }
 
   function handleReset() {
-    if (selected?.previewUrl.startsWith("blob:")) {
-      URL.revokeObjectURL(selected.previewUrl);
+    if (activeSelected?.previewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(activeSelected.previewUrl);
     }
     setSelected(null);
+    onSelectFile?.(null);
+    if (currentImageUrl || onRequestReset) {
+      onRequestReset?.(true);
+    }
     setError(null);
     setModalError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -146,9 +176,12 @@ export function ProfileImageUploadSlot({
     <div className="ym-s3-profile-slot" data-s3-slot={slotName}>
       <div className="ym-s3-profile-row">
         <div className={`ym-avatar-frame ${compact ? "is-compact" : "is-large"}`} aria-label={initialLabel}>
-          {selected?.previewUrl ? (
+          {activeSelected?.previewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={selected.previewUrl} alt="선택한 프로필 미리보기" className="ym-avatar-img" />
+            <img src={activeSelected.previewUrl} alt="선택한 프로필 미리보기" className="ym-avatar-img" />
+          ) : currentImageUrl && !resetRequested ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={currentImageUrl} alt={`${nickname || "회원"} 현재 프로필 이미지`} className="ym-avatar-img" />
           ) : (
             <span className="ym-avatar-placeholder" aria-hidden="true">YM</span>
           )}
@@ -159,8 +192,8 @@ export function ProfileImageUploadSlot({
             readOnly
             className="myInput ym-file-display"
             aria-label="선택된 프로필 이미지 파일명"
-            value={selected ? `${selected.name} (${formatBytes(selected.sizeBytes)})` : ""}
-            placeholder="프로필 이미지 선택 (JPG, PNG, WEBP · 최대 5MB)"
+            value={activeSelected ? `${activeSelected.name} (${formatBytes(activeSelected.sizeBytes)})` : ""}
+            placeholder="프로필 이미지 선택 (JPG, PNG, WEBP, GIF · 최대 5MB)"
           />
           <label htmlFor={inputId} className="ym-file-trigger">
             파일 선택
@@ -169,11 +202,11 @@ export function ProfileImageUploadSlot({
             ref={fileInputRef}
             id={inputId}
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/png,image/webp,image/gif"
             className="sr-only"
             onChange={handleFileChange}
           />
-          {selected && (
+          {(activeSelected || (Boolean(currentImageUrl) && !resetRequested)) && (
             <button type="button" className="ym-file-reset" onClick={handleReset}>
               기본 이미지로 초기화
             </button>
@@ -181,7 +214,7 @@ export function ProfileImageUploadSlot({
         </div>
       </div>
       <small className="ym-helper-violet">
-        JPG, PNG, WEBP · 최대 5MB · S3 스토리지 업로드 연동 준비 완료 ({selected ? "프리뷰 적용됨" : "선택 사항"})
+        JPG, PNG, WEBP, GIF · 최대 5MB · S3 스토리지 업로드 연동 준비 완료 ({activeSelected ? "프리뷰 적용됨" : "선택 사항"})
       </small>
       {error && (
         <div
