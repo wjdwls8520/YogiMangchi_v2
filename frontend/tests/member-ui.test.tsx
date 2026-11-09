@@ -347,18 +347,33 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     assert.match(html, /BTCUSDT 무기한/);
     assert.match(html, /📊 포지션 공유하기/);
     assert.match(html, /인기글 \(POPULAR\)/);
-    assert.match(html, /새 게시글 보기/); assert.match(html, /새 글 작성/);
-    assert.match(html, /게시글 등록/);
+    assert.match(html, /새 게시글 보기/);
+    assert.equal(html.includes('id="community-inline-write-form"'), false);
+    assert.equal(html.includes('aria-label="댓글 및 대댓글"'), false);
     assert.match(html, /BTC 10배 롱 포지션 진입 및 손절가 공유/);
     assert.match(html, /좋아요 5/);
+    assert.match(html, /댓글 2/);
+    assert.match(html, /더보기 →/);
+    assert.match(html, /href="\/community\/all\/21"/);
     assert.match(html, /게시글 수정/);
     assert.match(html, /게시글 삭제/);
     assert.match(html, /href="\/members\/7">트레이더7<\/a>/);
     assert.match(html, /<span class="member-note" data-withdrawn="true">탈퇴한회원<\/span>/);
     assert.equal(html.includes("옛날닉네임"), false);
     assert.equal(html.includes("/members/99"), false);
-    assert.match(html, /좋은 관점이네요\./);
-    assert.match(html, /↳ <a href="\/members\/7">트레이더7<\/a>: 감사합니다! 리스크 관리가 최우선입니다\./);
+
+    const detailHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard
+          initialPage={postPage}
+          initialComments={{ 21: commentList.items }}
+          highlightPostId={21}
+        />
+      </MemberProvider>,
+    );
+    assert.match(detailHtml, /커뮤니티 피드로 돌아가기/);
+    assert.match(detailHtml, /좋은 관점이네요\./);
+    assert.match(detailHtml, /↳ <a href="\/members\/7">트레이더7<\/a>: 감사합니다! 리스크 관리가 최우선입니다\./);
   } finally {
     client.clear();
   }
@@ -579,6 +594,7 @@ test("Community API binding supports FormData multipart, S3 files, sharedPositio
             nextCursorId: null,
           }}
           initialComments={{ 77: commentsWithDeletedAndMention.items }}
+          highlightPostId={77}
         />
       </MemberProvider>,
     );

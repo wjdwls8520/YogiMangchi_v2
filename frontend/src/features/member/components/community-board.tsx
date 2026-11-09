@@ -258,9 +258,7 @@ export function CommunityBoard({
   const [cursorHistory, setCursorHistory] = useState<Array<number | null>>([null]);
   const currentCursorId = cursorHistory[cursorHistory.length - 1] ?? null;
 
-  const [openPostId, setOpenPostId] = useState<number | null>(
-    highlightPostId ?? initialPage?.items[0]?.id ?? null,
-  );
+  const isDetailView = typeof highlightPostId === "number" && Number.isFinite(highlightPostId);
   const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
   const [editDeleteFileIds, setEditDeleteFileIds] = useState<number[]>([]);
   const [editNewImages, setEditNewImages] = useState<SelectedS3File[]>([]);
@@ -292,16 +290,10 @@ export function CommunityBoard({
   const [selectedReportReason, setSelectedReportReason] = useState<string>(
     V1_REPORT_REASONS[0].description,
   );
-  const [attachedImages, setAttachedImages] = useState<SelectedS3File[]>([]);
   const [modalImages, setModalImages] = useState<SelectedS3File[]>([]);
   const [contestSeason, setContestSeason] = useState("SEASON_1");
 
-  // 인라인 & 모달 글쓰기 포지션 공유 상태
-  const [inlineCategory, setInlineCategory] = useState<CommunityCategory>("ANALYSIS");
-  const [inlineSymbolTag, setInlineSymbolTag] = useState<string>("BTC");
-  const [inlinePositionId, setInlinePositionId] = useState<string>("POS_BTC_LONG_10X");
-  const [inlineShowPnlAmount, setInlineShowPnlAmount] = useState<boolean>(true);
-
+  // 모달 글쓰기 포지션 공유 상태
   const [modalCategory, setModalCategory] = useState<CommunityCategory>(() =>
     initialSharePos ? "POSITION" : "FREE",
   );
@@ -348,7 +340,27 @@ export function CommunityBoard({
     initialData: isDefaultQuery ? initialPage : undefined,
   });
 
-  const activePostId = openPostId;
+  const initialDetailPost =
+    isDetailView && initialPage
+      ? initialPage.items.find(item => item.id === highlightPostId)
+      : undefined;
+
+  const detailPostQuery = useQuery({
+    queryKey: ["community-post-detail", origin, highlightPostId, snapshot.generation],
+    enabled: isDetailView,
+    queryFn: async () =>
+      parseCommunityPost(
+        await readCommunityOrPublic(
+          origin,
+          session,
+          snapshot,
+          `/community/posts/${highlightPostId!}`,
+        ),
+      ),
+    initialData: initialDetailPost,
+  });
+
+  const activePostId = isDetailView ? highlightPostId : null;
   const commentsQuery = useQuery({
     queryKey: ["community-comments", origin, activePostId, snapshot.generation],
     enabled: activePostId !== null,
@@ -429,9 +441,9 @@ export function CommunityBoard({
     onSuccess: created => {
       myCreatedPostIdsRef.current.add(created.id);
       setFeedback("게시글이 등록되었습니다.");
-      setOpenPostId(created.id);
       setWriteModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
     onError: error => setFeedback(contentMessage(error)),
   });
@@ -496,6 +508,7 @@ export function CommunityBoard({
       setEditNewImages([]);
       setFeedback("게시글이 수정되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
     onError: error => setFeedback(contentMessage(error)),
   });
@@ -506,6 +519,7 @@ export function CommunityBoard({
     onSuccess: () => {
       setFeedback("게시글이 삭제되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
     onError: error => setFeedback(contentMessage(error)),
   });
@@ -519,6 +533,7 @@ export function CommunityBoard({
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
     onError: error => setFeedback(contentMessage(error)),
   });
@@ -563,6 +578,7 @@ export function CommunityBoard({
       );
       setReportTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
       if (variables.postId) {
         void queryClient.invalidateQueries({
           queryKey: ["community-comments", origin, variables.postId],
@@ -591,6 +607,7 @@ export function CommunityBoard({
         `${variables.type === "POST" ? "게시글" : "댓글"} #${variables.id} 신고가 취소되었습니다.`,
       );
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
       if (variables.postId) {
         void queryClient.invalidateQueries({
           queryKey: ["community-comments", origin, variables.postId],
@@ -633,6 +650,7 @@ export function CommunityBoard({
         queryKey: ["community-comments", origin, variables.postId],
       });
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
     onError: error => setFeedback(contentMessage(error)),
   });
@@ -669,6 +687,7 @@ export function CommunityBoard({
         queryKey: ["community-comments", origin, variables.postId],
       });
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
+      void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
     onError: error => setFeedback(contentMessage(error)),
   });
@@ -694,7 +713,6 @@ export function CommunityBoard({
     event.preventDefault();
     if (!requireReadyMember()) return;
     const form = event.currentTarget;
-    const isModalForm = form.dataset.formSource === "modal";
     const data = new FormData(form);
     const sharedPositionId = String(data.get("sharedPositionId") ?? "");
     const showPnlAmount = data.get("showPnlAmount") !== null;
@@ -720,8 +738,6 @@ export function CommunityBoard({
         }
       : null;
 
-    const selectedFiles = isModalForm ? modalImages : attachedImages;
-
     createPostMutation.mutate(
       {
         category: postCategory,
@@ -729,7 +745,7 @@ export function CommunityBoard({
         title,
         content,
         sharedPosition: sharedPositionPayload,
-        files: selectedFiles,
+        files: modalImages,
       },
       {
         onSuccess: created => {
@@ -742,11 +758,7 @@ export function CommunityBoard({
               },
             }));
           }
-          if (isModalForm) {
-            setModalImages([]);
-          } else {
-            setAttachedImages([]);
-          }
+          setModalImages([]);
           form.reset();
         },
       },
@@ -927,10 +939,24 @@ export function CommunityBoard({
     }
   }
 
-  const inlineSelectedPosition =
-    SHAREABLE_POSITIONS.find(pos => pos.id === inlinePositionId) ?? null;
   const modalSelectedPosition =
     SHAREABLE_POSITIONS.find(pos => pos.id === modalPositionId) ?? null;
+
+  const matchedInItems = isDetailView
+    ? items.find(item => item.id === highlightPostId) ?? null
+    : null;
+  const detailPost = detailPostQuery.data ?? matchedInItems;
+  const displayedItems = isDetailView ? (detailPost ? [detailPost] : []) : items;
+  const isLoadingPosts = isDetailView
+    ? !detailPost && (detailPostQuery.isLoading || postsQuery.isLoading)
+    : postsQuery.isLoading;
+  const loadError = isDetailView
+    ? !detailPost && detailPostQuery.isError
+      ? detailPostQuery.error
+      : null
+    : postsQuery.isError
+      ? postsQuery.error
+      : null;
 
   return (
     <MemberShell
@@ -981,247 +1007,120 @@ export function CommunityBoard({
         </div>
 
         <div className="lg:flex lg:items-start lg:gap-14">
-          {/* 좌측/중앙: CommunityTabs + 필터 + 인라인/모달 작성 + CommunityItem 리스트 */}
+          {/* 좌측/중앙: CommunityTabs + 필터 + CommunityItem 피드 또는 단건 상세 */}
           <div className="min-w-0 flex-1 space-y-6">
-            {/* V1 CommunityTabs (전체글 | 주간 인기글 | 최신글) */}
-            <div className="rounded-2xl border border-gray-200 bg-white px-4 pt-2 pb-4">
-              <V1Tabs
-                tabs={[
-                  { label: "전체글", value: "all" },
-                  { label: "주간 인기글", value: "best" },
-                  { label: "최신글", value: "latest" },
-                ]}
-                activeTab={v1Tab}
-                onChange={handleV1TabChange}
-                className="mb-4"
-              />
-
-              {/* 카테고리 · 종목 · 정렬 셀렉트박스 필터 (글쓰기 팝업 스타일과 통일) */}
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                  <label className="block">
-                    <span className="mb-1 block text-[11px] font-bold text-gray-500">
-                      카테고리
-                    </span>
-                    <select
-                      aria-label="카테고리 필터"
-                      value={category}
-                      onChange={event => {
-                        setCategory(event.currentTarget.value as "" | CommunityCategory);
-                        setCursorHistory([null]);
-                      }}
-                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-                    >
-                      {COMMUNITY_CATEGORIES.map(item => (
-                        <option key={item.key || "ALL_CAT"} value={item.key}>
-                          {item.key ? `${item.label} (${item.key})` : "전체 카테고리"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1 block text-[11px] font-bold text-gray-500">
-                      연관 선물 종목
-                    </span>
-                    <select
-                      aria-label="종목 태그 필터"
-                      value={symbolTag}
-                      onChange={event => {
-                        setSymbolTag(event.currentTarget.value);
-                        setCursorHistory([null]);
-                      }}
-                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-                    >
-                      {SYMBOL_FILTER_TAGS.map(symbol => (
-                        <option key={symbol || "ALL_SYM"} value={symbol}>
-                          {symbol ? `#${symbol} (${symbol}USDT)` : "전체 종목"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1 block text-[11px] font-bold text-gray-500">
-                      정렬 기준
-                    </span>
-                    <select
-                      aria-label="정렬 선택"
-                      value={sort}
-                      onChange={event => {
-                        const nextSort = event.currentTarget.value as "LATEST" | "POPULAR";
-                        setSort(nextSort);
-                        setV1Tab(nextSort === "POPULAR" ? "best" : "latest");
-                        setCursorHistory([null]);
-                      }}
-                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-                    >
-                      <option value="LATEST">최신글 (LATEST)</option>
-                      <option value="POPULAR">인기글 (POPULAR)</option>
-                    </select>
-                  </label>
-                </div>
-
-                <form className="flex gap-2" onSubmit={handleSearch}>
-                  <label className="flex-1">
-                    <span className="sr-only">커뮤니티 검색어</span>
-                    <input
-                      type="search"
-                      name="keyword"
-                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-medium text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
-                      value={searchInput}
-                      onChange={event => setSearchInput(event.currentTarget.value)}
-                      placeholder="제목·본문 키워드 검색 (예: 롱, 손절, ETF)"
-                    />
-                  </label>
-                  <V1Button type="submit" variant="blue" size="sm">
-                    검색
-                  </V1Button>
-                </form>
+            {isDetailView ? (
+              <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white px-5 py-3.5">
+                <Link
+                  href={`/community/${v1Tab}`}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-700 hover:text-[#0058FF]"
+                >
+                  <span aria-hidden="true">←</span>
+                  <span>커뮤니티 피드로 돌아가기</span>
+                </Link>
+                <span className="text-xs font-bold text-gray-400">
+                  게시글 상세 #{highlightPostId}
+                </span>
               </div>
-            </div>
-
-            {/* 인라인 새 글 작성 카드 */}
-            <section
-              className="card rounded-2xl border border-gray-200 bg-white p-6"
-              aria-labelledby="community-write-heading"
-            >
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <h2 id="community-write-heading" className="text-base font-black text-gray-900">
-                  새 글 작성
-                </h2>
-                {inlineSelectedPosition && (
-                  <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-gray-600">
-                    <input
-                      type="checkbox"
-                      name="showPnlAmount"
-                      form="community-inline-write-form"
-                      checked={inlineShowPnlAmount}
-                      onChange={event => setInlineShowPnlAmount(event.currentTarget.checked)}
-                    />
-                    <span>평가손익 금액(USDT) 함께 공개</span>
-                  </label>
-                )}
-              </div>
-
-              <form
-                id="community-inline-write-form"
-                data-form-source="inline"
-                className="space-y-4"
-                onSubmit={handleCreatePost}
-              >
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-bold text-gray-700">카테고리</span>
-                    <select
-                      name="category"
-                      value={inlineCategory}
-                      onChange={event =>
-                        setInlineCategory(event.currentTarget.value as CommunityCategory)
-                      }
-                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-                    >
-                      {SELECTABLE_CATEGORIES.map(item => (
-                        <option key={item} value={item}>
-                          {communityCategoryLabel(item)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-bold text-gray-700">연관 선물 종목</span>
-                    <select
-                      name="symbolTag"
-                      value={inlineSymbolTag}
-                      onChange={event => setInlineSymbolTag(event.currentTarget.value)}
-                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-                    >
-                      <option value="">종목 선택 안 함</option>
-                      {SELECTABLE_SYMBOLS.map(symbol => (
-                        <option key={symbol} value={symbol}>
-                          {symbol}USDT
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-bold text-gray-700">
-                      내 포지션 공유 첨부 (선택)
-                    </span>
-                    <select
-                      name="sharedPositionId"
-                      aria-label="포지션 공유 선택"
-                      value={inlinePositionId}
-                      onChange={event => {
-                        const nextId = event.currentTarget.value;
-                        setInlinePositionId(nextId);
-                        const matched = SHAREABLE_POSITIONS.find(pos => pos.id === nextId);
-                        if (matched) {
-                          setInlineCategory("POSITION");
-                          setInlineSymbolTag(matched.symbol);
-                        }
-                      }}
-                      className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-                    >
-                      <option value="">포지션 첨부 안 함</option>
-                      {SHAREABLE_POSITIONS.map(pos => (
-                        <option key={pos.id} value={pos.id}>
-                          {pos.symbol}USDT {pos.leverage}x {pos.side} ({pos.roePct})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                {inlineSelectedPosition && (
-                  <SharedPositionCard
-                    snapshot={inlineSelectedPosition}
-                    showPnlAmount={inlineShowPnlAmount}
-                  />
-                )}
-
-                <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-gray-700">제목</span>
-                  <input
-                    name="title"
-                    className="h-11 w-full rounded-xl border border-gray-300 bg-white px-4 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
-                    required
-                    maxLength={120}
-                    placeholder="제목을 입력해주세요 (최대 50~120자)"
-                  />
-                </label>
-
-                <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-gray-700">본문</span>
-                  <textarea
-                    name="content"
-                    className="w-full rounded-xl border border-gray-300 bg-white p-4 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
-                    required
-                    maxLength={4000}
-                    rows={3}
-                    placeholder="자유롭게 이야기를 나눠보세요. (타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다.)"
-                  />
-                </label>
-
-                <CommunityImageUploadSlot
-                  files={attachedImages}
-                  onChange={setAttachedImages}
+            ) : (
+              /* V1 CommunityTabs (전체글 | 주간 인기글 | 최신글) */
+              <div className="rounded-2xl border border-gray-200 bg-white px-4 pt-2 pb-4">
+                <V1Tabs
+                  tabs={[
+                    { label: "전체글", value: "all" },
+                    { label: "주간 인기글", value: "best" },
+                    { label: "최신글", value: "latest" },
+                  ]}
+                  activeTab={v1Tab}
+                  onChange={handleV1TabChange}
+                  className="mb-4"
                 />
 
-                <div className="flex items-center justify-between pt-2">
-                  <span className="text-xs font-medium text-gray-400">
-                    {attachedImages.length > 0 ? `첨부 이미지 ${attachedImages.length}장 준비됨` : "이미지는 최대 4장까지 첨부 가능합니다."}
-                  </span>
-                  <button
-                    className="member-primary login-button inline-flex h-11 items-center justify-center rounded-xl bg-[#0058FF] px-6 text-sm font-bold text-white hover:bg-blue-700"
-                    type="submit"
-                    disabled={createPostMutation.isPending}
-                  >
-                    {createPostMutation.isPending ? "등록 중…" : "게시글 등록"}
-                  </button>
+                {/* 카테고리 · 종목 · 정렬 셀렉트박스 필터 (글쓰기 팝업 스타일과 통일) */}
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] font-bold text-gray-500">
+                        카테고리
+                      </span>
+                      <select
+                        aria-label="카테고리 필터"
+                        value={category}
+                        onChange={event => {
+                          setCategory(event.currentTarget.value as "" | CommunityCategory);
+                          setCursorHistory([null]);
+                        }}
+                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                      >
+                        {COMMUNITY_CATEGORIES.map(item => (
+                          <option key={item.key || "ALL_CAT"} value={item.key}>
+                            {item.key ? `${item.label} (${item.key})` : "전체 카테고리"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] font-bold text-gray-500">
+                        연관 선물 종목
+                      </span>
+                      <select
+                        aria-label="종목 태그 필터"
+                        value={symbolTag}
+                        onChange={event => {
+                          setSymbolTag(event.currentTarget.value);
+                          setCursorHistory([null]);
+                        }}
+                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                      >
+                        {SYMBOL_FILTER_TAGS.map(symbol => (
+                          <option key={symbol || "ALL_SYM"} value={symbol}>
+                            {symbol ? `#${symbol} (${symbol}USDT)` : "전체 종목"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] font-bold text-gray-500">
+                        정렬 기준
+                      </span>
+                      <select
+                        aria-label="정렬 선택"
+                        value={sort}
+                        onChange={event => {
+                          const nextSort = event.currentTarget.value as "LATEST" | "POPULAR";
+                          setSort(nextSort);
+                          setV1Tab(nextSort === "POPULAR" ? "best" : "latest");
+                          setCursorHistory([null]);
+                        }}
+                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                      >
+                        <option value="LATEST">최신글 (LATEST)</option>
+                        <option value="POPULAR">인기글 (POPULAR)</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <form className="flex gap-2" onSubmit={handleSearch}>
+                    <label className="flex-1">
+                      <span className="sr-only">커뮤니티 검색어</span>
+                      <input
+                        type="search"
+                        name="keyword"
+                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-medium text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
+                        value={searchInput}
+                        onChange={event => setSearchInput(event.currentTarget.value)}
+                        placeholder="제목·본문 키워드 검색 (예: 롱, 손절, ETF)"
+                      />
+                    </label>
+                    <V1Button type="submit" variant="blue" size="sm">
+                      검색
+                    </V1Button>
+                  </form>
                 </div>
-              </form>
-            </section>
+              </div>
+            )}
 
             {feedback && (
               <div
@@ -1232,35 +1131,37 @@ export function CommunityBoard({
               </div>
             )}
 
-            {postsQuery.isLoading && (
+            {isLoadingPosts && (
               <div className="card rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-500" role="status">
                 커뮤니티 게시글을 불러오는 중입니다…
               </div>
             )}
 
-            {postsQuery.isError && (
+            {loadError && (
               <div className="card rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-600" role="alert">
-                <p>게시글 목록을 불러오지 못했습니다. ({contentMessage(postsQuery.error)})</p>
+                <p>게시글을 불러오지 못했습니다. ({contentMessage(loadError)})</p>
                 <V1Button
                   variant="white"
                   size="sm"
                   className="mt-3"
-                  onClick={() => void postsQuery.refetch()}
+                  onClick={() =>
+                    void (isDetailView ? detailPostQuery.refetch() : postsQuery.refetch())
+                  }
                 >
                   다시 시도
                 </V1Button>
               </div>
             )}
 
-            {items.length === 0 && !postsQuery.isLoading && !postsQuery.isError && (
+            {displayedItems.length === 0 && !isLoadingPosts && !loadError && (
               <div className="card rounded-2xl border border-gray-200 bg-white py-16 text-center text-sm text-gray-500">
                 조건에 맞는 게시글이 없습니다. 첫 번째 관점을 남겨보세요!
               </div>
             )}
 
-            {/* 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 알약 팝업 */}
+            {/* 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 알약 팝업 (피드 전용) */}
             <div ref={feedTopRef} className="scroll-mt-24" />
-            {pendingNewPostsCount > 0 && (
+            {!isDetailView && pendingNewPostsCount > 0 && (
               <div
                 className="sticky top-20 z-30 flex justify-center py-1"
                 role="status"
@@ -1282,8 +1183,8 @@ export function CommunityBoard({
 
             {/* V1 CommunityItem 카드 스트림 */}
             <div className="space-y-4">
-              {items.map(post => {
-                const isOpen = activePostId === post.id;
+              {displayedItems.map(post => {
+                const isOpen = isDetailView && activePostId === post.id;
                 const isEditing = editingPost?.id === post.id;
 
                 return (
@@ -1480,14 +1381,25 @@ export function CommunityBoard({
                       </form>
                     ) : (
                       <div className="mt-3">
-                        <Link href={`/community/${v1Tab}/${post.id}`} className="group block">
-                          <h3 className="text-lg font-bold text-gray-900 group-hover:text-[#0058FF]">
-                            {post.title}
-                          </h3>
-                        </Link>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
-                          {post.content}
-                        </p>
+                        {isDetailView ? (
+                          <div>
+                            <h3 className="text-xl font-bold text-gray-900">
+                              {post.title}
+                            </h3>
+                            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
+                              {post.content}
+                            </p>
+                          </div>
+                        ) : (
+                          <Link href={`/community/${v1Tab}/${post.id}`} className="group block">
+                            <h3 className="text-lg font-bold text-gray-900 group-hover:text-[#0058FF]">
+                              {post.title}
+                            </h3>
+                            <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
+                              {post.content}
+                            </p>
+                          </Link>
+                        )}
                         {(() => {
                           if (post.sharedPosition) {
                             return (
@@ -1543,7 +1455,7 @@ export function CommunityBoard({
                       </div>
                     )}
 
-                    {/* 하단: V1 액션 바 (LikeButton + BubbleButton + 상세보기) */}
+                    {/* 하단: V1 액션 바 (LikeButton + BubbleButton + 더보기) */}
                     <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
                       <div className="flex items-center gap-3">
                         <button
@@ -1562,27 +1474,42 @@ export function CommunityBoard({
                           <span>좋아요 {post.likeCount}</span>
                         </button>
 
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100"
-                          onClick={() => setOpenPostId(isOpen ? null : post.id)}
-                        >
-                          <span>💬</span>
-                          <span>{isOpen ? `댓글 접기 (${post.commentCount})` : `댓글 ${post.commentCount}`}</span>
-                        </button>
+                        {isDetailView ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-1.5 text-xs font-bold text-[#0058FF]">
+                            <span>💬</span>
+                            <span>댓글 {post.commentCount}</span>
+                          </span>
+                        ) : (
+                          <Link
+                            href={`/community/${v1Tab}/${post.id}`}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100"
+                          >
+                            <span>💬</span>
+                            <span>댓글 {post.commentCount}</span>
+                          </Link>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <Link
-                          href={`/community/${v1Tab}/${post.id}`}
-                          className="text-xs font-bold text-gray-400 hover:text-gray-700"
-                        >
-                          상세보기
-                        </Link>
+                        {isDetailView ? (
+                          <Link
+                            href={`/community/${v1Tab}`}
+                            className="text-xs font-bold text-gray-400 hover:text-gray-700"
+                          >
+                            목록으로
+                          </Link>
+                        ) : (
+                          <Link
+                            href={`/community/${v1Tab}/${post.id}`}
+                            className="text-xs font-bold text-gray-400 hover:text-gray-700"
+                          >
+                            더보기 →
+                          </Link>
+                        )}
                       </div>
                     </div>
 
-                    {/* V1 CommentContainer & CommentForm */}
+                    {/* V1 CommentContainer & CommentForm (상세페이지 전용) */}
                     {isOpen && (
                       <section
                         className="mt-4 space-y-4 border-t border-gray-100 pt-4"
@@ -1907,29 +1834,31 @@ export function CommunityBoard({
               })}
             </div>
 
-            {/* 페이지네이션 */}
-            <div className="flex items-center justify-between pt-2">
-              {cursorHistory.length > 1 ? (
-                <V1Button
-                  variant="white"
-                  size="sm"
-                  onClick={() => setCursorHistory(current => current.slice(0, -1))}
-                >
-                  최신 목록으로
-                </V1Button>
-              ) : (
-                <span />
-              )}
-              {page?.hasNext && page.nextCursorId !== null && (
-                <V1Button
-                  variant="white"
-                  size="sm"
-                  onClick={() => setCursorHistory(current => [...current, page.nextCursorId])}
-                >
-                  이전 게시글 더보기
-                </V1Button>
-              )}
-            </div>
+            {/* 페이지네이션 (피드 전용) */}
+            {!isDetailView && (
+              <div className="flex items-center justify-between pt-2">
+                {cursorHistory.length > 1 ? (
+                  <V1Button
+                    variant="white"
+                    size="sm"
+                    onClick={() => setCursorHistory(current => current.slice(0, -1))}
+                  >
+                    최신 목록으로
+                  </V1Button>
+                ) : (
+                  <span />
+                )}
+                {page?.hasNext && page.nextCursorId !== null && (
+                  <V1Button
+                    variant="white"
+                    size="sm"
+                    onClick={() => setCursorHistory(current => [...current, page.nextCursorId])}
+                  >
+                    이전 게시글 더보기
+                  </V1Button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 우측 사이드바: V1 대회투자 TOP5 (Top5.tsx 100% 카피) */}
