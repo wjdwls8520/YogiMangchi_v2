@@ -348,7 +348,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         mvc.perform(get("/api/v1/community/ux/subscribe/feed"))
                 .andExpect(status().isOk());
 
-        // 3. Reject video/* upload and oversized GIF (>3MB), but allow small GIF (<=3MB, e.g. 1KB)
+        // 3. Reject video/* upload, oversized GIF (>3MB), and oversized image (>5MB), but allow small GIF (<=3MB, e.g. 1KB)
         var videoFile = new MockMultipartFile("files", "clip.mp4", "video/mp4", new byte[]{1, 2, 3, 4});
         mvc.perform(multipart("/api/v1/community/posts")
                         .file(videoFile)
@@ -357,7 +357,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                         .param("content", "video/* 포맷은 업로드할 수 없습니다.")
                         .header("Authorization", authorBearer))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+                .andExpect(jsonPath("$.code").value("FILE_VIDEO_NOT_ALLOWED"));
 
         var oversizedGifFile = new MockMultipartFile(
                 "files", "huge-anim.gif", "image/gif", new byte[3 * 1024 * 1024 + 1024]);
@@ -368,7 +368,18 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                         .param("content", "3MB 초과 GIF 파일은 업로드할 수 없습니다.")
                         .header("Authorization", authorBearer))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+                .andExpect(jsonPath("$.code").value("GIF_FILE_TOO_LARGE"));
+
+        var oversizedPngFile = new MockMultipartFile(
+                "files", "huge-chart.png", "image/png", new byte[5 * 1024 * 1024 + 1024]);
+        mvc.perform(multipart("/api/v1/community/posts")
+                        .file(oversizedPngFile)
+                        .param("category", "POSITION")
+                        .param("title", "대용량 일반 이미지 거절 테스트")
+                        .param("content", "5MB 초과 일반 이미지는 업로드할 수 없습니다.")
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("IMAGE_FILE_TOO_LARGE"));
 
         var smallGifFile = new MockMultipartFile("files", "crash-meme.gif", "image/gif", new byte[1024]);
         var gifCreatedBody = mvc.perform(multipart("/api/v1/community/posts")

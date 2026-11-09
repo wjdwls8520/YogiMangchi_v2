@@ -104,7 +104,7 @@ public class CommunityS3Service {
             return List.of();
         }
         if (existingRemainingCount + nonEmpty.size() > MAX_POST_IMAGE_COUNT) {
-            throw invalidRequest();
+            throw badRequest("FILE_COUNT_EXCEEDED");
         }
 
         long totalSize = 0L;
@@ -112,7 +112,7 @@ public class CommunityS3Service {
             validateImageFile(file);
             totalSize += file.getSize();
             if (totalSize > MAX_TOTAL_FILE_SIZE) {
-                throw invalidRequest();
+                throw badRequest("FILE_TOTAL_SIZE_EXCEEDED");
             }
         }
 
@@ -144,18 +144,35 @@ public class CommunityS3Service {
         }
         String contentType = file.getContentType();
         if (contentType == null) {
-            throw invalidRequest();
+            throw badRequest("FILE_TYPE_NOT_ALLOWED");
         }
         String normalizedType = normalizeMimeType(contentType);
-        if (normalizedType.startsWith("video/") || !ALLOWED_IMAGE_TYPES.contains(normalizedType)) {
-            throw invalidRequest();
+        if (normalizedType.startsWith("video/")) {
+            throw badRequest("FILE_VIDEO_NOT_ALLOWED");
+        }
+        if (!ALLOWED_IMAGE_TYPES.contains(normalizedType)) {
+            throw badRequest("FILE_TYPE_NOT_ALLOWED");
+        }
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename != null && !originalFilename.isBlank()) {
+            String sanitized = sanitizeOriginalName(originalFilename);
+            int dot = sanitized.lastIndexOf('.');
+            if (dot >= 0 && dot < sanitized.length() - 1) {
+                String ext = sanitized.substring(dot + 1).toLowerCase(Locale.ROOT);
+                if (Set.of("mp4", "mov", "webm", "avi", "mkv", "m4v").contains(ext)) {
+                    throw badRequest("FILE_VIDEO_NOT_ALLOWED");
+                }
+                if (!ALLOWED_EXTENSIONS.contains(ext)) {
+                    throw badRequest("FILE_TYPE_NOT_ALLOWED");
+                }
+            }
         }
         if ("image/gif".equals(normalizedType)) {
             if (size > MAX_GIF_FILE_SIZE) {
-                throw invalidRequest();
+                throw badRequest("GIF_FILE_TOO_LARGE");
             }
         } else if (size > MAX_SINGLE_FILE_SIZE) {
-            throw invalidRequest();
+            throw badRequest("IMAGE_FILE_TOO_LARGE");
         }
     }
 
@@ -312,6 +329,10 @@ public class CommunityS3Service {
     }
 
     private static AuthFailure invalidRequest() {
-        return new AuthFailure("INVALID_REQUEST", HttpStatus.BAD_REQUEST);
+        return badRequest("INVALID_REQUEST");
+    }
+
+    private static AuthFailure badRequest(String code) {
+        return new AuthFailure(code, HttpStatus.BAD_REQUEST);
     }
 }

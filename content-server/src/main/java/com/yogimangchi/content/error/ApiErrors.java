@@ -30,6 +30,10 @@ public class ApiErrors {
     }
     @ExceptionHandler({HttpMessageNotReadableException.class,MethodArgumentTypeMismatchException.class,org.springframework.web.bind.ServletRequestBindingException.class})
     ResponseEntity<ProblemDetail> validation(Exception e) { return problem(HttpStatus.BAD_REQUEST,"INVALID_REQUEST"); }
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    ResponseEntity<ProblemDetail> maxUploadSize(org.springframework.web.multipart.MaxUploadSizeExceededException e) {
+        return problem(HttpStatus.BAD_REQUEST,"IMAGE_FILE_TOO_LARGE");
+    }
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ProblemDetail> conflict(DataIntegrityViolationException e) {
         if(e.getMostSpecificCause() instanceof java.sql.SQLException sql && "23505".equals(sql.getSQLState())) {
