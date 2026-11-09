@@ -35,7 +35,22 @@ public class CommunityS3Service {
     private static final Logger log = LoggerFactory.getLogger(CommunityS3Service.class);
     public static final int MAX_POST_IMAGE_COUNT = 10;
     public static final long MAX_SINGLE_FILE_SIZE = 5L * 1024 * 1024;
-    public static final long MAX_TOTAL_FILE_SIZE = 50L * 1024 * 1024;
+    public static final long MAX_GIF_FILE_SIZE = 3L * 1024 * 1024;
+    public static final long MAX_TOTAL_FILE_SIZE = 20L * 1024 * 1024;
+    private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
+            "image/jpeg",
+            "image/jpg",
+            "image/png",
+            "image/webp",
+            "image/gif"
+    );
+    private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
+            "jpg",
+            "jpeg",
+            "png",
+            "webp",
+            "gif"
+    );
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
     public record UploadResult(
@@ -124,17 +139,30 @@ public class CommunityS3Service {
             throw invalidRequest();
         }
         long size = file.getSize();
-        if (size <= 0 || size > MAX_SINGLE_FILE_SIZE) {
+        if (size <= 0) {
             throw invalidRequest();
         }
         String contentType = file.getContentType();
         if (contentType == null) {
             throw invalidRequest();
         }
-        String normalizedType = contentType.strip().toLowerCase(Locale.ROOT);
-        if (!normalizedType.startsWith("image/") || normalizedType.equals("image/gif") || normalizedType.startsWith("image/gif;")) {
+        String normalizedType = normalizeMimeType(contentType);
+        if (normalizedType.startsWith("video/") || !ALLOWED_IMAGE_TYPES.contains(normalizedType)) {
             throw invalidRequest();
         }
+        if ("image/gif".equals(normalizedType)) {
+            if (size > MAX_GIF_FILE_SIZE) {
+                throw invalidRequest();
+            }
+        } else if (size > MAX_SINGLE_FILE_SIZE) {
+            throw invalidRequest();
+        }
+    }
+
+    private static String normalizeMimeType(String contentType) {
+        String lowered = contentType.strip().toLowerCase(Locale.ROOT);
+        int semicolon = lowered.indexOf(';');
+        return semicolon >= 0 ? lowered.substring(0, semicolon).strip() : lowered;
     }
 
     private UploadResult uploadSingleImage(MultipartFile file, String dirPrefix) {
@@ -175,19 +203,28 @@ public class CommunityS3Service {
         return new UploadResult(key, url, originalName, size, contentType);
     }
 
-    public void deleteByKeyQuietly(String key) {
+    public boolean deleteByKeyQuietly(String key) {
         if (key == null || key.isBlank()) {
-            return;
+            return false;
         }
         if (s3Client != null) {
             try {
                 s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
+                return true;
             } catch (Exception e) {
                 log.warn("S3 deleteObject deferred for key={}", key);
+                return false;
             }
-            return;
         }
-        simulatedStore.remove(key);
+        return simulatedStore.remove(key);
+    }
+
+    public boolean isRealS3Configured() {
+        return s3Client != null;
+    }
+
+    public String region() {
+        return region;
     }
 
     public void registerRollbackCleanup(List<String> keys) {
@@ -251,15 +288,22 @@ public class CommunityS3Service {
     }
 
     private static String extractExtension(String filename, String contentType) {
+        if (contentType != null) {
+            String lower = normalizeMimeType(contentType);
+            if ("image/gif".equals(lower)) {
+                return "gif";
+            }
+        }
         int dot = filename.lastIndexOf('.');
         if (dot >= 0 && dot < filename.length() - 1) {
             String candidate = filename.substring(dot + 1).toLowerCase(Locale.ROOT);
-            if (candidate.matches("[a-z0-9]{1,8}")) {
+            if (ALLOWED_EXTENSIONS.contains(candidate)) {
                 return candidate;
             }
         }
         if (contentType != null) {
-            String lower = contentType.toLowerCase(Locale.ROOT);
+            String lower = normalizeMimeType(contentType);
+            if (lower.contains("gif")) return "gif";
             if (lower.contains("jpeg") || lower.contains("jpg")) return "jpg";
             if (lower.contains("webp")) return "webp";
             if (lower.contains("png")) return "png";

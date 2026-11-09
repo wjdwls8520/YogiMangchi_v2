@@ -11,16 +11,24 @@ import com.yogimangchi.content.member.service.MemberProvisioning;
 import com.yogimangchi.content.member.service.MemberWithdrawals;
 import com.yogimangchi.content.support.TestEnvironment;
 import com.yogimangchi.content.support.TestInfrastructure;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.support.PropertiesLoaderUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
@@ -38,6 +46,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @Import(TestInfrastructure.class)
 class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
+    private static final Logger log = LoggerFactory.getLogger(CommunityNewsAndRetentionIntegrationTests.class);
     @Autowired MockMvc mvc;
     @Autowired AuthService auth;
     @Autowired MemberWithdrawals withdrawals;
@@ -339,16 +348,53 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         mvc.perform(get("/api/v1/community/ux/subscribe/feed"))
                 .andExpect(status().isOk());
 
-        // 3. Reject GIF upload on multipart post creation
-        var gifFile = new MockMultipartFile("files", "anim.gif", "image/gif", new byte[]{1, 2, 3, 4});
+        // 3. Reject video/* upload and oversized GIF (>3MB), but allow small GIF (<=3MB, e.g. 1KB)
+        var videoFile = new MockMultipartFile("files", "clip.mp4", "video/mp4", new byte[]{1, 2, 3, 4});
         mvc.perform(multipart("/api/v1/community/posts")
-                        .file(gifFile)
+                        .file(videoFile)
                         .param("category", "POSITION")
-                        .param("title", "GIF 거절 테스트")
-                        .param("content", "GIF 파일은 업로드할 수 없습니다.")
+                        .param("title", "동영상 업로드 차단 테스트")
+                        .param("content", "video/* 포맷은 업로드할 수 없습니다.")
                         .header("Authorization", authorBearer))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        var oversizedGifFile = new MockMultipartFile(
+                "files", "huge-anim.gif", "image/gif", new byte[3 * 1024 * 1024 + 1024]);
+        mvc.perform(multipart("/api/v1/community/posts")
+                        .file(oversizedGifFile)
+                        .param("category", "POSITION")
+                        .param("title", "대용량 GIF 거절 테스트")
+                        .param("content", "3MB 초과 GIF 파일은 업로드할 수 없습니다.")
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        var smallGifFile = new MockMultipartFile("files", "crash-meme.gif", "image/gif", new byte[1024]);
+        var gifCreatedBody = mvc.perform(multipart("/api/v1/community/posts")
+                        .file(smallGifFile)
+                        .param("category", "FREE")
+                        .param("title", "급락 짤 소용량 GIF 허용 테스트")
+                        .param("content", "3MB 이하 소용량 GIF는 정상 업로드됩니다.")
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.files.length()").value(1))
+                .andExpect(jsonPath("$.files[0].originalName").value("crash-meme.gif"))
+                .andExpect(jsonPath("$.files[0].contentType").value("image/gif"))
+                .andExpect(jsonPath("$.files[0].size").value(1024))
+                .andReturn().getResponse().getContentAsString();
+        long gifPostId = json.readTree(gifCreatedBody).path("id").asLong();
+        long gifFileId = json.readTree(gifCreatedBody).path("files").get(0).path("id").asLong();
+        String gifFileKey = jdbc.queryForObject(
+                "select s3_key from content.community_post_file where id = ?",
+                String.class, gifFileId);
+        assertThat(gifFileKey).startsWith("community/post/").endsWith(".gif");
+        assertThat(s3.isSimulatedKeyPresent(gifFileKey)).isTrue();
+
+        mvc.perform(delete("/api/v1/community/posts/" + gifPostId)
+                        .header("Authorization", authorBearer))
+                .andExpect(status().isNoContent());
+        assertThat(s3.isSimulatedKeyPresent(gifFileKey)).isFalse();
 
         // 4. Create multipart post with 2 images and a shared position snapshot
         var img1 = new MockMultipartFile("files", "chart-1.png", "image/png", new byte[]{10, 20, 30, 40});
@@ -528,6 +574,46 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reportCount").value(0))
                 .andExpect(jsonPath("$.reportedByMe").value(false));
+    }
+
+    @Test
+    void rootDotEnvS3LiveUploadAndImmediateDeleteWhenConfigured() throws Exception {
+        List<Path> candidates = List.of(
+                Path.of(".env"),
+                Path.of("../.env"),
+                Path.of("../../../.env"),
+                Path.of("../../../../.env")
+        );
+        Path envPath = candidates.stream().filter(Files::isRegularFile).findFirst().orElse(null);
+        Properties props = new Properties();
+        if (envPath != null) {
+            props = PropertiesLoaderUtils.loadProperties(new FileSystemResource(envPath));
+        }
+        String bucket = props.getProperty("S3_BUCKET", "").strip();
+        String access = props.getProperty("S3_ACCESS", "").strip();
+        String secret = props.getProperty("S3_SECRET", "").strip();
+        String region = props.getProperty("S3_REGION", "ap-northeast-2").strip();
+
+        CommunityS3Service service = new CommunityS3Service(bucket, access, secret, region);
+        try {
+            var tinyGif = new MockMultipartFile("files", "probe.gif", "image/gif", new byte[]{0x47, 0x49, 0x46, 0x38, 0x39, 0x61});
+            List<CommunityS3Service.UploadResult> uploaded = service.validateAndUploadPostImages(List.of(tinyGif), 0);
+            assertThat(uploaded).hasSize(1);
+            CommunityS3Service.UploadResult item = uploaded.get(0);
+            try {
+                assertThat(item.key()).matches("^community/post/\\d{8}/[0-9a-f\\-]+\\.gif$");
+                assertThat(item.url()).startsWith("https://").endsWith(item.key());
+                assertThat(item.contentType()).isEqualTo("image/gif");
+                assertThat(item.size()).isEqualTo(6L);
+            } finally {
+                boolean deleted = service.deleteByKeyQuietly(item.key());
+                assertThat(deleted).isTrue();
+                log.info("S3 upload & immediate delete probe completed: realS3={}, region={}, key={}, deleted={}",
+                        service.isRealS3Configured(), service.region(), item.key(), deleted);
+            }
+        } finally {
+            service.closeClient();
+        }
     }
 
     private AuthService.Issued signup() {
