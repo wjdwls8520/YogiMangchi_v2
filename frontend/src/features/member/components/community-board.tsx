@@ -2022,6 +2022,14 @@ export function CommunityBoard({
         subtitle="타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다."
       >
         <form data-form-source="modal" className="space-y-4" onSubmit={handleCreatePost}>
+          {(createPostMutation.isError || (feedback && snapshot.phase !== "ready")) && feedback && (
+            <div
+              role="alert"
+              className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-600"
+            >
+              {feedback}
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <select
               name="category"

@@ -8,6 +8,7 @@ const codes = new Set([
   "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "MEMBER_NOT_ACTIVE", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS",
   "POLICY_VERSION_OR_CONSENT_INVALID", "POLICY_VERSION_CHANGED", "REQUIRED_CONSENT_MISSING", "POLICY_VERSION_REQUIRED",
   "LOGIN_PROOF_REQUIRED", "LOGIN_PROOF_EXPIRED", "CSRF_INVALID", "PROFILE_MESSAGE_UPDATE_REQUIRED", "RESOURCE_ALREADY_EXISTS", "RESOURCE_NOT_FOUND",
+  "FILE_VIDEO_NOT_ALLOWED", "FILE_TYPE_NOT_ALLOWED", "GIF_FILE_TOO_LARGE", "IMAGE_FILE_TOO_LARGE", "FILE_TOTAL_SIZE_EXCEEDED", "FILE_COUNT_EXCEEDED",
 ]);
 
 export function contentRecovery(error: unknown): "policies" | "login" | "state" | "csrf" | null {
@@ -78,6 +79,12 @@ export function contentMessage(error: unknown) {
   if (error.code === "MEMBER_ALREADY_EXISTS") return "이미 가입된 소셜 계정입니다. 현재 로그인 상태를 확인해 주세요.";
   if (error.code === "RESOURCE_ALREADY_EXISTS") return "이미 처리된 정보와 요청이 충돌했습니다. 현재 상태를 먼저 확인해 주세요.";
   if (error.code === "RESOURCE_NOT_FOUND") return "요청한 게시글·댓글·뉴스 또는 회원을 찾을 수 없습니다.";
+  if (error.code === "FILE_VIDEO_NOT_ALLOWED") return "동영상 파일은 업로드할 수 없습니다. 이미지(JPG, PNG, WEBP 최대 5MB) 또는 GIF 움짤(최대 3MB)만 첨부해 주세요.";
+  if (error.code === "FILE_TYPE_NOT_ALLOWED") return "지원하지 않는 파일 형식입니다. JPG, PNG, WEBP 또는 GIF(움짤) 파일만 첨부할 수 있습니다.";
+  if (error.code === "GIF_FILE_TOO_LARGE") return "GIF 움짤 용량이 제한(최대 3MB)을 초과했습니다. 3MB 이하의 가벼운 GIF 파일만 첨부해 주세요.";
+  if (error.code === "IMAGE_FILE_TOO_LARGE") return "이미지 파일 용량이 제한(장당 최대 5MB)을 초과했습니다. 5MB 이하의 이미지를 선택해 주세요.";
+  if (error.code === "FILE_TOTAL_SIZE_EXCEEDED") return "첨부 파일의 총합 용량이 제한(최대 20MB)을 초과했습니다.";
+  if (error.code === "FILE_COUNT_EXCEEDED") return "첨부 가능한 최대 이미지 장수를 초과했습니다.";
   if (error.code === "POLICY_VERSION_OR_CONSENT_INVALID") return "정책 버전이 변경되었거나 필수 동의가 누락되었습니다. 최신 원문을 확인하고 다시 동의해 주세요.";
   if (error.code === "WITHDRAWAL_CONFIRMATION_REQUIRED") return "안내 확인과 ‘탈퇴합니다’ 문구를 정확하게 입력해 주세요.";
   if (error.status === 401) return "로그인 상태가 만료되었습니다. 다시 로그인해 주세요.";

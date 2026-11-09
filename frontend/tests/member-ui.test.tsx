@@ -405,6 +405,31 @@ test("Community API binding supports FormData multipart, S3 files, sharedPositio
   assert.equal(capturedContentType, null);
   assert.equal(capturedBodyIsFormData, true);
 
+  assert.equal(
+    contentMessage(new ContentApiError(400, "FILE_VIDEO_NOT_ALLOWED")),
+    "동영상 파일은 업로드할 수 없습니다. 이미지(JPG, PNG, WEBP 최대 5MB) 또는 GIF 움짤(최대 3MB)만 첨부해 주세요.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "FILE_TYPE_NOT_ALLOWED")),
+    "지원하지 않는 파일 형식입니다. JPG, PNG, WEBP 또는 GIF(움짤) 파일만 첨부할 수 있습니다.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "GIF_FILE_TOO_LARGE")),
+    "GIF 움짤 용량이 제한(최대 3MB)을 초과했습니다. 3MB 이하의 가벼운 GIF 파일만 첨부해 주세요.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "IMAGE_FILE_TOO_LARGE")),
+    "이미지 파일 용량이 제한(장당 최대 5MB)을 초과했습니다. 5MB 이하의 이미지를 선택해 주세요.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "FILE_TOTAL_SIZE_EXCEEDED")),
+    "첨부 파일의 총합 용량이 제한(최대 20MB)을 초과했습니다.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "FILE_COUNT_EXCEEDED")),
+    "첨부 가능한 최대 이미지 장수를 초과했습니다.",
+  );
+
   for (const allowedPath of [
     "/community/posts/latest-check?sincePostId=21",
     "/community/ux/subscribe/feed",
