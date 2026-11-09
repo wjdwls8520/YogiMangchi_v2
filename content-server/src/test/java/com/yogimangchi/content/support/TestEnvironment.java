@@ -32,5 +32,6 @@ public abstract class TestEnvironment {
         registry.add("CONTENT_TRADING_BASE_URL",() -> "http://localhost:9");
         registry.add("CONTENT_WITHDRAWAL_DELIVERY_ENABLED",() -> "false");
         registry.add("content.s3.bucket",() -> "");
+        registry.add("content.news.collector.enabled",() -> "false");
     }
 }

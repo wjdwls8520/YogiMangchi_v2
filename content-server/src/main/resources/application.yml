@@ -73,3 +73,9 @@ content:
     access-key: ${S3_ACCESS:}
     secret-key: ${S3_SECRET:}
     region: ${S3_REGION:ap-northeast-2}
+  news:
+    collector:
+      enabled: ${CONTENT_NEWS_COLLECTOR_ENABLED:true}
+      interval-ms: ${CONTENT_NEWS_COLLECTOR_INTERVAL_MS:120000}
+      initial-delay-ms: ${CONTENT_NEWS_COLLECTOR_INITIAL_DELAY_MS:120000}
+      max-items-per-feed: ${CONTENT_NEWS_COLLECTOR_MAX_ITEMS_PER_FEED:8}

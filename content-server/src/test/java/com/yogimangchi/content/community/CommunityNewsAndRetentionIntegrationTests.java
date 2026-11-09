@@ -9,6 +9,7 @@ import com.yogimangchi.content.member.entity.OAuthIdentity.Provider;
 import com.yogimangchi.content.member.service.ContentRetentionCleanupService;
 import com.yogimangchi.content.member.service.MemberProvisioning;
 import com.yogimangchi.content.member.service.MemberWithdrawals;
+import com.yogimangchi.content.news.NewsIngestionService;
 import com.yogimangchi.content.support.TestEnvironment;
 import com.yogimangchi.content.support.TestInfrastructure;
 import java.nio.file.Files;
@@ -53,6 +54,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
     @Autowired MemberProvisioning provisioning;
     @Autowired ContentRetentionCleanupService retentionCleanup;
     @Autowired CommunityS3Service s3;
+    @Autowired NewsIngestionService newsIngestion;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
 
@@ -625,6 +627,115 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         } finally {
             service.closeClient();
         }
+    }
+
+    @Test
+    void rssIngestionDeduplicationSectionFiltersHighlightsReactionsAndSseStreamWorkEndToEnd() throws Exception {
+        // 1. SSE stream endpoint connects immediately
+        mvc.perform(get("/api/v1/news/stream"))
+                .andExpect(status().isOk());
+
+        // 2. Ingest official RSS 2.0 XML (Google News RSS format with <source>, HTML description, media:content)
+        String sampleRssXml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+                  <channel>
+                    <title>Google News 코인 속보</title>
+                    <item>
+                      <title>비트코인 9만8천달러 저항 돌파 강세… 선물 매수 수급 급등 - 한경글로벌</title>
+                      <link>https://news.example.com/articles/btc-breakout-98k</link>
+                      <pubDate>Mon, 09 Nov 2026 12:00:00 GMT</pubDate>
+                      <description>&lt;p&gt;비트코인 현물 및 무기한 선물 시장에서 매수세가 강하게 유입되며 단기 저항선을 돌파했습니다.&lt;/p&gt;</description>
+                      <source url="https://news.example.com">한경글로벌</source>
+                      <media:content url="https://cdn.example.com/thumb/btc-98k.jpg" type="image/jpeg"/>
+                    </item>
+                    <item>
+                      <title>이더리움 고래 지갑 스테이킹 물량 확대… 온체인 수수료 개선 - 코인데스크코리아</title>
+                      <link>https://news.example.com/articles/eth-whale-staking</link>
+                      <pubDate>Mon, 09 Nov 2026 11:30:00 GMT</pubDate>
+                      <description>&lt;div&gt;이더리움 메인넷 고래 지갑들의 스테이킹 예치량이 꾸준히 증가하며 유통 물량 감소세가 나타나고 있습니다.&lt;/div&gt;</description>
+                      <source url="https://coindesk.example.com">코인데스크코리아</source>
+                    </item>
+                  </channel>
+                </rss>
+                """;
+
+        var firstBatch = newsIngestion.ingestRssXml(sampleRssXml, "BREAKING", "COIN_FLASH", 10);
+        assertThat(firstBatch).hasSize(2);
+
+        // Latest item in feed (BTC) should have stripped " - 한경글로벌" from title, extracted sourceName, symbolTag=BTC, BULLISH sentiment, aiSummary
+        var btcItem = firstBatch.stream().filter(i -> "BTC".equals(i.symbolTag())).findFirst().orElseThrow();
+        assertThat(btcItem.title()).isEqualTo("비트코인 9만8천달러 저항 돌파 강세… 선물 매수 수급 급등");
+        assertThat(btcItem.sourceName()).isEqualTo("한경글로벌");
+        assertThat(btcItem.sourceUrl()).isEqualTo("https://news.example.com/articles/btc-breakout-98k");
+        assertThat(btcItem.thumbnailUrl()).isEqualTo("https://cdn.example.com/thumb/btc-98k.jpg");
+        assertThat(btcItem.sentiment()).isEqualTo("BULLISH");
+        assertThat(btcItem.aiSummary()).startsWith("[AI 강세 분석]").contains("#BTC");
+        assertThat(btcItem.content()).contains("공개 RSS 메타데이터 기반 요약 브리핑");
+
+        var ethItem = firstBatch.stream().filter(i -> "ETH".equals(i.symbolTag())).findFirst().orElseThrow();
+        assertThat(ethItem.category()).isEqualTo("ONCHAIN");
+        assertThat(ethItem.sourceName()).isEqualTo("코인데스크코리아");
+
+        // 3. Re-ingesting the exact same RSS feed must deduplicate 100% (0 items inserted)
+        var duplicateBatch = newsIngestion.ingestRssXml(sampleRssXml, "BREAKING", "COIN_FLASH", 10);
+        assertThat(duplicateBatch).isEmpty();
+
+        // 4. Filter by section & subCategory & sort
+        mvc.perform(get("/api/v1/news")
+                        .param("section", "BREAKING")
+                        .param("subCategory", "COIN_FLASH")
+                        .param("size", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].section").value("BREAKING"))
+                .andExpect(jsonPath("$.items[0].subCategory").value("COIN_FLASH"));
+
+        mvc.perform(get("/api/v1/news")
+                        .param("section", "NEWSROOM")
+                        .param("subCategory", "STOCKS")
+                        .param("sort", "POPULAR"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].section").value("NEWSROOM"))
+                .andExpect(jsonPath("$.items[0].subCategory").value("STOCKS"));
+
+        // 5. Vote BULL and BEAR reactions on the newly ingested BTC article
+        mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
+                        .contentType("application/json")
+                        .content("{\"reaction\":\"BULL\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.newsId").value(btcItem.id()))
+                .andExpect(jsonPath("$.reaction").value("BULL"))
+                .andExpect(jsonPath("$.bullCount").value(1))
+                .andExpect(jsonPath("$.bearCount").value(0))
+                .andExpect(jsonPath("$.bullPct").value(100));
+
+        mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
+                        .contentType("application/json")
+                        .content("{\"reaction\":\"BEAR\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bullCount").value(1))
+                .andExpect(jsonPath("$.bearCount").value(1))
+                .andExpect(jsonPath("$.bullPct").value(50))
+                .andExpect(jsonPath("$.bearPct").value(50));
+
+        // 6. Single article lookup increments viewCount
+        mvc.perform(get("/api/v1/news/" + btcItem.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.viewCount").value(1))
+                .andExpect(jsonPath("$.bullCount").value(1))
+                .andExpect(jsonPath("$.bearCount").value(1));
+
+        // 7. Highlights endpoint returns mustReadBreaking, popularByViews, popularByReactions, keywordIssues, recommendedNewsroom, sentimentSummary
+        mvc.perform(get("/api/v1/news/highlights"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mustReadBreaking").isArray())
+                .andExpect(jsonPath("$.mustReadBreaking.length()").value(3))
+                .andExpect(jsonPath("$.popularByViews").isArray())
+                .andExpect(jsonPath("$.popularByReactions").isArray())
+                .andExpect(jsonPath("$.keywordIssues.length()").value(3))
+                .andExpect(jsonPath("$.recommendedNewsroom").isArray())
+                .andExpect(jsonPath("$.sentimentSummary.bullPct").isNumber())
+                .andExpect(jsonPath("$.sentimentSummary.bearPct").isNumber());
     }
 
     private AuthService.Issued signup() {
