@@ -740,21 +740,37 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     assert.equal(meLoggedInHtml.includes('href="/login"'), false);
     assert.equal(meLoggedInHtml.includes('href="/signup"'), false);
 
-    // 헤더 비로그인 vs 로그인 버튼 규격 100% 동일 검증
-    const anonHeaderHtml = renderToStaticMarkup(<V1Header theme="dark" />);
+    // 헤더 비로그인 vs 로그인 버튼 및 라이트/다크 픽셀 단위 100% 동일 규격 검증
+    const anonHeaderHtml = renderToStaticMarkup(
+      <V1Header theme="dark" rightExtra={<span>불필요한우측요소</span>} />,
+    );
     assert.match(anonHeaderHtml, /src="\/logo_dark\.png"/);
     assert.match(anonHeaderHtml, /href="\/login"[^>]*>로그인<\/a>/);
+    assert.match(anonHeaderHtml, /h-16 w-full max-w-\[1280px\]/);
+    assert.match(anonHeaderHtml, /h-9 min-w-\[96px\]/);
+    assert.match(anonHeaderHtml, /border-white\/10 bg-\[#0B0E11\] text-white/);
     assert.equal(anonHeaderHtml.includes('href="/signup"'), false);
+    assert.equal(anonHeaderHtml.includes("테마 전환"), false);
+    assert.equal(anonHeaderHtml.includes("알림 열기"), false);
+    assert.equal(anonHeaderHtml.includes("내 프로필 아바타"), false);
+    assert.equal(anonHeaderHtml.includes("불필요한우측요소"), false);
 
     const loggedInHeaderHtml = renderToStaticMarkup(
       <MemberProvider session={loggedInSession} client={client}>
         <V1Header theme="light" />
       </MemberProvider>,
     );
+    assert.match(loggedInHeaderHtml, /src="\/images\/logo\.webp"/);
     assert.match(loggedInHeaderHtml, /href="\/me"[^>]*>마이페이지<\/a>/);
+    assert.match(loggedInHeaderHtml, /h-16 w-full max-w-\[1280px\]/);
+    assert.match(loggedInHeaderHtml, /h-9 min-w-\[96px\]/);
+    assert.match(loggedInHeaderHtml, /border-gray-200 bg-white text-gray-900/);
     assert.equal(loggedInHeaderHtml.includes('href="/login"'), false);
     assert.equal(loggedInHeaderHtml.includes('href="/signup"'), false);
     assert.equal(loggedInHeaderHtml.includes('href="/assets"'), false);
+    assert.equal(loggedInHeaderHtml.includes("테마 전환"), false);
+    assert.equal(loggedInHeaderHtml.includes("알림 열기"), false);
+    assert.equal(loggedInHeaderHtml.includes("내 프로필 아바타"), false);
   } finally {
     client.clear();
   }

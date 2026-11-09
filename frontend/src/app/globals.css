@@ -12,7 +12,7 @@
 .trading-table [role="alert"] { max-width: 20rem; white-space: normal; }
 
 @theme {
-  --font-sans: Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-sans: "Pretendard", "Noto Sans KR", Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --color-terminal-gutter: #050506;
   --color-terminal-panel: #101014;
   --color-terminal-header: #17181d;
@@ -45,6 +45,9 @@
 }
 
 @layer base {
+  html {
+    scrollbar-gutter: stable;
+  }
   body {
     @apply bg-terminal-gutter font-sans text-sm text-terminal-text antialiased;
     color-scheme: dark;
@@ -131,7 +134,7 @@
 
 @layer components {
   .trading-brand-header {
-    @apply border-b-4 border-terminal-gutter bg-terminal-header;
+    @apply border-b border-white/10 bg-[#0B0E11];
   }
   .trading-brand-bar {
     @apply flex min-h-12 items-center gap-5 px-3 lg:px-4;
@@ -2988,8 +2991,9 @@ body:has(.member-shell) :focus-visible {
 .ym-brand-logo-img {
   display: block;
   height: 34px;
-  width: auto;
+  width: 120px;
   object-fit: contain;
+  object-position: left center;
 }
 
 .ym-login-logo-wrap {

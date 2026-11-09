@@ -569,255 +569,95 @@ export function V1ProfileSidebar({
 
 export function V1Header({
   theme = "light",
-  rightExtra,
 }: {
   theme?: "light" | "dark";
   rightExtra?: ReactNode;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isAlarmOpen, setIsAlarmOpen] = useState(false);
-  const [darkPreview, setDarkPreview] = useState(false);
   const memberCtx = useOptionalMember();
   const isLoggedIn = memberCtx?.snapshot.phase === "ready";
   const isDark = theme === "dark";
 
   useDimScrollLock(isMenuOpen);
 
-  const headerPillClass = cn(
-    "inline-flex h-9 items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
-    isDark
-      ? "bg-white text-gray-900 hover:bg-gray-200"
-      : "bg-gray-900 text-white hover:bg-gray-800",
-  );
-
   return (
     <>
       <header
         className={cn(
+          "ym-gnb-header trading-brand-header sticky top-0 z-50 w-full border-b font-sans text-sm leading-none tracking-normal antialiased [word-break:keep-all] transition-colors",
           isDark
-            ? "trading-brand-header sticky left-0 top-0 z-50 w-full border-b border-white/10 bg-[#0B0E11]/95 text-white backdrop-blur-md transition-colors duration-200"
-            : "ym-gnb-header sticky left-0 top-0 z-50 w-full border-b border-gray-100 bg-white/80 text-gray-900 backdrop-blur-md transition-colors duration-200",
+            ? "border-white/10 bg-[#0B0E11] text-white"
+            : "border-gray-200 bg-white text-gray-900",
         )}
       >
-        <div className="ym-gnb-inner relative m-auto flex h-16 w-full max-w-[1280px] items-center justify-between px-6">
+        <div className="ym-gnb-inner mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between px-6">
           {/* 1. 왼쪽 로고 */}
-          <div className="ym-gnb-left flex shrink-0 items-center gap-4">
-            <Link href="/" className="member-logo flex items-center gap-2 text-lg font-bold tracking-tight">
-              {isDark ? (
-                <>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="/logo_dark.png"
-                    alt="요기망치 YOGIMANGCHI"
-                    width={100}
-                    height={35}
-                    className="ym-brand-logo-img h-[35px] w-auto object-contain"
-                  />
-                  <span className="sr-only">
-                    요기망치 <span className="trading-brand-latin">YOGIMANGCHI</span> 선물 모의투자
-                  </span>
-                </>
-              ) : (
-                <>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="/images/logo.webp"
-                    alt="요기망치 YOGIMANGCHI"
-                    width={100}
-                    height={35}
-                    className="ym-brand-logo-img h-[35px] w-auto object-contain"
-                  />
-                  <span className="sr-only">요기망치 YOGIMANGCHI</span>
-                </>
-              )}
-            </Link>
-          </div>
+          <Link
+            href="/"
+            className="member-logo ym-brand-logo-link flex h-9 w-[124px] shrink-0 items-center"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={isDark ? "/logo_dark.png" : "/images/logo.webp"}
+              alt="YogiMangchi"
+              width={120}
+              height={34}
+              className="ym-brand-logo-img block h-[34px] w-[120px] object-contain object-left"
+            />
+            <span className="sr-only">
+              요기망치 <span className="trading-brand-latin">YOGIMANGCHI</span> 선물 모의투자
+            </span>
+          </Link>
 
           {/* 2. 중앙 네비게이션 (PC 전용) */}
-          <div className="hidden md:block absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <nav aria-label="서비스 메뉴" className="ym-gnb-nav flex items-center gap-6 text-sm font-bold">
+          <nav aria-label="서비스 메뉴" className="ym-gnb-nav hidden md:flex items-center gap-7">
+            {[
+              { href: "/trading", label: "모의투자" },
+              { href: "/contest", label: "대회" },
+              { href: "/community", label: "커뮤니티" },
+              { href: "/news", label: "실시간 뉴스" },
+            ].map(item => (
               <Link
-                href="/trading"
+                key={item.href}
+                href={item.href}
                 className={cn(
-                  "py-2 transition-colors",
-                  isDark ? "text-gray-200 hover:text-white" : "text-gray-700 hover:text-[#0058FF]",
-                )}
-              >
-                모의투자
-              </Link>
-              <Link
-                href="/contest"
-                className={cn(
-                  "py-2 transition-colors",
-                  isDark ? "text-gray-200 hover:text-white" : "text-gray-700 hover:text-[#0058FF]",
-                )}
-              >
-                대회
-              </Link>
-              <Link
-                href="/community"
-                className={cn(
-                  "py-2 transition-colors",
-                  isDark ? "text-gray-200 hover:text-white" : "text-gray-700 hover:text-[#0058FF]",
-                )}
-              >
-                커뮤니티
-              </Link>
-              <Link
-                href="/news"
-                className={cn(
-                  "py-2 transition-colors",
-                  isDark ? "text-gray-200 hover:text-white" : "text-gray-700 hover:text-[#0058FF]",
-                )}
-              >
-                실시간 뉴스
-              </Link>
-            </nav>
-          </div>
-
-          {/* 3. 오른쪽 V1 유틸리티 영역: 게스트 배지(있을 경우) + 테마 아이콘 + 알림 벨 + 구분선 + 마이페이지/로그인 알약 버튼 */}
-          <div className="ym-gnb-right flex items-center gap-2.5 text-sm">
-            {rightExtra ? <div className="flex items-center gap-2">{rightExtra}</div> : null}
-
-            <button
-              type="button"
-              onClick={() => setDarkPreview(prev => !prev)}
-              className={cn(
-                "rounded-full p-2 transition-colors",
-                isDark
-                  ? "text-gray-400 hover:bg-white/10 hover:text-white"
-                  : "text-gray-500 hover:bg-gray-100 hover:text-gray-900",
-              )}
-              aria-label="테마 전환"
-            >
-              {isDark || darkPreview ? (
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-                </svg>
-              ) : (
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
-                </svg>
-              )}
-            </button>
-
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setIsAlarmOpen(prev => !prev)}
-                className={cn(
-                  "flex items-center justify-center rounded-full p-2 transition-colors",
+                  "inline-flex h-9 items-center px-2 text-[15px] font-bold leading-none whitespace-nowrap transition-colors",
                   isDark
-                    ? "text-gray-400 hover:bg-white/10 hover:text-white"
-                    : "text-gray-500 hover:bg-gray-100 hover:text-gray-900",
+                    ? "text-gray-200 hover:text-white"
+                    : "text-gray-700 hover:text-gray-950",
                 )}
-                aria-label="알림 열기"
-                aria-expanded={isAlarmOpen}
               >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-                </svg>
-              </button>
-
-              {isAlarmOpen ? (
-                <div className="absolute right-0 top-12 z-50 w-72 rounded-2xl border border-gray-200 bg-white p-4 text-left text-xs text-gray-700">
-                  <div className="mb-2 flex items-center justify-between border-b border-gray-100 pb-2">
-                    <strong className="text-sm font-black text-gray-900">알림</strong>
-                    <button
-                      type="button"
-                      onClick={() => setIsAlarmOpen(false)}
-                      className="text-gray-400 hover:text-gray-700"
-                    >
-                      닫기
-                    </button>
-                  </div>
-                  <p className="py-4 text-center font-medium text-gray-400">
-                    {isLoggedIn
-                      ? "새로운 알림이 없습니다."
-                      : "로그인 후 실시간 체결·커뮤니티 알림을 확인할 수 있습니다."}
-                  </p>
-                </div>
-              ) : null}
-            </div>
-
-            <div
-              className={cn(
-                "mx-1 hidden h-4 w-[1px] sm:block",
-                isDark ? "bg-white/15" : "bg-gray-200",
-              )}
-            />
-
-            {isLoggedIn ? (
-              <div className="flex items-center gap-2">
-                <Link href="/me" className={headerPillClass}>
-                  마이페이지
-                </Link>
-                <Link
-                  href="/me"
-                  aria-label="내 프로필 아바타"
-                  className={cn(
-                    "hidden h-8 w-8 items-center justify-center overflow-hidden rounded-full ring-1 transition-transform hover:scale-105 sm:flex",
-                    isDark ? "bg-zinc-800 ring-zinc-700" : "bg-gray-50 ring-gray-200",
-                  )}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={resolveV1AvatarUrl({ memberId: memberCtx?.snapshot.memberId })}
-                    alt="프로필"
-                    className="h-full w-full object-cover"
-                  />
-                </Link>
-              </div>
-            ) : (
-              <Link href="/login" className={headerPillClass}>
-                로그인
+                {item.label}
               </Link>
-            )}
+            ))}
+          </nav>
+
+          {/* 3. 오른쪽 액션 영역 (마이페이지 또는 로그인 버튼 1개만) */}
+          <div className="ym-gnb-right flex shrink-0 items-center gap-2">
+            <Link
+              href={isLoggedIn ? "/me" : "/login"}
+              className={cn(
+                "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                isDark
+                  ? "bg-white text-gray-900 hover:bg-gray-200"
+                  : "bg-gray-900 text-white hover:bg-gray-800",
+              )}
+            >
+              {isLoggedIn ? "마이페이지" : "로그인"}
+            </Link>
 
             {/* 모바일 햄버거 버튼 */}
             <button
               type="button"
               onClick={() => setIsMenuOpen(true)}
               className={cn(
-                "ml-1 block md:hidden focus:outline-none p-2 rounded-lg",
+                "inline-flex h-9 w-9 items-center justify-center rounded-lg md:hidden focus:outline-none",
                 isDark ? "text-gray-200 hover:bg-white/10" : "text-gray-700 hover:bg-gray-100",
               )}
               aria-label="메뉴 열기"
               aria-expanded={isMenuOpen}
             >
-              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
