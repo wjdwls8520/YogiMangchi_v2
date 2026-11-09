@@ -14,12 +14,15 @@ import {
   newsPath,
   parseNewsHighlights,
   parseNewsItem,
+  parseNewsLiveStatus,
   parseNewsPage,
   parseNewsReaction,
   type NewsCategory,
   type NewsHighlights,
   type NewsItem,
+  type NewsLiveStatus,
   type NewsPage,
+  type NewsSort,
 } from "../api/community-news";
 
 function kst(value: string) {
@@ -117,31 +120,192 @@ const NEWSROOM_FEATURED_CARDS = [
   },
 ] as const;
 
+function parseUrlTabState(search: string): {
+  section?: "BREAKING" | "NEWSROOM";
+  breakingSub?: "COIN" | "ECONOMY";
+  breakingSort?: "LATEST" | "OLDEST";
+  newsroomSub?: "ALL" | "CRYPTO" | "STOCKS" | "FX_RATES";
+  newsroomSort?: NewsSort;
+} {
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab")?.toLowerCase();
+  const sub = params.get("sub")?.toLowerCase();
+  const sort = params.get("sort")?.toLowerCase();
+
+  const section =
+    tab === "newsroom" ? "NEWSROOM" : tab === "breaking" ? "BREAKING" : undefined;
+  const breakingSub =
+    sub === "economy" ? "ECONOMY" : sub === "coin" ? "COIN" : undefined;
+  const breakingSort =
+    sort === "oldest" ? "OLDEST" : sort === "latest" ? "LATEST" : undefined;
+  const newsroomSub =
+    sub === "crypto"
+      ? "CRYPTO"
+      : sub === "stocks"
+        ? "STOCKS"
+        : sub === "fx" || sub === "fx_rates"
+          ? "FX_RATES"
+          : sub === "all"
+            ? "ALL"
+            : undefined;
+  const newsroomSort =
+    sort === "popular"
+      ? "POPULAR"
+      : sort === "oldest"
+        ? "OLDEST"
+        : sort === "latest"
+          ? "LATEST"
+          : undefined;
+  return { section, breakingSub, breakingSort, newsroomSub, newsroomSort };
+}
+
+function buildNewsUrlQuery(
+  sectionTab: "BREAKING" | "NEWSROOM",
+  breakingSubTab: "COIN" | "ECONOMY",
+  breakingSort: "LATEST" | "OLDEST",
+  newsroomTab: "ALL" | "CRYPTO" | "STOCKS" | "FX_RATES",
+  newsroomSort: NewsSort,
+): string {
+  const params = new URLSearchParams();
+  if (sectionTab === "NEWSROOM") {
+    params.set("tab", "newsroom");
+    const subMap: Record<"ALL" | "CRYPTO" | "STOCKS" | "FX_RATES", string> = {
+      ALL: "all",
+      CRYPTO: "crypto",
+      STOCKS: "stocks",
+      FX_RATES: "fx",
+    };
+    params.set("sub", subMap[newsroomTab]);
+    params.set(
+      "sort",
+      newsroomSort === "POPULAR"
+        ? "popular"
+        : newsroomSort === "OLDEST"
+          ? "oldest"
+          : "latest",
+    );
+  } else {
+    params.set("tab", "breaking");
+    params.set("sub", breakingSubTab === "ECONOMY" ? "economy" : "coin");
+    params.set("sort", breakingSort === "OLDEST" ? "oldest" : "latest");
+  }
+  return `?${params.toString()}`;
+}
+
+function sortNewsItems(items: NewsItem[], sort: NewsSort): NewsItem[] {
+  return [...items].sort((a, b) => {
+    const timeA = Number.isNaN(Date.parse(a.publishedAt)) ? 0 : Date.parse(a.publishedAt);
+    const timeB = Number.isNaN(Date.parse(b.publishedAt)) ? 0 : Date.parse(b.publishedAt);
+    if (sort === "OLDEST") {
+      return timeA - timeB || a.id - b.id;
+    }
+    if (sort === "POPULAR") {
+      const scoreA = (a.bullCount ?? 0) + (a.bearCount ?? 0) + (a.viewCount ?? 0);
+      const scoreB = (b.bullCount ?? 0) + (b.bearCount ?? 0) + (b.viewCount ?? 0);
+      return scoreB - scoreA || timeB - timeA || b.id - a.id;
+    }
+    return timeB - timeA || b.id - a.id;
+  });
+}
+
+function cleanBreakingBody(content: string, summary: string, aiSummary?: string | null): string {
+  const withoutFooter = content.split(/\n*\s*\[출처:/)[0]?.trim() ?? "";
+  const lines = withoutFooter
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(
+      line =>
+        line.length > 0 &&
+        line !== summary.trim() &&
+        line !== (aiSummary ?? "").trim() &&
+        !line.startsWith("✦ AI"),
+    );
+  return lines.join(" ");
+}
+
+function cleanNewsroomExcerpt(
+  summary: string,
+  content: string,
+  aiSummary?: string | null,
+): string {
+  const extra = cleanBreakingBody(content, summary, aiSummary);
+  return extra ? `${summary} ${extra}` : summary;
+}
+
+function newsroomSubHashtag(item: NewsItem): string {
+  if (item.subCategory === "STOCKS") return "#해외증시";
+  if (item.subCategory === "FX_RATES") return "#환율·금리";
+  if (item.category === "MACRO") return "#거시경제";
+  if (item.category === "REGULATION") return "#규제·정책";
+  return "#암호화폐";
+}
+
 export function NewsFeed({
   initialPage,
   initialHighlights,
   initialCategory = "",
   initialSymbolTag = "",
-  initialSection = "BREAKING",
+  initialSection,
+  initialBreakingSubTab,
+  initialBreakingSort,
+  initialNewsroomTab,
+  initialNewsroomSort,
   initialPendingNewNewsCount = 0,
+  initialLiveActive,
 }: {
   initialPage?: NewsPage;
   initialHighlights?: NewsHighlights;
   initialCategory?: "" | NewsCategory;
   initialSymbolTag?: string;
   initialSection?: "BREAKING" | "NEWSROOM";
+  initialBreakingSubTab?: "COIN" | "ECONOMY";
+  initialBreakingSort?: "LATEST" | "OLDEST";
+  initialNewsroomTab?: "ALL" | "CRYPTO" | "STOCKS" | "FX_RATES";
+  initialNewsroomSort?: NewsSort;
   initialPendingNewNewsCount?: number;
+  initialLiveActive?: boolean;
 } = {}) {
   const { origin } = useMember();
   const queryClient = useQueryClient();
-  const [sectionTab, setSectionTab] = useState<"BREAKING" | "NEWSROOM">(initialSection);
-  const [breakingSubTab, setBreakingSubTab] = useState<"COIN" | "ECONOMY">("COIN");
+  const [sectionTab, setSectionTab] = useState<"BREAKING" | "NEWSROOM">(() => {
+    if (initialSection) return initialSection;
+    if (typeof window !== "undefined") {
+      return parseUrlTabState(window.location.search).section ?? "BREAKING";
+    }
+    return "BREAKING";
+  });
+  const [breakingSubTab, setBreakingSubTab] = useState<"COIN" | "ECONOMY">(() => {
+    if (initialBreakingSubTab) return initialBreakingSubTab;
+    if (typeof window !== "undefined") {
+      return parseUrlTabState(window.location.search).breakingSub ?? "COIN";
+    }
+    return "COIN";
+  });
+  const [breakingSort, setBreakingSort] = useState<"LATEST" | "OLDEST">(() => {
+    if (initialBreakingSort) return initialBreakingSort;
+    if (typeof window !== "undefined") {
+      return parseUrlTabState(window.location.search).breakingSort ?? "LATEST";
+    }
+    return "LATEST";
+  });
   const [popularMode, setPopularMode] = useState<"QUOTE" | "REACTION">("QUOTE");
   const [issueIndex, setIssueIndex] = useState(0);
   const [quickChip, setQuickChip] = useState<"" | "WATCH" | "MENTION" | "VOLUME">("");
 
-  const [newsroomTab, setNewsroomTab] = useState<"ALL" | "CRYPTO" | "STOCKS" | "FX_RATES">("ALL");
-  const [newsroomSort, setNewsroomSort] = useState<"LATEST" | "POPULAR">("LATEST");
+  const [newsroomTab, setNewsroomTab] = useState<"ALL" | "CRYPTO" | "STOCKS" | "FX_RATES">(() => {
+    if (initialNewsroomTab) return initialNewsroomTab;
+    if (typeof window !== "undefined") {
+      return parseUrlTabState(window.location.search).newsroomSub ?? "ALL";
+    }
+    return "ALL";
+  });
+  const [newsroomSort, setNewsroomSort] = useState<NewsSort>(() => {
+    if (initialNewsroomSort) return initialNewsroomSort;
+    if (typeof window !== "undefined") {
+      return parseUrlTabState(window.location.search).newsroomSort ?? "LATEST";
+    }
+    return "LATEST";
+  });
 
   const [viewMode, setViewMode] = useState<"ALL" | "HEADLINE">("ALL");
   const [category, setCategory] = useState<"" | NewsCategory>(initialCategory);
@@ -159,6 +323,9 @@ export function NewsFeed({
     Record<number, { bullCount: number; bearCount: number }>
   >({});
   const [failedThumbIds, setFailedThumbIds] = useState<Record<number, boolean>>({});
+  const [sseConnected, setSseConnected] = useState<boolean | null>(null);
+  const [sseError, setSseError] = useState(false);
+  const [sseLiveStatus, setSseLiveStatus] = useState<NewsLiveStatus | null>(null);
 
   // 실시간 SSE 속보 토스트 및 무한스크롤 센티넬 상태
   const feedTopRef = useRef<HTMLDivElement>(null);
@@ -169,8 +336,39 @@ export function NewsFeed({
   const [prependedNews, setPrependedNews] = useState<NewsItem[]>([]);
   const incomingNewsRef = useRef<NewsItem[]>([]);
 
-  const effectiveSort =
-    sectionTab === "NEWSROOM" && newsroomSort === "POPULAR" ? "POPULAR" : undefined;
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.history?.replaceState !== "function") {
+      return;
+    }
+    const nextQuery = buildNewsUrlQuery(
+      sectionTab,
+      breakingSubTab,
+      breakingSort,
+      newsroomTab,
+      newsroomSort,
+    );
+    if (window.location.search !== nextQuery) {
+      const nextUrl = `${window.location.pathname || "/news"}${nextQuery}`;
+      window.history.replaceState(null, "", nextUrl);
+    }
+  }, [sectionTab, breakingSubTab, breakingSort, newsroomTab, newsroomSort]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onPopState = () => {
+      const parsed = parseUrlTabState(window.location.search);
+      if (parsed.section) setSectionTab(parsed.section);
+      if (parsed.breakingSub) setBreakingSubTab(parsed.breakingSub);
+      if (parsed.breakingSort) setBreakingSort(parsed.breakingSort);
+      if (parsed.newsroomSub) setNewsroomTab(parsed.newsroomSub);
+      if (parsed.newsroomSort) setNewsroomSort(parsed.newsroomSort);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const activeSort: NewsSort = sectionTab === "NEWSROOM" ? newsroomSort : breakingSort;
+  const effectiveSort: NewsSort | undefined = activeSort === "LATEST" ? undefined : activeSort;
 
   const query = useQuery({
     queryKey: ["public-news", origin, category, symbolTag, submittedKeyword, effectiveSort],
@@ -222,22 +420,40 @@ export function NewsFeed({
         merged.push(item);
       }
     }
-    return merged;
+    return sortNewsItems(merged, activeSort);
+  })();
+
+  const retentionHours = highlightsQuery.data?.liveStatus?.retentionHours ?? 6;
+  const referenceNowMs = (() => {
+    const collectedRaw = highlightsQuery.data?.liveStatus?.lastCollectedAt;
+    const collectedMs = collectedRaw ? Date.parse(collectedRaw) : Number.NaN;
+    const maxItemMs = allItems.reduce((acc, item) => {
+      const ts = Date.parse(item.publishedAt);
+      return Number.isNaN(ts) ? acc : Math.max(acc, ts);
+    }, 0);
+    return !Number.isNaN(collectedMs) ? Math.max(collectedMs, maxItemMs) : maxItemMs;
   })();
 
   // 서브탭 필터링 (결과가 비어있으면 전체 항목 fallback)
   const subFilteredItems = (() => {
     if (sectionTab === "BREAKING") {
+      const cutoffMs =
+        referenceNowMs > 0 ? referenceNowMs - retentionHours * 60 * 60 * 1000 : 0;
+      const recentItems = allItems.filter(item => {
+        const ts = Date.parse(item.publishedAt);
+        return Number.isNaN(ts) || ts >= cutoffMs;
+      });
+      const pool = recentItems.length > 0 ? recentItems : allItems;
       if (breakingSubTab === "ECONOMY") {
-        const matched = allItems.filter(
+        const matched = pool.filter(
           item =>
             item.subCategory === "ECONOMY_FLASH" ||
             item.category === "MACRO" ||
             item.category === "REGULATION",
         );
-        return matched.length > 0 ? matched : allItems;
+        return sortNewsItems(matched.length > 0 ? matched : pool, activeSort);
       }
-      return allItems;
+      return sortNewsItems(pool, activeSort);
     }
     if (newsroomTab === "CRYPTO") {
       const matched = allItems.filter(
@@ -246,7 +462,7 @@ export function NewsFeed({
           item.category === "CRYPTO" ||
           item.category === "ONCHAIN",
       );
-      return matched.length > 0 ? matched : allItems;
+      return sortNewsItems(matched.length > 0 ? matched : allItems, activeSort);
     }
     if (newsroomTab === "STOCKS" || newsroomTab === "FX_RATES") {
       const matched = allItems.filter(
@@ -255,9 +471,9 @@ export function NewsFeed({
           item.category === "MACRO" ||
           item.category === "REGULATION",
       );
-      return matched.length > 0 ? matched : allItems;
+      return sortNewsItems(matched.length > 0 ? matched : allItems, activeSort);
     }
-    return allItems;
+    return sortNewsItems(allItems, activeSort);
   })();
 
   const visibleItems =
@@ -316,6 +532,35 @@ export function NewsFeed({
     let es: EventSource | null = null;
     try {
       es = new window.EventSource(`${contentOrigin(origin)}/api/v1/news/stream`);
+      es.onopen = () => {
+        setSseConnected(true);
+        setSseError(false);
+      };
+      es.onerror = () => {
+        setSseConnected(false);
+        setSseError(true);
+      };
+      const onConnected = (event: MessageEvent) => {
+        setSseConnected(true);
+        setSseError(false);
+        try {
+          const parsed = JSON.parse(String(event.data ?? "{}"));
+          if (parsed && typeof parsed === "object" && "live" in parsed) {
+            setSseLiveStatus(parseNewsLiveStatus(parsed));
+          }
+        } catch {
+          // Ignore malformed frame
+        }
+      };
+      const onLiveStatus = (event: MessageEvent) => {
+        try {
+          const parsed = parseNewsLiveStatus(JSON.parse(String(event.data ?? "{}")));
+          setSseLiveStatus(parsed);
+          setSseError(!parsed.live);
+        } catch {
+          // Ignore malformed frame
+        }
+      };
       const onNewsCreated = (event: MessageEvent) => {
         try {
           const parsed = parseNewsItem(JSON.parse(String(event.data ?? "{}")));
@@ -343,6 +588,8 @@ export function NewsFeed({
           // Ignore malformed reaction frame
         }
       };
+      es.addEventListener("CONNECTED", onConnected as EventListener);
+      es.addEventListener("NEWS_LIVE_STATUS", onLiveStatus as EventListener);
       es.addEventListener("NEWS_CREATED", onNewsCreated as EventListener);
       es.addEventListener("NEWS_REACTION_UPDATED", onReactionUpdated as EventListener);
     } catch {
@@ -470,6 +717,16 @@ export function NewsFeed({
   const sentimentBullPct = highlights?.sentimentSummary.bullPct ?? 68;
   const sentimentBearPct = highlights?.sentimentSummary.bearPct ?? 32;
 
+  const serverLiveStatus = sseLiveStatus ?? highlights?.liveStatus;
+  const isLiveActive =
+    initialLiveActive !== undefined
+      ? initialLiveActive
+      : sseError
+        ? false
+        : serverLiveStatus
+          ? Boolean(serverLiveStatus.live && serverLiveStatus.collectorEnabled)
+          : sseConnected !== false;
+
   return (
     <MemberShell
       title="실시간 뉴스"
@@ -513,17 +770,32 @@ export function NewsFeed({
                       sectionTab === "BREAKING" ? "text-blue-100" : "text-gray-400"
                     }`}
                   >
-                    24시 실시간 속보
+                    최근 6시간 실시간 속보
                   </p>
                 </div>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
-                    sectionTab === "BREAKING"
-                      ? "bg-white/20 text-white"
-                      : "bg-red-50 text-red-500"
+                  data-live-status={isLiveActive ? "on" : "off"}
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                    isLiveActive
+                      ? sectionTab === "BREAKING"
+                        ? "bg-white/20 text-white"
+                        : "bg-red-50 text-red-500"
+                      : sectionTab === "BREAKING"
+                        ? "bg-white/15 text-gray-200"
+                        : "bg-gray-100 text-gray-400"
                   }`}
                 >
-                  LIVE
+                  <span
+                    aria-hidden="true"
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      isLiveActive
+                        ? sectionTab === "BREAKING"
+                          ? "animate-pulse bg-emerald-300"
+                          : "animate-pulse bg-red-500"
+                        : "bg-gray-400"
+                    }`}
+                  />
+                  <span>{isLiveActive ? "LIVE" : "OFF"}</span>
                 </span>
               </button>
 
@@ -832,9 +1104,46 @@ export function NewsFeed({
                 </div>
               </div>
 
-              {/* 퀵 필터 알약 칩 바 */}
+              {/* 퀵 필터 알약 칩 바 & 속보 정렬 (최신순 | 오래된순) */}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
+                  <div
+                    className="flex items-center gap-1 rounded-full bg-[#F2F4F7] p-1"
+                    role="group"
+                    aria-label="속보 정렬 방식"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={breakingSort === "LATEST"}
+                      onClick={() => {
+                        setBreakingSort("LATEST");
+                        resetPagination();
+                      }}
+                      className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                        breakingSort === "LATEST"
+                          ? "bg-gray-900 text-white"
+                          : "text-gray-500 hover:text-gray-900"
+                      }`}
+                    >
+                      최신순
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={breakingSort === "OLDEST"}
+                      onClick={() => {
+                        setBreakingSort("OLDEST");
+                        resetPagination();
+                      }}
+                      className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                        breakingSort === "OLDEST"
+                          ? "bg-gray-900 text-white"
+                          : "text-gray-500 hover:text-gray-900"
+                      }`}
+                    >
+                      오래된순
+                    </button>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => setQuickChip(prev => (prev === "WATCH" ? "" : "WATCH"))}
@@ -873,7 +1182,7 @@ export function NewsFeed({
                   </button>
                 </div>
                 <span className="text-xs font-medium text-gray-400">
-                  24시간 실시간 업데이트 · KST 기준
+                  최근 6시간 실시간 속보 · 4시간 경과 자동 정리 · KST 기준
                 </span>
               </div>
             </>
@@ -944,10 +1253,11 @@ export function NewsFeed({
                 ))}
               </div>
 
-              {/* 최신 뉴스 | 많이 본 뉴스 알약 정렬 버튼 */}
-              <div className="flex items-center gap-2">
+              {/* 최신 뉴스 | 많이 본 뉴스 | 오래된 순 알약 정렬 버튼 */}
+              <div className="flex items-center gap-2" role="group" aria-label="뉴스룸 정렬 방식">
                 <button
                   type="button"
+                  aria-pressed={newsroomSort === "LATEST"}
                   onClick={() => {
                     setNewsroomSort("LATEST");
                     resetPagination();
@@ -962,6 +1272,7 @@ export function NewsFeed({
                 </button>
                 <button
                   type="button"
+                  aria-pressed={newsroomSort === "POPULAR"}
                   onClick={() => {
                     setNewsroomSort("POPULAR");
                     resetPagination();
@@ -973,6 +1284,21 @@ export function NewsFeed({
                   }`}
                 >
                   많이 본 뉴스
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={newsroomSort === "OLDEST"}
+                  onClick={() => {
+                    setNewsroomSort("OLDEST");
+                    resetPagination();
+                  }}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${
+                    newsroomSort === "OLDEST"
+                      ? "bg-gray-800 text-white"
+                      : "text-gray-500 hover:text-gray-900"
+                  }`}
+                >
+                  오래된 순
                 </button>
               </div>
             </>
@@ -1118,6 +1444,11 @@ export function NewsFeed({
                     const bearCount = liveReaction
                       ? liveReaction.bearCount
                       : baseBear + (userReaction === "bear" ? 1 : 0);
+                    const extraBody = cleanBreakingBody(
+                      item.content,
+                      item.summary,
+                      item.aiSummary,
+                    );
 
                     return (
                       <li key={item.id} className="p-5 transition-colors hover:bg-gray-50/50">
@@ -1139,9 +1470,11 @@ export function NewsFeed({
                             <p className="mt-1.5 text-sm leading-relaxed text-gray-600">
                               {item.summary}
                             </p>
-                            <p className="mt-1 text-xs leading-relaxed text-gray-500">
-                              {item.content}
-                            </p>
+                            {extraBody && (
+                              <p className="mt-1 text-xs leading-relaxed text-gray-500">
+                                {extraBody}
+                              </p>
+                            )}
 
                             {item.aiSummary && (
                               <div className="mt-2.5 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs font-bold text-[#5B44F2]">
@@ -1241,103 +1574,129 @@ export function NewsFeed({
             ) : (
               <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
                 <ul className="divide-y divide-gray-100" aria-label="뉴스룸 기사 목록">
-                  {visibleItems.map(item => (
-                    <li key={item.id} className="p-5 transition-colors hover:bg-gray-50/60">
-                      <article className="flex items-start justify-between gap-5">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
-                            <time
-                              dateTime={item.publishedAt}
-                              className="rounded bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600"
-                            >
-                              {kstTimeOnly(item.publishedAt)}
-                            </time>
-                            <span>2026년 11월 10일 화요일</span>
-                            <span>·</span>
-                            <span className="font-bold text-gray-500">
-                              {newsCategoryLabel(item.category)}
-                            </span>
-                            {item.symbolTag && (
-                              <span className="font-bold text-[#0058FF]">#{item.symbolTag}</span>
-                            )}
-                          </div>
+                  {visibleItems.map(item => {
+                    const hasValidThumbnail = Boolean(
+                      item.thumbnailUrl &&
+                        item.thumbnailUrl.trim() !== "" &&
+                        !failedThumbIds[item.id],
+                    );
+                    const categoryHashtag = `#${newsCategoryLabel(item.category).replace(
+                      /\s+/g,
+                      "",
+                    )}`;
+                    const subHashtag = newsroomSubHashtag(item);
+                    const hashtags = Array.from(
+                      new Set([
+                        item.symbolTag ? `#${item.symbolTag}` : "#MACRO",
+                        categoryHashtag,
+                        subHashtag,
+                      ]),
+                    );
 
-                          <h3
-                            onClick={() => void inspectArticle(item.id, item)}
-                            className="mt-1.5 cursor-pointer text-base font-bold text-gray-900 hover:text-[#0058FF]"
-                          >
-                            {item.title}
-                          </h3>
-                          <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-gray-500">
-                            {item.summary} {item.content}
-                          </p>
-                          {item.aiSummary && (
-                            <p className="mt-1.5 text-xs font-bold text-[#5B44F2]">
-                              ✦ AI 분석: {item.aiSummary}
-                            </p>
-                          )}
-
-                          <div className="mt-2.5 flex flex-wrap items-center gap-3 text-xs">
-                            <span className="font-medium text-gray-400">
-                              출처 {item.sourceName}
-                            </span>
-                            {item.sourceUrl && (
-                              <a
-                                href={item.sourceUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="font-bold text-gray-600 hover:text-[#0058FF] hover:underline"
+                    return (
+                      <li key={item.id} className="p-5 transition-colors hover:bg-gray-50/60">
+                        <article className="flex items-start justify-between gap-5">
+                          <div className="min-w-0 flex-1 w-full">
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                              <time
+                                dateTime={item.publishedAt}
+                                className="rounded bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600"
                               >
-                                원문 기사 보기 ↗
-                              </a>
-                            )}
-                            {item.symbolTag && (
-                              <Link
-                                href="/trading"
-                                className="font-bold text-[#0058FF] hover:underline"
-                              >
-                                {item.symbolTag} 선물 모의투자 이동 →
-                              </Link>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => void inspectArticle(item.id, item)}
-                              className="font-bold text-gray-500 hover:text-gray-900"
-                            >
-                              뉴스 상세 모달 보기
-                            </button>
-                          </div>
-                        </div>
-
-                        <div
-                          data-s3-slot="news-thumbnail"
-                          onClick={() => void inspectArticle(item.id, item)}
-                          className="relative flex h-20 w-28 shrink-0 cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-gray-200 bg-slate-900 p-2.5 text-white sm:h-22 sm:w-36"
-                        >
-                          {item.thumbnailUrl && !failedThumbIds[item.id] ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={item.thumbnailUrl}
-                              alt={item.title}
-                              onError={() =>
-                                setFailedThumbIds(prev => ({ ...prev, [item.id]: true }))
-                              }
-                              className="absolute inset-0 h-full w-full object-cover"
-                            />
-                          ) : (
-                            <>
-                              <span className="text-[11px] font-black text-blue-400">
-                                #{item.symbolTag ?? "MACRO"}
-                              </span>
-                              <span className="truncate text-[10px] font-bold text-gray-300">
+                                {kstTimeOnly(item.publishedAt)}
+                              </time>
+                              <span>2026년 11월 10일 화요일</span>
+                              <span>·</span>
+                              <span className="font-bold text-gray-500">
                                 {newsCategoryLabel(item.category)}
                               </span>
-                            </>
-                          )}
-                        </div>
-                      </article>
-                    </li>
-                  ))}
+                            </div>
+
+                            <h3
+                              onClick={() => void inspectArticle(item.id, item)}
+                              className="mt-1.5 cursor-pointer text-base font-bold text-gray-900 hover:text-[#0058FF]"
+                            >
+                              {item.title}
+                            </h3>
+                            <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-gray-600">
+                              {cleanNewsroomExcerpt(
+                                item.summary,
+                                item.content,
+                                item.aiSummary,
+                              )}
+                            </p>
+                            {item.aiSummary && (
+                              <p className="mt-1.5 text-xs font-bold text-[#5B44F2]">
+                                ✦ AI 분석: {item.aiSummary}
+                              </p>
+                            )}
+
+                            <div
+                              data-newsroom-hashtags="true"
+                              className="mt-2.5 flex flex-wrap items-center gap-1.5"
+                            >
+                              {hashtags.map(tag => (
+                                <span
+                                  key={tag}
+                                  className="rounded-md bg-blue-50/80 px-2 py-0.5 text-[11px] font-extrabold text-[#0058FF]"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+                              <span className="font-medium text-gray-400">
+                                출처 {item.sourceName}
+                              </span>
+                              {item.sourceUrl && (
+                                <a
+                                  href={item.sourceUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-bold text-gray-600 hover:text-[#0058FF] hover:underline"
+                                >
+                                  원문 기사 보기 ↗
+                                </a>
+                              )}
+                              {item.symbolTag && (
+                                <Link
+                                  href="/trading"
+                                  className="font-bold text-[#0058FF] hover:underline"
+                                >
+                                  {item.symbolTag} 선물 모의투자 이동 →
+                                </Link>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => void inspectArticle(item.id, item)}
+                                className="font-bold text-gray-500 hover:text-gray-900"
+                              >
+                                뉴스 상세 모달 보기
+                              </button>
+                            </div>
+                          </div>
+
+                          {hasValidThumbnail ? (
+                            <div
+                              data-s3-slot="news-thumbnail"
+                              onClick={() => void inspectArticle(item.id, item)}
+                              className="relative flex h-20 w-28 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-gray-100 sm:h-24 sm:w-36"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={item.thumbnailUrl ?? ""}
+                                alt={item.title}
+                                onError={() =>
+                                  setFailedThumbIds(prev => ({ ...prev, [item.id]: true }))
+                                }
+                                className="h-full w-full object-cover"
+                              />
+                            </div>
+                          ) : null}
+                        </article>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ))}
