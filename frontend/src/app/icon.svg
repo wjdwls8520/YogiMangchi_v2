@@ -1,7 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="3" fill="#ff9f24" />
-  <g transform="translate(4 4)" fill="#17181d">
-    <path d="m8 4 4-1 8 8-1 4-3 1-8-8V4Z" />
-    <path d="m11 11-7 8" fill="none" stroke="#17181d" stroke-width="3" stroke-linecap="square" />
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 기둥 (꼬리) -->
+  <rect x="28" y="4" width="8" height="56" fill="#B80000" />
+  <!-- 몸통 (망치 머리) -->
+  <rect x="12" y="12" width="40" height="26" fill="#B80000" />
 </svg>
