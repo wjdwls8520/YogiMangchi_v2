@@ -784,6 +784,11 @@ export function NewsFeed({
   const [prependedNews, setPrependedNews] = useState<NewsItem[]>([]);
   const incomingNewsRef = useRef<NewsItem[]>([]);
   const accountStorageKeyRef = useRef<string>(accountStorageKey);
+  const [acknowledgedMaxId, setAcknowledgedMaxId] = useState<number | null>(() =>
+    initialPage?.items && initialPage.items.length > 0
+      ? Math.max(...initialPage.items.map(item => item.id))
+      : null,
+  );
 
   useEffect(() => {
     accountStorageKeyRef.current = accountStorageKey;
@@ -896,18 +901,6 @@ export function NewsFeed({
     }
   }, [accountStorageKey, unreadByAccount, pendingCoinIds, pendingEconomyIds, hasInitialCountOverride]);
 
-  const coinUnreadCount = pendingCoinIds.length;
-  const economyUnreadCount = pendingEconomyIds.length;
-  const allUnreadCount = coinUnreadCount + economyUnreadCount;
-  const activeToastCount =
-    sectionTab === "BREAKING"
-      ? breakingSubTab === "COIN"
-        ? coinUnreadCount
-        : breakingSubTab === "ECONOMY"
-          ? economyUnreadCount
-          : allUnreadCount
-      : pendingNewsroomCount || allUnreadCount;
-
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.history?.replaceState !== "function") {
       return;
@@ -1008,6 +1001,47 @@ export function NewsFeed({
     query.data?.items ??
     (sectionTab === "NEWSROOM" ? (cachedDefaultPage?.items ?? initialPage?.items) : undefined) ??
     [];
+
+  const unacknowledgedQueryItems =
+    acknowledgedMaxId !== null ? baseItems.filter(item => item.id > acknowledgedMaxId) : [];
+  const effectiveCoinIds = Array.from(
+    new Set([
+      ...pendingCoinIds,
+      ...unacknowledgedQueryItems.filter(isCoinBreakingItem).map(item => item.id),
+    ]),
+  );
+  const effectiveEconomyIds = Array.from(
+    new Set([
+      ...pendingEconomyIds,
+      ...unacknowledgedQueryItems.filter(isEconomyBreakingItem).map(item => item.id),
+    ]),
+  );
+  const coinUnreadCount = effectiveCoinIds.length;
+  const economyUnreadCount = effectiveEconomyIds.length;
+  const allUnreadCount = coinUnreadCount + economyUnreadCount;
+  const activeToastCount =
+    sectionTab === "BREAKING"
+      ? breakingSubTab === "COIN"
+        ? coinUnreadCount
+        : breakingSubTab === "ECONOMY"
+          ? economyUnreadCount
+          : allUnreadCount
+      : pendingNewsroomCount || allUnreadCount;
+
+  const activeUnreadIdsForView =
+    sectionTab === "BREAKING"
+      ? breakingSubTab === "COIN"
+        ? effectiveCoinIds
+        : breakingSubTab === "ECONOMY"
+          ? effectiveEconomyIds
+          : [...effectiveCoinIds, ...effectiveEconomyIds]
+      : [...effectiveCoinIds, ...effectiveEconomyIds];
+  const positiveUnreadIdSet = new Set(activeUnreadIdsForView.filter(id => id > 0));
+  const placeholderUnreadCount =
+    activeUnreadIdsForView.filter(id => id <= 0).length +
+    (sectionTab === "NEWSROOM"
+      ? Math.max(0, pendingNewsroomCount - activeUnreadIdsForView.length)
+      : 0);
   const prependedIdSet = new Set(prependedNews.map(item => item.id));
   const allItems = (() => {
     const seen = new Set<number>();
@@ -1188,6 +1222,9 @@ export function NewsFeed({
           if (!incomingNewsRef.current.some(item => item.id === parsed.id)) {
             incomingNewsRef.current = [parsed, ...incomingNewsRef.current];
           }
+          setPrependedNews(prev =>
+            prev.some(item => item.id === parsed.id) ? prev : [parsed, ...prev],
+          );
           if (isEconomyBreakingItem(parsed)) {
             setUnreadByAccount(prevMap => {
               const key = accountStorageKeyRef.current;
@@ -1248,6 +1285,15 @@ export function NewsFeed({
   }, [origin, category, symbolTag]);
 
   function handleLoadNewNews() {
+    const allKnownIds = [
+      ...prependedNews,
+      ...baseItems,
+      ...extraItems,
+      ...incomingNewsRef.current,
+    ].map(item => item.id);
+    if (allKnownIds.length > 0) {
+      setAcknowledgedMaxId(prev => Math.max(prev ?? 0, ...allKnownIds));
+    }
     if (sectionTab === "BREAKING" && breakingSubTab === "COIN") {
       const coinItems = incomingNewsRef.current.filter(isCoinBreakingItem);
       incomingNewsRef.current = incomingNewsRef.current.filter(isEconomyBreakingItem);
@@ -2109,7 +2155,10 @@ export function NewsFeed({
                 </div>
 
                 <ul className="divide-y divide-gray-100" aria-label=" 실시간 속보 목록">
-                  {visibleItems.map(item => {
+                  {visibleItems.map((item, itemIdx) => {
+                    const isUnreadNewItem =
+                      positiveUnreadIdSet.has(item.id) ||
+                      (placeholderUnreadCount > 0 && itemIdx < placeholderUnreadCount);
                     const userReaction = reactions[item.id];
                     const liveReaction = liveReactions[item.id];
                     const baseBull =
@@ -2147,7 +2196,16 @@ export function NewsFeed({
                               onClick={() => void inspectArticle(item.id, item)}
                               className="cursor-pointer text-[15px] font-bold text-gray-900 hover:text-[#0058FF]"
                             >
-                              {item.title}
+                              <span className="align-middle">{item.title}</span>
+                              {isUnreadNewItem && (
+                                <span
+                                  data-news-new-badge={item.id}
+                                  aria-label="새로 등록된 뉴스"
+                                  className="relative -top-0.5 ml-1.5 inline-flex items-center justify-center rounded-md bg-[#F6465D] px-1.5 py-0.5 align-middle text-[10px] font-extrabold leading-none tracking-wider text-white uppercase"
+                                >
+                                  NEW
+                                </span>
+                              )}
                             </h3>
                             <p className="mt-1.5 text-sm leading-relaxed text-gray-600">
                               {item.summary}
@@ -2256,7 +2314,10 @@ export function NewsFeed({
             ) : (
               <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
                 <ul className="divide-y divide-gray-100" aria-label="뉴스룸 기사 목록">
-                  {visibleItems.map(item => {
+                  {visibleItems.map((item, itemIdx) => {
+                    const isUnreadNewItem =
+                      positiveUnreadIdSet.has(item.id) ||
+                      (placeholderUnreadCount > 0 && itemIdx < placeholderUnreadCount);
                     const hasValidThumbnail = Boolean(
                       item.thumbnailUrl &&
                         item.thumbnailUrl.trim() !== "" &&
@@ -2304,7 +2365,16 @@ export function NewsFeed({
                               onClick={() => void inspectArticle(item.id, item)}
                               className="mt-1.5 cursor-pointer text-base font-bold text-gray-900 hover:text-[#0058FF]"
                             >
-                              {item.title}
+                              <span className="align-middle">{item.title}</span>
+                              {isUnreadNewItem && (
+                                <span
+                                  data-news-new-badge={item.id}
+                                  aria-label="새로 등록된 뉴스"
+                                  className="relative -top-0.5 ml-1.5 inline-flex items-center justify-center rounded-md bg-[#F6465D] px-1.5 py-0.5 align-middle text-[10px] font-extrabold leading-none tracking-wider text-white uppercase"
+                                >
+                                  NEW
+                                </span>
+                              )}
                             </h3>
                             <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-gray-600">
                               {cleanNewsroomExcerpt(
