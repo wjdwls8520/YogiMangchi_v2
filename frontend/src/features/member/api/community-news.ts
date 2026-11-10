@@ -75,6 +75,10 @@ export type NewsSentimentSummary = {
   bullPct: number;
   bearPct: number;
   dominantSentiment: NewsSentiment;
+  bullishArticleCount?: number;
+  bearishArticleCount?: number;
+  neutralArticleCount?: number;
+  summary?: string;
 };
 
 export type NewsLiveStatus = {
@@ -513,6 +517,18 @@ export function parseNewsHighlights(value: unknown): NewsHighlights {
       bullPct: typeof rawSummary.bullPct === "number" ? nonNegInt(rawSummary.bullPct) : 50,
       bearPct: typeof rawSummary.bearPct === "number" ? nonNegInt(rawSummary.bearPct) : 50,
       dominantSentiment,
+      ...(typeof rawSummary.bullishArticleCount === "number"
+        ? { bullishArticleCount: nonNegInt(rawSummary.bullishArticleCount) }
+        : {}),
+      ...(typeof rawSummary.bearishArticleCount === "number"
+        ? { bearishArticleCount: nonNegInt(rawSummary.bearishArticleCount) }
+        : {}),
+      ...(typeof rawSummary.neutralArticleCount === "number"
+        ? { neutralArticleCount: nonNegInt(rawSummary.neutralArticleCount) }
+        : {}),
+      ...(typeof rawSummary.summary === "string" && rawSummary.summary.trim().length > 0
+        ? { summary: str(rawSummary.summary, 400) }
+        : {}),
     },
     liveStatus: parseNewsLiveStatus(row.liveStatus),
   };
