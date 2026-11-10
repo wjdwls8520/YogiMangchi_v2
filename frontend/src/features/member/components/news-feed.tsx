@@ -36,7 +36,8 @@ import {
 } from "../api/community-news";
 import {
   FALLBACK_MARKET_OVERVIEW,
-  parseMarketOverviewPayload,
+  fetchRedisMarketOverview,
+  resolveTradingMarketBaseUrl,
   type MarketOverviewData,
 } from "../api/market-overview";
 
@@ -968,18 +969,13 @@ export function NewsFeed({
       parseNewsHighlights(await contentJson(origin, "/news/highlights", { signal })),
   });
 
+  const tradingBase = resolveTradingMarketBaseUrl();
   const marketOverviewQuery = useQuery<MarketOverviewData>({
-    queryKey: ["portal-market-overview"],
+    queryKey: ["portal-redis-market-overview", tradingBase],
     initialData: initialMarketOverview,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-    queryFn: async ({ signal }) => {
-      const response = await fetch("/api/market-overview", { signal });
-      if (!response.ok) {
-        throw new Error(`market-overview HTTP ${response.status}`);
-      }
-      return parseMarketOverviewPayload(await response.json());
-    },
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    queryFn: async ({ signal }) => fetchRedisMarketOverview(tradingBase, signal),
   });
 
   function resetPagination() {

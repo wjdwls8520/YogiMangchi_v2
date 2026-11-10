@@ -71,6 +71,7 @@ import {
   computeBtcDominanceChange24h,
   computeKimchiPremiumPercent,
   fetchLiveMarketOverview,
+  fetchRedisMarketOverview,
   parseMarketOverviewPayload,
 } from "../src/features/member/api/market-overview";
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
@@ -2591,6 +2592,74 @@ test("메인페이지(/) 새로고침 시 SSR과 클라이언트 초기 Hydratio
     client.clear();
   }
 });
+
+test("fetchRedisMarketOverview는 trading-server의 Redis 기반 /api/v1/market/overview decimal string 응답을 파싱하고 UNAVAILABLE 상태는 거부하여 이전 신선값을 유지한다", async () => {
+  const requestedUrls: string[] = [];
+  const freshOverview = await fetchRedisMarketOverview(
+    "http://localhost:8081",
+    undefined,
+    async input => {
+      requestedUrls.push(String(input));
+      return Response.json({
+        btcDominancePercent: "59.7",
+        btcDominanceChange24h: "1.85",
+        kimchiPremiumPercent: "1.26",
+        openInterestBillionsUsd: "30.4",
+        fearGreedValue: 32,
+        fearGreedLabelKr: "공포",
+        futuresBullPct: 58,
+        futuresBearPct: 42,
+        btcChange24h: "-2.14",
+        usdKrwRate: "1343.92",
+        usdKrwChangeAmount: "3.64",
+        usdKrwChangePct: "0.27",
+        usdKrwHistory: [
+          "1325.1",
+          "1326.0",
+          "1328.4",
+          "1331.2",
+          "1333.5",
+          "1330.8",
+          "1334.0",
+          "1336.5",
+          "1338.1",
+          "1339.9",
+          "1342.0",
+          "1341.2",
+          "1340.5",
+          "1343.92",
+        ],
+        status: "FRESH",
+        updatedAt: "2026-11-10T17:58:00Z",
+      });
+    },
+  );
+
+  assert.deepEqual(requestedUrls, ["http://localhost:8081/api/v1/market/overview"]);
+  assert.equal(freshOverview.btcDominancePercent, 59.7);
+  assert.equal(freshOverview.btcDominanceChange24h, 1.85);
+  assert.equal(freshOverview.kimchiPremiumPercent, 1.26);
+  assert.equal(freshOverview.openInterestBillionsUsd, 30.4);
+  assert.equal(freshOverview.fearGreedValue, 32);
+  assert.equal(freshOverview.fearGreedLabelKr, "공포");
+  assert.equal(freshOverview.usdKrwRate, 1343.92);
+  assert.equal(freshOverview.usdKrwChangeAmount, 3.64);
+  assert.equal(freshOverview.usdKrwChangePct, 0.27);
+  assert.equal(freshOverview.usdKrwHistory[13], 1343.92);
+
+  await assert.rejects(
+    () =>
+      fetchRedisMarketOverview("http://localhost:8081", undefined, async () =>
+        Response.json({
+          ...freshOverview,
+          status: "UNAVAILABLE",
+          updatedAt: null,
+        }),
+      ),
+    /not ready yet/,
+  );
+});
+
 
 
 

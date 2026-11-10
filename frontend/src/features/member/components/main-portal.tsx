@@ -16,7 +16,8 @@ import {
 import {
   FALLBACK_MARKET_OVERVIEW,
   buildExchangeRateChartGeometry,
-  parseMarketOverviewPayload,
+  fetchRedisMarketOverview,
+  resolveTradingMarketBaseUrl,
   type MarketOverviewData,
 } from "../api/market-overview";
 import { marketTickersJson } from "../../trading/api/client";
@@ -319,10 +320,7 @@ export function MainPortal({
   initialTickers?: unknown;
 } = {}) {
   const { origin, session, snapshot } = useMember();
-  const tradingBase =
-    process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ??
-    process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
-    "http://localhost:8081";
+  const tradingBase = resolveTradingMarketBaseUrl();
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
   const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false);
   const [reportFiles, setReportFiles] = useState<SelectedS3File[]>([]);
@@ -331,7 +329,7 @@ export function MainPortal({
   const [krwInput, setKrwInput] = useState(() =>
     Math.round(100 * FALLBACK_MARKET_OVERVIEW.usdKrwRate).toLocaleString("ko-KR"),
   );
-  const [userEditedCalc, setUserEditedCalc] = useState(false);
+  const [calcAnchor, setCalcAnchor] = useState<"YD" | "KRW">("YD");
 
   // 선물 모의투자 퀵 시뮬레이터 상태
   const [simSide, setSimSide] = useState<"LONG" | "SHORT">("LONG");
@@ -340,17 +338,11 @@ export function MainPortal({
   const [simMovePercent, setSimMovePercent] = useState<number>(3.5);
 
   const marketOverviewQuery = useQuery<MarketOverviewData>({
-    queryKey: ["portal-market-overview"],
+    queryKey: ["portal-redis-market-overview", tradingBase],
     initialData: initialMarketOverview,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-    queryFn: async ({ signal }) => {
-      const response = await fetch("/api/market-overview", { signal });
-      if (!response.ok) {
-        throw new Error(`market-overview HTTP ${response.status}`);
-      }
-      return parseMarketOverviewPayload(await response.json());
-    },
+    staleTime: 3_000,
+    refetchInterval: 5_000,
+    queryFn: async ({ signal }) => fetchRedisMarketOverview(tradingBase, signal),
   });
 
   const tickersQuery = useQuery({
@@ -386,11 +378,19 @@ export function MainPortal({
   const exchangeRate = marketOverview.usdKrwRate;
   const exchangeChart = buildExchangeRateChartGeometry(marketOverview.usdKrwHistory);
   const popularCoins = mapRedisTickersToPopularCoins(tickersQuery.data);
-  const displayedKrwInput = userEditedCalc
-    ? krwInput
-    : ydInput && Number.isFinite(Number(ydInput))
-      ? Math.round(Number(ydInput) * exchangeRate).toLocaleString("ko-KR")
-      : krwInput;
+  const rawKrwDigits = krwInput.replace(/[^0-9]/g, "");
+  const displayedYdInput =
+    calcAnchor === "YD"
+      ? ydInput
+      : rawKrwDigits && Number.isFinite(Number(rawKrwDigits))
+        ? (Number(rawKrwDigits) / exchangeRate).toFixed(2)
+        : "";
+  const displayedKrwInput =
+    calcAnchor === "KRW"
+      ? krwInput
+      : ydInput && Number.isFinite(Number(ydInput))
+        ? Math.round(Number(ydInput) * exchangeRate).toLocaleString("ko-KR")
+        : "";
   const newsItems = newsQuery.data?.items?.length ? newsQuery.data.items : FALLBACK_NEWS;
   const postItems = postsQuery.data?.items?.length ? postsQuery.data.items : FALLBACK_POSTS;
 
@@ -410,7 +410,7 @@ export function MainPortal({
   }, [simLeverage, simMargin, simMovePercent, simSide]);
 
   function handleYdChange(value: string) {
-    setUserEditedCalc(true);
+    setCalcAnchor("YD");
     const raw = value.replace(/[^0-9.]/g, "");
     setYdInput(raw);
     const num = Number(raw);
@@ -422,7 +422,7 @@ export function MainPortal({
   }
 
   function handleKrwChange(value: string) {
-    setUserEditedCalc(true);
+    setCalcAnchor("KRW");
     const raw = value.replace(/[^0-9]/g, "");
     const num = Number(raw);
     if (!raw || Number.isNaN(num)) {
@@ -435,7 +435,7 @@ export function MainPortal({
   }
 
   function handleResetCalculator() {
-    setUserEditedCalc(true);
+    setCalcAnchor("YD");
     setYdInput("1");
     setKrwInput(Math.round(exchangeRate).toLocaleString("ko-KR"));
   }
@@ -644,7 +644,7 @@ export function MainPortal({
                         type="text"
                         inputMode="decimal"
                         aria-label="요기 달러 입력"
-                        value={ydInput}
+                        value={displayedYdInput}
                         onChange={e => handleYdChange(e.target.value)}
                         placeholder="0"
                         className="w-full bg-transparent text-right text-lg font-extrabold text-gray-900 focus:outline-none"
