@@ -8,6 +8,7 @@ import { usePolicies, PolicyConsentControl } from "./policy-controls";
 import { acceptance, parsePolicyState, type ConsentSelection } from "../api/policies";
 import { ContentApiError, contentMessage, contentRecovery } from "../api/client";
 import { MemberErrorActions } from "./member-error-actions";
+import { V1IconCheck } from "./v1-ui";
 
 function useOwnConsents() {
   const { session, snapshot } = useMember();
@@ -129,7 +130,8 @@ export function MemberConsents() {
         </h2>
         {!mine.isError && !policies.isError && mine.data && !mine.data.reconsentRequired && (
           <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-600">
-            ✓ 필수 동의 완료
+            <V1IconCheck className="mr-1 h-3.5 w-3.5" />
+            <span>필수 동의 완료</span>
           </span>
         )}
       </div>

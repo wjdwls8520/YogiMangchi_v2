@@ -10,6 +10,7 @@ import { readLoginRecovery } from "../api/login-recovery";
 import { parseFlow, validNickname } from "../api/contracts";
 import { useMember } from "./member-provider";
 import { MemberLoginView, MemberShell, SignupForm } from "./member-views";
+import { V1IconCheck } from "./v1-ui";
 import { validPolicyVersion } from "../api/policies";
 import { clearWithdrawalIntent, readWithdrawalIntent, saveWithdrawalIntent } from "../api/withdrawal-intent";
 
@@ -84,7 +85,7 @@ export function MemberSignupPage() {
     >
       <div className="identity_verification_wrap" aria-label="소셜 계정 본인인증">
         <div className="ym-verify-icon" aria-hidden="true">
-          ✓
+          <V1IconCheck className="h-4 w-4" />
         </div>
         <h2 className="ym-verify-title">소셜 계정 본인인증</h2>
         <p className="ym-verify-desc">
@@ -212,7 +213,7 @@ export function MemberCallback() {
     {flow?.status === "WITHDRAWAL_PENDING" && <p role="status" className="member-message">이 계정의 탈퇴 정리를 진행 중입니다. 완료 전에는 신규 가입이나 기존 계정 사용을 할 수 없습니다. 완료 후 같은 소셜 계정으로 새로 가입할 수 있으며 과거 자산·회차는 이전되지 않습니다.</p>}
     {flow?.status === "SIGNUP_REQUIRED" && !withdrawalIntent && snapshot.phase !== "ready" && <>
       <div className="identity_verification_wrap is-verified">
-        <div className="ym-verify-icon" aria-hidden="true">✓</div>
+        <div className="ym-verify-icon" aria-hidden="true"><V1IconCheck className="h-4 w-4" /></div>
         <h2 className="ym-verify-title">소셜 계정 본인인증 완료</h2>
         <p className="member-message">{flow.provider} · {flow.accountHint} 계정을 확인했습니다. 닉네임과 가입 동의를 입력해 주세요. 탈퇴 후 재가입인 경우 새로운 회원으로 시작하며 기존 자산·이력은 이전되지 않습니다.</p>
       </div>

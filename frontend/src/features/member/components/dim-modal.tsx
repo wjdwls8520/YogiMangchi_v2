@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, type ReactNode, type RefObject } from "react";
+import { V1IconClose } from "./v1-ui";
 
 interface ScrollLockTargetWindow {
   scrollY: number;
@@ -168,7 +169,7 @@ export function DimModal({
             aria-label="모달 닫기"
             onClick={onClose}
           >
-            ✕
+            <V1IconClose className="h-4 w-4" />
           </button>
         </header>
         <div className="ym-dim-body">{children}</div>

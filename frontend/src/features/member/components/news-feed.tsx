@@ -6,6 +6,20 @@ import Link from "next/link";
 import { useMember } from "./member-provider";
 import { MemberShell } from "./member-views";
 import { DimModal } from "./dim-modal";
+import {
+  V1IconBolt,
+  V1IconNews,
+  V1IconArrowUp,
+  V1IconSend,
+  V1IconStar,
+  V1IconMic,
+  V1IconChartBar,
+  V1IconCalendar,
+  V1IconSparkle,
+  V1IconTrendUp,
+  V1IconTrendDown,
+  V1IconExternal,
+} from "./v1-ui";
 import { contentJson, contentMessage, contentOrigin } from "../api/client";
 import {
   NEWS_CATEGORIES,
@@ -996,7 +1010,7 @@ export function NewsFeed({
               >
                 <div>
                   <div className="flex items-center gap-2 text-sm font-black">
-                    <span>⚡</span>
+                    <V1IconBolt className="h-4 w-4" />
                     <span>속보</span>
                   </div>
                   <p
@@ -1046,7 +1060,7 @@ export function NewsFeed({
               >
                 <div>
                   <div className="flex items-center gap-2 text-sm font-black">
-                    <span>📰</span>
+                    <V1IconNews className="h-4 w-4" />
                     <span>뉴스룸</span>
                   </div>
                   <p
@@ -1107,9 +1121,9 @@ export function NewsFeed({
                 onClick={handleLoadNewNews}
                 className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-blue-400 bg-[#0058FF] px-4 py-2 text-xs font-bold text-white shadow-lg transition-all hover:bg-blue-700"
               >
-                <span aria-hidden="true">⚡</span>
+                <V1IconBolt className="h-3.5 w-3.5" />
                 <span>새 실시간 속보 {activeToastCount}건 보기</span>
-                <span aria-hidden="true">↑</span>
+                <V1IconArrowUp className="h-3.5 w-3.5" />
               </button>
             </div>
           )}
@@ -1173,7 +1187,7 @@ export function NewsFeed({
                   href="/community"
                   className="inline-flex h-9 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 text-xs font-bold text-gray-600 hover:bg-gray-50"
                 >
-                  <span aria-hidden="true">✈</span>
+                  <V1IconSend className="h-3.5 w-3.5" />
                   <span>기사제보</span>
                 </Link>
               </div>
@@ -1397,7 +1411,7 @@ export function NewsFeed({
                         : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
                     }`}
                   >
-                    <span>★</span>
+                    <V1IconStar className="h-3.5 w-3.5" />
                     <span>관심 코인</span>
                   </button>
                   <button
@@ -1409,7 +1423,7 @@ export function NewsFeed({
                         : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
                     }`}
                   >
-                    <span>🎙</span>
+                    <V1IconMic className="h-3.5 w-3.5" />
                     <span>많이 언급된 코인</span>
                   </button>
                   <button
@@ -1421,7 +1435,7 @@ export function NewsFeed({
                         : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
                     }`}
                   >
-                    <span>📊</span>
+                    <V1IconChartBar className="h-3.5 w-3.5" />
                     <span>거래 많은 코인</span>
                   </button>
                 </div>
@@ -1640,7 +1654,8 @@ export function NewsFeed({
             (sectionTab === "BREAKING" ? (
               <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
                 <div className="border-b border-gray-200 bg-[#F7F8FA] px-5 py-3 text-xs font-bold text-gray-700">
-                  📅 오늘, 2026년 11월 10일 화요일
+                  <V1IconCalendar className="mr-1.5 inline h-3.5 w-3.5" />
+                  <span>오늘, 2026년 11월 10일 화요일</span>
                 </div>
 
                 <ul className="divide-y divide-gray-100" aria-label=" 실시간 속보 목록">
@@ -1695,7 +1710,8 @@ export function NewsFeed({
 
                             {item.aiSummary && (
                               <div className="mt-2.5 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs font-bold text-[#5B44F2]">
-                                ✦ AI 분석: {item.aiSummary}
+                                <V1IconSparkle className="mr-1 inline h-3.5 w-3.5" />
+                                <span>AI 분석: {item.aiSummary}</span>
                               </div>
                             )}
 
@@ -1705,7 +1721,7 @@ export function NewsFeed({
                                 onClick={() => void inspectArticle(item.id, item)}
                                 className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-1 text-[11px] font-extrabold text-[#5B44F2] hover:bg-indigo-100"
                               >
-                                <span>✦</span>
+                                <V1IconSparkle className="h-3.5 w-3.5" />
                                 <span>AI 분석</span>
                               </button>
 
@@ -1734,7 +1750,8 @@ export function NewsFeed({
                                   rel="noopener noreferrer"
                                   className="rounded-md border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] font-bold text-gray-600 hover:border-[#0058FF] hover:text-[#0058FF]"
                                 >
-                                  원문 기사 보기 ↗
+                                  <span>원문 기사 보기</span>
+                                  <V1IconExternal className="ml-1 inline h-3 w-3" />
                                 </a>
                               )}
                             </div>
@@ -1755,7 +1772,7 @@ export function NewsFeed({
                                       : "hover:bg-gray-100 hover:text-gray-700"
                                   }`}
                                 >
-                                  <span>📈</span>
+                                  <V1IconTrendUp className="h-3.5 w-3.5" />
                                   <span>{bullCount}</span>
                                 </button>
                                 <button
@@ -1768,7 +1785,7 @@ export function NewsFeed({
                                       : "hover:bg-gray-100 hover:text-gray-700"
                                   }`}
                                 >
-                                  <span>📉</span>
+                                  <V1IconTrendDown className="h-3.5 w-3.5" />
                                   <span>{bearCount}</span>
                                 </button>
                               </div>
@@ -1843,7 +1860,8 @@ export function NewsFeed({
                             </p>
                             {item.aiSummary && (
                               <p className="mt-1.5 text-xs font-bold text-[#5B44F2]">
-                                ✦ AI 분석: {item.aiSummary}
+                                <V1IconSparkle className="mr-1 inline h-3.5 w-3.5" />
+                                <span>AI 분석: {item.aiSummary}</span>
                               </p>
                             )}
 
@@ -1872,7 +1890,8 @@ export function NewsFeed({
                                   rel="noopener noreferrer"
                                   className="font-bold text-gray-600 hover:text-[#0058FF] hover:underline"
                                 >
-                                  원문 기사 보기 ↗
+                                  <span>원문 기사 보기</span>
+                                  <V1IconExternal className="ml-1 inline h-3 w-3" />
                                 </a>
                               )}
                               {item.symbolTag && (
@@ -1956,7 +1975,8 @@ export function NewsFeed({
                 rel="noopener noreferrer"
                 className="signup-button ym-btn-inline"
               >
-                원문 기사 보기 ↗
+                <span>원문 기사 보기</span>
+                <V1IconExternal className="ml-1 inline h-3 w-3" />
               </a>
             )}
             {selectedDetail?.symbolTag && (
@@ -1982,7 +2002,11 @@ export function NewsFeed({
           <div className="ym-modal-prose">
             {selectedDetail.aiSummary && (
               <p>
-                <strong>✦ AI 분석:</strong> {selectedDetail.aiSummary}
+                <strong>
+                  <V1IconSparkle className="mr-1 inline h-3.5 w-3.5" />
+                  <span>AI 분석:</span>
+                </strong>{" "}
+                {selectedDetail.aiSummary}
               </p>
             )}
             <p>

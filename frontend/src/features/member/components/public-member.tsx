@@ -25,6 +25,7 @@ import {
   V1ProfileSidebar,
   V1Tabs,
   V1UserAvatar,
+  V1IconHeart,
 } from "./v1-ui";
 
 function formatSignedUsdt(raw: string): string {
@@ -775,7 +776,10 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                 key={post.id}
                                 className="rounded-xl border border-gray-200 p-4 text-xs"
                               >
-                                <span className="font-bold text-red-500">♥ 좋아요 표시한 게시글</span>
+                                <span className="inline-flex items-center gap-1 font-bold text-gray-700">
+                                  <V1IconHeart className="h-3.5 w-3.5" />
+                                  <span>좋아요 표시한 게시글</span>
+                                </span>
                                 <Link
                                   href={`/community/all/${post.id}`}
                                   className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
@@ -800,7 +804,10 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                 key={comment.id}
                                 className="rounded-xl border border-gray-200 p-4 text-xs"
                               >
-                                <span className="font-bold text-red-500">♥ 좋아요 표시한 댓글</span>
+                                <span className="inline-flex items-center gap-1 font-bold text-gray-700">
+                                  <V1IconHeart className="h-3.5 w-3.5" />
+                                  <span>좋아요 표시한 댓글</span>
+                                </span>
                                 <Link
                                   href={`/community/all/${comment.postId}`}
                                   className="mt-1 block font-bold text-gray-900 hover:text-[#0058FF]"

@@ -15,7 +15,19 @@ import {
 } from "../api/community-news";
 import { DimModal } from "./dim-modal";
 import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
-import { V1Header, V1Button, V1UserAvatar } from "./v1-ui";
+import {
+  V1Header,
+  V1Button,
+  V1UserAvatar,
+  V1IconSwap,
+  V1IconBolt,
+  V1IconTrendUp,
+  V1IconChartBar,
+  V1IconTrophy,
+  V1IconCheck,
+  V1IconHeart,
+  V1IconComment,
+} from "./v1-ui";
 
 const FALLBACK_NEWS: NewsItem[] = [
   {
@@ -414,7 +426,7 @@ export function MainPortal() {
                   {/* 스왑 아이콘 */}
                   <div className="flex justify-center">
                     <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 text-xs font-bold text-gray-400">
-                      ⇅
+                      <V1IconSwap className="h-4 w-4" />
                     </div>
                   </div>
 
@@ -534,7 +546,7 @@ export function MainPortal() {
                 <div className="mb-4 flex items-center justify-between">
                   <span className="text-xs font-black tracking-widest text-blue-400">STEP 01</span>
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/20 text-lg">
-                    🚀
+                    <V1IconBolt className="h-5 w-5 text-blue-300" />
                   </span>
                 </div>
                 <h3 className="mb-2 text-lg font-bold text-white">게스트 · 간편 로그인</h3>
@@ -543,7 +555,8 @@ export function MainPortal() {
                 </p>
               </div>
               <div className="mt-6 border-t border-white/10 pt-3 text-xs font-semibold text-blue-300">
-                ✓ 10,000 USDT 기본 시드머니 지급
+                <V1IconCheck className="mr-1 inline h-3.5 w-3.5" />
+                <span>10,000 USDT 기본 시드머니 지급</span>
               </div>
             </div>
 
@@ -552,7 +565,7 @@ export function MainPortal() {
                 <div className="mb-4 flex items-center justify-between">
                   <span className="text-xs font-black tracking-widest text-emerald-400">STEP 02</span>
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/20 text-lg">
-                    📈
+                    <V1IconTrendUp className="h-5 w-5 text-emerald-300" />
                   </span>
                 </div>
                 <h3 className="mb-2 text-lg font-bold text-white">실시간 선물 모의투자</h3>
@@ -561,7 +574,8 @@ export function MainPortal() {
                 </p>
               </div>
               <div className="mt-6 border-t border-white/10 pt-3 text-xs font-semibold text-emerald-300">
-                ✓ 조건 없이 모든 회원·게스트 즉시 이용
+                <V1IconCheck className="mr-1 inline h-3.5 w-3.5" />
+                <span>조건 없이 모든 회원·게스트 즉시 이용</span>
               </div>
             </div>
 
@@ -570,7 +584,7 @@ export function MainPortal() {
                 <div className="mb-4 flex items-center justify-between">
                   <span className="text-xs font-black tracking-widest text-amber-400">STEP 03</span>
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20 text-lg">
-                    💼
+                    <V1IconChartBar className="h-5 w-5 text-amber-300" />
                   </span>
                 </div>
                 <h3 className="mb-2 text-lg font-bold text-white">포트폴리오 · 내 자산 분석</h3>
@@ -579,7 +593,8 @@ export function MainPortal() {
                 </p>
               </div>
               <div className="mt-6 border-t border-white/10 pt-3 text-xs font-semibold text-amber-300">
-                ✓ 파산 시 새 회차(10,000 USDT) 재시작 지원
+                <V1IconCheck className="mr-1 inline h-3.5 w-3.5" />
+                <span>파산 시 새 회차(10,000 USDT) 재시작 지원</span>
               </div>
             </div>
 
@@ -588,7 +603,7 @@ export function MainPortal() {
                 <div className="mb-4 flex items-center justify-between">
                   <span className="text-xs font-black tracking-widest text-rose-400">STEP 04</span>
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/20 text-lg">
-                    🏆
+                    <V1IconTrophy className="h-5 w-5 text-rose-300" />
                   </span>
                 </div>
                 <h3 className="mb-2 text-lg font-bold text-white">대회 랭킹전 & 커뮤니티</h3>
@@ -597,7 +612,8 @@ export function MainPortal() {
                 </p>
               </div>
               <div className="mt-6 border-t border-white/10 pt-3 text-xs font-semibold text-rose-300">
-                ✓ 주간 인기글 & 대회 TOP 랭킹 운영
+                <V1IconCheck className="mr-1 inline h-3.5 w-3.5" />
+                <span>주간 인기글 & 대회 TOP 랭킹 운영</span>
               </div>
             </div>
           </div>
@@ -662,10 +678,12 @@ export function MainPortal() {
                 <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3 text-xs font-bold text-gray-400">
                   <div className="flex items-center gap-4">
                     <span className="flex items-center gap-1 text-red-500">
-                      ♥ 좋아요 {post.likeCount}
+                      <V1IconHeart className="h-3.5 w-3.5" />
+                      <span>좋아요 {post.likeCount}</span>
                     </span>
                     <span className="flex items-center gap-1 text-gray-500">
-                      💬 댓글 {post.commentCount}
+                      <V1IconComment className="h-3.5 w-3.5" />
+                      <span>댓글 {post.commentCount}</span>
                     </span>
                   </div>
                   <Link href="/community" className="text-[#0058FF] hover:underline">
