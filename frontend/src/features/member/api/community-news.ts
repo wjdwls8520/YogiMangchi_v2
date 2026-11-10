@@ -470,6 +470,34 @@ export function parseNewsLiveStatus(value: unknown): NewsLiveStatus {
   };
 }
 
+export function parseNewsSentimentSummary(value: unknown): NewsSentimentSummary {
+  const rawSummary = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const dom = rawSummary.dominantSentiment;
+  const dominantSentiment: NewsSentiment =
+    dom === "BULLISH" || dom === "BEARISH" || dom === "NEUTRAL" ? dom : "NEUTRAL";
+  return {
+    totalBullVotes:
+      typeof rawSummary.totalBullVotes === "number" ? nonNegInt(rawSummary.totalBullVotes) : 0,
+    totalBearVotes:
+      typeof rawSummary.totalBearVotes === "number" ? nonNegInt(rawSummary.totalBearVotes) : 0,
+    bullPct: typeof rawSummary.bullPct === "number" ? nonNegInt(rawSummary.bullPct) : 50,
+    bearPct: typeof rawSummary.bearPct === "number" ? nonNegInt(rawSummary.bearPct) : 50,
+    dominantSentiment,
+    ...(typeof rawSummary.bullishArticleCount === "number"
+      ? { bullishArticleCount: nonNegInt(rawSummary.bullishArticleCount) }
+      : {}),
+    ...(typeof rawSummary.bearishArticleCount === "number"
+      ? { bearishArticleCount: nonNegInt(rawSummary.bearishArticleCount) }
+      : {}),
+    ...(typeof rawSummary.neutralArticleCount === "number"
+      ? { neutralArticleCount: nonNegInt(rawSummary.neutralArticleCount) }
+      : {}),
+    ...(typeof rawSummary.summary === "string" && rawSummary.summary.trim().length > 0
+      ? { summary: str(rawSummary.summary, 400) }
+      : {}),
+  };
+}
+
 export function parseNewsHighlights(value: unknown): NewsHighlights {
   const row = obj(value);
   const parseList = (list: unknown): NewsItem[] =>
@@ -492,44 +520,13 @@ export function parseNewsHighlights(value: unknown): NewsHighlights {
       articles: parseList(issue.articles),
     };
   });
-  const rawSummary =
-    row.sentimentSummary && typeof row.sentimentSummary === "object"
-      ? (row.sentimentSummary as Record<string, unknown>)
-      : {};
-  const dom = rawSummary.dominantSentiment;
-  const dominantSentiment: NewsSentiment =
-    dom === "BULLISH" || dom === "BEARISH" || dom === "NEUTRAL" ? dom : "NEUTRAL";
   return {
     mustReadBreaking: parseList(row.mustReadBreaking),
     popularByViews: parseList(row.popularByViews),
     popularByReactions: parseList(row.popularByReactions),
     keywordIssues,
     recommendedNewsroom: parseList(row.recommendedNewsroom),
-    sentimentSummary: {
-      totalBullVotes:
-        typeof rawSummary.totalBullVotes === "number"
-          ? nonNegInt(rawSummary.totalBullVotes)
-          : 0,
-      totalBearVotes:
-        typeof rawSummary.totalBearVotes === "number"
-          ? nonNegInt(rawSummary.totalBearVotes)
-          : 0,
-      bullPct: typeof rawSummary.bullPct === "number" ? nonNegInt(rawSummary.bullPct) : 50,
-      bearPct: typeof rawSummary.bearPct === "number" ? nonNegInt(rawSummary.bearPct) : 50,
-      dominantSentiment,
-      ...(typeof rawSummary.bullishArticleCount === "number"
-        ? { bullishArticleCount: nonNegInt(rawSummary.bullishArticleCount) }
-        : {}),
-      ...(typeof rawSummary.bearishArticleCount === "number"
-        ? { bearishArticleCount: nonNegInt(rawSummary.bearishArticleCount) }
-        : {}),
-      ...(typeof rawSummary.neutralArticleCount === "number"
-        ? { neutralArticleCount: nonNegInt(rawSummary.neutralArticleCount) }
-        : {}),
-      ...(typeof rawSummary.summary === "string" && rawSummary.summary.trim().length > 0
-        ? { summary: str(rawSummary.summary, 400) }
-        : {}),
-    },
+    sentimentSummary: parseNewsSentimentSummary(row.sentimentSummary),
     liveStatus: parseNewsLiveStatus(row.liveStatus),
   };
 }

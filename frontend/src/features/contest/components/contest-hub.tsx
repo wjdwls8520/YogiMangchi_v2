@@ -550,7 +550,7 @@ export function ContestListCard({
               onClick={event => event.stopPropagation()}
               className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
             >
-              <span>터미널 보기</span>
+              <span>대회장 입장</span>
               <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
             </Link>
           ) : (

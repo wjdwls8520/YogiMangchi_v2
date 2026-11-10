@@ -1106,9 +1106,9 @@ export function MainPortal({
 
               <Link
                 href="/trading"
-                className="flex h-12 w-full items-center justify-center rounded-xl bg-[#0058FF] text-sm font-bold text-white transition-colors hover:bg-blue-700"
+                className="flex h-12 w-full items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] text-sm font-bold text-white transition-colors hover:bg-blue-700"
               >
-                실제 터미널에서 모의주문 실행하기
+                모의투자 하러가기
               </Link>
             </div>
           </div>
