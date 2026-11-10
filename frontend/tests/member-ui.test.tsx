@@ -863,6 +863,7 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
       </MemberProvider>,
     );
     assert.match(meAnonHtml, /마이페이지/);
+    assert.match(meAnonHtml, /data-tab-variant="bookmark"/);
     assert.match(meAnonHtml, /포트폴리오/);
     assert.match(meAnonHtml, /커뮤니티활동/);
     assert.equal(meAnonHtml.includes("내 모의투자 자산"), false);
@@ -877,6 +878,7 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
       </MemberProvider>,
     );
     assert.match(meLoggedInHtml, /내 모의투자 자산/);
+    assert.match(meLoggedInHtml, /data-tab-variant="bookmark"/);
     assert.match(meLoggedInHtml, /시즌별 대회 자산/);
     assert.match(meLoggedInHtml, /포트폴리오/);
     assert.match(meLoggedInHtml, /커뮤니티활동/);

@@ -404,11 +404,12 @@ export function MemberMyProfilePage({
 
           {/* 우측 컬럼 (lg:col-span-8): 권한별 4대 메인 탭 / 2대 메인 탭 */}
           <div className="space-y-6 lg:col-span-8">
-            <div className="rounded-2xl border border-gray-200 bg-white px-6 pt-2">
+            <div data-mypage-bookmark-nav="true">
               <V1Tabs
                 tabs={visibleMainTabs}
                 activeTab={activeMainTab}
                 onChange={val => setSelectedTab(val as MyPageMainTab)}
+                variant="bookmark"
               />
             </div>
 
