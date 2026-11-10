@@ -1,4 +1,6 @@
 import { TradingApiError, tradingOrigin } from "../../trading/api/client";
+import { ContentApiError, contentJson, contentOrigin } from "../../member/api/client";
+import { parseProfile } from "../../member/api/contracts";
 
 export const DEFAULT_TRADING_API_BASE_URL =
   process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
@@ -338,6 +340,142 @@ export async function fetchPublicMemberContestSeasons(
     `contest/public/members/${memberId}/seasons`,
     options,
   );
+}
+
+export interface ContestSidebarTraderProfile {
+  memberId: number;
+  nickname: string;
+  profileImgUrl: string | null;
+  withdrawn: boolean;
+}
+
+export interface InitialContestSidebarSnapshot {
+  seasons: PublicSeasonsOverviewResponse | null;
+  leaderboard: LeaderboardPageResponse | null;
+  profiles: Record<number, ContestSidebarTraderProfile>;
+}
+
+export function groupContestSidebarSeasons(
+  overview: PublicSeasonsOverviewResponse | null | undefined,
+): {
+  running: ContestSeasonView[];
+  finished: ContestSeasonView[];
+  recruitingOnly: ContestSeasonView[];
+  all: ContestSeasonView[];
+} {
+  if (!overview) {
+    return { running: [], finished: [], recruitingOnly: [], all: [] };
+  }
+  const seen = new Set<number>();
+  const running: ContestSeasonView[] = [];
+  for (const s of overview.running ?? []) {
+    if (!seen.has(s.id)) {
+      seen.add(s.id);
+      running.push(s);
+    }
+  }
+  const finished: ContestSeasonView[] = [];
+  for (const s of overview.finished ?? []) {
+    if (!seen.has(s.id)) {
+      seen.add(s.id);
+      finished.push(s);
+    }
+  }
+  const recruitingOnly: ContestSeasonView[] = [];
+  if (running.length === 0 && finished.length === 0) {
+    for (const s of overview.recruiting ?? []) {
+      if (!seen.has(s.id)) {
+        seen.add(s.id);
+        recruitingOnly.push(s);
+      }
+    }
+  }
+  return {
+    running,
+    finished,
+    recruitingOnly,
+    all: [...running, ...finished, ...recruitingOnly],
+  };
+}
+
+export function selectDefaultContestSidebarSeasonId(
+  overview: PublicSeasonsOverviewResponse | null | undefined,
+): number | null {
+  const { running, finished, recruitingOnly } = groupContestSidebarSeasons(overview);
+  return (
+    running.find(s => s.participantCount > 0)?.id ??
+    finished.find(s => s.participantCount > 0)?.id ??
+    running[0]?.id ??
+    finished[0]?.id ??
+    recruitingOnly[0]?.id ??
+    null
+  );
+}
+
+export async function loadInitialContestSidebarSnapshot(options: {
+  tradingBaseUrl?: string;
+  contentBaseUrl?: string;
+  transport?: typeof fetch;
+} = {}): Promise<InitialContestSidebarSnapshot> {
+  const signal = AbortSignal.timeout(1_500);
+  try {
+    const seasons = await fetchPublicContestSeasons({
+      baseUrl: options.tradingBaseUrl,
+      signal,
+      transport: options.transport,
+    });
+    const seasonId = selectDefaultContestSidebarSeasonId(seasons);
+    if (seasonId === null) {
+      return { seasons, leaderboard: null, profiles: {} };
+    }
+    const leaderboard = await fetchPublicContestLeaderboard(seasonId, {
+      baseUrl: options.tradingBaseUrl,
+      size: 5,
+      signal,
+      transport: options.transport,
+    });
+    const profiles: Record<number, ContestSidebarTraderProfile> = {};
+    const memberOrigin = contentOrigin(
+      options.contentBaseUrl ??
+        process.env.NEXT_PUBLIC_CONTENT_SERVER_URL ??
+        "http://localhost:8080",
+    );
+    const uniqueMemberIds = Array.from(
+      new Set((leaderboard.items ?? []).slice(0, 5).map(item => item.memberId)),
+    );
+    await Promise.all(
+      uniqueMemberIds.map(async memberId => {
+        try {
+          const parsed = parseProfile(
+            await contentJson(
+              memberOrigin,
+              `/members/${memberId}`,
+              { signal },
+              options.transport,
+            ),
+          );
+          profiles[memberId] = {
+            memberId,
+            nickname: parsed.nickname,
+            profileImgUrl: parsed.profileImgUrl ?? null,
+            withdrawn: false,
+          };
+        } catch (err) {
+          if (err instanceof ContentApiError && err.status === 404) {
+            profiles[memberId] = {
+              memberId,
+              nickname: "탈퇴한회원",
+              profileImgUrl: null,
+              withdrawn: true,
+            };
+          }
+        }
+      }),
+    );
+    return { seasons, leaderboard, profiles };
+  } catch {
+    return { seasons: null, leaderboard: null, profiles: {} };
+  }
 }
 
 // ============================================================================

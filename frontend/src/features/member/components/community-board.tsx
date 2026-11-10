@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberShell } from "./member-views";
 import { useMember } from "./member-provider";
-import { contentJson, contentMessage, contentOrigin } from "../api/client";
+import { ContentApiError, contentJson, contentMessage, contentOrigin } from "../api/client";
+import { parseProfile } from "../api/contracts";
 import {
   COMMUNITY_CATEGORIES,
   SYMBOL_FILTER_TAGS,
@@ -39,7 +40,13 @@ import {
   fetchPublicContestLeaderboard,
   fetchPublicContestSeasons,
   formatContestSignedRoi,
+  formatContestUsdt,
+  groupContestSidebarSeasons,
   resolveTradingContestBaseUrl,
+  selectDefaultContestSidebarSeasonId,
+  type ContestSidebarTraderProfile,
+  type LeaderboardPageResponse,
+  type PublicSeasonsOverviewResponse,
 } from "../../contest/api/contest-client";
 import { DimModal } from "./dim-modal";
 import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
@@ -67,14 +74,6 @@ export const V1_REPORT_REASONS: readonly CommunityReportReason[] = [
   { code: "ABUSE", description: "욕설/생명경시/혐오/차별적 표현입니다." },
   { code: "PRIVACY", description: "개인정보 노출 게시물입니다." },
   { code: "INAPPROPRIATE", description: "불쾌한 표현이 있습니다." },
-] as const;
-
-const V1_CONTEST_TOP5 = [
-  { rank: 1, memberId: 7, nickname: "트레이더7", roi: "+148.60%", season: "시즌 1" },
-  { rank: 2, memberId: 11, nickname: "알파트레이더", roi: "+96.25%", season: "시즌 1" },
-  { rank: 3, memberId: 15, nickname: "퀀트매니저", roi: "+74.10%", season: "시즌 1" },
-  { rank: 4, memberId: 22, nickname: "솔라나고래", roi: "+51.80%", season: "시즌 1" },
-  { rank: 5, memberId: 31, nickname: "매크로워처", roi: "+39.45%", season: "시즌 1" },
 ] as const;
 
 const SELECTABLE_CATEGORIES: readonly CommunityCategory[] = [
@@ -327,12 +326,18 @@ export function CommunityBoard({
   initialV1Tab = "all",
   highlightPostId,
   initialPendingNewPostsCount = 0,
+  initialContestSeasons = null,
+  initialContestLeaderboard = null,
+  initialContestProfiles,
 }: {
   initialPage?: CommunityPostPage;
   initialComments?: Record<number, CommunityComment[]>;
   initialV1Tab?: "all" | "best" | "latest";
   highlightPostId?: number;
   initialPendingNewPostsCount?: number;
+  initialContestSeasons?: PublicSeasonsOverviewResponse | null;
+  initialContestLeaderboard?: LeaderboardPageResponse | null;
+  initialContestProfiles?: Record<number, ContestSidebarTraderProfile>;
 } = {}) {
   const { origin, session, snapshot } = useMember();
   const queryClient = useQueryClient();
@@ -542,27 +547,61 @@ export function CommunityBoard({
     return () => window.clearTimeout(timer);
   }, [isLoggedIn, liveShareablePositions, shareablePositionsQuery.isSuccess]);
 
-  // 우측 사이드바 실시간 대회투자 TOP5 조회
+  // 우측 사이드바 실시간 대회투자 TOP5 조회 (Redis 리더보드 폴링 연동)
   const sidebarContestSeasonsQuery = useQuery({
     queryKey: ["community-sidebar-contest-seasons", tradingBase],
-    staleTime: 60_000,
+    initialData: initialContestSeasons ?? undefined,
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
     queryFn: async ({ signal }) => fetchPublicContestSeasons({ baseUrl: tradingBase, signal }),
   });
 
-  const sidebarSeasons = sidebarContestSeasonsQuery.data
-    ? [...sidebarContestSeasonsQuery.data.running, ...sidebarContestSeasonsQuery.data.finished]
-    : [];
+  const sidebarSeasonGroups = useMemo(
+    () => groupContestSidebarSeasons(sidebarContestSeasonsQuery.data),
+    [sidebarContestSeasonsQuery.data],
+  );
+  const sidebarSeasons = sidebarSeasonGroups.all;
 
-  const activeSidebarSeasonId = (() => {
+  const initialLeaderboardSeasonId = initialContestLeaderboard?.season?.id ?? null;
+  const activeSidebarSeasonId = useMemo(() => {
     const num = Number(contestSeason);
-    if (Number.isFinite(num) && sidebarSeasons.some(s => s.id === num)) return num;
-    return sidebarSeasons[0]?.id ?? null;
-  })();
+    if (contestSeason !== "" && Number.isFinite(num) && sidebarSeasons.some(s => s.id === num)) {
+      return num;
+    }
+    if (
+      contestSeason === "" &&
+      initialLeaderboardSeasonId !== null &&
+      sidebarSeasons.some(s => s.id === initialLeaderboardSeasonId)
+    ) {
+      return initialLeaderboardSeasonId;
+    }
+    return selectDefaultContestSidebarSeasonId(sidebarContestSeasonsQuery.data);
+  }, [
+    contestSeason,
+    initialLeaderboardSeasonId,
+    sidebarContestSeasonsQuery.data,
+    sidebarSeasons,
+  ]);
+
+  const activeSidebarSeason = useMemo(
+    () => sidebarSeasons.find(s => s.id === activeSidebarSeasonId) ?? null,
+    [activeSidebarSeasonId, sidebarSeasons],
+  );
 
   const sidebarLeaderboardQuery = useQuery({
     queryKey: ["community-sidebar-contest-top5", tradingBase, activeSidebarSeasonId],
     enabled: activeSidebarSeasonId !== null,
-    staleTime: 30_000,
+    initialData:
+      activeSidebarSeasonId !== null &&
+      initialContestLeaderboard?.season?.id === activeSidebarSeasonId
+        ? initialContestLeaderboard
+        : undefined,
+    placeholderData: prev =>
+      prev && prev.season.id === activeSidebarSeasonId ? prev : undefined,
+    staleTime: 2_000,
+    refetchInterval: activeSidebarSeason?.displayStatus === "FINISHED" ? 30_000 : 3_000,
+    refetchIntervalInBackground: false,
     queryFn: async ({ signal }) =>
       fetchPublicContestLeaderboard(activeSidebarSeasonId!, {
         baseUrl: tradingBase,
@@ -570,6 +609,60 @@ export function CommunityBoard({
         signal,
       }),
   });
+
+  const top5MemberIds = useMemo(() => {
+    const ids = (sidebarLeaderboardQuery.data?.items ?? [])
+      .slice(0, 5)
+      .map(item => item.memberId);
+    return Array.from(new Set(ids));
+  }, [sidebarLeaderboardQuery.data]);
+
+  const top5ProfileQueries = useQueries({
+    queries: top5MemberIds.map(memberId => ({
+      queryKey: ["contest-sidebar-member-profile", origin, memberId] as const,
+      initialData: initialContestProfiles?.[memberId],
+      staleTime: 60_000,
+      retry: false,
+      queryFn: async ({ signal }): Promise<ContestSidebarTraderProfile> => {
+        try {
+          const parsed = parseProfile(
+            await contentJson(origin, `/members/${memberId}`, { signal }),
+          );
+          return {
+            memberId,
+            nickname: parsed.nickname,
+            profileImgUrl: parsed.profileImgUrl ?? null,
+            withdrawn: false,
+          };
+        } catch (err) {
+          if (err instanceof ContentApiError && err.status === 404) {
+            return {
+              memberId,
+              nickname: "탈퇴한회원",
+              profileImgUrl: null,
+              withdrawn: true,
+            };
+          }
+          throw err;
+        }
+      },
+    })),
+  });
+
+  const top5ProfilesByMemberId = useMemo(() => {
+    const map = new Map<number, ContestSidebarTraderProfile>();
+    if (initialContestProfiles) {
+      for (const [key, val] of Object.entries(initialContestProfiles)) {
+        map.set(Number(key), val);
+      }
+    }
+    for (const q of top5ProfileQueries) {
+      if (q.data) {
+        map.set(q.data.memberId, q.data);
+      }
+    }
+    return map;
+  }, [initialContestProfiles, top5ProfileQueries]);
 
   const [sharedPositionsByPostId, setSharedPositionsByPostId] = useState<
     Record<number, { snapshot: SharedPositionSnapshot; showPnlAmount: boolean }>
@@ -2538,109 +2631,249 @@ export function CommunityBoard({
 
           {/* 우측 사이드바: 실시간 대회투자 TOP5 */}
           <aside className="mt-10 w-full shrink-0 space-y-6 lg:mt-0 lg:w-72">
-            <div className="card rounded-2xl border border-gray-200 bg-white p-6">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="shrink-0 whitespace-nowrap text-lg font-bold text-gray-900">대회투자 TOP5</h2>
+            <div
+              className="card rounded-2xl border border-gray-200 bg-white p-5"
+              data-contest-top5-card="true"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="shrink-0 whitespace-nowrap text-lg font-bold text-gray-900">
+                  대회투자 TOP5
+                </h2>
+                {activeSidebarSeason?.displayStatus === "LIVE" ? (
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-[#0058FF]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#0058FF] animate-pulse" />
+                    실시간 LIVE
+                  </span>
+                ) : activeSidebarSeason?.displayStatus === "FINISHED" ? (
+                  <span className="inline-flex shrink-0 items-center rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-bold text-gray-600">
+                    정산 완료
+                  </span>
+                ) : activeSidebarSeason?.displayStatus === "RECRUITING" ? (
+                  <span className="inline-flex shrink-0 items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">
+                    모집 중
+                  </span>
+                ) : (
+                  <span className="inline-flex shrink-0 items-center rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-bold text-gray-500">
+                    실시간 랭킹
+                  </span>
+                )}
+              </div>
+              <p className="mt-1.5 text-xs font-medium text-gray-400">
+                시즌별 대회 지갑 수익률 상위 트레이더 랭킹입니다.
+              </p>
+
+              <div className="mt-3">
                 <select
                   aria-label="대회 시즌 선택"
                   value={activeSidebarSeasonId !== null ? String(activeSidebarSeasonId) : ""}
+                  disabled={!sidebarContestSeasonsQuery.data || sidebarSeasons.length === 0}
                   onChange={e => setContestSeason(e.target.value)}
-                  className="h-8 max-w-[132px] truncate rounded-lg border border-gray-200 bg-gray-50 px-2 text-xs font-bold text-gray-700"
+                  className="h-9 w-full truncate rounded-xl border border-gray-200 bg-gray-50 px-3 text-xs font-bold text-gray-800 transition-colors hover:border-gray-300 focus:border-[#0058FF] focus:bg-white focus:outline-none disabled:opacity-70"
                 >
-                  {sidebarContestSeasonsQuery.isSuccess ? (
+                  {sidebarContestSeasonsQuery.data ? (
                     sidebarSeasons.length > 0 ? (
-                      sidebarSeasons.map(s => (
-                        <option key={s.id} value={String(s.id)}>
-                          {s.title}
-                        </option>
-                      ))
+                      <>
+                        {sidebarSeasonGroups.running.length > 0 && (
+                          <optgroup label="진행 중 (LIVE)">
+                            {sidebarSeasonGroups.running.map(s => (
+                              <option key={s.id} value={String(s.id)}>
+                                {s.title}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {sidebarSeasonGroups.finished.length > 0 && (
+                          <optgroup label="종료 · 정산 완료">
+                            {sidebarSeasonGroups.finished.map(s => (
+                              <option key={s.id} value={String(s.id)}>
+                                {s.title}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {sidebarSeasonGroups.recruitingOnly.length > 0 && (
+                          <optgroup label="참가 모집 중">
+                            {sidebarSeasonGroups.recruitingOnly.map(s => (
+                              <option key={s.id} value={String(s.id)}>
+                                {s.title}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </>
                     ) : (
-                      <option value="">등록된 시즌 없음</option>
+                      <option value="">등록된 대회 시즌 없음</option>
                     )
+                  ) : sidebarContestSeasonsQuery.isError ? (
+                    <option value="">시즌 목록 조회 실패</option>
                   ) : (
-                    <>
-                      <option value="">정기 시즌</option>
-                    </>
+                    <option value="">대회 시즌 불러오는 중...</option>
                   )}
                 </select>
               </div>
-              <p className="mb-4 text-xs font-medium text-gray-400">
-                시즌 누적 모의투자 수익률 상위 트레이더 랭킹입니다.
-              </p>
 
-              {(() => {
-                const displayTop5: Array<{
-                  rank: number;
-                  memberId: number;
-                  nickname: string;
-                  roi: string;
-                }> = sidebarContestSeasonsQuery.isSuccess
-                  ? (sidebarLeaderboardQuery.data?.items ?? []).slice(0, 5).map(entry => ({
-                      rank: entry.rank,
-                      memberId: entry.memberId,
-                      nickname: entry.nickname,
-                      roi: formatContestSignedRoi(entry.roiPct),
-                    }))
-                  : V1_CONTEST_TOP5.map(item => ({ ...item }));
+              <div className="mt-3.5">
+                {(() => {
+                  const isInitialSeasonsLoading =
+                    !sidebarContestSeasonsQuery.data && sidebarContestSeasonsQuery.isPending;
+                  const isLeaderboardLoading =
+                    activeSidebarSeasonId !== null &&
+                    !sidebarLeaderboardQuery.data &&
+                    sidebarLeaderboardQuery.isPending;
 
-                if (sidebarContestSeasonsQuery.isSuccess && displayTop5.length === 0) {
-                  return (
-                    <div className="rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-6 text-center text-xs font-bold text-gray-400">
-                      집계된 대회 랭킹 데이터가 없습니다.
-                    </div>
-                  );
-                }
-
-                return (
-                  <ul className="space-y-3">
-                    {displayTop5.map(trader => {
-                      const isNeg = trader.roi.trim().startsWith("-");
-                      const isZero = !/[1-9]/.test(trader.roi);
-                      const roiColor = isNeg
-                        ? "text-blue-600"
-                        : isZero
-                          ? "text-gray-500"
-                          : "text-red-500";
-                      return (
-                        <li
-                          key={`${trader.rank}-${trader.memberId}`}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-2.5"
-                        >
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span
-                              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black ${
-                                trader.rank === 1
-                                  ? "bg-[#0058FF] text-white"
-                                  : "bg-gray-200 text-gray-700"
-                              }`}
-                            >
-                              {trader.rank}
-                            </span>
-                            <V1UserAvatar
-                              memberId={trader.memberId}
-                              nickname={trader.nickname}
-                              size="sm"
-                            />
-                            <Link
-                              href={`/members/${trader.memberId}`}
-                              className="truncate text-xs font-bold text-gray-900 hover:text-[#0058FF]"
-                            >
-                              {trader.nickname}
-                            </Link>
+                  if (isInitialSeasonsLoading || isLeaderboardLoading) {
+                    return (
+                      <div
+                        className="space-y-2.5"
+                        data-contest-top5-state="loading"
+                        aria-live="polite"
+                      >
+                        <span className="sr-only">실시간 대회 랭킹을 불러오는 중입니다.</span>
+                        {[1, 2, 3, 4, 5].map(rank => (
+                          <div
+                            key={rank}
+                            className="flex items-center justify-between gap-2 rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-2.5"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-500">
+                                {rank}
+                              </span>
+                              <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-gray-200" />
+                              <div className="h-3.5 w-16 animate-pulse rounded bg-gray-200" />
+                            </div>
+                            <div className="h-3.5 w-12 animate-pulse rounded bg-gray-200" />
                           </div>
-                          <span className={`shrink-0 whitespace-nowrap text-xs font-black ${roiColor}`}>
-                            {trader.roi}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                );
-              })()}
+                        ))}
+                      </div>
+                    );
+                  }
+
+                  const hasQueryError =
+                    (!sidebarContestSeasonsQuery.data && sidebarContestSeasonsQuery.isError) ||
+                    (activeSidebarSeasonId !== null &&
+                      !sidebarLeaderboardQuery.data &&
+                      sidebarLeaderboardQuery.isError);
+
+                  if (hasQueryError) {
+                    return (
+                      <div
+                        className="rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-5 text-center"
+                        data-contest-top5-state="error"
+                      >
+                        <p className="text-xs font-bold text-gray-500">
+                          실시간 대회 랭킹을 불러오지 못했습니다.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void sidebarContestSeasonsQuery.refetch();
+                            if (activeSidebarSeasonId !== null) {
+                              void sidebarLeaderboardQuery.refetch();
+                            }
+                          }}
+                          className="mt-2.5 inline-flex h-8 items-center justify-center rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
+                        >
+                          다시 불러오기
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  const rawItems = (sidebarLeaderboardQuery.data?.items ?? []).slice(0, 5);
+                  if (rawItems.length === 0) {
+                    return (
+                      <div
+                        className="rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-6 text-center text-xs font-bold text-gray-400"
+                        data-contest-top5-state="empty"
+                      >
+                        {activeSidebarSeason?.displayStatus === "RECRUITING"
+                          ? "대회 시작 후 실시간 수익률 랭킹이 집계됩니다."
+                          : "집계된 대회 랭킹 데이터가 없습니다."}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <ul className="space-y-2.5" data-contest-top5-state="ready">
+                      {rawItems.map(entry => {
+                        const profile = top5ProfilesByMemberId.get(entry.memberId);
+                        const withdrawn = profile?.withdrawn ?? false;
+                        const displayNickname = withdrawn
+                          ? "탈퇴한회원"
+                          : profile?.nickname || entry.nickname;
+                        const roi = formatContestSignedRoi(entry.roiPct);
+                        const equityLabel = formatContestUsdt(entry.totalEquity);
+                        const isNeg = roi.trim().startsWith("-");
+                        const isZero = !/[1-9]/.test(roi);
+                        const roiColor = isNeg
+                          ? "text-blue-600"
+                          : isZero
+                            ? "text-gray-600"
+                            : "text-red-500";
+                        const rankBadgeClass =
+                          entry.rank === 1
+                            ? "bg-[#0058FF] text-white"
+                            : entry.rank === 2
+                              ? "bg-slate-800 text-white"
+                              : entry.rank === 3
+                                ? "bg-amber-600 text-white"
+                                : "bg-gray-200 text-gray-700";
+
+                        return (
+                          <li
+                            key={`${entry.rank}-${entry.memberId}`}
+                            className="flex items-center justify-between gap-2 rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-2.5"
+                          >
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <span
+                                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black ${rankBadgeClass}`}
+                              >
+                                {entry.rank}
+                              </span>
+                              <V1UserAvatar
+                                src={profile?.profileImgUrl}
+                                memberId={entry.memberId}
+                                nickname={displayNickname}
+                                withdrawn={withdrawn}
+                                size="sm"
+                              />
+                              <div className="min-w-0">
+                                {withdrawn ? (
+                                  <span
+                                    className="block truncate text-xs font-bold text-gray-400"
+                                    data-withdrawn="true"
+                                  >
+                                    탈퇴한회원
+                                  </span>
+                                ) : (
+                                  <Link
+                                    href={`/members/${entry.memberId}`}
+                                    className="block truncate text-xs font-bold text-gray-900 transition-colors hover:text-[#0058FF]"
+                                  >
+                                    {displayNickname}
+                                  </Link>
+                                )}
+                                <span className="block truncate text-[11px] font-medium tabular-nums text-gray-400">
+                                  {equityLabel}
+                                </span>
+                              </div>
+                            </div>
+                            <span
+                              className={`shrink-0 whitespace-nowrap text-xs font-black tabular-nums ${roiColor}`}
+                            >
+                              {roi}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  );
+                })()}
+              </div>
 
               <Link
                 href="/contest"
-                className="mt-4 flex h-10 w-full items-center justify-center rounded-xl bg-gray-100 text-xs font-bold text-gray-700 hover:bg-gray-200"
+                className="mt-4 flex h-10 w-full items-center justify-center rounded-xl bg-gray-100 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200"
               >
                 대회 참여하기 →
               </Link>
