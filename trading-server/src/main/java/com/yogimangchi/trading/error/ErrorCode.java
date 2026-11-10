@@ -47,7 +47,14 @@ public enum ErrorCode {
     SYMBOL_NOT_AVAILABLE(HttpStatus.CONFLICT, "Trading symbol is not ACTIVE"),
     POSITION_LIMIT_REACHED(HttpStatus.CONFLICT, "Maximum open positions reached"),
     ACCOUNT_NOT_FOUND(HttpStatus.NOT_FOUND, "Trading account was not found"),
-    TRADING_BUSY(HttpStatus.CONFLICT, "Account is busy; retry the request shortly");
+    TRADING_BUSY(HttpStatus.CONFLICT, "Account is busy; retry the request shortly"),
+    CONTEST_SEASON_NOT_FOUND(HttpStatus.NOT_FOUND, "Contest season was not found"),
+    CONTEST_NOT_RECRUITING(HttpStatus.CONFLICT, "Contest season is not currently open for applications"),
+    CONTEST_NOT_RUNNING(HttpStatus.CONFLICT, "Contest trading is only allowed while the contest season is actively running"),
+    CONTEST_PARTICIPATION_REQUIRED(HttpStatus.FORBIDDEN, "Approved contest season participation is required"),
+    CONTEST_APPLICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "Contest application was not found"),
+    CONTEST_APPLICATION_ALREADY_PROCESSED(HttpStatus.CONFLICT, "Contest application has already been processed"),
+    INVALID_CONTEST_REQUEST(HttpStatus.BAD_REQUEST, "Invalid contest season or settlement request");
 
     private final HttpStatus status;
     private final String message;

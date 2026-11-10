@@ -31,6 +31,9 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/candles").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/status").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/portfolios/members/{memberId:[0-9]+}").permitAll();
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/contest/public/**").permitAll();
+            authorize.requestMatchers("/api/v1/trading/contest/**").hasRole("MEMBER");
+            authorize.requestMatchers("/api/v1/trading/admin/contest/**").hasRole("ADMIN");
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
             // /ws/trading requires an authenticated first frame before any account data is read/sent.
             authorize.requestMatchers(HttpMethod.GET, "/ws/trading").permitAll();
@@ -75,15 +78,21 @@ public class SecurityConfig {
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint((request, response, failure) -> {
                     String path = request.getRequestURI().substring(request.getContextPath().length());
                     if (path.startsWith("/api/v1/trading/")) {
-                        if ("POST".equals(request.getMethod()) && path.equals("/api/v1/trading/accounts/member")) {
+                        if ("POST".equals(request.getMethod()) && path.equals("/api/v1/trading/accounts/member")
+                                || path.startsWith("/api/v1/trading/contest/")
+                                || path.startsWith("/api/v1/trading/admin/contest/")) {
                             TradingTokenFilter.problem(response, 401, "MEMBER_CREDENTIAL_REQUIRED", "A Content member Access JWT is required");
                             return;
                         }
                         TradingTokenFilter.problem(response, 401, "GUEST_CREDENTIAL_REQUIRED", "A guest bearer credential is required");
                     } else new Http403ForbiddenEntryPoint().commence(request, response, failure);
                 }).accessDeniedHandler((request, response, failure) -> {
+                    String path = request.getRequestURI().substring(request.getContextPath().length());
                     var authentication=org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-                    if(authentication!=null && authentication.getPrincipal() instanceof TradingPrincipal principal && principal.memberId()!=null && principal.accountId()==null) {
+                    if(!path.startsWith("/api/v1/trading/admin/")
+                            && !path.startsWith("/api/v1/trading/contest/")
+                            && authentication!=null && authentication.getPrincipal() instanceof TradingPrincipal principal
+                            && principal.memberId()!=null && principal.accountId()==null) {
                         TradingTokenFilter.problem(response,409,"TRADING_ACCOUNT_REQUIRED","Explicitly open your own member trading account first"); return;
                     }
                     TradingTokenFilter.problem(response, 403, "ACCESS_DENIED", "Access is denied");
@@ -101,7 +110,7 @@ public class SecurityConfig {
         }
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(allowed);
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key"));
         configuration.setAllowCredentials(false);
         configuration.setMaxAge(3600L);

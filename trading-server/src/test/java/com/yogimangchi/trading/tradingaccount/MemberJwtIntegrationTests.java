@@ -333,7 +333,7 @@ class MemberJwtIntegrationTests {
         Long id=members.open(member).accountId();
         LegacyLeverageFixtures.bothDirections(jdbc,id,btc);
         var oldOrder=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,BigDecimal.ONE,10,new BigDecimal("900")));
-        Instant oldTime=Instant.now();var oldTick=new LatestMarkPrice(btc,BigDecimal.ONE,oldTime,oldTime);
+        Instant oldTime=jdbc.queryForObject("select clock_timestamp() - interval '1 millisecond'",java.sql.Timestamp.class).toInstant();var oldTick=new LatestMarkPrice(btc,BigDecimal.ONE,oldTime,oldTime);
         rounds.restart(id,UUID.randomUUID().toString());
         Instant now=Instant.now();prices.update(new LatestMarkPrice(btc,new BigDecimal("1000"),now,now));
         var fresh=orders.create(id,UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));

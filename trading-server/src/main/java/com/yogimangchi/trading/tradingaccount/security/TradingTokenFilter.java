@@ -22,7 +22,8 @@ public class TradingTokenFilter extends OncePerRequestFilter {
         return !path.startsWith("/api/v1/trading/")
                 || "OPTIONS".equals(request.getMethod())
                 || ("POST".equals(request.getMethod()) && path.equals("/api/v1/trading/accounts/guest"))
-                || ("GET".equals(request.getMethod()) && path.startsWith("/api/v1/trading/portfolios/members/"));
+                || ("GET".equals(request.getMethod()) && path.startsWith("/api/v1/trading/portfolios/members/"))
+                || ("GET".equals(request.getMethod()) && path.startsWith("/api/v1/trading/contest/public/"));
     }
 
     @Override
@@ -47,6 +48,7 @@ public class TradingTokenFilter extends OncePerRequestFilter {
             var authorities=new java.util.ArrayList<SimpleGrantedAuthority>();
             if(principal.get().accountId()!=null) authorities.add(new SimpleGrantedAuthority("ROLE_TRADER"));
             if(principal.get().memberId()!=null) authorities.add(new SimpleGrantedAuthority("ROLE_MEMBER"));
+            if(principal.get().isAdmin()) authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
             SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(principal.get(),null,authorities));
         }
         chain.doFilter(request, response);

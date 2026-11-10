@@ -8,19 +8,24 @@ import java.util.Objects;
 @Table(name = "trading_account")
 public class TradingAccount {
     public enum Status { ACTIVE, BANKRUPT, WITHDRAWN }
+    public enum AccountType { MOCK, CONTEST }
     public enum MarginTransitionStatus { COMPLETE, PENDING, REVIEW_REQUIRED }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 16)
     private Status status;
+    @Enumerated(EnumType.STRING) @Column(nullable = false, length = 16, updatable = false)
+    private AccountType accountType = AccountType.MOCK;
+    @Column(updatable = false)
+    private Long contestSeasonId;
     @Column(nullable = false, updatable = false)
     private boolean guestAccount;
     @Column(length = 64, updatable = false)
     private String credentialHash;
     @Column(updatable = false)
     private Instant credentialExpiresAt;
-    @Column(updatable=false,unique=true)
+    @Column(updatable=false)
     private Long memberId;
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -58,8 +63,26 @@ public class TradingAccount {
     public static TradingAccount member(Long memberId,Instant now) {
         if(memberId==null || memberId<=0) throw new IllegalArgumentException("Member ID must be positive");
         TradingAccount result=new TradingAccount(); result.memberId=memberId; result.guestAccount=false;
+        result.accountType=AccountType.MOCK; result.contestSeasonId=null;
         result.memberRoundStartedAt=now;result.status=Status.ACTIVE; result.createdAt=Objects.requireNonNull(now); result.lastFinancialChangeAt=now;
         result.marginTransitionStatus=MarginTransitionStatus.COMPLETE; result.isolatedActivatedAt=now;
+        return result;
+    }
+
+    public static TradingAccount contest(Long memberId, Long contestSeasonId, Instant now) {
+        if (memberId == null || memberId <= 0) throw new IllegalArgumentException("Member ID must be positive");
+        if (contestSeasonId == null || contestSeasonId <= 0) throw new IllegalArgumentException("Contest season ID must be positive");
+        TradingAccount result = new TradingAccount();
+        result.memberId = memberId;
+        result.guestAccount = false;
+        result.accountType = AccountType.CONTEST;
+        result.contestSeasonId = contestSeasonId;
+        result.memberRoundStartedAt = Objects.requireNonNull(now);
+        result.status = Status.ACTIVE;
+        result.createdAt = now;
+        result.lastFinancialChangeAt = now;
+        result.marginTransitionStatus = MarginTransitionStatus.COMPLETE;
+        result.isolatedActivatedAt = now;
         return result;
     }
 
@@ -98,6 +121,8 @@ public class TradingAccount {
     public Long getId() { return id; }
     public Instant getMemberRoundStartedAt() {return memberRoundStartedAt;}
     public Long getMemberId() { return memberId; }
+    public AccountType getAccountType() { return accountType; }
+    public Long getContestSeasonId() { return contestSeasonId; }
     public Status getStatus() { return status; }
     public boolean isGuestAccount() { return guestAccount; }
     public Instant getCreatedAt() { return createdAt; }

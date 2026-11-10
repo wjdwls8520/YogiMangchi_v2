@@ -21,6 +21,7 @@ public class MemberCredentials {
         Long member=Long.valueOf(jwt.getSubject());
         if(accounts.existsByMemberIdAndStatus(member,com.yogimangchi.trading.tradingaccount.entity.TradingAccount.Status.WITHDRAWN)) return Optional.empty();
         Long account=accounts.findAccountIdByMemberId(member).orElse(null);
-        return Optional.of(new TradingPrincipal(account,jwt.getExpiresAt(),member));
+        var roles = jwt.getClaimAsStringList("roles");
+        return Optional.of(new TradingPrincipal(account,jwt.getExpiresAt(),member,roles));
     }
 }

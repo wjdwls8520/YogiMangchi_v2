@@ -161,6 +161,11 @@ public class Position {
         return closeAdministratively(now,"GUEST_RETRY");
     }
     public BigDecimal closeForMemberRestart(Instant now) {return closeAdministratively(now,"MEMBER_RESTART");}
+    public Settlement closeForContestSettlement(BigDecimal price, Instant now) {
+        Settlement settlement = close(quantity, price, now, true);
+        closeReason = "CONTEST_SETTLEMENT";
+        return settlement;
+    }
     private BigDecimal closeAdministratively(Instant now,String reason) {
         if(status!=Status.OPEN || reservedCloseQuantity.signum()!=0 || now.isBefore(openedAt))
             throw new IllegalStateException("Administrative closure requires an unreserved open position: status="+status
