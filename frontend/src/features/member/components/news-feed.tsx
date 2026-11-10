@@ -11,9 +11,6 @@ import {
   V1IconNews,
   V1IconArrowUp,
   V1IconSend,
-  V1IconStar,
-  V1IconMic,
-  V1IconChartBar,
   V1IconCalendar,
   V1IconSparkle,
   V1IconTrendUp,
@@ -716,7 +713,6 @@ export function NewsFeed({
   });
   const [popularMode, setPopularMode] = useState<"QUOTE" | "REACTION">("QUOTE");
   const [issueIndex, setIssueIndex] = useState(0);
-  const [quickChip, setQuickChip] = useState<"" | "WATCH" | "MENTION" | "VOLUME">("");
 
   const [newsroomTab, setNewsroomTab] = useState<"ALL" | "CRYPTO" | "STOCKS" | "FX_RATES">(() => {
     if (initialNewsroomTab) return initialNewsroomTab;
@@ -1875,96 +1871,57 @@ export function NewsFeed({
                 </div>
               </div>
 
-              {/* 퀵 필터 알약 칩 바 & 속보 정렬 (최신순 | 오래된순) */}
+              {/* 속보 정렬 (최신순 | 많이 본 순 | 오래된순) */}
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div
-                    className="flex items-center gap-1 rounded-full bg-[#F2F4F7] p-1"
-                    role="group"
-                    aria-label="속보 정렬 방식"
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={breakingSort === "LATEST"}
-                      onClick={() => {
-                        setBreakingSort("LATEST");
-                        resetPagination();
-                      }}
-                      className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
-                        breakingSort === "LATEST"
-                          ? "bg-gray-900 text-white"
-                          : "text-gray-500 hover:text-gray-900"
-                      }`}
-                    >
-                      최신순
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={breakingSort === "POPULAR"}
-                      onClick={() => {
-                        setBreakingSort("POPULAR");
-                        resetPagination();
-                      }}
-                      className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
-                        breakingSort === "POPULAR"
-                          ? "bg-gray-900 text-white"
-                          : "text-gray-500 hover:text-gray-900"
-                      }`}
-                    >
-                      많이 본 순
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={breakingSort === "OLDEST"}
-                      onClick={() => {
-                        setBreakingSort("OLDEST");
-                        resetPagination();
-                      }}
-                      className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
-                        breakingSort === "OLDEST"
-                          ? "bg-gray-900 text-white"
-                          : "text-gray-500 hover:text-gray-900"
-                      }`}
-                    >
-                      오래된순
-                    </button>
-                  </div>
-
+                <div
+                  className="flex items-center gap-1 rounded-full bg-[#F2F4F7] p-1"
+                  role="group"
+                  aria-label="속보 정렬 방식"
+                >
                   <button
                     type="button"
-                    onClick={() => setQuickChip(prev => (prev === "WATCH" ? "" : "WATCH"))}
-                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-bold transition-colors ${
-                      quickChip === "WATCH"
-                        ? "border-gray-900 bg-gray-900 text-white"
-                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    aria-pressed={breakingSort === "LATEST"}
+                    onClick={() => {
+                      setBreakingSort("LATEST");
+                      resetPagination();
+                    }}
+                    className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                      breakingSort === "LATEST"
+                        ? "bg-gray-900 text-white"
+                        : "text-gray-500 hover:text-gray-900"
                     }`}
                   >
-                    <V1IconStar className="h-3.5 w-3.5" />
-                    <span>관심 코인</span>
+                    최신순
                   </button>
                   <button
                     type="button"
-                    onClick={() => setQuickChip(prev => (prev === "MENTION" ? "" : "MENTION"))}
-                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-bold transition-colors ${
-                      quickChip === "MENTION"
-                        ? "border-gray-900 bg-gray-900 text-white"
-                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    aria-pressed={breakingSort === "POPULAR"}
+                    onClick={() => {
+                      setBreakingSort("POPULAR");
+                      resetPagination();
+                    }}
+                    className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                      breakingSort === "POPULAR"
+                        ? "bg-gray-900 text-white"
+                        : "text-gray-500 hover:text-gray-900"
                     }`}
                   >
-                    <V1IconMic className="h-3.5 w-3.5" />
-                    <span>많이 언급된 코인</span>
+                    많이 본 순
                   </button>
                   <button
                     type="button"
-                    onClick={() => setQuickChip(prev => (prev === "VOLUME" ? "" : "VOLUME"))}
-                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-bold transition-colors ${
-                      quickChip === "VOLUME"
-                        ? "border-gray-900 bg-gray-900 text-white"
-                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    aria-pressed={breakingSort === "OLDEST"}
+                    onClick={() => {
+                      setBreakingSort("OLDEST");
+                      resetPagination();
+                    }}
+                    className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                      breakingSort === "OLDEST"
+                        ? "bg-gray-900 text-white"
+                        : "text-gray-500 hover:text-gray-900"
                     }`}
                   >
-                    <V1IconChartBar className="h-3.5 w-3.5" />
-                    <span>거래 많은 코인</span>
+                    오래된순
                   </button>
                 </div>
                 <span className="text-xs font-medium text-gray-400">
