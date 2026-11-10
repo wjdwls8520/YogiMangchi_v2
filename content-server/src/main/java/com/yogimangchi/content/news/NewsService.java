@@ -342,7 +342,11 @@ public class NewsService {
             int bull = rs.getInt("bull_count");
             int bear = rs.getInt("bear_count");
             int total = bull + bear;
-            int bullPct = total > 0 ? Math.round((bull * 100.0f) / total) : 50;
+            int bullPct = total > 0
+                    ? java.math.BigDecimal.valueOf(bull * 100L)
+                            .divide(java.math.BigDecimal.valueOf(total), 0, java.math.RoundingMode.HALF_UP)
+                            .intValue()
+                    : 50;
             int bearPct = total > 0 ? (100 - bullPct) : 50;
             return new NewsReactionResponse(
                     rs.getLong("id"),
@@ -359,7 +363,16 @@ public class NewsService {
         }
         NewsReactionResponse response = rows.get(0);
         sse.publishReactionUpdatedAfterCommit(response);
+        sse.publishSentimentUpdatedAfterCommit(currentSentimentSummary());
         return response;
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public SentimentSummary currentSentimentSummary() {
+        List<NewsItemResponse> recentPool = jdbc.query(
+                "select " + SELECT_COLUMNS + " from content.news_article order by published_at desc, id desc limit 40",
+                NewsService::mapRow);
+        return buildSentimentSummary(recentPool);
     }
 
     @Transactional(readOnly = true, timeout = 3)
@@ -506,7 +519,11 @@ public class NewsService {
         long bearWeight = bearishArticleCount * 3L + neutralArticleCount + totalBearVotes;
         long totalWeight = bullWeight + bearWeight;
 
-        int bullPct = totalWeight > 0 ? Math.round((bullWeight * 100.0f) / totalWeight) : 50;
+        int bullPct = totalWeight > 0
+                ? java.math.BigDecimal.valueOf(bullWeight * 100L)
+                        .divide(java.math.BigDecimal.valueOf(totalWeight), 0, java.math.RoundingMode.HALF_UP)
+                        .intValue()
+                : 50;
         int bearPct = totalWeight > 0 ? (100 - bullPct) : 50;
         String dominant = bullPct >= 55 ? "BULLISH" : (bearPct >= 55 ? "BEARISH" : "NEUTRAL");
 

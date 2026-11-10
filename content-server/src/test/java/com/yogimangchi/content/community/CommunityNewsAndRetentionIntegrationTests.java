@@ -1161,6 +1161,22 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         assertThat(sentimentNode.path("bullPct").asInt() + sentimentNode.path("bearPct").asInt()).isEqualTo(100);
         assertThat(sentimentNode.path("bearishArticleCount").asInt()).isGreaterThanOrEqualTo(3);
         assertThat(sentimentNode.path("summary").asText()).contains("최근 실시간 뉴스");
+
+        long bullVotesBefore = sentimentNode.path("totalBullVotes").asLong();
+        int bullPctBefore = sentimentNode.path("bullPct").asInt();
+        for (int i = 0; i < 30; i++) {
+            mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
+                            .contentType("application/json")
+                            .content("{\"reaction\":\"BULL\"}"))
+                    .andExpect(status().isOk());
+        }
+        var postVoteHighlights = json.readTree(mvc.perform(get("/api/v1/news/highlights"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        var postVoteSentiment = postVoteHighlights.path("sentimentSummary");
+        assertThat(postVoteSentiment.path("totalBullVotes").asLong()).isEqualTo(bullVotesBefore + 30L);
+        assertThat(postVoteSentiment.path("bullPct").asInt()).isGreaterThan(bullPctBefore);
+        assertThat(postVoteSentiment.path("bullPct").asInt() + postVoteSentiment.path("bearPct").asInt()).isEqualTo(100);
     }
 
     @Test

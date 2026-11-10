@@ -130,4 +130,32 @@ public class NewsSseService {
             }
         }
     }
+
+    public void publishSentimentUpdatedAfterCommit(NewsService.SentimentSummary summary) {
+        if (summary == null) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    broadcastSentimentUpdated(summary);
+                }
+            });
+        } else {
+            broadcastSentimentUpdated(summary);
+        }
+    }
+
+    public void broadcastSentimentUpdated(NewsService.SentimentSummary summary) {
+        for (SseEmitter emitter : emitters) {
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("NEWS_SENTIMENT_UPDATED")
+                        .data(summary, MediaType.APPLICATION_JSON));
+            } catch (Exception e) {
+                emitters.remove(emitter);
+            }
+        }
+    }
 }
