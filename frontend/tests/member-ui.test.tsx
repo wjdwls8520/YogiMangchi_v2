@@ -1569,5 +1569,92 @@ test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-ser
   }
 });
 
+test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커뮤니티·마이페이지에 적용된다", () => {
+  const client = new QueryClient();
+  try {
+    const headerHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <V1Header />
+      </MemberProvider>,
+    );
+    assert.match(
+      headerHtml,
+      /ym-gnb-inner mx-auto flex h-16 w-full max-w-\[1280px\] items-center justify-between px-4 sm:px-6/,
+    );
+
+    const mainHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+    // 메인 시장 요약·환율·인기종목 반응형 클래스
+    assert.match(mainHtml, /gap-x-3 gap-y-1\.5 text-\[11px\] sm:gap-4 sm:text-xs/);
+    assert.match(mainHtml, /whitespace-nowrap text-xl font-black text-gray-900 sm:text-3xl/);
+    assert.match(mainHtml, /h-11 w-24 shrink-0 sm:w-28/);
+
+    const newsHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPendingCoinCount={2} initialPendingEconomyCount={1} />
+      </MemberProvider>,
+    );
+    // 속보 서브탭 반응형 래핑 및 뱃지 간격, 투자 심리 바 줄바꿈 방지
+    assert.match(newsHtml, /flex flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-5/);
+    assert.match(newsHtml, /bg-\[#2EBD85\] px-1\.5 whitespace-nowrap/);
+    assert.match(newsHtml, /-right-2 -top-2/);
+
+    const communityHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialPage={{
+            items: [
+              {
+                id: 901,
+                memberId: 7,
+                authorNickname: "트레이더7",
+                authorProfileImgUrl: null,
+                authorWithdrawn: false,
+                category: "POSITION",
+                symbolTag: "BTC",
+                title: "모바일 반응형 테스트 게시글",
+                content: "포지션 스냅샷 카드 반응형 확인",
+                likeCount: 5,
+                commentCount: 1,
+                likedByMe: false,
+                reportedByMe: false,
+                mine: false,
+                sharedPosition: null,
+                files: [],
+                createdAt: "2026-11-10 10:00",
+                updatedAt: "2026-11-10 10:00",
+              },
+            ],
+            hasNext: false,
+            nextCursorId: null,
+          }}
+        />
+      </MemberProvider>,
+    );
+    // 커뮤니티 게시글 카드 모바일 패딩 및 포지션 공유 스냅샷 반응형 그리드
+    assert.match(communityHtml, /rounded-2xl border border-gray-200 bg-white p-4 transition-colors sm:p-6/);
+    assert.match(communityHtml, /grid grid-cols-1 gap-2 rounded-xl border border-gray-200 bg-white px-3\.5 py-2\.5 text-xs sm:grid-cols-3/);
+
+    const myPageHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberMyProfilePage />
+      </MemberProvider>,
+    );
+    // 마이페이지 북마크 탭 모바일 패딩, 도넛 차트 세로/가로 반응형 스택, 롱/숏 비율 줄바꿈 대응
+    assert.match(myPageHtml, /px-3 sm:px-5 text-xs sm:text-sm/);
+    assert.match(myPageHtml, /flex flex-col items-center gap-4 sm:flex-row sm:gap-6/);
+    assert.match(
+      myPageHtml,
+      /flex flex-wrap items-center justify-between gap-1 text-\[11px\] sm:text-xs font-black/,
+    );
+  } finally {
+    client.clear();
+  }
+});
+
+
 
 

@@ -477,7 +477,7 @@ export function V1Tabs({
               aria-selected={isActive}
               onClick={() => onChange(tab.value)}
               className={cn(
-                "relative inline-flex shrink-0 items-center justify-center rounded-t-xl px-4 sm:px-5 text-[13px] sm:text-sm whitespace-nowrap transition-all select-none cursor-pointer focus:outline-none",
+                "relative inline-flex shrink-0 items-center justify-center rounded-t-xl px-3 sm:px-5 text-xs sm:text-sm whitespace-nowrap transition-all select-none cursor-pointer focus:outline-none",
                 fullWidth && "flex-1",
                 isActive
                   ? "z-10 -mb-px h-11 border border-gray-200 border-b-white border-t-[3px] border-t-[#0058FF] bg-white font-black text-gray-900 shadow-[0_-2px_6px_rgba(15,23,42,0.04)]"
@@ -884,7 +884,7 @@ export function V1Header({
             : "border-gray-200 bg-white text-gray-900",
         )}
       >
-        <div className="ym-gnb-inner mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between px-6">
+        <div className="ym-gnb-inner mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between px-4 sm:px-6">
           {/* 1. 왼쪽 로고 */}
           <Link
             href="/"
@@ -966,10 +966,10 @@ export function V1Header({
             className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs transition-opacity"
             onClick={() => setIsMenuOpen(false)}
           />
-          <aside className="fixed right-0 top-0 z-50 h-screen w-64 bg-white p-6 text-gray-900 border-l border-gray-200">
+          <aside className="fixed right-0 top-0 z-50 h-screen w-[min(18rem,85vw)] overflow-y-auto bg-white p-6 text-gray-900 border-l border-gray-200">
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.png" alt="요기망치" className="h-7 w-auto object-contain" />
+              <img src="/images/logo.webp" alt="YogiMangchi" className="h-7 w-auto object-contain" />
               <button
                 type="button"
                 onClick={() => setIsMenuOpen(false)}

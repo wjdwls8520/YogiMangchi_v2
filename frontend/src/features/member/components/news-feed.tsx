@@ -1322,13 +1322,13 @@ export function NewsFeed({
             <h3 className="text-xs font-black text-gray-900">실시간 뉴스 투자 심리</h3>
             <div className="mt-2.5 flex h-6 overflow-hidden rounded-lg text-[11px] font-extrabold text-white">
               <div
-                className="flex items-center justify-center bg-[#2EBD85]"
+                className="flex items-center justify-center bg-[#2EBD85] px-1.5 whitespace-nowrap"
                 style={{ width: `${sentimentBullPct}%` }}
               >
                 강세 {sentimentBullPct}%
               </div>
               <div
-                className="flex items-center justify-center bg-[#F6465D]"
+                className="flex items-center justify-center bg-[#F6465D] px-1.5 whitespace-nowrap"
                 style={{ width: `${sentimentBearPct}%` }}
               >
                 약세 {sentimentBearPct}%
@@ -1376,7 +1376,11 @@ export function NewsFeed({
                   <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
                     속보
                   </h2>
-                  <div className="flex items-center gap-4" role="tablist" aria-label="속보 분야 탭">
+                  <div
+                    className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-5"
+                    role="tablist"
+                    aria-label="속보 분야 탭"
+                  >
                     {(
                       [
                         { key: "ALL", label: "전체 속보", count: allUnreadCount, badgeKey: "all" },
@@ -1389,7 +1393,7 @@ export function NewsFeed({
                         },
                       ] as const
                     ).map((tab, idx) => (
-                      <div key={tab.key} className="flex items-center gap-4">
+                      <div key={tab.key} className="flex items-center gap-3 sm:gap-4">
                         {idx > 0 && (
                           <span className="text-gray-300" aria-hidden="true">
                             |
@@ -1401,6 +1405,8 @@ export function NewsFeed({
                           aria-selected={breakingSubTab === tab.key}
                           onClick={() => setBreakingSubTab(tab.key)}
                           className={`relative inline-flex items-center text-sm font-extrabold transition-colors ${
+                            tab.count > 0 ? "pr-2 " : ""
+                          }${
                             breakingSubTab === tab.key
                               ? "text-gray-900"
                               : "text-gray-400 hover:text-gray-700"
@@ -1411,7 +1417,7 @@ export function NewsFeed({
                             <span
                               data-breaking-badge={tab.badgeKey}
                               aria-label={`${tab.label} 새 소식 ${tab.count}건`}
-                              className="absolute -right-3.5 -top-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold leading-none text-white shadow-xs"
+                              className="absolute -right-2 -top-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold leading-none text-white shadow-xs"
                             >
                               {tab.count}
                             </span>
@@ -2067,8 +2073,8 @@ export function NewsFeed({
                     );
 
                     return (
-                      <li key={item.id} className="p-5 transition-colors hover:bg-gray-50/60">
-                        <article className="flex items-start justify-between gap-5">
+                      <li key={item.id} className="p-4 transition-colors hover:bg-gray-50/60 sm:p-5">
+                        <article className="flex items-start justify-between gap-3 sm:gap-5">
                           <div className="min-w-0 flex-1 w-full">
                             <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
                               <time
@@ -2155,7 +2161,7 @@ export function NewsFeed({
                             <div
                               data-s3-slot="news-thumbnail"
                               onClick={() => void inspectArticle(item.id, item)}
-                              className="relative flex h-20 w-28 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-gray-100 sm:h-24 sm:w-36"
+                              className="relative flex h-18 w-24 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-gray-100 sm:h-24 sm:w-36"
                             >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
