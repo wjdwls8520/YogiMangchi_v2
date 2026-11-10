@@ -16,6 +16,7 @@ import {
   formatContestSignedRoi,
   formatContestSignedUsdt,
   formatContestUsdt,
+  formatContestWinRate,
   isNonNegativeContestDecimal,
   type ContestSeasonView,
   type LeaderboardPageResponse,
@@ -863,8 +864,8 @@ function mapLeaderboardPageToSeason(page: LeaderboardPageResponse): ContestLeade
       realizedPnl: formatContestSignedUsdt(entry.realizedPnl),
       roi: formatContestSignedRoi(entry.roiPct),
       isPositive: isNonNegativeContestDecimal(entry.roiPct),
-      tradeCount: Math.max(1, entry.openPositionCount),
-      winRate: isNonNegativeContestDecimal(entry.roiPct) ? "65.0%" : "45.0%",
+      tradeCount: typeof entry.tradeCount === "number" ? entry.tradeCount : 0,
+      winRate: formatContestWinRate(entry.winRate),
     })),
   };
 }
@@ -988,7 +989,7 @@ export function ContestHub() {
 
     void fetchPublicContestSeasons({ signal: controller.signal })
       .then(res => {
-        if (!res || !Array.isArray(res.seasons) || res.seasons.length === 0) return;
+        if (!res || !Array.isArray(res.seasons)) return;
         setPublicRunningContests(res.running.map(s => mapSeasonViewToItem(s, "live")));
         if (!isLoggedIn) {
           setAvailableContests(res.recruiting.map(s => mapSeasonViewToItem(s, "apply")));
@@ -1012,15 +1013,8 @@ export function ContestHub() {
           fetchMyContestOverview(cred.accessToken, { signal: controller.signal }),
         )
         .then(overview => {
-          if (!overview) return;
-          const hasAnyRealData =
-            overview.participatingSeasons.length > 0 ||
-            overview.recruitingSeasons.length > 0 ||
-            overview.pendingApplications.length > 0 ||
-            overview.rejectedApplications.length > 0;
-          if (hasAnyRealData) {
-            applyMyOverviewResponse(overview);
-          }
+          if (!overview || !Array.isArray(overview.participatingSeasons)) return;
+          applyMyOverviewResponse(overview);
         })
         .catch(() => {
           // Keep fallback seed data when server is unreachable
@@ -1039,7 +1033,6 @@ export function ContestHub() {
       .then(page => {
         if (!page || !page.season) return;
         const mapped = mapLeaderboardPageToSeason(page);
-        if (mapped.entries.length === 0) return;
         setLeaderboardSeasons(prev => {
           const exists = prev.some(item => item.seasonId === mapped.seasonId);
           if (exists) {

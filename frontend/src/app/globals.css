@@ -3048,3 +3048,25 @@ body:has(.member-shell) :focus-visible {
   width: auto;
   object-fit: contain;
 }
+
+/* GNB Center Navigation Lock & Right Action Area Width Stabilization */
+.ym-gnb-right {
+  min-height: 38px;
+}
+
+@media (min-width: 769px) {
+  .ym-gnb-inner {
+    position: relative;
+  }
+
+  .ym-gnb-nav {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .ym-gnb-right {
+    min-width: 196px;
+    justify-content: flex-end;
+  }
+}

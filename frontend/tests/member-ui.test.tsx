@@ -98,11 +98,27 @@ import {
   formatContestSignedRoi,
   formatContestSignedUsdt,
   formatContestUsdt,
+  formatContestWinRate,
   patchAdminContestSeasonStatus,
   rejectAdminContestApplicant,
   settleAdminContestSeason,
   updateAdminContestSeason,
 } from "../src/features/contest/api/contest-client";
+import { parseAccess } from "../src/features/member/api/contracts";
+import {
+  authenticateGuestTradingSocket,
+  resolveContestTradingPath,
+} from "../src/features/trading/api/guest-session";
+import { AdminUsers } from "../src/features/admin/components/admin-users";
+import { AdminCommunity } from "../src/features/admin/components/admin-community";
+import {
+  deleteAdminCommunityPost,
+  deleteAdminCommunityReply,
+  fetchAdminCommunityPosts,
+  fetchAdminCommunityReplies,
+  fetchAdminMembers,
+  withdrawAdminMember,
+} from "../src/features/admin/api/admin-api";
 
 test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
   const html = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending={false}/></MemberProvider>);
@@ -2241,6 +2257,219 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.equal(formatContestUsdt("10000"), "10,000.00 USDT");
     assert.equal(formatContestSignedUsdt("3480.5"), "+3,480.50 USDT");
     assert.equal(formatContestSignedRoi("-5.8"), "-5.80%");
+    assert.equal(formatContestWinRate("68.40"), "68.4%");
+  } finally {
+    client.clear();
+  }
+});
+
+test("GNB admin button role gate, contest trading path routing, and AdminUsers/AdminCommunity pages", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  try {
+    const makeJwt = (payloadObj: Record<string, unknown>) => {
+      const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+      const payload = Buffer.from(JSON.stringify(payloadObj)).toString("base64url");
+      return `${header}.${payload}.sig`;
+    };
+
+    const adminToken = makeJwt({ sub: "1", roles: ["ROLE_ADMIN"] });
+    const memberToken = makeJwt({ sub: "2", roles: ["ROLE_MEMBER"] });
+
+    const parsedAdmin = parseAccess({
+      memberId: 1,
+      nickname: "총괄관리자",
+      accessToken: adminToken,
+      tokenType: "Bearer",
+      expiresIn: 900,
+      expiresAt: "2026-12-31T23:59:59Z",
+    });
+    assert.equal(parsedAdmin.role, "ADMIN");
+
+    const parsedMember = parseAccess({
+      memberId: 2,
+      nickname: "일반회원",
+      accessToken: memberToken,
+      tokenType: "Bearer",
+      expiresIn: 900,
+      expiresAt: "2026-12-31T23:59:59Z",
+    });
+    assert.equal(parsedMember.role, "MEMBER");
+
+    // GNB V1Header: 일반회원 세션에서는 관리자 버튼 미노출, ADMIN 세션에서만 노출
+    const epoch = Date.now();
+    const memberSession = createMemberSession(
+      "http://localhost:8080",
+      async url =>
+        String(url).endsWith("csrf")
+          ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+          : Response.json({
+              memberId: 2,
+              nickname: "일반회원",
+              accessToken: memberToken,
+              tokenType: "Bearer",
+              expiresIn: 900,
+              expiresAt: new Date(epoch + 900000).toISOString(),
+            }),
+      () => epoch,
+      fn => fn(),
+      () => true,
+      () => null,
+    );
+    await memberSession.restore();
+    const memberHeaderHtml = renderToStaticMarkup(
+      <MemberProvider session={memberSession} client={client}>
+        <V1Header />
+      </MemberProvider>,
+    );
+    assert.equal(memberHeaderHtml.includes('href="/admin/contest"'), false);
+
+    const adminSession = createMemberSession(
+      "http://localhost:8080",
+      async url =>
+        String(url).endsWith("csrf")
+          ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+          : Response.json({
+              memberId: 1,
+              nickname: "총괄관리자",
+              accessToken: adminToken,
+              tokenType: "Bearer",
+              expiresIn: 900,
+              expiresAt: new Date(epoch + 900000).toISOString(),
+            }),
+      () => epoch,
+      fn => fn(),
+      () => true,
+      () => null,
+    );
+    await adminSession.restore();
+    const adminHeaderHtml = renderToStaticMarkup(
+      <MemberProvider session={adminSession} client={client}>
+        <V1Header />
+      </MemberProvider>,
+    );
+    assert.equal(adminHeaderHtml.includes('href="/admin/contest"'), true);
+
+    // Contest trading path routing & WS authenticate frame
+    assert.equal(
+      resolveContestTradingPath("account/summary", 202602),
+      "contest/seasons/202602/account/summary",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/orders/market", 202602),
+      "contest/seasons/202602/orders/market",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/positions/10/stop-loss", 202602),
+      "contest/seasons/202602/positions/10/stop-loss",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/symbols/1/leverage?side=LONG", 202602),
+      "contest/seasons/202602/symbols/1/leverage?side=LONG",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/events?afterId=0&limit=50", 202602),
+      "contest/seasons/202602/events?afterId=0&limit=50",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/recovery", 202602),
+      "contest/seasons/202602/recovery",
+    );
+    assert.equal(resolveContestTradingPath("account/summary", undefined), "account/summary");
+
+    const sentFrames: string[] = [];
+    authenticateGuestTradingSocket(
+      { send: msg => sentFrames.push(String(msg)) },
+      "jwt-123",
+      0,
+      202602,
+    );
+    assert.deepEqual(JSON.parse(sentFrames[0]!), {
+      type: "AUTHENTICATE",
+      credential: "jwt-123",
+      afterEventId: "0",
+      contestSeasonId: 202602,
+    });
+
+    // AdminUsers (/admin/users) & AdminCommunity (/admin/community) SSR rendering
+    const adminUsersHtml = renderToStaticMarkup(
+      <MemberProvider session={adminSession} client={client}>
+        <AdminUsers />
+      </MemberProvider>,
+    );
+    assert.match(adminUsersHtml, /data-admin-users-page="true"/);
+    assert.match(adminUsersHtml, /회원 관리/);
+    assert.match(adminUsersHtml, /전체 회원/);
+    assert.match(adminUsersHtml, /활동 회원/);
+    assert.match(adminUsersHtml, /탈퇴 회원/);
+    assert.match(adminUsersHtml, /href="\/admin\/users"/);
+    assert.match(adminUsersHtml, /href="\/admin\/community"/);
+    assert.equal(adminUsersHtml.includes("cursor-not-allowed"), false);
+
+    const adminCommunityHtml = renderToStaticMarkup(
+      <MemberProvider session={adminSession} client={client}>
+        <AdminCommunity />
+      </MemberProvider>,
+    );
+    assert.match(adminCommunityHtml, /data-admin-community-page="true"/);
+    assert.match(adminCommunityHtml, /커뮤니티 관리/);
+    assert.match(adminCommunityHtml, /게시글 관리/);
+    assert.match(adminCommunityHtml, /댓글 관리/);
+    assert.equal(adminCommunityHtml.includes("cursor-not-allowed"), false);
+
+    // admin-api.ts contract verification
+    const adminCalls: Array<{ url: string; method: string; auth: string }> = [];
+    const adminTransport: typeof fetch = async (input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      adminCalls.push({
+        url: String(input),
+        method: init?.method ?? "GET",
+        auth: headers.Authorization ?? "",
+      });
+      if ((init?.method ?? "GET") === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(
+        JSON.stringify({
+          totalCount: 2,
+          activeCount: 1,
+          withdrawnCount: 1,
+          content: [],
+          nextCursorId: null,
+          hasNext: false,
+        }),
+        { status: 200 },
+      );
+    };
+    const adminOpts = { origin: "http://localhost:8080", transport: adminTransport };
+    await fetchAdminMembers("admin-jwt", { status: "ACTIVE", role: "MEMBER", size: 10 }, adminOpts);
+    await withdrawAdminMember("admin-jwt", 77, adminOpts);
+    await fetchAdminCommunityPosts("admin-jwt", "ACTIVE", { title: "비트", size: 10 }, adminOpts);
+    await deleteAdminCommunityPost("admin-jwt", 301, adminOpts);
+    await fetchAdminCommunityReplies("admin-jwt", "WITHDRAWN", { replyContent: "댓글", size: 10 }, adminOpts);
+    await deleteAdminCommunityReply("admin-jwt", 401, adminOpts);
+
+    assert.equal(
+      adminCalls[0]?.url,
+      "http://localhost:8080/api/v1/admin/members?status=ACTIVE&role=MEMBER&size=10",
+    );
+    assert.equal(adminCalls[0]?.auth, "Bearer admin-jwt");
+    assert.equal(adminCalls[1]?.url, "http://localhost:8080/api/v1/admin/members/77");
+    assert.equal(adminCalls[1]?.method, "DELETE");
+    assert.match(
+      adminCalls[2]?.url ?? "",
+      /^http:\/\/localhost:8080\/api\/v1\/admin\/community\/posts\/active-author\?/,
+    );
+    assert.equal(adminCalls[3]?.url, "http://localhost:8080/api/v1/admin/community/posts/301");
+    assert.equal(adminCalls[3]?.method, "DELETE");
+    assert.match(
+      adminCalls[4]?.url ?? "",
+      /^http:\/\/localhost:8080\/api\/v1\/admin\/community\/replies\/withdrawn-author\?/,
+    );
+    assert.equal(adminCalls[5]?.url, "http://localhost:8080/api/v1/admin/community/replies/401");
+    assert.equal(adminCalls[5]?.method, "DELETE");
   } finally {
     client.clear();
   }

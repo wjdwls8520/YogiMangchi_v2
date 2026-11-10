@@ -18,7 +18,7 @@ import { useJournalResolution } from "../api/journal-resolution";
 
 function useCurrentRound() {
   const { session, snapshot } = useGuestSession();
-  return useQuery({ queryKey: [...tradingKeys.account(snapshot), "member-current-round"], enabled: snapshot.mode === "member" && snapshot.phase === "ready" && !snapshot.retrying,
+  return useQuery({ queryKey: [...tradingKeys.account(snapshot), "member-current-round"], enabled: snapshot.mode === "member" && !snapshot.contestSeasonId && snapshot.phase === "ready" && !snapshot.retrying,
     queryFn: async ({ signal }) => parseRoundSummary(await session.read("account/rounds/current", snapshot, signal), snapshot.accountId!), refetchInterval: query => query.state.status === "error" ? false : 5000 });
 }
 export function MemberRoundMonitor() {

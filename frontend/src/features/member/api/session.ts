@@ -1,10 +1,46 @@
 import { ContentApiError, contentJson } from "./client";
-import { parseAccess, parseCsrf, parseWithdrawal, type MemberAccess } from "./contracts";
+import { parseAccess, parseCsrf, parseWithdrawal, type MemberAccess, type MemberRole } from "./contracts";
 import { memberTabVisible } from "./activity";
 
 export type MemberSnapshot = { phase: "loading" | "anonymous" | "authenticating" | "ready" | "ending" | "withdrawing" | "recovering" | "error";
-  memberId: number | null; nickname: string; expiresAt: string | null; generation: number; role?: "MEMBER" | "ADMIN"; recovery?: { retryable: boolean; retryAt: number; uncertain: boolean }; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
+  memberId: number | null; nickname: string; expiresAt: string | null; generation: number; role?: MemberRole; recovery?: { retryable: boolean; retryAt: number; uncertain: boolean }; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
+export type MemberSessionSnapshot = MemberSnapshot;
 export const initialMember: MemberSnapshot = { phase: "loading", memberId: null, nickname: "", expiresAt: null, generation: 0 };
+export const HEADER_AUTH_HINT_KEY = "yogimangchi:header-auth-hint:v1";
+export type HeaderAuthHint = { loggedIn: boolean; role: MemberRole | null };
+
+export function readHeaderAuthHint(
+  storage: Pick<Storage, "getItem"> | null = typeof window === "undefined" ? null : window.localStorage,
+): HeaderAuthHint | null {
+  try {
+    const raw = storage?.getItem(HEADER_AUTH_HINT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed.loggedIn !== "boolean") return null;
+    const role = parsed.role === "ADMIN" ? "ADMIN" : parsed.role === "MEMBER" ? "MEMBER" : null;
+    return { loggedIn: parsed.loggedIn, role: parsed.loggedIn ? (role ?? "MEMBER") : null };
+  } catch {
+    return null;
+  }
+}
+
+export function writeHeaderAuthHint(
+  hint: HeaderAuthHint,
+  storage: Pick<Storage, "setItem"> | null = typeof window === "undefined" ? null : window.localStorage,
+): void {
+  try {
+    storage?.setItem(
+      HEADER_AUTH_HINT_KEY,
+      JSON.stringify({
+        loggedIn: Boolean(hint.loggedIn),
+        role: hint.loggedIn ? (hint.role === "ADMIN" ? "ADMIN" : "MEMBER") : null,
+      }),
+    );
+  } catch {
+    // Ignore storage quota or privacy mode errors
+  }
+}
+
 export type CookieLock = <T>(operation: () => Promise<T>) => Promise<T>;
 export function clearRefreshPending(error: unknown) {
   return error instanceof ContentApiError && (
@@ -32,16 +68,19 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
   function clear(phase: MemberSnapshot["phase"]) {
     access = null;
     refreshRequired = false; refreshFailures = 0; accessRejected = false;
+    if (phase === "anonymous") writeHeaderAuthHint({ loggedIn: false, role: null });
     snapshot = { ...initialMember, phase, generation: snapshot.generation + 1 }; emit();
   }
   function accept(value: unknown, generation: number) {
     if (snapshot.generation !== generation) throw new DOMException("Session changed", "AbortError");
-    const parsed = parseAccess(value);
+    const parsed = parseAccess(value, now());
     if (Date.parse(parsed.expiresAt) <= now()) throw new ContentApiError(401);
     const changed = snapshot.memberId !== parsed.memberId;
     access = Object.freeze(parsed); refreshFailures = 0; accessRejected = false;
-    snapshot = { phase: "ready", memberId: parsed.memberId, nickname: parsed.nickname, expiresAt: parsed.expiresAt,
-      generation: snapshot.generation + (changed ? 1 : 0), consentStatus: changed ? "checking" : snapshot.consentStatus ?? "checking" }; emit();
+    snapshot = { phase: "ready", memberId: parsed.memberId, nickname: parsed.nickname, expiresAt: parsed.expiresAt, role: parsed.role,
+      generation: snapshot.generation + (changed ? 1 : 0), consentStatus: changed ? "checking" : snapshot.consentStatus ?? "checking" };
+    writeHeaderAuthHint({ loggedIn: true, role: parsed.role });
+    emit();
   }
   async function cookie(path: string, body?: object) {
     const csrf = parseCsrf(await contentJson(origin, "/auth/csrf", {}, transport));
@@ -147,6 +186,12 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
     setConsentStatus(status: NonNullable<MemberSnapshot["consentStatus"]>, memberId: number, generation: number) {
       if (snapshot.phase !== "ready" || snapshot.memberId !== memberId || snapshot.generation !== generation || snapshot.consentStatus === status) return;
       snapshot = { ...snapshot, consentStatus: status }; emit();
+    },
+    setRole(role: MemberRole, memberId: number, generation: number) {
+      if (snapshot.phase !== "ready" || snapshot.memberId !== memberId || snapshot.generation !== generation) return;
+      writeHeaderAuthHint({ loggedIn: true, role });
+      if (snapshot.role === role) return;
+      snapshot = { ...snapshot, role }; emit();
     },
     async restore() { if (access && !refreshRequired && Date.parse(access.expiresAt) - now() >= 30_000) return; await refresh(); },
     refresh, checkExpiry,

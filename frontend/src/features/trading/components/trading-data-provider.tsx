@@ -14,9 +14,12 @@ const SessionContext = createContext<GuestSession | null>(null);
 const emptySubscribe = () => () => {};
 const emptyGetSnapshot = () => initialSession;
 let browserSession: GuestSession | undefined;
-function getSession() {
+function getSession(contestSeasonId?: number) {
   const origin = process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081";
-  if (typeof window === "undefined") return createGuestSession(origin, () => { throw new Error("Browser storage required"); });
+  if (typeof window === "undefined") return createGuestSession(origin, () => { throw new Error("Browser storage required"); }, fetch, Date.now, undefined, undefined, { contestSeasonId });
+  if (contestSeasonId && Number.isInteger(contestSeasonId) && contestSeasonId > 0) {
+    return createGuestSession(origin, () => window.localStorage, fetch, Date.now, () => window.sessionStorage, undefined, { contestSeasonId });
+  }
   return browserSession ??= createGuestSession(origin, () => window.localStorage, fetch, Date.now, () => window.sessionStorage);
 }
 
@@ -34,13 +37,13 @@ export function bindGuestCache(client: QueryClient, session: GuestSession) {
   });
 }
 
-export function TradingDataProvider({ children, session: providedSession, client: providedClient }: { children: ReactNode; session?: GuestSession; client?: QueryClient }) {
+export function TradingDataProvider({ children, session: providedSession, client: providedClient, contestSeasonId }: { children: ReactNode; session?: GuestSession; client?: QueryClient; contestSeasonId?: number }) {
   const { session: memberSession } = useMember();
   const [client] = useState(() => providedClient ?? new QueryClient({ defaultOptions: { queries: {
     staleTime: 15_000, gcTime: 60_000, retry: retryTradingQuery, refetchIntervalInBackground: false,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
   } } }));
-  const [session] = useState(() => providedSession ?? getSession());
+  const [session] = useState(() => providedSession ?? getSession(contestSeasonId));
   useEffect(() => {
     const unsubscribe = bindGuestCache(client, session);
     const identity = memberSession.observeAccess(access => {

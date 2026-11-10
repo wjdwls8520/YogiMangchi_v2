@@ -16,6 +16,7 @@ import {
   formatContestSignedRoi,
   formatContestSignedUsdt,
   formatContestUsdt,
+  formatContestWinRate,
 } from "../../contest/api/contest-client";
 import { contentJson } from "../api/client";
 import { parseFollowPage } from "../api/contracts";
@@ -656,7 +657,12 @@ export function MemberMyProfilePage({
           finalEquity: formatContestUsdt(item.totalEquity),
           finalRoi: formatContestSignedRoi(item.roiPct),
           finalRank: `${item.rank ?? "-"}위 / ${item.totalParticipants}명`,
-          winRate: isNonNegativeDecimal(item.roiPct) ? "68.0%" : "45.0%",
+          winRate:
+            item.winRate !== undefined
+              ? formatContestWinRate(item.winRate)
+              : isNonNegativeDecimal(item.roiPct)
+                ? "68.0%"
+                : "45.0%",
           status: item.statusLabel || "정산완료",
         }))
       : FINISHED_CONTEST_SEASONS;

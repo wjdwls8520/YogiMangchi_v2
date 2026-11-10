@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import { useOptionalMember } from "../../member/components/member-provider";
 import { MarketChartPanel } from "../../trading/components/market-chart-panel";
 import { OrderPanel } from "../../trading/components/order-panel";
-import { TradingDataProvider } from "../../trading/components/trading-data-provider";
+import { TradingDataProvider, useOptionalGuestSession } from "../../trading/components/trading-data-provider";
+import { useTradingSummary } from "../../trading/api/queries";
 import {
   cn,
   V1Header,
@@ -145,14 +146,37 @@ function mapPublicSeasonToTerminalMeta(
   };
 }
 
+function ContestLiveWalletSync({
+  onWalletUpdate,
+}: {
+  onWalletUpdate: (wallet: { contestEquity: string; availableMargin: string }) => void;
+}) {
+  const summary = useTradingSummary();
+  const equity = summary.data?.wallet.equity ?? summary.data?.wallet.balance ?? null;
+  const available = summary.data?.wallet.availableBalance ?? summary.data?.wallet.balance ?? null;
+
+  useEffect(() => {
+    if (equity != null && available != null) {
+      onWalletUpdate({
+        contestEquity: formatContestUsdt(equity),
+        availableMargin: formatContestUsdt(available),
+      });
+    }
+  }, [equity, available, onWalletUpdate]);
+
+  return null;
+}
+
 export function ContestTradingSubheader({
   seasonId,
 }: {
   seasonId: number | string;
 }) {
   const memberCtx = useOptionalMember();
+  const guestCtx = useOptionalGuestSession();
   const baseMeta = resolveContestTerminalMeta(seasonId);
   const [liveMeta, setLiveMeta] = useState<ContestSeasonTerminalMeta | null>(null);
+  const [liveWallet, setLiveWallet] = useState<{ contestEquity: string; availableMargin: string } | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -189,9 +213,16 @@ export function ContestTradingSubheader({
     }
 
     return () => controller.abort();
-  }, [seasonId, memberCtx?.session, memberCtx?.snapshot.phase]);
+  }, [seasonId, memberCtx?.session, memberCtx?.snapshot.phase, liveWallet?.contestEquity]);
 
-  const meta = liveMeta && liveMeta.seasonId === baseMeta.seasonId ? liveMeta : baseMeta;
+  const rawMeta = liveMeta && liveMeta.seasonId === baseMeta.seasonId ? liveMeta : baseMeta;
+  const meta: ContestSeasonTerminalMeta = liveWallet
+    ? {
+        ...rawMeta,
+        contestEquity: liveWallet.contestEquity,
+        availableMargin: liveWallet.availableMargin,
+      }
+    : rawMeta;
   const isActive = meta.walletStatus === "ACTIVE";
 
   return (
@@ -199,6 +230,7 @@ export function ContestTradingSubheader({
       data-contest-trading-subheader={meta.seasonId}
       className="flex min-h-[48px] w-full flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-[#161A1E] px-4 py-1.5 text-xs text-white"
     >
+      {guestCtx ? <ContestLiveWalletSync onWalletUpdate={setLiveWallet} /> : null}
       {/* 좌측: 대회 목록 돌아가기 + 시즌 컬러 도트 + 시즌 타이틀 + 대회 지갑 상태 배지 + 남은 시간 */}
       <div className="flex flex-wrap items-center gap-3 min-w-0">
         <Link
@@ -283,7 +315,7 @@ export function ContestTradingTerminal({
   const meta = resolveContestTerminalMeta(seasonId);
 
   return (
-    <TradingDataProvider>
+    <TradingDataProvider key={meta.seasonId} contestSeasonId={meta.seasonId}>
       <a
         href="#contest-trading-main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-10 focus:bg-terminal-panel focus:px-4 focus:py-3"

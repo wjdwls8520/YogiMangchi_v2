@@ -22,9 +22,9 @@ interface AdminNavTabItem {
 
 const ADMIN_NAV_TABS: AdminNavTabItem[] = [
   { key: "contest", label: "대회 관리", href: "/admin/contest", ready: true },
-  { key: "users", label: "회원 관리", href: "/admin/contest#users", ready: false },
-  { key: "community", label: "커뮤니티 관리", href: "/admin/contest#community", ready: false },
-  { key: "reports", label: "신고 관리", href: "/admin/contest#reports", ready: false },
+  { key: "users", label: "회원 관리", href: "/admin/users", ready: true },
+  { key: "community", label: "커뮤니티 관리", href: "/admin/community", ready: true },
+  { key: "reports", label: "신고 관리", href: "/admin/community", ready: false },
 ];
 
 export function AdminHeader({
@@ -70,7 +70,9 @@ export function AdminHeader({
             {ADMIN_NAV_TABS.map(tab => {
               const isActive =
                 tab.key === activeSection ||
-                (tab.key === "contest" && pathname?.startsWith("/admin/contest"));
+                (tab.key === "contest" && pathname?.startsWith("/admin/contest")) ||
+                (tab.key === "users" && pathname?.startsWith("/admin/users")) ||
+                (tab.key === "community" && pathname?.startsWith("/admin/community"));
 
               return (
                 <Link

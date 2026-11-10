@@ -45,6 +45,8 @@ export interface ContestLeaderboardEntryDto {
   unrealizedPnl: string;
   roiPct: string;
   openPositionCount: number;
+  tradeCount?: number;
+  winRate?: string;
   settled: boolean;
   settledAt: string | null;
 }
@@ -85,6 +87,8 @@ export interface MemberContestParticipationView {
   totalParticipants: number;
   openPositionCount: number;
   pendingOrderCount: number;
+  tradeCount?: number;
+  winRate?: string;
 }
 
 export interface MemberContestSeasonsResponse {
@@ -175,6 +179,8 @@ export interface AdminParticipantView {
   rank: number | null;
   openPositionCount: number;
   pendingOrderCount: number;
+  tradeCount?: number;
+  winRate?: string;
   appliedAt: string;
   approvedAt: string;
   settledAt: string | null;
@@ -565,6 +571,14 @@ export function formatContestSignedRoi(raw: string): string {
     return `${formatted}%`;
   }
   return `+${formatted}%`;
+}
+
+export function formatContestWinRate(raw: string | number | null | undefined): string {
+  if (raw === null || raw === undefined) return "0.0%";
+  const cleaned = String(raw).replace(/%/g, "").trim();
+  if (!cleaned) return "0.0%";
+  const [intPartRaw = "0", fracPartRaw = "0"] = cleaned.replace(/^[+-]/, "").split(".");
+  return `${intPartRaw || "0"}.${(fracPartRaw || "0").padEnd(1, "0").slice(0, 1)}%`;
 }
 
 export function isNonNegativeContestDecimal(raw: string): boolean {

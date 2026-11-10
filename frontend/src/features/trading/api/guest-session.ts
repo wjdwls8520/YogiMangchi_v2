@@ -11,21 +11,56 @@ import { parseRestart } from "./member-rounds";
 import { CommandJournalError, createCommandJournal, type CommandJournal, type JournalCommand, type JournalEntry, type JournalOwner } from "./command-journal";
 import { commandResultRequest, parseCommandResult, commandResultSettled, type CommandResult } from "./command-result";
 
-export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean; mode?: "member" | "checking"; roundId?: number; authRequired?: boolean };
+export type SessionSnapshot = { phase: "loading" | "anonymous" | "creating" | "ready" | "error"; accountId: number | null; generation: number; retrying?: boolean; mode?: "member" | "checking"; roundId?: number; authRequired?: boolean; contestSeasonId?: number };
 export const initialSession: SessionSnapshot = { phase: "loading", accountId: null, generation: 0 };
+export type TradingSessionClientOptions = { contestSeasonId?: number };
 type StorageAccess = () => Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type MemberCredential = { memberId: number; accessToken: string; expiresAt: string };
 
+export function resolveContestTradingPath(path: string, contestSeasonId?: number): string {
+  if (!contestSeasonId || !Number.isSafeInteger(contestSeasonId) || contestSeasonId <= 0) {
+    return path;
+  }
+  if (path === "account/summary") {
+    return `contest/seasons/${contestSeasonId}/account/summary`;
+  }
+  if (path.startsWith("account/")) {
+    return `contest/seasons/${contestSeasonId}/${path.slice("account/".length)}`;
+  }
+  return path;
+}
+
+export function authenticateGuestTradingSocket(
+  ws: Pick<WebSocket, "send">,
+  token: string,
+  afterEventId: number | string = "0",
+  contestSeasonId?: number,
+) {
+  ws.send(
+    JSON.stringify({
+      type: "AUTHENTICATE",
+      credential: token,
+      afterEventId: String(afterEventId),
+      ...(contestSeasonId && Number.isSafeInteger(contestSeasonId) && contestSeasonId > 0
+        ? { contestSeasonId }
+        : {}),
+    }),
+  );
+}
+
 // Tokens stay private: snapshots, query keys/data and errors never contain them.
 export function createGuestSession(origin: string, storage: StorageAccess, transport: typeof fetch = fetch, now = Date.now, legacyStorage?: StorageAccess,
-  journal:CommandJournal|undefined=typeof window==="undefined"?undefined:createCommandJournal()) {
-  const storageKey = `yogimangchi.guest.v1:${origin}`;
+  journal:CommandJournal|undefined=typeof window==="undefined"?undefined:createCommandJournal(), options?: TradingSessionClientOptions) {
+  const contestId = options?.contestSeasonId && Number.isSafeInteger(options.contestSeasonId) && options.contestSeasonId > 0 ? options.contestSeasonId : undefined;
+  const contestSeasonId = contestId;
+  const resolvePath = (path: string) => resolveContestTradingPath(path, contestId);
+  const storageKey = contestId ? `yogimangchi.contest.v1:${origin}:${contestId}` : `yogimangchi.guest.v1:${origin}`;
   let credential: GuestCredential | null = null;
-  let snapshot = initialSession;
+  let snapshot: SessionSnapshot = contestId ? { ...initialSession, mode: "member", contestSeasonId: contestId } : initialSession;
   let flight: Promise<void> | null = null;
   let retrying=false, writes=0;
   let retryFlight: Promise<ReturnType<typeof parseGuestRetry>> | null=null;
-  let mode: "guest" | "member" | "checking" = "guest";
+  let mode: "guest" | "member" | "checking" = contestId ? "member" : "guest";
   let member: MemberCredential | null = null;
   let memberRequest: { owner: MemberCredential; generation: number } | null = null;
   let memberRoundId: number | undefined;
@@ -76,10 +111,10 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     let result:CommandResult;
     try {
       if(entry.command.kind==="cancel") {
-        const order=parseOrder(await tradingJson(origin,`account/orders/${entry.command.orderId}`,{token:sentToken,signal},transport));
+        const order=parseOrder(await tradingJson(origin,resolvePath(`account/orders/${entry.command.orderId}`),{token:sentToken,signal},transport));
         if(order.orderId!==entry.command.orderId)throw new TradingApiError(422);
         result={status:"FOUND",operation:"CANCEL",observedAt:new Date(now()).toISOString(),resultKind:"ORDER_CURRENT",result:order};
-      } else result=parseCommandResult(await tradingJson(origin,"account/command-results/query",{token:sentToken,signal,method:"POST",body:commandResultRequest(entry)},transport),entry);
+      } else result=parseCommandResult(await tradingJson(origin,resolvePath("account/command-results/query"),{token:sentToken,signal,method:"POST",body:commandResultRequest(entry)},transport),entry);
       if(!owned()||signal?.aborted)throw new DOMException("Session changed","AbortError");
       if(result.status==="FOUND"&&result.operation==="MEMBER_RESTART") {
         if(mode!=="member"||!member)throw new TradingApiError(401);
@@ -94,7 +129,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     } catch(error) {if(error instanceof TradingApiError&&error.status===401&&owned())invalidate(current,sentToken);throw error;}
   }
   function publish(phase: SessionSnapshot["phase"]) {
-    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}), ...(mode !== "guest" ? { mode } : {}), ...(memberAuthRejected ? { authRequired: true } : {}), ...(mode === "member" && memberRoundId ? { roundId: memberRoundId } : {}) };
+    snapshot = { phase, accountId: phase === "ready" ? credential!.accountId : null, generation: snapshot.generation + 1, ...(retrying ? {retrying:true} : {}), ...(mode !== "guest" ? { mode } : {}), ...(memberAuthRejected ? { authRequired: true } : {}), ...(mode === "member" && memberRoundId ? { roundId: memberRoundId } : {}), ...(contestId ? { contestSeasonId: contestId } : {}) };
     listeners.forEach((listener) => listener());
   }
   const usable = (value: GuestCredential) => Date.parse(value.expiresAt) > now();
@@ -162,6 +197,13 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     let sentToken = owner.accessToken;
     let reconcile = false;
     try {
+      if (contestId) {
+        const row = record(await tradingJson(origin, resolvePath("account/summary"), { token: sentToken }, transport));
+        if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
+        memberRoundId = contestId; memberLookupRecoveryAttempted = false;
+        credential = { accountId: id(row.accountId), accessToken: owner.accessToken, expiresAt: owner.expiresAt }; publish("ready");
+        return;
+      }
       const row = record(await tradingJson(origin, open ? "accounts/member" : "account/summary", { token: sentToken, ...(open ? { method: "POST" as const } : {}) }, transport));
       if (mode !== "member" || member !== owner || snapshot.generation !== generation) return;
       if (open && (id(row.memberId) !== owner.memberId || row.status !== "ACTIVE" || row.quoteAsset !== "USDT")) throw new TradingApiError(422);
@@ -253,6 +295,10 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       await loadMember(false);
     },
     leaveMember() {
+      if (contestSeasonId) {
+        mode = "member"; memberAuthRejected = false; memberLookupRecoveryAttempted = false; member = null; memberRefresh = undefined; credential = null; memberRoundId = undefined; restartIntent = null; publish("anonymous");
+        return;
+      }
       if (mode === "guest") return;
       mode = "guest"; memberAuthRejected = false; memberLookupRecoveryAttempted = false; member = null; memberRefresh = undefined; credential = null; memberRoundId = undefined; restartIntent = null; publish("loading");
     },
@@ -260,6 +306,11 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       return run(() => snapshot.phase === "anonymous" && mode === "member" ? loadMember(true) : undefined);
     },
     restore() {
+      if (contestSeasonId) {
+        if (mode === "member" && member) return credential && usable(credential) && snapshot.phase === "ready" ? Promise.resolve() : run(() => loadMember(false));
+        publish("anonymous");
+        return Promise.resolve();
+      }
       if (mode === "member") return credential && usable(credential) && snapshot.phase === "ready" ? Promise.resolve() : run(() => loadMember(false));
       if (mode !== "guest") return Promise.resolve();
       return run(() => {
@@ -269,7 +320,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       });
     },
     createGuest() {
-      if (mode !== "guest") return Promise.resolve();
+      if (contestSeasonId || mode !== "guest") return Promise.resolve();
       return run(async () => {
         if (mode !== "guest") return;
         let generation = snapshot.generation;
@@ -297,7 +348,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
       if (!usable(current)) { invalidate(current, sentToken); throw new TradingApiError(401); }
       try {
-        const value = await tradingJson(origin, path, { token: sentToken, signal, ...(path === "account/orders/quote" ? {method:"POST" as const,body:quote} : {}) }, transport);
+        const value = await tradingJson(origin, resolvePath(path), { token: sentToken, signal, ...(path === "account/orders/quote" ? {method:"POST" as const,body:quote} : {}) }, transport);
         if (current !== credential || signal.aborted || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         if (!usable(current)) { invalidate(current, sentToken); throw new TradingApiError(401); }
         return value;
@@ -360,13 +411,13 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       const stream = openTradingEvents({ url: socketUrl.href, current: active, onEvent, onState, onReady,
         authenticate: (socket, cursor) => {
           if (!active()) throw new DOMException("Session changed", "AbortError");
-          socket.send(JSON.stringify({ type: "AUTHENTICATE", credential: current.accessToken, afterEventId: cursor }));
+          authenticateGuestTradingSocket(socket, current.accessToken, cursor, contestSeasonId);
         },
         read: async (cursor, signal) => {
           if (!active()) throw new DOMException("Session changed", "AbortError");
           const sentToken = current.accessToken;
           try {
-            const value = await tradingJson(origin, `account/events?afterId=${cursor}&limit=100`, { token: sentToken, signal }, transport);
+            const value = await tradingJson(origin, resolvePath(`account/events?afterId=${cursor}&limit=100`), { token: sentToken, signal }, transport);
             if (!active()) throw new DOMException("Session changed", "AbortError");
             return value;
           } catch (error) {
@@ -380,7 +431,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     },
     async changeLeverage(symbolId: number, leverage: number, expected: SessionSnapshot, side: "LONG" | "SHORT" = "LONG") {
       if(retrying)throw new TradingApiError(409,undefined,"TRADING_BUSY");
-      const path = leveragePath(symbolId, side).split("?")[0];
+      const path = resolvePath(leveragePath(symbolId, side).split("?")[0]);
       if (!validLeverage(leverage)) throw new TradingApiError(400, "레버리지는 1~100배 정수로 설정해 주세요.");
       const current = credential;
       const sentToken = current?.accessToken;
@@ -407,7 +458,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       try {
         return await journaled({kind:"stopLoss",...command},current.accountId,key,async()=>{
         if(current!==credential||expected.generation!==snapshot.generation)throw new DOMException("Session changed","AbortError");
-        const value = await tradingJson(origin, request.path, {token:sentToken, method:request.method, body:request.body, idempotencyKey:key}, transport);
+        const value = await tradingJson(origin, resolvePath(request.path), {token:sentToken, method:request.method, body:request.body, idempotencyKey:key}, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         return parseStopLoss(value, command.positionId);
         });
@@ -427,7 +478,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       try {
         return await journaled(command,current.accountId,key,async()=>{
         if(current!==credential||expected.generation!==snapshot.generation)throw new DOMException("Session changed","AbortError");
-        const value = await tradingJson(origin, request.path, { token: sentToken, method: "POST", body: request.body,
+        const value = await tradingJson(origin, resolvePath(request.path), { token: sentToken, method: "POST", body: request.body,
           idempotencyKey: request.keyed ? key : undefined }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         return parseOrder(value);
@@ -464,4 +515,5 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
     },
   };
 }
+export const createGuestTradingSessionClient = createGuestSession;
 export type GuestSession = ReturnType<typeof createGuestSession>;

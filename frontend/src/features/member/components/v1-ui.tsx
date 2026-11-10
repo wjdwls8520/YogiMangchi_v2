@@ -12,6 +12,12 @@ import {
 } from "react";
 import { useDimScrollLock } from "./dim-modal";
 import { useOptionalMember } from "./member-provider";
+import type { MemberRole } from "../api/contracts";
+import {
+  readHeaderAuthHint,
+  writeHeaderAuthHint,
+  type HeaderAuthHint,
+} from "../api/session";
 
 export interface V1FlatIconProps extends SVGProps<SVGSVGElement> {
   className?: string;
@@ -965,46 +971,75 @@ export function V1Header({
   rightExtra?: ReactNode;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [resolvedAdminKey, setResolvedAdminKey] = useState<string | null>(null);
+  const [verifiedRole, setVerifiedRole] = useState<{
+    key: string;
+    role: MemberRole;
+  } | null>(null);
+  const [authHint, setAuthHint] = useState<HeaderAuthHint | null>(() =>
+    readHeaderAuthHint(),
+  );
   const pathname = usePathname();
   const memberCtx = useOptionalMember();
-  const isLoggedIn = memberCtx?.snapshot.phase === "ready";
+  const phase = memberCtx?.snapshot.phase;
+  const effectiveHint = readHeaderAuthHint() ?? authHint;
+  const isLoggedIn =
+    phase === "ready" ||
+    (phase === "loading" && Boolean(effectiveHint?.loggedIn));
   const isDarkTrading = Boolean(
     pathname?.startsWith("/trading") ||
       (pathname?.startsWith("/contest/") && pathname?.endsWith("/trading")),
   );
   const isDark = theme === "dark" || isDarkTrading;
   const sessionKey =
-    isLoggedIn && memberCtx?.snapshot.memberId
+    phase === "ready" && memberCtx?.snapshot.memberId
       ? `${memberCtx.snapshot.memberId}:${memberCtx.snapshot.generation}`
       : null;
 
   useEffect(() => {
-    if (!isLoggedIn || !memberCtx || !sessionKey || role || memberCtx.snapshot.role) {
+    if (phase !== "ready" || !memberCtx || !sessionKey || role) {
       return;
     }
     const controller = new AbortController();
+    const memberId = memberCtx.snapshot.memberId!;
+    const generation = memberCtx.snapshot.generation;
     void memberCtx.session
       .request("/members/me", { signal: controller.signal })
       .then(data => {
-        if (
-          data &&
-          typeof data === "object" &&
-          (data as { role?: unknown }).role === "ADMIN"
-        ) {
-          setResolvedAdminKey(sessionKey);
+        if (data && typeof data === "object") {
+          const rawRole = (data as { role?: unknown }).role;
+          const resolved: MemberRole =
+            rawRole === "ADMIN" || rawRole === "ROLE_ADMIN" ? "ADMIN" : "MEMBER";
+          setVerifiedRole({ key: sessionKey, role: resolved });
+          const nextHint: HeaderAuthHint = { loggedIn: true, role: resolved };
+          writeHeaderAuthHint(nextHint);
+          setAuthHint(nextHint);
+          memberCtx.session.setRole(resolved, memberId, generation);
         }
       })
       .catch(() => {
         // Ignore unverified role lookup errors in header
       });
     return () => controller.abort();
-  }, [isLoggedIn, memberCtx, role, sessionKey]);
+  }, [phase, memberCtx, role, sessionKey]);
+
+  const verifiedSessionRole =
+    sessionKey !== null && verifiedRole?.key === sessionKey
+      ? verifiedRole.role
+      : null;
 
   const isAdmin =
-    role === "ADMIN" ||
-    memberCtx?.snapshot.role === "ADMIN" ||
-    (sessionKey !== null && resolvedAdminKey === sessionKey);
+    role !== undefined
+      ? role === "ADMIN"
+      : phase === "ready"
+        ? (verifiedSessionRole ??
+            (memberCtx?.snapshot.role === "ADMIN"
+              ? "ADMIN"
+              : effectiveHint?.role === "ADMIN"
+                ? "ADMIN"
+                : (memberCtx?.snapshot.role ?? "MEMBER"))) === "ADMIN"
+        : phase === "loading"
+          ? Boolean(effectiveHint?.loggedIn && effectiveHint?.role === "ADMIN")
+          : false;
 
   useDimScrollLock(isMenuOpen);
 
@@ -1033,7 +1068,7 @@ export function V1Header({
             : "border-gray-200 bg-white text-gray-900",
         )}
       >
-        <div className="ym-gnb-inner mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between px-4 sm:px-6">
+        <div className="ym-gnb-inner mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between px-4 sm:px-6 relative">
           {/* 1. 왼쪽 로고 */}
           <Link
             href="/"
@@ -1053,7 +1088,10 @@ export function V1Header({
           </Link>
 
           {/* 2. 중앙 네비게이션 (PC 전용) */}
-          <nav aria-label="서비스 메뉴" className="ym-gnb-nav hidden md:flex items-center gap-7">
+          <nav
+            aria-label="서비스 메뉴"
+            className="ym-gnb-nav hidden md:flex md:absolute md:left-1/2 md:-translate-x-1/2 items-center gap-7"
+          >
             {[
               { href: "/news", label: "실시간 뉴스" },
               { href: "/trading", label: "모의투자" },
@@ -1076,8 +1114,8 @@ export function V1Header({
           </nav>
 
           {/* 3. 오른쪽 액션 영역 (관리자 배지 + 마이페이지 또는 로그인 버튼) */}
-          <div className="ym-gnb-right flex shrink-0 items-center gap-2">
-            {isLoggedIn && isAdmin ? (
+          <div className="ym-gnb-right flex min-h-[38px] md:min-w-[196px] shrink-0 items-center justify-end gap-2">
+            {isAdmin ? (
               <Link
                 href="/admin/contest"
                 className={cn(

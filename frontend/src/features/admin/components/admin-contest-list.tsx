@@ -510,7 +510,7 @@ export function AdminContestList() {
 
     void requestSeasons
       .then(res => {
-        if (res && Array.isArray(res.items) && res.items.length > 0) {
+        if (res && Array.isArray(res.items)) {
           setSeasons(res.items.map(mapSeasonViewToAdminRecord));
         }
       })
