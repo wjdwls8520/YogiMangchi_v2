@@ -939,7 +939,7 @@ export function MemberMyProfilePage({
                       <h4 className="mb-4 text-sm font-black text-gray-900">
                         포지션 증거금 비중 (%)
                       </h4>
-                      <div className="flex items-center gap-6">
+                      <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
                         <div className="relative flex h-36 w-36 shrink-0 items-center justify-center">
                           <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90">
                             <circle
@@ -988,7 +988,7 @@ export function MemberMyProfilePage({
                             </strong>
                           </div>
                         </div>
-                        <ul className="flex-1 space-y-2 text-xs">
+                        <ul className="w-full flex-1 space-y-2 text-xs">
                           {displayPositions.map(pos => (
                             <li key={pos.symbol} className="flex items-center justify-between">
                               <span className="flex items-center gap-2 font-bold text-gray-700">
@@ -1023,7 +1023,7 @@ export function MemberMyProfilePage({
                         </p>
                       </div>
                       <div className="my-4 space-y-2">
-                        <div className="flex justify-between text-xs font-black">
+                        <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-black">
                           <span className="text-red-500">
                             LONG {longRatioDisplay}% ({longMarginDisplay})
                           </span>
@@ -1558,7 +1558,7 @@ export function MemberMyProfilePage({
                         <h3 className="mb-4 text-sm font-black text-gray-900">
                           포지션 증거금 비중 (%)
                         </h3>
-                        <div className="flex items-center gap-6">
+                        <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
                           <div className="relative flex h-36 w-36 shrink-0 items-center justify-center">
                             <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90">
                               <circle
@@ -1608,7 +1608,7 @@ export function MemberMyProfilePage({
                             </div>
                           </div>
 
-                          <ul className="flex-1 space-y-2 text-xs">
+                          <ul className="w-full flex-1 space-y-2 text-xs">
                             {displayPositions.map(pos => (
                               <li key={pos.symbol} className="flex items-center justify-between">
                                 <span className="flex items-center gap-2 font-bold text-gray-700">
@@ -1646,7 +1646,7 @@ export function MemberMyProfilePage({
                         </div>
 
                         <div className="my-4 space-y-2">
-                          <div className="flex justify-between text-xs font-black">
+                          <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-black">
                             <span className="text-red-500">
                               LONG {longRatioDisplay}% ({longCountDisplay}종목)
                             </span>
@@ -1956,7 +1956,7 @@ export function MemberMyProfilePage({
                         liveReports.map(item => (
                           <div
                             key={item.id}
-                            className="flex items-center justify-between rounded-xl border border-gray-200 p-4 text-xs"
+                            className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-gray-200 p-4 text-xs"
                           >
                             <div>
                               <span className="rounded bg-red-50 px-2 py-0.5 font-bold text-red-600">
@@ -1992,7 +1992,7 @@ export function MemberMyProfilePage({
                       fallbackReports.map(item => (
                         <div
                           key={item.id}
-                          className="flex items-center justify-between rounded-xl border border-gray-200 p-4 text-xs"
+                          className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-gray-200 p-4 text-xs"
                         >
                           <div>
                             <span className="rounded bg-red-50 px-2 py-0.5 font-bold text-red-600">

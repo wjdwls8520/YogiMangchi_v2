@@ -205,7 +205,7 @@ export function SharedPositionCard({
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-xs">
+      <div className="mt-3 grid grid-cols-1 gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-xs sm:grid-cols-3">
         <div>
           <span className="block text-[11px] font-bold text-gray-400">진입가</span>
           <strong className="font-bold text-gray-900">{snapshot.entryPrice} USDT</strong>
@@ -220,7 +220,7 @@ export function SharedPositionCard({
         </div>
       </div>
 
-      <div className="mt-2.5 flex items-center justify-between text-[11px] text-gray-400">
+      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-gray-400">
         <span>실제 자금을 사용하지 않는 모의투자 포지션 공유 스냅샷입니다.</span>
         <Link href="/trading" className="font-bold text-[#0058FF] hover:underline">
           {snapshot.pair} 차트·호가 보러가기 →
@@ -1431,7 +1431,7 @@ export function CommunityBoard({
                 return (
                   <article
                     key={post.id}
-                    className="card rounded-2xl border border-gray-200 bg-white p-6 transition-colors"
+                    className="card rounded-2xl border border-gray-200 bg-white p-4 transition-colors sm:p-6"
                   >
                     {/* 상단: 작성자 프로필 + 시간 + 우측 더보기/수정·삭제 액션 */}
                     <div className="flex items-start justify-between gap-3">
@@ -1780,7 +1780,7 @@ export function CommunityBoard({
                                 id={`comment-${comment.id}`}
                                 className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-3.5 text-xs scroll-mt-24"
                               >
-                                <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap items-center justify-between gap-1.5">
                                   <div className="flex items-center gap-2 font-bold text-gray-900">
                                     <AuthorLabel
                                       memberId={comment.memberId}
@@ -2415,7 +2415,7 @@ export function CommunityBoard({
           </div>
           {modalSelectedPosition && (
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
                 <span className="text-[11px] font-bold text-gray-600">
                   공유할 실시간 포지션 스냅샷 미리보기
                 </span>

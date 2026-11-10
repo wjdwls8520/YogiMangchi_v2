@@ -448,8 +448,8 @@ export function MainPortal({
       {/* 상단 마켓 지표 티커 바 */}
       <section className="border-b border-gray-200 bg-white py-2.5 text-xs" aria-label="글로벌 마켓 요약 지표">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-3 px-4 md:px-6">
-          <div className="flex flex-wrap items-center gap-4">
-            <span className="font-bold text-gray-500">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] sm:gap-4 sm:text-xs">
+            <span className="whitespace-nowrap font-bold text-gray-500">
               BTC 도미넌스{" "}
               <strong className="text-gray-900">
                 {marketOverview.btcDominancePercent.toFixed(1)}%
@@ -465,27 +465,27 @@ export function MainPortal({
                 {marketOverview.btcDominanceChange24h.toFixed(2)}%
               </em>
             </span>
-            <span className="font-bold text-gray-500">
+            <span className="whitespace-nowrap font-bold text-gray-500">
               김치프리미엄{" "}
               <strong className="text-gray-900">
                 {marketOverview.kimchiPremiumPercent >= 0 ? "+" : ""}
                 {marketOverview.kimchiPremiumPercent.toFixed(2)}%
               </strong>
             </span>
-            <span className="font-bold text-gray-500">
+            <span className="whitespace-nowrap font-bold text-gray-500">
               24h 선물 미결제약정{" "}
               <strong className="text-gray-900">
                 ${marketOverview.openInterestBillionsUsd.toFixed(1)}B
               </strong>
             </span>
-            <span className="font-bold text-gray-500">
+            <span className="whitespace-nowrap font-bold text-gray-500">
               공포·탐욕 지수{" "}
               <strong className="text-[#0058FF]">
                 {marketOverview.fearGreedValue} ({marketOverview.fearGreedLabelKr})
               </strong>
             </span>
           </div>
-          <Link href="/trading" className="font-bold text-[#0058FF] hover:underline">
+          <Link href="/trading" className="whitespace-nowrap font-bold text-[#0058FF] hover:underline">
             실시간 선물 호가·차트 바로가기 →
           </Link>
         </div>
@@ -543,11 +543,11 @@ export function MainPortal({
             <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:items-center">
               {/* 왼쪽: 실시간 환율 변동 차트 */}
               <div className="flex flex-col justify-between lg:col-span-7 lg:border-r lg:border-gray-100 lg:pr-8">
-                <div className="mb-4 flex items-center justify-between">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <span className="text-xs font-bold text-gray-400">실시간 환율 변동 (USD/KRW)</span>
-                    <div className="mt-1 flex items-baseline gap-2.5">
-                      <strong className="text-2xl font-black text-gray-900 sm:text-3xl">
+                    <div className="mt-1 flex flex-wrap items-baseline gap-2">
+                      <strong className="whitespace-nowrap text-xl font-black text-gray-900 sm:text-3xl">
                         1 YD ={" "}
                         {exchangeRate.toLocaleString("ko-KR", {
                           minimumFractionDigits: 2,
@@ -558,8 +558,8 @@ export function MainPortal({
                       <span
                         className={
                           marketOverview.usdKrwChangeAmount >= 0
-                            ? "rounded-md bg-red-50 px-2 py-0.5 text-xs font-bold text-red-500"
-                            : "rounded-md bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-600"
+                            ? "shrink-0 whitespace-nowrap rounded-md bg-red-50 px-2 py-0.5 text-xs font-bold text-red-500"
+                            : "shrink-0 whitespace-nowrap rounded-md bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-600"
                         }
                       >
                         {marketOverview.usdKrwChangeAmount >= 0
@@ -568,7 +568,7 @@ export function MainPortal({
                       </span>
                     </div>
                   </div>
-                  <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-600">
+                  <span className="shrink-0 whitespace-nowrap rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-600">
                     최근 14일 추이
                   </span>
                 </div>
@@ -588,7 +588,7 @@ export function MainPortal({
                       points={exchangeChart.polylinePoints}
                     />
                   </svg>
-                  <div className="flex justify-between text-[11px] font-bold text-gray-400">
+                  <div className="flex justify-between gap-1 text-[10px] font-bold whitespace-nowrap text-gray-400 sm:text-[11px]">
                     <span>
                       2주 전 (
                       {exchangeChart.twoWeeksAgoRate.toLocaleString("ko-KR", {
@@ -689,7 +689,7 @@ export function MainPortal({
 
         {/* 섹션 2: V1 실시간 인기 종목 TOP 3 */}
         <section>
-          <div className="mb-6 flex items-end justify-between">
+          <div className="mb-6 flex flex-wrap items-end justify-between gap-2">
             <div>
               <h2 className="text-xl font-bold tracking-tight text-gray-900 md:text-2xl">
                 실시간 인기 종목 TOP 3
@@ -700,7 +700,7 @@ export function MainPortal({
             </div>
             <Link
               href="/trading"
-              className="text-sm font-semibold text-[#0058FF] hover:underline"
+              className="shrink-0 whitespace-nowrap text-sm font-semibold text-[#0058FF] hover:underline"
             >
               전체 마켓 보기 &rarr;
             </Link>
@@ -739,10 +739,10 @@ export function MainPortal({
 
                 <div className="my-5 flex items-end justify-between gap-4">
                   <div>
-                    <p className="text-2xl font-black tracking-tight text-gray-900">{coin.price}</p>
+                    <p className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">{coin.price}</p>
                     <p className="mt-1 text-xs font-medium text-gray-400">24h 거래대금 {coin.volume}</p>
                   </div>
-                  <svg viewBox="0 0 120 44" className="h-11 w-28 shrink-0">
+                  <svg viewBox="0 0 120 44" className="h-11 w-24 shrink-0 sm:w-28">
                     <path
                       d={coin.sparkline}
                       fill="none"
