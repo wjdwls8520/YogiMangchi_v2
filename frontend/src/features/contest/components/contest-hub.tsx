@@ -1,10 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DimModal } from "../../member/components/dim-modal";
 import { useOptionalMember } from "../../member/components/member-provider";
 import { MemberShell } from "../../member/components/member-views";
+import {
+  applyForContestSeason,
+  fetchMyContestOverview,
+  fetchPublicContestLeaderboard,
+  fetchPublicContestSeasons,
+  formatContestDateOnly,
+  formatContestDateTime,
+  formatContestSeedPlain,
+  formatContestSignedRoi,
+  formatContestSignedUsdt,
+  formatContestUsdt,
+  isNonNegativeContestDecimal,
+  type ContestSeasonView,
+  type LeaderboardPageResponse,
+  type MyContestOverviewResponse,
+} from "../api/contest-client";
 import {
   cn,
   V1Button,
@@ -782,6 +798,77 @@ export function ContestOngoingSection({
   );
 }
 
+const ONGOING_DOT_PALETTE = ["#0058FF", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899"];
+
+function mapSeasonViewToItem(
+  view: ContestSeasonView,
+  cardType: ContestCardType,
+  extra?: Partial<ContestSeasonItem>,
+): ContestSeasonItem {
+  const accentLabel =
+    cardType === "apply"
+      ? "모집중"
+      : cardType === "live"
+        ? "진행중"
+        : cardType === "wait"
+          ? "심사중"
+          : cardType === "reject"
+            ? "반려"
+            : "종료";
+  const actionLabel =
+    cardType === "apply"
+      ? "신청"
+      : cardType === "live"
+        ? "진행중인 대회"
+        : cardType === "wait"
+          ? "승인 대기중"
+          : cardType === "reject"
+            ? "반려됨"
+            : "정산 완료";
+  return {
+    id: view.id,
+    title: view.title,
+    description: view.description,
+    seedMoney: `${formatContestSeedPlain(view.seedMoney)} USDT`,
+    recruitmentStartAt: formatContestDateTime(view.recruitmentStartAt),
+    recruitmentEndAt: formatContestDateTime(view.recruitmentEndAt),
+    contestStartAt: formatContestDateTime(view.contestStartAt),
+    contestEndAt: formatContestDateTime(view.contestEndAt),
+    participantCount: view.participantCount,
+    cardType,
+    accentLabel,
+    actionLabel,
+    isLive: cardType === "live" || view.displayStatus === "LIVE",
+    ...extra,
+  };
+}
+
+function mapLeaderboardPageToSeason(page: LeaderboardPageResponse): ContestLeaderboardSeason {
+  const isFinished = page.season.displayStatus === "FINISHED" || Boolean(page.season.settledAt);
+  return {
+    seasonId: page.season.id,
+    seasonTitle: page.season.title,
+    statusLabel: isFinished ? "최종 확정 순위" : "실시간 랭킹",
+    period: `${formatContestDateOnly(page.season.contestStartAt)} ~ ${formatContestDateOnly(page.season.contestEndAt)}`,
+    settledAt: page.season.settledAt
+      ? `${formatContestDateTime(page.season.settledAt)} 정산 확정`
+      : undefined,
+    participantCount: page.season.participantCount,
+    entries: page.items.map(entry => ({
+      rank: entry.rank,
+      memberId: entry.memberId,
+      nickname: entry.nickname,
+      seedMoney: formatContestUsdt(entry.seedMoney),
+      equity: formatContestUsdt(entry.totalEquity),
+      realizedPnl: formatContestSignedUsdt(entry.realizedPnl),
+      roi: formatContestSignedRoi(entry.roiPct),
+      isPositive: isNonNegativeContestDecimal(entry.roiPct),
+      tradeCount: Math.max(1, entry.openPositionCount),
+      winRate: isNonNegativeContestDecimal(entry.roiPct) ? "65.0%" : "45.0%",
+    })),
+  };
+}
+
 export function ContestHub() {
   const memberCtx = useOptionalMember();
   const isLoggedIn = memberCtx?.snapshot.phase === "ready";
@@ -790,11 +877,18 @@ export function ContestHub() {
   const [activeCatalogTab, setActiveCatalogTab] = useState<"available" | "pending" | "history">(
     "available",
   );
+  const [publicRunningContests, setPublicRunningContests] =
+    useState<ContestSeasonItem[]>(PUBLIC_RUNNING_CONTESTS);
+  const [myOngoingContests, setMyOngoingContests] =
+    useState<OngoingMyContestItem[]>(INITIAL_MY_ONGOING_CONTESTS);
   const [availableContests, setAvailableContests] =
     useState<ContestSeasonItem[]>(INITIAL_AVAILABLE_CONTESTS);
   const [pendingContests, setPendingContests] =
     useState<ContestSeasonItem[]>(INITIAL_PENDING_CONTESTS);
-  const [historyContests] = useState<ContestSeasonItem[]>(INITIAL_HISTORY_CONTESTS);
+  const [historyContests, setHistoryContests] =
+    useState<ContestSeasonItem[]>(INITIAL_HISTORY_CONTESTS);
+  const [leaderboardSeasons, setLeaderboardSeasons] =
+    useState<ContestLeaderboardSeason[]>(LEADERBOARD_SEASONS);
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
 
   const [selectedLeaderboardSeasonId, setSelectedLeaderboardSeasonId] = useState<number>(
@@ -802,9 +896,167 @@ export function ContestHub() {
   );
   const [visibleRankCount, setVisibleRankCount] = useState<number>(5);
 
+  function applyMyOverviewResponse(overview: MyContestOverviewResponse) {
+    const ongoing = overview.participatingSeasons
+      .filter(p => p.displayStatus !== "FINISHED")
+      .map((p, idx): OngoingMyContestItem => {
+        const isLive = p.displayStatus === "LIVE";
+        return {
+          id: p.seasonId,
+          title: p.title,
+          period: `${formatContestDateTime(p.contestStartAt)} ~ ${formatContestDateTime(p.contestEndAt)}`,
+          contestStartAt: formatContestDateTime(p.contestStartAt),
+          contestEndAt: formatContestDateTime(p.contestEndAt),
+          seedMoney: formatContestUsdt(p.seedMoney),
+          currentEquity: formatContestUsdt(p.totalEquity),
+          myRoi: formatContestSignedRoi(p.roiPct),
+          myPnl: formatContestSignedUsdt(p.totalPnl),
+          myRank: p.rank ?? 1,
+          participantCount: p.totalParticipants,
+          isLive,
+          statusLabel: isLive ? "라이브 진행중" : "시작 대기중",
+          dotColor: ONGOING_DOT_PALETTE[idx % ONGOING_DOT_PALETTE.length] ?? "#0058FF",
+        };
+      });
+    setMyOngoingContests(ongoing);
+
+    const available = overview.recruitingSeasons
+      .filter(r => !r.applied && r.applicationStatus !== "REJECTED")
+      .map(r => mapSeasonViewToItem(r.season, "apply"));
+    setAvailableContests(available);
+
+    const pending = overview.pendingApplications.map(
+      (app): ContestSeasonItem => ({
+        id: app.seasonId,
+        title: app.seasonTitle,
+        description:
+          "관리자 심사 대기 중인 시즌입니다. 승인 즉시 시즌 전용 독립 대회 지갑이 자동 생성됩니다.",
+        seedMoney: "10,000 USDT",
+        recruitmentStartAt: formatContestDateTime(app.appliedAt),
+        recruitmentEndAt: formatContestDateTime(app.contestStartAt),
+        contestStartAt: formatContestDateTime(app.contestStartAt),
+        contestEndAt: formatContestDateTime(app.contestEndAt),
+        participantCount: 0,
+        cardType: "wait",
+        accentLabel: "심사중",
+        actionLabel: "승인 대기중",
+      }),
+    );
+    setPendingContests(pending);
+
+    const pastParticipations: ContestSeasonItem[] = overview.participatingSeasons
+      .filter(p => p.displayStatus === "FINISHED")
+      .map(p => ({
+        id: p.seasonId,
+        title: p.title,
+        description: p.description,
+        seedMoney: `${formatContestSeedPlain(p.seedMoney)} USDT`,
+        recruitmentStartAt: formatContestDateTime(p.recruitmentStartAt),
+        recruitmentEndAt: formatContestDateTime(p.recruitmentEndAt),
+        contestStartAt: formatContestDateTime(p.contestStartAt),
+        contestEndAt: formatContestDateTime(p.contestEndAt),
+        participantCount: p.totalParticipants,
+        cardType: "past",
+        accentLabel: "종료",
+        actionLabel: "정산 완료",
+        finalRank: p.rank ?? undefined,
+        finalRoi: formatContestSignedRoi(p.roiPct),
+        finalPnl: formatContestSignedUsdt(p.realizedPnl),
+      }));
+
+    const rejectedItems: ContestSeasonItem[] = overview.rejectedApplications.map(app => ({
+      id: app.seasonId,
+      title: app.seasonTitle,
+      description: "신청 심사 결과 반려 처리된 시즌입니다.",
+      seedMoney: "10,000 USDT",
+      recruitmentStartAt: formatContestDateTime(app.appliedAt),
+      recruitmentEndAt: formatContestDateTime(app.contestStartAt),
+      contestStartAt: formatContestDateTime(app.contestStartAt),
+      contestEndAt: formatContestDateTime(app.contestEndAt),
+      participantCount: 0,
+      cardType: "reject",
+      accentLabel: "반려",
+      actionLabel: "반려됨",
+      rejectReason: app.rejectReason ?? "운영 기준 미충족으로 반려 처리되었습니다.",
+    }));
+
+    setHistoryContests([...pastParticipations, ...rejectedItems]);
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void fetchPublicContestSeasons({ signal: controller.signal })
+      .then(res => {
+        if (!res || !Array.isArray(res.seasons) || res.seasons.length === 0) return;
+        setPublicRunningContests(res.running.map(s => mapSeasonViewToItem(s, "live")));
+        if (!isLoggedIn) {
+          setAvailableContests(res.recruiting.map(s => mapSeasonViewToItem(s, "apply")));
+          setHistoryContests(res.finished.map(s => mapSeasonViewToItem(s, "past")));
+        }
+        const candidateSeasons = [...res.running, ...res.finished];
+        if (candidateSeasons.length > 0) {
+          const firstId = candidateSeasons[0]!.id;
+          setSelectedLeaderboardSeasonId(prev =>
+            candidateSeasons.some(s => s.id === prev) ? prev : firstId,
+          );
+        }
+      })
+      .catch(() => {
+        // Keep fallback seed data when server is unreachable
+      });
+
+    if (isLoggedIn && memberCtx?.session) {
+      void memberCtx.session
+        .authorized(cred =>
+          fetchMyContestOverview(cred.accessToken, { signal: controller.signal }),
+        )
+        .then(overview => {
+          if (!overview) return;
+          const hasAnyRealData =
+            overview.participatingSeasons.length > 0 ||
+            overview.recruitingSeasons.length > 0 ||
+            overview.pendingApplications.length > 0 ||
+            overview.rejectedApplications.length > 0;
+          if (hasAnyRealData) {
+            applyMyOverviewResponse(overview);
+          }
+        })
+        .catch(() => {
+          // Keep fallback seed data when server is unreachable
+        });
+    }
+
+    return () => controller.abort();
+  }, [isLoggedIn, memberCtx?.session, memberCtx?.snapshot.generation]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchPublicContestLeaderboard(selectedLeaderboardSeasonId, {
+      size: 20,
+      signal: controller.signal,
+    })
+      .then(page => {
+        if (!page || !page.season) return;
+        const mapped = mapLeaderboardPageToSeason(page);
+        if (mapped.entries.length === 0) return;
+        setLeaderboardSeasons(prev => {
+          const exists = prev.some(item => item.seasonId === mapped.seasonId);
+          if (exists) {
+            return prev.map(item => (item.seasonId === mapped.seasonId ? mapped : item));
+          }
+          return [mapped, ...prev];
+        });
+      })
+      .catch(() => {
+        // Keep fallback leaderboard seed data when server is unreachable
+      });
+    return () => controller.abort();
+  }, [selectedLeaderboardSeasonId]);
+
   const currentLeaderboard =
-    LEADERBOARD_SEASONS.find(season => season.seasonId === selectedLeaderboardSeasonId) ??
-    LEADERBOARD_SEASONS[0]!;
+    leaderboardSeasons.find(season => season.seasonId === selectedLeaderboardSeasonId) ??
+    leaderboardSeasons[0]!;
   const topThreeEntries = currentLeaderboard.entries.slice(0, 3);
   const visibleEntries = currentLeaderboard.entries.slice(0, visibleRankCount);
 
@@ -830,6 +1082,21 @@ export function ContestHub() {
     setFeedbackNotice(
       `"${contest.title}" 참가 신청이 접수되었습니다. 관리자 승인 즉시 시즌 전용 ${contest.seedMoney} 대회 지갑이 자동 발급됩니다.`,
     );
+
+    if (memberCtx?.session) {
+      const applicantNickname = memberCtx.snapshot.nickname ?? "";
+      void memberCtx.session
+        .authorized(cred => applyForContestSeason(contest.id, applicantNickname, cred.accessToken))
+        .then(() =>
+          memberCtx.session.authorized(cred => fetchMyContestOverview(cred.accessToken)),
+        )
+        .then(overview => {
+          if (overview) applyMyOverviewResponse(overview);
+        })
+        .catch(() => {
+          // Optimistic state already updated
+        });
+    }
   }
 
   return (
@@ -919,7 +1186,7 @@ export function ContestHub() {
                 <h2 className="text-lg font-black text-gray-900">진행중인 대회</h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
-                {PUBLIC_RUNNING_CONTESTS.map((contest, idx) => (
+                {publicRunningContests.map((contest, idx) => (
                   <ContestListCard
                     key={contest.id}
                     contest={contest}
@@ -966,7 +1233,7 @@ export function ContestHub() {
           <div className="space-y-10">
             {/* 1. 내 진행 중인 대회 캐러셀 */}
             <ContestOngoingSection
-              contests={INITIAL_MY_ONGOING_CONTESTS}
+              contests={myOngoingContests}
               onBlockedEnter={message => setFeedbackNotice(message)}
             />
 
@@ -1090,7 +1357,7 @@ export function ContestHub() {
                 }}
                 className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
               >
-                {LEADERBOARD_SEASONS.map(season => (
+                {leaderboardSeasons.map(season => (
                   <option key={season.seasonId} value={season.seasonId}>
                     {season.seasonTitle} · {season.statusLabel}
                   </option>

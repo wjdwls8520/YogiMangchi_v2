@@ -9,6 +9,14 @@ import { DimModal } from "./dim-modal";
 import { TradingDataProvider } from "../../trading/components/trading-data-provider";
 import { MemberSimulation } from "../../trading/components/member-simulation";
 import { tradingJson } from "../../trading/api/client";
+import {
+  fetchMyContestSeasons,
+  fetchPublicMemberContestSeasons,
+  formatContestDateOnly,
+  formatContestSignedRoi,
+  formatContestSignedUsdt,
+  formatContestUsdt,
+} from "../../contest/api/contest-client";
 import { contentJson } from "../api/client";
 import { parseFollowPage } from "../api/contracts";
 import {
@@ -352,6 +360,25 @@ export function MemberMyProfilePage({
       ),
   });
 
+  // 시즌별 대회 참가 자산 및 정산 이력 API 조회 (본인 로그인 시 /account/seasons, 타인/공개 시 /public/members/{id}/seasons)
+  const memberContestSeasonsQuery = useQuery({
+    queryKey: [
+      "member",
+      "contest-seasons",
+      targetMemberId,
+      isOwnAndLoggedIn,
+      tradingBase,
+      member.generation,
+    ],
+    enabled: targetMemberId > 0,
+    queryFn: async ({ signal }) =>
+      isOwnAndLoggedIn
+        ? session.authorized(cred =>
+            fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
+          )
+        : fetchPublicMemberContestSeasons(targetMemberId, { baseUrl: tradingBase, signal }),
+  });
+
   // 본인 로그인 시 5대 원장 실시간 API 조회
   const ownerOrdersQuery = useQuery({
     queryKey: [
@@ -594,6 +621,45 @@ export function MemberMyProfilePage({
     publicPortfolioQuery.data && publicPortfolioQuery.data.accountExists
       ? publicPortfolioQuery.data
       : null;
+
+  const activeContestParticipation = memberContestSeasonsQuery.data?.activeSeason ?? null;
+  const activeContestBadgeLabel = activeContestParticipation
+    ? `${activeContestParticipation.displayStatus === "LIVE" ? "LIVE" : activeContestParticipation.statusLabel} · ${activeContestParticipation.title}`
+    : "LIVE · 2026 정규 시즌 2";
+  const activeContestRankText = activeContestParticipation?.rank
+    ? `${activeContestParticipation.rank}위`
+    : "14위";
+  const activeContestTotalParticipantsText = activeContestParticipation
+    ? `${activeContestParticipation.totalParticipants}명`
+    : "520명";
+  const activeContestEquityText = activeContestParticipation
+    ? formatContestUsdt(activeContestParticipation.totalEquity)
+    : "12,480.00 USDT";
+  const activeContestAvailableText = activeContestParticipation
+    ? formatContestUsdt(activeContestParticipation.availableBalance)
+    : "8,480.00 USDT";
+  const activeContestPnlText = activeContestParticipation
+    ? formatContestSignedUsdt(activeContestParticipation.totalPnl)
+    : "+2,480.00 USDT";
+  const activeContestRoiText = activeContestParticipation
+    ? formatContestSignedRoi(activeContestParticipation.roiPct)
+    : "+24.80%";
+
+  const finishedContestSeasonsDisplay =
+    memberContestSeasonsQuery.data?.pastSeasons &&
+    memberContestSeasonsQuery.data.pastSeasons.length > 0
+      ? memberContestSeasonsQuery.data.pastSeasons.map(item => ({
+          seasonId: String(item.seasonId),
+          seasonTitle: item.title,
+          period: `${formatContestDateOnly(item.contestStartAt)} ~ ${formatContestDateOnly(item.contestEndAt)}`,
+          seedMoney: formatContestUsdt(item.seedMoney),
+          finalEquity: formatContestUsdt(item.totalEquity),
+          finalRoi: formatContestSignedRoi(item.roiPct),
+          finalRank: `${item.rank ?? "-"}위 / ${item.totalParticipants}명`,
+          winRate: isNonNegativeDecimal(item.roiPct) ? "68.0%" : "45.0%",
+          status: item.statusLabel || "정산완료",
+        }))
+      : FINISHED_CONTEST_SEASONS;
 
   const displayPositions = livePortfolio
     ? livePortfolio.positions.map((pos, idx) => ({
@@ -1449,33 +1515,33 @@ export function MemberMyProfilePage({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-[#0058FF]">
-                          LIVE · 2026 정규 시즌 2
+                          {activeContestBadgeLabel}
                         </span>
                         <h4 className="text-sm font-black text-gray-900">
                           내 시즌별 대회 실시간 자산
                         </h4>
                       </div>
                       <span className="text-xs font-bold text-gray-500">
-                        실시간 순위: <strong className="text-[#0058FF]">14위</strong> / 520명
+                        실시간 순위: <strong className="text-[#0058FF]">{activeContestRankText}</strong> / {activeContestTotalParticipantsText}
                       </span>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                       <div className="rounded-xl border border-gray-200 bg-white p-3.5">
                         <span className="text-[11px] font-bold text-gray-400">실시간 대회 평가자산</span>
-                        <p className="mt-1 text-base font-black text-gray-900">12,480.00 USDT</p>
+                        <p className="mt-1 text-base font-black text-gray-900">{activeContestEquityText}</p>
                       </div>
                       <div className="rounded-xl border border-gray-200 bg-white p-3.5">
                         <span className="text-[11px] font-bold text-gray-400">대회 가용 증거금</span>
-                        <p className="mt-1 text-base font-black text-gray-900">8,480.00 USDT</p>
+                        <p className="mt-1 text-base font-black text-gray-900">{activeContestAvailableText}</p>
                       </div>
                       <div className="rounded-xl border border-gray-200 bg-white p-3.5">
                         <span className="text-[11px] font-bold text-gray-400">실시간 대회 수익금</span>
-                        <p className="mt-1 text-base font-black text-red-500">+2,480.00 USDT</p>
+                        <p className="mt-1 text-base font-black text-red-500">{activeContestPnlText}</p>
                       </div>
                       <div className="rounded-xl border border-gray-200 bg-white p-3.5">
                         <span className="text-[11px] font-bold text-gray-400">실시간 대회 수익률(ROI)</span>
-                        <p className="mt-1 text-base font-black text-red-500">+24.80%</p>
+                        <p className="mt-1 text-base font-black text-red-500">{activeContestRoiText}</p>
                       </div>
                     </div>
                   </section>
@@ -1487,7 +1553,7 @@ export function MemberMyProfilePage({
                         종료된 시즌의 대회 자산 및 정산 이력
                       </h4>
                       <span className="text-xs font-medium text-gray-400">
-                        총 {FINISHED_CONTEST_SEASONS.length}개 시즌 참가 완료
+                        총 {finishedContestSeasonsDisplay.length}개 시즌 참가 완료
                       </span>
                     </div>
 
@@ -1504,7 +1570,7 @@ export function MemberMyProfilePage({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
-                          {FINISHED_CONTEST_SEASONS.map(season => (
+                          {finishedContestSeasonsDisplay.map(season => (
                             <tr key={season.seasonId} className="hover:bg-gray-50">
                               <td className="px-4 py-3.5">
                                 <div className="font-black text-gray-900">{season.seasonTitle}</div>
@@ -1739,7 +1805,7 @@ export function MemberMyProfilePage({
                   <div className="space-y-4">
                     <h3 className="text-base font-black text-gray-900">시즌별 대회 참가 성적 요약</h3>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      {FINISHED_CONTEST_SEASONS.map(season => (
+                      {finishedContestSeasonsDisplay.map(season => (
                         <div
                           key={season.seasonId}
                           className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-5"

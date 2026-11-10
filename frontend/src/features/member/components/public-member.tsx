@@ -16,6 +16,12 @@ import {
   type CommunityCategory,
 } from "../api/community-news";
 import { tradingJson } from "../../trading/api/client";
+import {
+  fetchMyContestSeasons,
+  fetchPublicMemberContestSeasons,
+  formatContestSignedRoi,
+  formatContestUsdt,
+} from "../../contest/api/contest-client";
 import { useMember } from "./member-provider";
 import { MemberShell } from "./member-views";
 import {
@@ -114,6 +120,17 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const isOwner =
     snapshot.phase === "ready" && Boolean(summary.data?.mine || snapshot.memberId === memberId);
+
+  const publicContestSeasonsQuery = useQuery({
+    queryKey: ["member", "public-contest-seasons", memberId, isOwner, tradingBase, snapshot.generation],
+    enabled: memberId > 0,
+    queryFn: async ({ signal }) =>
+      isOwner
+        ? session.authorized(cred =>
+            fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
+          )
+        : fetchPublicMemberContestSeasons(memberId, { baseUrl: tradingBase, signal }),
+  });
 
   // [C-6] 커뮤니티활동 커서 기반 무한스크롤 (게시글, 댓글, 좋아요, 좋아요 댓글 전체 공개 / 신고내역 본인 전용)
   const memberPostsInfinite = useInfiniteQuery({
@@ -678,6 +695,27 @@ export function PublicMember({ memberId }: { memberId: number }) {
                               </table>
                             </div>
                           )}
+                        </div>
+                      ) : publicContestSeasonsQuery.data?.participatingSeasons &&
+                        publicContestSeasonsQuery.data.participatingSeasons.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          {publicContestSeasonsQuery.data.participatingSeasons.map(item => (
+                            <div
+                              key={item.seasonId}
+                              className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-5"
+                            >
+                              <span className="text-xs font-bold text-[#0058FF]">
+                                {item.title}
+                              </span>
+                              <p className="mt-2 text-2xl font-black text-red-500">
+                                {formatContestSignedRoi(item.roiPct)}
+                              </p>
+                              <p className="mt-1 text-xs font-bold text-gray-600">
+                                순위 {item.rank ?? "-"}위 / {item.totalParticipants}명 · 평가자산{" "}
+                                {formatContestUsdt(item.totalEquity)}
+                              </p>
+                            </div>
+                          ))}
                         </div>
                       ) : (
                         <div className="py-10 text-center text-xs font-bold text-gray-400">

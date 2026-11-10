@@ -81,6 +81,28 @@ import {
   ContestCreateEditModal,
 } from "../src/features/admin/components/admin-contest-list";
 import { AdminContestDetail } from "../src/features/admin/components/admin-contest-detail";
+import {
+  applyForContestSeason,
+  approveAdminContestApplicant,
+  bulkApproveAdminContestApplicants,
+  cleanupRemainingAdminContestSeason,
+  createAdminContestSeason,
+  fetchAdminContestSeasonDetail,
+  fetchAdminContestSeasons,
+  fetchContestSeasonSummary,
+  fetchMyContestOverview,
+  fetchMyContestSeasons,
+  fetchPublicContestLeaderboard,
+  fetchPublicContestSeasons,
+  fetchPublicMemberContestSeasons,
+  formatContestSignedRoi,
+  formatContestSignedUsdt,
+  formatContestUsdt,
+  patchAdminContestSeasonStatus,
+  rejectAdminContestApplicant,
+  settleAdminContestSeason,
+  updateAdminContestSeason,
+} from "../src/features/contest/api/contest-client";
 
 test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
   const html = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending={false}/></MemberProvider>);
@@ -2097,6 +2119,128 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(adminDetailHtml, /선택 일괄 승인 \(0\)/);
     assert.match(adminDetailHtml, /델타헤저/);
     assert.equal(adminDetailHtml.includes("cursor-not-allowed"), false);
+
+    // 7. contest-client API 계약 검증 (공개·회원·관리자 엔드포인트, 메서드, Authorization 헤더, Decimal 포맷)
+    const calls: Array<{ url: string; method: string; auth: string; body: string }> = [];
+    const mockTransport: typeof fetch = async (input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      calls.push({
+        url: String(input),
+        method: init?.method ?? "GET",
+        auth: headers.Authorization ?? "",
+        body: typeof init?.body === "string" ? init.body : "",
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+
+    const opts = { baseUrl: "http://localhost:8081", transport: mockTransport };
+    await fetchPublicContestSeasons(opts);
+    await fetchPublicContestLeaderboard(202602, { ...opts, size: 20 });
+    await fetchPublicMemberContestSeasons(11, opts);
+    await fetchMyContestOverview("jwt-token", opts);
+    await applyForContestSeason(202605, "트레이더7", "jwt-token", opts);
+    await fetchMyContestSeasons("jwt-token", opts);
+    await fetchContestSeasonSummary(202602, "jwt-token", opts);
+    await fetchAdminContestSeasons({ ...opts, token: "admin-jwt", size: 20 });
+    await createAdminContestSeason(
+      {
+        title: "신규 시즌",
+        description: "설명",
+        seedMoney: "10000",
+        recruitmentStartAt: "2026-12-01T00:00:00Z",
+        recruitmentEndAt: "2026-12-10T23:59:00Z",
+        contestStartAt: "2026-12-11T09:00:00Z",
+        contestEndAt: "2026-12-31T23:59:00Z",
+        isPublic: true,
+      },
+      { ...opts, token: "admin-jwt" },
+    );
+    await updateAdminContestSeason(
+      202602,
+      {
+        title: "수정 시즌",
+        description: "설명",
+        seedMoney: "10000",
+        recruitmentStartAt: "2026-12-01T00:00:00Z",
+        recruitmentEndAt: "2026-12-10T23:59:00Z",
+        contestStartAt: "2026-12-11T09:00:00Z",
+        contestEndAt: "2026-12-31T23:59:00Z",
+        isPublic: true,
+      },
+      { ...opts, token: "admin-jwt" },
+    );
+    await patchAdminContestSeasonStatus(
+      202602,
+      { isPublic: false, isCanceled: true },
+      { ...opts, token: "admin-jwt" },
+    );
+    await fetchAdminContestSeasonDetail(202602, { ...opts, token: "admin-jwt" });
+    await approveAdminContestApplicant(202602, 501, { ...opts, token: "admin-jwt" });
+    await bulkApproveAdminContestApplicants(202602, [501, 502], { ...opts, token: "admin-jwt" });
+    await rejectAdminContestApplicant(202602, 503, "사유", { ...opts, token: "admin-jwt" });
+    await settleAdminContestSeason(202602, { ...opts, token: "admin-jwt" });
+    await cleanupRemainingAdminContestSeason(202602, { ...opts, token: "admin-jwt" });
+
+    assert.equal(calls[0]?.url, "http://localhost:8081/api/v1/trading/contest/public/seasons");
+    assert.equal(
+      calls[1]?.url,
+      "http://localhost:8081/api/v1/trading/contest/public/seasons/202602/leaderboard?size=20",
+    );
+    assert.equal(
+      calls[2]?.url,
+      "http://localhost:8081/api/v1/trading/contest/public/members/11/seasons",
+    );
+    assert.equal(calls[3]?.url, "http://localhost:8081/api/v1/trading/contest/me/overview");
+    assert.equal(calls[3]?.auth, "Bearer jwt-token");
+    assert.equal(
+      calls[4]?.url,
+      "http://localhost:8081/api/v1/trading/contest/seasons/202605/applications",
+    );
+    assert.equal(calls[4]?.method, "POST");
+    assert.equal(calls[5]?.url, "http://localhost:8081/api/v1/trading/contest/account/seasons");
+    assert.equal(
+      calls[6]?.url,
+      "http://localhost:8081/api/v1/trading/contest/seasons/202602/summary",
+    );
+    assert.equal(
+      calls[7]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons?size=20",
+    );
+    assert.equal(calls[8]?.method, "POST");
+    assert.equal(calls[9]?.method, "PUT");
+    assert.equal(
+      calls[10]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/status",
+    );
+    assert.equal(calls[10]?.method, "PATCH");
+    assert.equal(
+      calls[11]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602",
+    );
+    assert.equal(
+      calls[12]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/applicants/501/approve",
+    );
+    assert.equal(
+      calls[13]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/applicants/bulk-approve",
+    );
+    assert.equal(
+      calls[14]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/applicants/503/reject",
+    );
+    assert.equal(
+      calls[15]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/settle",
+    );
+    assert.equal(
+      calls[16]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/cleanup-remaining",
+    );
+
+    assert.equal(formatContestUsdt("10000"), "10,000.00 USDT");
+    assert.equal(formatContestSignedUsdt("3480.5"), "+3,480.50 USDT");
+    assert.equal(formatContestSignedRoi("-5.8"), "-5.80%");
   } finally {
     client.clear();
   }

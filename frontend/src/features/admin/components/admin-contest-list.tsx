@@ -1,8 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  createAdminContestSeason,
+  fetchAdminContestSeasons,
+  formatContestDateTime,
+  formatContestSeedPlain,
+  patchAdminContestSeasonStatus,
+  toDatetimeLocalInput,
+  toIsoInstantFromInput,
+  updateAdminContestSeason,
+  type ContestSeasonView,
+} from "../../contest/api/contest-client";
 import { DimModal } from "../../member/components/dim-modal";
+import { useOptionalMember } from "../../member/components/member-provider";
 import {
   cn,
   V1Button,
@@ -441,7 +453,38 @@ export function ContestCreateEditModal({
   );
 }
 
+export function mapSeasonViewToAdminRecord(view: ContestSeasonView): AdminContestSeasonRecord {
+  const progressState: AdminContestProgressState =
+    view.displayStatus === "LIVE"
+      ? "Live"
+      : view.displayStatus === "RECRUITING"
+        ? "모집중"
+        : view.displayStatus === "FINISHED" || Boolean(view.settledAt)
+          ? "정산완료"
+          : "대기중";
+  return {
+    id: view.id,
+    title: view.title,
+    description: view.description,
+    seedMoney: formatContestSeedPlain(view.seedMoney),
+    recruitmentStartAt: toDatetimeLocalInput(view.recruitmentStartAt),
+    recruitmentEndAt: toDatetimeLocalInput(view.recruitmentEndAt),
+    contestStartAt: toDatetimeLocalInput(view.contestStartAt),
+    contestEndAt: toDatetimeLocalInput(view.contestEndAt),
+    isPublic: view.isPublic,
+    isCancel: view.isCanceled,
+    progressState,
+    settledAt: view.settledAt ? formatContestDateTime(view.settledAt) : null,
+    applicantCount: view.applicantCount,
+    participantCount: view.participantCount,
+    rejectedCount: 0,
+    pendingOrderCount: view.pendingOrderCount,
+    openPositionCount: view.openPositionCount,
+  };
+}
+
 export function AdminContestList() {
+  const memberCtx = useOptionalMember();
   const [seasons, setSeasons] = useState<AdminContestSeasonRecord[]>(
     INITIAL_ADMIN_CONTEST_SEASONS,
   );
@@ -452,6 +495,32 @@ export function AdminContestList() {
   );
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const requestSeasons =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            fetchAdminContestSeasons({
+              token: cred.accessToken,
+              size: 50,
+              signal: controller.signal,
+            }),
+          )
+        : fetchAdminContestSeasons({ size: 50, signal: controller.signal });
+
+    void requestSeasons
+      .then(res => {
+        if (res && Array.isArray(res.items) && res.items.length > 0) {
+          setSeasons(res.items.map(mapSeasonViewToAdminRecord));
+        }
+      })
+      .catch(() => {
+        // Keep fallback admin season list when server is unreachable
+      });
+
+    return () => controller.abort();
+  }, [memberCtx?.session, memberCtx?.snapshot.phase]);
+
   const recruitingCount = seasons.filter(
     s => s.progressState === "모집중" && s.isPublic && !s.isCancel,
   ).length;
@@ -460,10 +529,12 @@ export function AdminContestList() {
   ).length;
 
   function handleToggleField(id: number, field: "isPublic" | "isCancel") {
+    let nextValue = false;
     setSeasons(prev =>
       prev.map(item => {
         if (item.id !== id) return item;
-        const updated = { ...item, [field]: !item[field] };
+        nextValue = !item[field];
+        const updated = { ...item, [field]: nextValue };
         const label =
           field === "isPublic"
             ? updated.isPublic
@@ -476,6 +547,24 @@ export function AdminContestList() {
         return updated;
       }),
     );
+
+    const patchBody = field === "isPublic" ? { isPublic: nextValue } : { isCanceled: nextValue };
+    const callPatch =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            patchAdminContestSeasonStatus(id, patchBody, { token: cred.accessToken }),
+          )
+        : patchAdminContestSeasonStatus(id, patchBody);
+
+    void callPatch
+      .then(updatedView => {
+        if (!updatedView) return;
+        const mapped = mapSeasonViewToAdminRecord(updatedView);
+        setSeasons(prev => prev.map(item => (item.id === id ? mapped : item)));
+      })
+      .catch(() => {
+        // Keep optimistic toggle state
+      });
   }
 
   function handleCreateSeason(draft: ContestFormDraft) {
@@ -502,13 +591,41 @@ export function AdminContestList() {
     setSeasons(prev => [created, ...prev]);
     setCreateModalOpen(false);
     setStatusMessage(`새 대회 시즌 #${created.id} "${created.title}"이(가) 생성되었습니다.`);
+
+    const payload = {
+      title: draft.title,
+      description: draft.description,
+      seedMoney: draft.seedMoney.replace(/,/g, ""),
+      recruitmentStartAt: toIsoInstantFromInput(draft.recruitmentStartAt),
+      recruitmentEndAt: toIsoInstantFromInput(draft.recruitmentEndAt),
+      contestStartAt: toIsoInstantFromInput(draft.contestStartAt),
+      contestEndAt: toIsoInstantFromInput(draft.contestEndAt),
+      isPublic: draft.isPublic,
+    };
+    const callCreate =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            createAdminContestSeason(payload, { token: cred.accessToken }),
+          )
+        : createAdminContestSeason(payload);
+
+    void callCreate
+      .then(serverView => {
+        if (!serverView) return;
+        const mapped = mapSeasonViewToAdminRecord(serverView);
+        setSeasons(prev => prev.map(item => (item.id === nextId ? mapped : item)));
+      })
+      .catch(() => {
+        // Keep optimistic created season
+      });
   }
 
   function handleUpdateSeason(draft: ContestFormDraft) {
     if (!editingSeason) return;
+    const targetId = editingSeason.id;
     setSeasons(prev =>
       prev.map(item =>
-        item.id === editingSeason.id
+        item.id === targetId
           ? {
               ...item,
               title: draft.title,
@@ -523,8 +640,35 @@ export function AdminContestList() {
           : item,
       ),
     );
-    setStatusMessage(`시즌 #${editingSeason.id} "${draft.title}" 정보가 수정되었습니다.`);
+    setStatusMessage(`시즌 #${targetId} "${draft.title}" 정보가 수정되었습니다.`);
     setEditingSeason(null);
+
+    const payload = {
+      title: draft.title,
+      description: draft.description,
+      seedMoney: draft.seedMoney.replace(/,/g, ""),
+      recruitmentStartAt: toIsoInstantFromInput(draft.recruitmentStartAt),
+      recruitmentEndAt: toIsoInstantFromInput(draft.recruitmentEndAt),
+      contestStartAt: toIsoInstantFromInput(draft.contestStartAt),
+      contestEndAt: toIsoInstantFromInput(draft.contestEndAt),
+      isPublic: draft.isPublic,
+    };
+    const callUpdate =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            updateAdminContestSeason(targetId, payload, { token: cred.accessToken }),
+          )
+        : updateAdminContestSeason(targetId, payload);
+
+    void callUpdate
+      .then(serverView => {
+        if (!serverView) return;
+        const mapped = mapSeasonViewToAdminRecord(serverView);
+        setSeasons(prev => prev.map(item => (item.id === targetId ? mapped : item)));
+      })
+      .catch(() => {
+        // Keep optimistic updated season
+      });
   }
 
   const visibleSeasons = seasons.slice(0, visibleCount);

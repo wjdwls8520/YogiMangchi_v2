@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { useOptionalMember } from "../../member/components/member-provider";
 import { MarketChartPanel } from "../../trading/components/market-chart-panel";
 import { OrderPanel } from "../../trading/components/order-panel";
 import { TradingDataProvider } from "../../trading/components/trading-data-provider";
@@ -11,6 +13,15 @@ import {
   V1IconClock,
   V1IconTrophy,
 } from "../../member/components/v1-ui";
+import {
+  fetchContestSeasonSummary,
+  fetchPublicContestSeasons,
+  formatContestDateOnly,
+  formatContestSignedRoi,
+  formatContestUsdt,
+  type ContestSeasonSummaryResponse,
+  type ContestSeasonView,
+} from "../api/contest-client";
 
 interface ContestSeasonTerminalMeta {
   seasonId: number;
@@ -90,12 +101,97 @@ function resolveContestTerminalMeta(seasonIdInput: number | string): ContestSeas
   };
 }
 
+function mapSummaryToTerminalMeta(
+  summary: ContestSeasonSummaryResponse,
+  dotColor: string,
+): ContestSeasonTerminalMeta {
+  const { season, participation } = summary;
+  const isSettled = Boolean(season.settledAt) || season.displayStatus === "FINISHED";
+  return {
+    seasonId: season.id,
+    title: season.title,
+    period: `${formatContestDateOnly(season.contestStartAt)} ~ ${formatContestDateOnly(season.contestEndAt)}`,
+    remainingLabel: isSettled ? "시즌 종료 · 정산 확정 완료" : season.statusLabel || "시즌 진행 중",
+    walletStatus: isSettled ? "SETTLED" : "ACTIVE",
+    seedMoney: formatContestUsdt(participation.seedMoney),
+    contestEquity: formatContestUsdt(participation.totalEquity),
+    availableMargin: formatContestUsdt(participation.availableBalance),
+    seasonRoi: formatContestSignedRoi(participation.roiPct),
+    liveRank:
+      participation.rank != null
+        ? `${isSettled ? "최종 " : ""}${participation.rank}위 / ${participation.totalParticipants}명`
+        : "집계 중",
+    dotColor,
+  };
+}
+
+function mapPublicSeasonToTerminalMeta(
+  season: ContestSeasonView,
+  fallback: ContestSeasonTerminalMeta,
+): ContestSeasonTerminalMeta {
+  const isSettled = Boolean(season.settledAt) || season.displayStatus === "FINISHED";
+  return {
+    seasonId: season.id,
+    title: season.title,
+    period: `${formatContestDateOnly(season.contestStartAt)} ~ ${formatContestDateOnly(season.contestEndAt)}`,
+    remainingLabel: isSettled ? "시즌 종료 · 정산 확정 완료" : season.statusLabel || "시즌 진행 중",
+    walletStatus: isSettled ? "SETTLED" : "ACTIVE",
+    seedMoney: formatContestUsdt(season.seedMoney),
+    contestEquity: fallback.contestEquity,
+    availableMargin: fallback.availableMargin,
+    seasonRoi: fallback.seasonRoi,
+    liveRank: `${season.participantCount}명 참가 중`,
+    dotColor: fallback.dotColor,
+  };
+}
+
 export function ContestTradingSubheader({
   seasonId,
 }: {
   seasonId: number | string;
 }) {
-  const meta = resolveContestTerminalMeta(seasonId);
+  const memberCtx = useOptionalMember();
+  const baseMeta = resolveContestTerminalMeta(seasonId);
+  const [liveMeta, setLiveMeta] = useState<ContestSeasonTerminalMeta | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const fallbackMeta = resolveContestTerminalMeta(seasonId);
+    const targetSeasonId = fallbackMeta.seasonId;
+
+    const loadFallbackPublicSeason = () =>
+      fetchPublicContestSeasons({ signal: controller.signal })
+        .then(res => {
+          const matched = res?.seasons?.find(s => s.id === targetSeasonId);
+          if (matched) {
+            setLiveMeta(mapPublicSeasonToTerminalMeta(matched, fallbackMeta));
+          }
+        })
+        .catch(() => {
+          // Keep static fallback metadata
+        });
+
+    if (memberCtx?.snapshot.phase === "ready" && memberCtx.session) {
+      void memberCtx.session
+        .authorized(cred =>
+          fetchContestSeasonSummary(targetSeasonId, cred.accessToken, {
+            signal: controller.signal,
+          }),
+        )
+        .then(summary => {
+          if (summary && summary.season && summary.participation) {
+            setLiveMeta(mapSummaryToTerminalMeta(summary, fallbackMeta.dotColor));
+          }
+        })
+        .catch(() => loadFallbackPublicSeason());
+    } else {
+      void loadFallbackPublicSeason();
+    }
+
+    return () => controller.abort();
+  }, [seasonId, memberCtx?.session, memberCtx?.snapshot.phase]);
+
+  const meta = liveMeta && liveMeta.seasonId === baseMeta.seasonId ? liveMeta : baseMeta;
   const isActive = meta.walletStatus === "ACTIVE";
 
   return (

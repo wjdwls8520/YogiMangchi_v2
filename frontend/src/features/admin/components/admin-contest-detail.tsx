@@ -1,8 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  approveAdminContestApplicant,
+  bulkApproveAdminContestApplicants,
+  cleanupRemainingAdminContestSeason,
+  fetchAdminContestSeasonDetail,
+  formatContestDateTime,
+  formatContestSignedRoi,
+  formatContestSignedUsdt,
+  formatContestUsdt,
+  isNonNegativeContestDecimal,
+  patchAdminContestSeasonStatus,
+  rejectAdminContestApplicant,
+  settleAdminContestSeason,
+  toDatetimeLocalInput,
+  toIsoInstantFromInput,
+  updateAdminContestSeason,
+  type AdminSeasonDetailResponse,
+} from "../../contest/api/contest-client";
 import { DimModal } from "../../member/components/dim-modal";
+import { useOptionalMember } from "../../member/components/member-provider";
 import {
   cn,
   V1Button,
@@ -22,6 +41,7 @@ import {
   ContestCreateEditModal,
   formatReadableDateTime,
   INITIAL_ADMIN_CONTEST_SEASONS,
+  mapSeasonViewToAdminRecord,
   resolveDisplayStatus,
   type AdminContestSeasonRecord,
   type ContestFormDraft,
@@ -200,6 +220,7 @@ export function AdminContestDetail({
 }: {
   seasonId: number | string;
 }) {
+  const memberCtx = useOptionalMember();
   const [season, setSeason] = useState<AdminContestSeasonRecord>(() =>
     resolveInitialSeason(seasonId),
   );
@@ -240,13 +261,133 @@ export function AdminContestDetail({
     },
   ]);
 
+  function applyDetailResponse(detail: AdminSeasonDetailResponse) {
+    if (!detail || !detail.season) return;
+    const mappedSeason = mapSeasonViewToAdminRecord(detail.season);
+    setSeason({
+      ...mappedSeason,
+      pendingOrderCount: detail.pendingOrderCount,
+      openPositionCount: detail.openPositionCount,
+      applicantCount: detail.applicants.length,
+      participantCount: detail.participants.length,
+      rejectedCount: detail.rejectedApplicants.length,
+    });
+
+    setApplicants(
+      detail.applicants.map(app => ({
+        applicantId: app.applicationId,
+        memberId: app.memberId,
+        nickname: app.nickname,
+        appliedAt: formatContestDateTime(app.appliedAt),
+        profileMsg: "시즌 대회 참가 신청",
+      })),
+    );
+
+    setParticipants(
+      detail.participants.map((p, idx) => ({
+        participantId: p.participantId,
+        memberId: p.memberId,
+        nickname: p.nickname,
+        walletId: p.accountId,
+        walletStatus:
+          p.accountStatus === "ACTIVE" && !detail.season.settledAt ? "ACTIVE" : "INACTIVE",
+        seedMoney: formatContestUsdt(p.seedMoney),
+        equity: formatContestUsdt(p.totalEquity),
+        realizedPnl: formatContestSignedUsdt(p.realizedPnl),
+        roi: formatContestSignedRoi(p.roiPct),
+        isPositive: isNonNegativeContestDecimal(p.roiPct),
+        pendingOrderCount: p.pendingOrderCount,
+        openPositionCount: p.openPositionCount,
+        rank: p.rank ?? idx + 1,
+        approvedAt: formatContestDateTime(p.approvedAt),
+        approvedBy: "총괄관리자",
+      })),
+    );
+
+    setRejectedList(
+      detail.rejectedApplicants.map(r => ({
+        rejectedId: r.applicationId,
+        memberId: r.memberId,
+        nickname: r.nickname,
+        appliedAt: formatContestDateTime(r.appliedAt),
+        rejectedAt: formatContestDateTime(r.processedAt ?? r.appliedAt),
+        rejectReason: r.rejectReason ?? "운영 기준 미충족으로 반려 처리되었습니다.",
+        processedBy: "총괄관리자",
+      })),
+    );
+
+    if (detail.settlementRuns.length > 0) {
+      setSettlementRuns(
+        detail.settlementRuns.map(run => ({
+          attemptNo: run.attemptNo,
+          triggeredBy: run.triggeredBy.startsWith("ADMIN") ? "ADMIN" : "SYSTEM_SCHEDULER",
+          status: run.status === "COMPLETED" ? "COMPLETED" : "READY",
+          executedAt: formatContestDateTime(run.completedAt ?? run.startedAt),
+          pipelineSummary:
+            "가격 스냅샷 → 지갑 비활성화 → 미체결 주문 500청크 소프트 취소 → 오픈 포지션 500청크 강제청산 → 올림픽 순위 확정",
+          deactivatedWalletCount: run.deactivatedWalletCount,
+          canceledOrderCount: run.canceledOrderCount,
+          liquidatedPositionCount: run.liquidatedPositionCount,
+          finalizedParticipantCount: run.finalizedParticipantCount,
+        })),
+      );
+    }
+  }
+
+  function reloadDetailFromServer(targetId: number) {
+    const requestDetail =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            fetchAdminContestSeasonDetail(targetId, { token: cred.accessToken }),
+          )
+        : fetchAdminContestSeasonDetail(targetId);
+
+    void requestDetail
+      .then(detail => {
+        if (detail && detail.season) {
+          applyDetailResponse(detail);
+        }
+      })
+      .catch(() => {
+        // Keep current state when server is unreachable
+      });
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const targetId = resolveInitialSeason(seasonId).id;
+    const requestDetail =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            fetchAdminContestSeasonDetail(targetId, {
+              token: cred.accessToken,
+              signal: controller.signal,
+            }),
+          )
+        : fetchAdminContestSeasonDetail(targetId, { signal: controller.signal });
+
+    void requestDetail
+      .then(detail => {
+        if (detail && detail.season) {
+          applyDetailResponse(detail);
+        }
+      })
+      .catch(() => {
+        // Keep fallback detail seed data when server is unreachable
+      });
+
+    return () => controller.abort();
+  }, [seasonId, memberCtx?.session, memberCtx?.snapshot.phase]);
+
   const displayStatus = resolveDisplayStatus(season);
   const isAllApplicantsSelected =
     applicants.length > 0 && selectedApplicantIds.length === applicants.length;
 
   function handleToggleStatus(field: "isPublic" | "isCancel") {
+    let nextValue = false;
     setSeason(prev => {
-      const next = { ...prev, [field]: !prev[field] };
+      nextValue = !prev[field];
+      const next = { ...prev, [field]: nextValue };
       const label =
         field === "isPublic"
           ? next.isPublic
@@ -260,6 +401,26 @@ export function AdminContestDetail({
       );
       return next;
     });
+
+    const patchBody = field === "isPublic" ? { isPublic: nextValue } : { isCanceled: nextValue };
+    const callPatch =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            patchAdminContestSeasonStatus(season.id, patchBody, { token: cred.accessToken }),
+          )
+        : patchAdminContestSeasonStatus(season.id, patchBody);
+
+    void callPatch
+      .then(updatedView => {
+        if (!updatedView) return;
+        setSeason(prev => ({
+          ...prev,
+          ...mapSeasonViewToAdminRecord(updatedView),
+        }));
+      })
+      .catch(() => {
+        // Keep optimistic toggle state
+      });
   }
 
   function handleSaveSeasonEdit(draft: ContestFormDraft) {
@@ -276,6 +437,35 @@ export function AdminContestDetail({
     }));
     setEditModalOpen(false);
     setOperationBanner(`시즌 #${season.id} "${draft.title}" 정보가 저장되었습니다.`);
+
+    const payload = {
+      title: draft.title,
+      description: draft.description,
+      seedMoney: draft.seedMoney.replace(/,/g, ""),
+      recruitmentStartAt: toIsoInstantFromInput(draft.recruitmentStartAt),
+      recruitmentEndAt: toIsoInstantFromInput(draft.recruitmentEndAt),
+      contestStartAt: toIsoInstantFromInput(draft.contestStartAt),
+      contestEndAt: toIsoInstantFromInput(draft.contestEndAt),
+      isPublic: draft.isPublic,
+    };
+    const callUpdate =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            updateAdminContestSeason(season.id, payload, { token: cred.accessToken }),
+          )
+        : updateAdminContestSeason(season.id, payload);
+
+    void callUpdate
+      .then(updatedView => {
+        if (!updatedView) return;
+        setSeason(prev => ({
+          ...prev,
+          ...mapSeasonViewToAdminRecord(updatedView),
+        }));
+      })
+      .catch(() => {
+        // Keep optimistic edit state
+      });
   }
 
   function handleConfirmEarlyFinishSettle() {
@@ -329,6 +519,34 @@ export function AdminContestDetail({
     setOperationBanner(
       `정산 완료: 비활성화 지갑 ${deactivatedCount}건 · 미체결 주문 소프트 취소 ${canceledCount}건 · 포지션 강제청산 ${liquidatedCount}건 · 최종 순위 확정 ${finalizedCount}명`,
     );
+
+    const callSettle =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            settleAdminContestSeason(season.id, { token: cred.accessToken }),
+          )
+        : settleAdminContestSeason(season.id);
+
+    void callSettle
+      .then(res => {
+        if (!res) return;
+        const settledLabel = formatContestDateTime(res.settledAt ?? res.completedAt) || nowStamp;
+        setSeason(prev => ({
+          ...prev,
+          contestEndAt: toDatetimeLocalInput(res.settledAt ?? res.completedAt ?? prev.contestEndAt),
+          settledAt: settledLabel,
+          progressState: "정산완료",
+          pendingOrderCount: 0,
+          openPositionCount: 0,
+        }));
+        setOperationBanner(
+          `정산 완료: 비활성화 지갑 ${res.deactivatedWalletCount}건 · 미체결 주문 소프트 취소 ${res.canceledOrderCount}건 · 포지션 강제청산 ${res.liquidatedPositionCount}건 · 최종 순위 확정 ${res.finalizedParticipantCount}명`,
+        );
+        reloadDetailFromServer(season.id);
+      })
+      .catch(() => {
+        // Keep optimistic settlement state
+      });
   }
 
   function handleConfirmCleanupRemaining() {
@@ -374,6 +592,25 @@ export function AdminContestDetail({
     setOperationBanner(
       `잔여 재정리 완료: 미체결 주문 500청크 소프트 취소 ${canceledCount}건 · 오픈 포지션 500청크 강제청산 ${liquidatedCount}건 · 최종 순위 재집계 ${finalizedCount}명`,
     );
+
+    const callCleanup =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            cleanupRemainingAdminContestSeason(season.id, { token: cred.accessToken }),
+          )
+        : cleanupRemainingAdminContestSeason(season.id);
+
+    void callCleanup
+      .then(res => {
+        if (!res) return;
+        setOperationBanner(
+          `잔여 재정리 완료: 미체결 주문 500청크 소프트 취소 ${res.canceledOrderCount}건 · 오픈 포지션 500청크 강제청산 ${res.liquidatedPositionCount}건 · 최종 순위 재집계 ${res.finalizedParticipantCount}명`,
+        );
+        reloadDetailFromServer(season.id);
+      })
+      .catch(() => {
+        // Keep optimistic cleanup state
+      });
   }
 
   function approveApplicantsByIds(targetIds: number[]) {
@@ -417,23 +654,47 @@ export function AdminContestDetail({
     setOperationBanner(
       `${approvedItems.length}명의 참가 신청을 승인하고 시즌 전용 ${season.seedMoney} USDT 대회 지갑(ACTIVE)을 자동 발급했습니다.`,
     );
+
+    const callApprove =
+      targetIds.length === 1
+        ? memberCtx?.snapshot.phase === "ready" && memberCtx.session
+          ? memberCtx.session.authorized(cred =>
+              approveAdminContestApplicant(season.id, targetIds[0]!, {
+                token: cred.accessToken,
+              }),
+            )
+          : approveAdminContestApplicant(season.id, targetIds[0]!)
+        : memberCtx?.snapshot.phase === "ready" && memberCtx.session
+          ? memberCtx.session.authorized(cred =>
+              bulkApproveAdminContestApplicants(season.id, targetIds, {
+                token: cred.accessToken,
+              }),
+            )
+          : bulkApproveAdminContestApplicants(season.id, targetIds);
+
+    void callApprove
+      .then(() => reloadDetailFromServer(season.id))
+      .catch(() => {
+        // Keep optimistic approved participants
+      });
   }
 
   function handleConfirmReject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!rejectTarget) return;
+    const targetAppId = rejectTarget.applicantId;
     const reason =
       rejectReasonInput.trim() || "시즌 참가 기준 미충족으로 반려되었습니다.";
 
     setApplicants(prev =>
-      prev.filter(item => item.applicantId !== rejectTarget.applicantId),
+      prev.filter(item => item.applicantId !== targetAppId),
     );
     setSelectedApplicantIds(prev =>
-      prev.filter(id => id !== rejectTarget.applicantId),
+      prev.filter(id => id !== targetAppId),
     );
 
     const rejectedEntry: AdminContestRejectedItem = {
-      rejectedId: 700 + rejectTarget.applicantId,
+      rejectedId: 700 + targetAppId,
       memberId: rejectTarget.memberId,
       nickname: rejectTarget.nickname,
       appliedAt: rejectTarget.appliedAt,
@@ -454,6 +715,21 @@ export function AdminContestDetail({
     setOperationBanner(
       `"${rejectTarget.nickname}" 신청자의 참가 신청을 반려 처리했습니다.`,
     );
+
+    const callReject =
+      memberCtx?.snapshot.phase === "ready" && memberCtx.session
+        ? memberCtx.session.authorized(cred =>
+            rejectAdminContestApplicant(season.id, targetAppId, reason, {
+              token: cred.accessToken,
+            }),
+          )
+        : rejectAdminContestApplicant(season.id, targetAppId, reason);
+
+    void callReject
+      .then(() => reloadDetailFromServer(season.id))
+      .catch(() => {
+        // Keep optimistic reject entry
+      });
   }
 
   return (
