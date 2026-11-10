@@ -657,6 +657,197 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
     }
 
     @Test
+    void twoLevelReplyNormalizationCommentCursorPaginationAndMyPageActivityFeedsWorkEndToEnd() throws Exception {
+        var writer = signup();
+        var commenter = signup();
+        var thirdUser = signup();
+        String writerBearer = "Bearer " + writer.access().accessToken();
+        String commenterBearer = "Bearer " + commenter.access().accessToken();
+        String thirdBearer = "Bearer " + thirdUser.access().accessToken();
+        long writerId = writer.access().memberId();
+        long commenterId = commenter.access().memberId();
+
+        // 1. Create 2 posts by writer
+        var p1Body = mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", writerBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of(
+                                "category", "ANALYSIS",
+                                "symbolTag", "ETH",
+                                "title", "ETH 2단 답글 및 마이페이지 검증 #1",
+                                "content", "첫 번째 게시글 본문입니다."))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long post1Id = json.readTree(p1Body).path("id").asLong();
+
+        var p2Body = mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", writerBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of(
+                                "category", "FREE",
+                                "title", "ETH 2단 답글 및 마이페이지 검증 #2",
+                                "content", "두 번째 게시글 본문입니다."))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long post2Id = json.readTree(p2Body).path("id").asLong();
+
+        // 2. Create 3 root comments on post1, plus a 1st-level reply and a 2nd-level reply-to-reply
+        var root1Body = mvc.perform(post("/api/v1/community/posts/" + post1Id + "/comments")
+                        .header("Authorization", writerBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("content", "루트 댓글 1"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.parentCommentId").isEmpty())
+                .andExpect(jsonPath("$.targetCommentId").isEmpty())
+                .andReturn().getResponse().getContentAsString();
+        long root1Id = json.readTree(root1Body).path("id").asLong();
+
+        // 1st-level reply to root1 (no explicit targetCommentId)
+        var reply1Body = mvc.perform(post("/api/v1/community/posts/" + post1Id + "/comments")
+                        .header("Authorization", commenterBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of(
+                                "content", "루트 1에 대한 1단 답글",
+                                "parentCommentId", root1Id))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.parentCommentId").value(root1Id))
+                .andExpect(jsonPath("$.targetCommentId").isEmpty())
+                .andReturn().getResponse().getContentAsString();
+        long reply1Id = json.readTree(reply1Body).path("id").asLong();
+
+        // 2nd-level reply (passing parentCommentId = reply1Id) -> normalized to parentCommentId = root1Id and target = commenter!
+        var reply2Body = mvc.perform(post("/api/v1/community/posts/" + post1Id + "/comments")
+                        .header("Authorization", thirdBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of(
+                                "content", "1단 답글에 대한 2단 답글 (@닉네임 자동 설정)",
+                                "parentCommentId", reply1Id))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.parentCommentId").value(root1Id))
+                .andExpect(jsonPath("$.targetCommentId").value(reply1Id))
+                .andExpect(jsonPath("$.targetMemberId").value(commenterId))
+                .andExpect(jsonPath("$.targetNickname").value(commenter.access().nickname()))
+                .andReturn().getResponse().getContentAsString();
+        long reply2Id = json.readTree(reply2Body).path("id").asLong();
+
+        var root2Body = mvc.perform(post("/api/v1/community/posts/" + post1Id + "/comments")
+                        .header("Authorization", commenterBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("content", "루트 댓글 2"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long root2Id = json.readTree(root2Body).path("id").asLong();
+
+        var root3Body = mvc.perform(post("/api/v1/community/posts/" + post1Id + "/comments")
+                        .header("Authorization", commenterBearer)
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("content", "루트 댓글 3"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long root3Id = json.readTree(root3Body).path("id").asLong();
+
+        // 3. Verify comment cursor pagination by root comment (size=2 -> returns root1 + its 2 replies + root2, hasNext=true, nextCursorId=root2Id)
+        var commentPage1 = json.readTree(mvc.perform(get("/api/v1/community/posts/" + post1Id + "/comments")
+                        .param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursorId").value(root2Id))
+                .andExpect(jsonPath("$.items.length()").value(4))
+                .andExpect(jsonPath("$.items[0].id").value(root1Id))
+                .andExpect(jsonPath("$.items[1].id").value(reply1Id))
+                .andExpect(jsonPath("$.items[2].id").value(reply2Id))
+                .andExpect(jsonPath("$.items[3].id").value(root2Id))
+                .andReturn().getResponse().getContentAsString());
+
+        long nextCommentCursor = commentPage1.path("nextCursorId").asLong();
+        mvc.perform(get("/api/v1/community/posts/" + post1Id + "/comments")
+                        .param("size", "2")
+                        .param("cursorId", Long.toString(nextCommentCursor)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasNext").value(false))
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(root3Id));
+
+        // 4. Likes & Reports for My Page activity tabs
+        mvc.perform(put("/api/v1/community/posts/" + post1Id + "/likes").header("Authorization", commenterBearer))
+                .andExpect(status().isOk());
+        mvc.perform(put("/api/v1/community/posts/" + post2Id + "/likes").header("Authorization", commenterBearer))
+                .andExpect(status().isOk());
+        mvc.perform(put("/api/v1/community/comments/" + root1Id + "/likes").header("Authorization", commenterBearer))
+                .andExpect(status().isOk());
+        mvc.perform(put("/api/v1/community/posts/" + post1Id + "/reports")
+                        .header("Authorization", commenterBearer)
+                        .param("reasonType", "SPAM"))
+                .andExpect(status().isOk());
+        mvc.perform(put("/api/v1/community/comments/" + root1Id + "/reports")
+                        .header("Authorization", commenterBearer)
+                        .param("reasonType", "ABUSE"))
+                .andExpect(status().isOk());
+
+        // 5. Public & Me My Page Activity Endpoints (posts, comments, liked-posts, liked-comments, reports)
+        var writerPostsPage1 = json.readTree(mvc.perform(get("/api/v1/members/" + writerId + "/community/posts")
+                        .param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(post2Id))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andReturn().getResponse().getContentAsString());
+        long writerPostsCursor = writerPostsPage1.path("nextCursorId").asLong();
+
+        mvc.perform(get("/api/v1/members/me/community/posts")
+                        .header("Authorization", writerBearer)
+                        .param("size", "1")
+                        .param("cursorId", Long.toString(writerPostsCursor)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(post1Id))
+                .andExpect(jsonPath("$.hasNext").value(false));
+
+        mvc.perform(get("/api/v1/members/" + commenterId + "/community/comments").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[0].postId").value(post1Id))
+                .andExpect(jsonPath("$.items[0].postTitle").value("ETH 2단 답글 및 마이페이지 검증 #1"))
+                .andExpect(jsonPath("$.hasNext").value(true));
+
+        mvc.perform(get("/api/v1/members/" + commenterId + "/community/liked-posts").param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(post2Id))
+                .andExpect(jsonPath("$.hasNext").value(true));
+
+        mvc.perform(get("/api/v1/members/me/community/liked-comments").header("Authorization", commenterBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(root1Id));
+
+        // Owner-only reports endpoint requires authentication and supports cursor pagination
+        mvc.perform(get("/api/v1/members/me/community/reports"))
+                .andExpect(status().isUnauthorized());
+
+        var reportsPage1 = json.readTree(mvc.perform(get("/api/v1/members/me/community/reports")
+                        .header("Authorization", commenterBearer)
+                        .param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].status").value("RECEIVED"))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andReturn().getResponse().getContentAsString());
+        long reportCursor = reportsPage1.path("nextCursorId").asLong();
+
+        mvc.perform(get("/api/v1/members/me/community/reports")
+                        .header("Authorization", commenterBearer)
+                        .param("size", "1")
+                        .param("cursorId", Long.toString(reportCursor)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.hasNext").value(false));
+
+        assertThat(s3.realS3PutCount()).isZero();
+        assertThat(s3.realS3DeleteCount()).isZero();
+    }
+
+    @Test
     void rootDotEnvS3LiveUploadAndImmediateDeleteWhenConfigured() throws Exception {
         String bucket = "";
         String access = "";

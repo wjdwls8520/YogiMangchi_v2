@@ -230,14 +230,128 @@ public class CommunityController {
     @GetMapping(value = "/api/v1/community/posts/{postId:[0-9]+}/comments", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(
             summary = "List comments for a community post",
-            description = "Public. Preserves deleted parent comments as masked nodes when active child replies exist."
+            description = "Public. Cursor-paginated by root comment ID (cursorId, size). Preserves deleted parent comments as masked nodes when active child replies exist."
     )
     public ResponseEntity<CommunityService.CommunityCommentListResponse> listComments(
             @PathVariable Long postId,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
             @AuthenticationPrincipal Jwt jwt) {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(community.listComments(postId, viewerId(jwt)));
+                .body(community.listComments(postId, cursorId, size, viewerId(jwt)));
+    }
+
+    @GetMapping(value = "/api/v1/members/{memberId:[0-9]+}/community/posts", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "List active community posts authored by a member (cursor-paginated)", description = "Public.")
+    public ResponseEntity<CommunityService.CommunityPostPageResponse> listMemberPosts(
+            @PathVariable Long memberId,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMemberPosts(memberId, cursorId, size, viewerId(jwt)));
+    }
+
+    @GetMapping(value = "/api/v1/members/me/community/posts", produces = MediaType.APPLICATION_JSON_VALUE)
+    @SecurityRequirement(name = "memberBearer")
+    @Operation(summary = "List own active community posts (cursor-paginated)", description = "Active member Bearer required.")
+    public ResponseEntity<CommunityService.CommunityPostPageResponse> listMyPosts(
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        Long me = Long.valueOf(jwt.getSubject());
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMemberPosts(me, cursorId, size, me));
+    }
+
+    @GetMapping(value = "/api/v1/members/{memberId:[0-9]+}/community/comments", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "List active community comments authored by a member (cursor-paginated)", description = "Public.")
+    public ResponseEntity<CommunityService.MemberCommunityCommentPageResponse> listMemberComments(
+            @PathVariable Long memberId,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMemberComments(memberId, cursorId, size, viewerId(jwt)));
+    }
+
+    @GetMapping(value = "/api/v1/members/me/community/comments", produces = MediaType.APPLICATION_JSON_VALUE)
+    @SecurityRequirement(name = "memberBearer")
+    @Operation(summary = "List own active community comments (cursor-paginated)", description = "Active member Bearer required.")
+    public ResponseEntity<CommunityService.MemberCommunityCommentPageResponse> listMyComments(
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        Long me = Long.valueOf(jwt.getSubject());
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMemberComments(me, cursorId, size, me));
+    }
+
+    @GetMapping(value = "/api/v1/members/{memberId:[0-9]+}/community/liked-posts", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "List active community posts liked by a member (cursor-paginated)", description = "Public.")
+    public ResponseEntity<CommunityService.CommunityPostPageResponse> listMemberLikedPosts(
+            @PathVariable Long memberId,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMemberLikedPosts(memberId, cursorId, size, viewerId(jwt)));
+    }
+
+    @GetMapping(value = "/api/v1/members/me/community/liked-posts", produces = MediaType.APPLICATION_JSON_VALUE)
+    @SecurityRequirement(name = "memberBearer")
+    @Operation(summary = "List own liked active community posts (cursor-paginated)", description = "Active member Bearer required.")
+    public ResponseEntity<CommunityService.CommunityPostPageResponse> listMyLikedPosts(
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        Long me = Long.valueOf(jwt.getSubject());
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMemberLikedPosts(me, cursorId, size, me));
+    }
+
+    @GetMapping(value = "/api/v1/members/{memberId:[0-9]+}/community/liked-comments", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "List active community comments liked by a member (cursor-paginated)", description = "Public.")
+    public ResponseEntity<CommunityService.MemberCommunityCommentPageResponse> listMemberLikedComments(
+            @PathVariable Long memberId,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMemberLikedComments(memberId, cursorId, size, viewerId(jwt)));
+    }
+
+    @GetMapping(value = "/api/v1/members/me/community/liked-comments", produces = MediaType.APPLICATION_JSON_VALUE)
+    @SecurityRequirement(name = "memberBearer")
+    @Operation(summary = "List own liked active community comments (cursor-paginated)", description = "Active member Bearer required.")
+    public ResponseEntity<CommunityService.MemberCommunityCommentPageResponse> listMyLikedComments(
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        Long me = Long.valueOf(jwt.getSubject());
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMemberLikedComments(me, cursorId, size, me));
+    }
+
+    @GetMapping(value = "/api/v1/members/me/community/reports", produces = MediaType.APPLICATION_JSON_VALUE)
+    @SecurityRequirement(name = "memberBearer")
+    @Operation(summary = "List own submitted community post/comment reports (owner-only, cursor-paginated)", description = "Active member Bearer required.")
+    public ResponseEntity<CommunityService.MemberCommunityReportPageResponse> listMyReports(
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(community.listMyReports(Long.valueOf(jwt.getSubject()), cursorId, size));
     }
 
     @PostMapping(value = "/api/v1/community/posts/{postId:[0-9]+}/comments", produces = MediaType.APPLICATION_JSON_VALUE)
