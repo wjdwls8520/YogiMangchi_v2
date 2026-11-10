@@ -54,6 +54,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
     @Autowired MemberProvisioning provisioning;
     @Autowired ContentRetentionCleanupService retentionCleanup;
     @Autowired CommunityS3Service s3;
+    @Autowired CommunityService community;
     @Autowired NewsIngestionService newsIngestion;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
@@ -1160,6 +1161,193 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         assertThat(sentimentNode.path("bullPct").asInt() + sentimentNode.path("bearPct").asInt()).isEqualTo(100);
         assertThat(sentimentNode.path("bearishArticleCount").asInt()).isGreaterThanOrEqualTo(3);
         assertThat(sentimentNode.path("summary").asText()).contains("최근 실시간 뉴스");
+    }
+
+    @Test
+    void adminMemberAndCommunityManagementEnforcesAdminRoleAndSupportsSearchAndSoftDelete() throws Exception {
+        var adminUser = signup();
+        var normalUser = signup();
+        var targetUser = signup();
+
+        Long adminId = adminUser.access().memberId();
+        Long normalId = normalUser.access().memberId();
+        Long targetId = targetUser.access().memberId();
+
+        String adminBearer = "Bearer " + adminUser.access().accessToken();
+        String normalBearer = "Bearer " + normalUser.access().accessToken();
+        String targetBearer = "Bearer " + targetUser.access().accessToken();
+
+        // 1. Unauthenticated requests -> 401 AUTHENTICATION_REQUIRED
+        mvc.perform(get("/api/v1/admin/members"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
+        mvc.perform(get("/api/v1/admin/community/posts"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
+        mvc.perform(get("/api/v1/admin/community/replies"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
+
+        // 2. Non-admin member requests -> 403 ACCESS_DENIED
+        mvc.perform(get("/api/v1/admin/members").header("Authorization", normalBearer))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+        mvc.perform(delete("/api/v1/admin/members/" + targetId).header("Authorization", normalBearer))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+        mvc.perform(get("/api/v1/admin/community/posts").header("Authorization", normalBearer))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+        mvc.perform(get("/api/v1/admin/community/replies").header("Authorization", normalBearer))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        // Promote adminUser to ADMIN in content.member
+        jdbc.update("update content.member set role = 'ADMIN' where id = ?", adminId);
+
+        // Create community posts & replies by normalUser and targetUser
+        var activeAuthorPost = community.createPost(
+                normalId,
+                new CommunityService.CreatePostRequest("MARKET", "BTC", "어드민검색용활성글제목", "어드민검색용활성글본문"));
+        var targetAuthorPost = community.createPost(
+                targetId,
+                new CommunityService.CreatePostRequest("ANALYSIS", "ETH", "탈퇴예정작성자글제목", "탈퇴예정작성자글본문"));
+
+        var activeReply = community.createComment(
+                normalId,
+                activeAuthorPost.id(),
+                new CommunityService.CreateCommentRequest("어드민검색용활성댓글내용", null));
+        var targetReply = community.createComment(
+                targetId,
+                activeAuthorPost.id(),
+                new CommunityService.CreateCommentRequest("탈퇴예정작성자댓글내용", activeReply.id()));
+
+        // 3. Admin member search by memberId, nickname, role, status
+        mvc.perform(get("/api/v1/admin/members")
+                        .header("Authorization", adminBearer)
+                        .param("memberId", targetId.toString())
+                        .param("role", "VERIFIED_USER")
+                        .param("status", "ACTIVE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalCount").isNumber())
+                .andExpect(jsonPath("$.activeCount").isNumber())
+                .andExpect(jsonPath("$.withdrawnCount").isNumber())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].memberId").value(targetId))
+                .andExpect(jsonPath("$.content[0].nickname").value(targetUser.access().nickname()))
+                .andExpect(jsonPath("$.content[0].role").value("MEMBER"))
+                .andExpect(jsonPath("$.content[0].deleteYn").value("N"))
+                .andExpect(jsonPath("$.content[0].status").value("ACTIVE"))
+                .andExpect(jsonPath("$.content[0].oauthEmail").value("community@example.test"))
+                .andExpect(jsonPath("$.content[0].oauthProvider").value("GOOGLE"))
+                .andExpect(jsonPath("$.content[0].oauthProviderUserId").isNotEmpty());
+
+        // 4. Admin cannot force-withdraw oneself or another ADMIN
+        mvc.perform(delete("/api/v1/admin/members/" + adminId).header("Authorization", adminBearer))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CANNOT_WITHDRAW_ADMIN"));
+
+        // 5. Admin force-withdraws targetUser
+        mvc.perform(delete("/api/v1/admin/members/" + targetId).header("Authorization", adminBearer))
+                .andExpect(status().isNoContent());
+
+        // Force-withdrawn member's existing Bearer token is immediately rejected by ActiveMemberFilter
+        mvc.perform(get("/api/v1/members/me").header("Authorization", targetBearer))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("MEMBER_NOT_ACTIVE"));
+
+        // Outbox row queued for Trading withdrawal propagation
+        String withdrawalOutboxStatus = jdbc.queryForObject(
+                "select status from content.member_withdrawal where member_id = ?",
+                String.class,
+                targetId);
+        assertThat(withdrawalOutboxStatus).isEqualTo("PENDING");
+
+        // Admin member list with status=WITHDRAWN returns the force-withdrawn member with deleteYn=Y
+        mvc.perform(get("/api/v1/admin/members")
+                        .header("Authorization", adminBearer)
+                        .param("memberId", targetId.toString())
+                        .param("status", "WITHDRAWN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].memberId").value(targetId))
+                .andExpect(jsonPath("$.content[0].deleteYn").value("Y"))
+                .andExpect(jsonPath("$.content[0].status").value("WITHDRAWN"))
+                .andExpect(jsonPath("$.content[0].nickname").value("탈퇴한회원"))
+                .andExpect(jsonPath("$.content[0].withdrawnAt").isNotEmpty());
+
+        // 6. Admin community posts search (all / active-author / withdrawn-author) & soft delete
+        mvc.perform(get("/api/v1/admin/community/posts/active-author")
+                        .header("Authorization", adminBearer)
+                        .param("title", "어드민검색용활성글"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].postId").value(activeAuthorPost.id()))
+                .andExpect(jsonPath("$.content[0].replyCount").value(2))
+                .andExpect(jsonPath("$.content[0].deleteYn").value("N"))
+                .andExpect(jsonPath("$.content[0].authorId").value(normalId));
+
+        mvc.perform(get("/api/v1/admin/community/posts/withdrawn-author")
+                        .header("Authorization", adminBearer)
+                        .param("title", "탈퇴예정작성자글"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].postId").value(targetAuthorPost.id()))
+                .andExpect(jsonPath("$.content[0].authorNickname").value("탈퇴한회원"))
+                .andExpect(jsonPath("$.content[0].deleteYn").value("N"));
+
+        // Admin soft-deletes targetAuthorPost
+        mvc.perform(delete("/api/v1/admin/community/posts/" + targetAuthorPost.id())
+                        .header("Authorization", adminBearer))
+                .andExpect(status().isNoContent());
+
+        // Public post detail now returns 404, while admin post list still shows it with deleteYn=Y
+        mvc.perform(get("/api/v1/community/posts/" + targetAuthorPost.id()))
+                .andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/admin/community/posts")
+                        .header("Authorization", adminBearer)
+                        .param("title", "탈퇴예정작성자글"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].postId").value(targetAuthorPost.id()))
+                .andExpect(jsonPath("$.content[0].deleteYn").value("Y"));
+
+        // 7. Admin community replies search (all / active-author / withdrawn-author) & soft delete
+        mvc.perform(get("/api/v1/admin/community/replies/active-author")
+                        .header("Authorization", adminBearer)
+                        .param("replyContent", "어드민검색용활성댓글"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].replyId").value(activeReply.id()))
+                .andExpect(jsonPath("$.content[0].postId").value(activeAuthorPost.id()))
+                .andExpect(jsonPath("$.content[0].postTitle").value("어드민검색용활성글제목"))
+                .andExpect(jsonPath("$.content[0].deleteYn").value("N"));
+
+        mvc.perform(get("/api/v1/admin/community/replies/withdrawn-author")
+                        .header("Authorization", adminBearer)
+                        .param("replyContent", "탈퇴예정작성자댓글"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].replyId").value(targetReply.id()))
+                .andExpect(jsonPath("$.content[0].authorNickname").value("탈퇴한회원"))
+                .andExpect(jsonPath("$.content[0].deleteYn").value("N"));
+
+        // Admin soft-deletes targetReply -> deleteYn=Y and post comment_count decremented from 2 to 1
+        mvc.perform(delete("/api/v1/admin/community/replies/" + targetReply.id())
+                        .header("Authorization", adminBearer))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/v1/admin/community/replies")
+                        .header("Authorization", adminBearer)
+                        .param("replyContent", "탈퇴예정작성자댓글"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].replyId").value(targetReply.id()))
+                .andExpect(jsonPath("$.content[0].deleteYn").value("Y"));
+
+        mvc.perform(get("/api/v1/community/posts/" + activeAuthorPost.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.commentCount").value(1));
     }
 
     private AuthService.Issued signup() {
