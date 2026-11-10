@@ -76,6 +76,7 @@ public class PublicPortfolioService {
                 FROM trading.trading_account
                 WHERE member_id = ?
                   AND guest_account = false
+                  AND account_type = 'MOCK'
                   AND status = 'ACTIVE'
                 ORDER BY id DESC
                 LIMIT 1

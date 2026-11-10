@@ -23,9 +23,11 @@ public class LedgerReconciler {
     public record Result(long accountId,String status,List<String> failedChecks,Map<String,Object> evidence) { }
 
     static final String SNAPSHOT="""
-        with owner as (select id,guest_account from trading.trading_account where id=?),
+        with owner as (select id,guest_account,account_type from trading.trading_account where id=?),
         latest_round as (
           select r.* from trading.member_trading_round r join owner a on a.id=r.account_id order by r.round_number desc limit 1
+        ), contest as (
+          select cp.seed_money from trading.contest_participant cp join owner a on a.id=cp.account_id limit 1
         ), facts as (
           select coalesce(sum(f.realized_pnl),0) gross,coalesce(sum(f.fee),0) fees,coalesce(sum(f.settlement_adjustment),0) adjustment,
             coalesce(sum(f.realized_pnl) filter(where f.round_id=(select id from latest_round)),0) round_gross,
@@ -42,14 +44,15 @@ public class LedgerReconciler {
             union all select m.capital_adjustment from trading.member_restart m join owner a on a.id=m.account_id
           ) adjustments
         )
-        select a.guest_account,w.account_id is not null wallet_present,
+        select a.guest_account,a.account_type,w.account_id is not null wallet_present,
           w.balance,w.used_margin,w.reserved_margin,w.realized_pnl,w.fees_paid,w.settlement_adjustment,
           facts.gross expected_gross,facts.fees expected_fees,facts.adjustment expected_adjustment,facts.round_gross,facts.round_fees,facts.round_adjustment,
           exposure.collateral expected_collateral,reservations.reserved expected_reserved,funding.capital,
           latest_round.id latest_round_id,latest_round.initial_balance round_initial,
-          latest_round.start_realized_pnl,latest_round.start_fees_paid,latest_round.start_adjustment
+          latest_round.start_realized_pnl,latest_round.start_fees_paid,latest_round.start_adjustment,
+          contest.seed_money contest_seed
         from owner a left join trading.wallet w on w.account_id=a.id
-        cross join facts cross join exposure cross join reservations cross join funding left join latest_round on true
+        cross join facts cross join exposure cross join reservations cross join funding left join latest_round on true left join contest on true
         """;
 
     @Transactional(propagation=Propagation.REQUIRES_NEW,timeout=5)
@@ -115,6 +118,10 @@ public class LedgerReconciler {
             expectedBalance=new BigDecimal("10000").add(number(evidence,"expected_gross")).subtract(number(evidence,"expected_fees"))
                     .add(number(evidence,"expected_adjustment")).add(number(evidence,"capital"));
             evidence.put("capital_basis","GUEST_INITIAL_PLUS_RETRY_ADJUSTMENTS");
+        } else if("CONTEST".equals(evidence.get("account_type"))&&evidence.get("contest_seed")!=null&&Boolean.TRUE.equals(evidence.get("wallet_present"))) {
+            expectedBalance=number(evidence,"contest_seed").add(number(evidence,"expected_gross"))
+                    .subtract(number(evidence,"expected_fees")).add(number(evidence,"expected_adjustment"));
+            evidence.put("capital_basis","CONTEST_SEED");
         } else if(evidence.get("round_initial")!=null&&Boolean.TRUE.equals(evidence.get("wallet_present"))) {
             // Latest verified round resets cash before its baseline. Previous lifetime capital is not guessed.
             expectedBalance=number(evidence,"round_initial").add(number(evidence,"round_gross"))
