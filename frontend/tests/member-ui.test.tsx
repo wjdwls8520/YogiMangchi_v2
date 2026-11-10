@@ -2063,7 +2063,7 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(memberContestHtml, /data-contest-section="ongoing"/);
     assert.match(memberContestHtml, /내 진행 중인 대회/);
     assert.match(memberContestHtml, /href="\/contest\/202602\/trading"/);
-    assert.match(memberContestHtml, /대회장 입장/);
+    assert.match(memberContestHtml, /대회 참여하기/);
     assert.match(memberContestHtml, /data-contest-section="catalog"/);
     assert.match(memberContestHtml, /참가 신청 가능 \(3\)/);
     assert.match(memberContestHtml, /참가 심사 중 \(1\)/);
@@ -2808,6 +2808,23 @@ test("전역 포인터 커서, KST 대회 시각 변환, 12종목 포지션 스�
   const globalsCss = fs.readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
   assert.match(globalsCss, /button:not\(:disabled\)[\s\S]*?cursor:\s*pointer;/);
   assert.equal(globalsCss.includes("not-allowed"), false);
+
+  // src/** 전 파일에서 "터미널" 단어가 단 1곳도 존재하지 않음을 영구 검증
+  const scanSrcForForbiddenWord = (dir: string) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) scanSrcForForbiddenWord(full);
+      else if (/\.(tsx?|jsx?|css)$/.test(ent.name)) {
+        const fileText = fs.readFileSync(full, "utf8");
+        assert.equal(
+          fileText.includes("터미널"),
+          false,
+          `${full} 파일에 금지된 "터미널" 문구가 포함되어 있습니다.`,
+        );
+      }
+    }
+  };
+  scanSrcForForbiddenWord(path.join(process.cwd(), "src"));
 
   // KST(UTC+9) 시각 변환 및 datetime-local 왕복 검증
   assert.equal(formatContestDateTime("2026-11-10T15:00:00Z"), "2026.11.11 00:00");

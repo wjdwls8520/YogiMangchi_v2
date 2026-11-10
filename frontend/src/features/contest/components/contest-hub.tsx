@@ -550,7 +550,7 @@ export function ContestListCard({
               onClick={event => event.stopPropagation()}
               className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
             >
-              <span>대회장 입장</span>
+              <span>대회 참여하기</span>
               <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
             </Link>
           ) : (
@@ -773,7 +773,7 @@ export function ContestOngoingSection({
                   data-contest-enter={contest.id}
                   className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white transition-colors hover:bg-blue-700"
                 >
-                  <span>대회장 입장</span>
+                  <span>대회 참여하기</span>
                   <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
                 </Link>
               ) : (
@@ -787,7 +787,7 @@ export function ContestOngoingSection({
                   }
                   className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-gray-200 bg-gray-100 px-4 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200 cursor-pointer"
                 >
-                  <span>대회장 입장</span>
+                  <span>대회 참여하기</span>
                   <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
                 </button>
               )}
