@@ -2,6 +2,7 @@ package com.yogimangchi.trading.tradingaccount.repository;
 
 import com.yogimangchi.trading.tradingaccount.entity.TradingAccount;
 import jakarta.persistence.LockModeType;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -14,6 +15,8 @@ public interface TradingAccountRepository extends Repository<TradingAccount, Lon
     Optional<Long> findAccountIdByMemberId(Long memberId);
     @Query("select a.id from TradingAccount a where a.memberId=:memberId and a.contestSeasonId=:contestSeasonId and a.accountType=com.yogimangchi.trading.tradingaccount.entity.TradingAccount.AccountType.CONTEST")
     Optional<Long> findContestAccountId(Long memberId, Long contestSeasonId);
+    @Query("select a.id from TradingAccount a where a.memberId=:memberId and a.accountType=com.yogimangchi.trading.tradingaccount.entity.TradingAccount.AccountType.CONTEST and a.status<>com.yogimangchi.trading.tradingaccount.entity.TradingAccount.Status.WITHDRAWN order by a.id asc")
+    List<Long> findNonWithdrawnContestAccountIdsByMemberId(Long memberId);
     boolean existsByMemberIdAndAccountTypeAndStatus(Long memberId, TradingAccount.AccountType accountType, TradingAccount.Status status);
     default boolean existsByMemberIdAndStatus(Long memberId,TradingAccount.Status status) {
         return existsByMemberIdAndAccountTypeAndStatus(memberId, TradingAccount.AccountType.MOCK, status);

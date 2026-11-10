@@ -80,6 +80,7 @@ class ContestSettlementAndTradingTest {
     @Autowired private ContestSettlementScheduler settlementScheduler;
     @Autowired private LedgerReconciler reconciler;
     @Autowired private com.yogimangchi.trading.tradingaccount.security.TradingCredentials tradingCredentials;
+    @Autowired private com.yogimangchi.trading.tradingaccount.service.MemberWithdrawal memberWithdrawal;
     @MockitoBean private TradingEngineGate gate;
 
     private long btc;
@@ -514,6 +515,135 @@ class ContestSettlementAndTradingTest {
                 .isInstanceOf(com.yogimangchi.trading.error.BusinessException.class)
                 .extracting("code")
                 .isEqualTo(com.yogimangchi.trading.error.ErrorCode.TRADING_BUSY);
+    }
+
+    @Test
+    void contestHistoryBeforeIdPaginationVisibilityGuardsAndMemberWithdrawalWorkCleanly() throws Exception {
+        long adminId = MEMBERS.incrementAndGet();
+        long memberId = MEMBERS.incrementAndGet();
+        long withdrawMemberId = MEMBERS.incrementAndGet();
+        String adminBearer = "Bearer " + adminToken(adminId);
+        String memberBearer = "Bearer " + memberToken(memberId);
+        String withdrawBearer = "Bearer " + memberToken(withdrawMemberId);
+
+        Instant now = Instant.now();
+        long seasonId = createSeasonViaAdmin(adminBearer, "페이징 및 탈퇴 정합성 시즌", "30000",
+                now.minusSeconds(3600), now.plusSeconds(3600), now.minusSeconds(600), now.plusSeconds(7200));
+
+        // Overlapping LIVE + recruitment season appears in BOTH running and recruiting
+        mvc.perform(get("/api/v1/trading/contest/public/seasons"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.running[?(@.id==" + seasonId + ")]").isNotEmpty())
+                .andExpect(jsonPath("$.recruiting[?(@.id==" + seasonId + ")]").isNotEmpty());
+
+        // Application view exposes real seedMoney and recruitmentEndAt
+        String appBody = mvc.perform(post("/api/v1/trading/contest/seasons/" + seasonId + "/applications")
+                        .header("Authorization", memberBearer)
+                        .contentType("application/json")
+                        .content("{\"nickname\":\"페이징테스터\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seedMoney").value("30000"))
+                .andExpect(jsonPath("$.recruitmentEndAt").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+        long appId = json.readTree(appBody).path("applicationId").asLong();
+        long withdrawAppId = applyForSeason(withdrawBearer, seasonId, "탈퇴테스터");
+
+        mvc.perform(post("/api/v1/trading/admin/contest/seasons/" + seasonId + "/applicants/bulk-approve")
+                        .header("Authorization", adminBearer)
+                        .contentType("application/json")
+                        .content("{\"applicationIds\":[" + appId + "," + withdrawAppId + "]}"))
+                .andExpect(status().isOk());
+
+        Long memberContestAccId = jdbc.queryForObject(
+                "select account_id from trading.contest_participant where contest_season_id=? and member_id=?",
+                Long.class, seasonId, memberId);
+        Long withdrawContestAccId = jdbc.queryForObject(
+                "select account_id from trading.contest_participant where contest_season_id=? and member_id=?",
+                Long.class, seasonId, withdrawMemberId);
+        LegacyLeverageFixtures.bothDirections(jdbc, memberContestAccId, btc);
+        LegacyLeverageFixtures.bothDirections(jdbc, withdrawContestAccId, btc);
+
+        // Place 2 market orders on memberId so /orders and /fills have 2 rows, then paginate with beforeId
+        placeOrder(memberBearer, seasonId, "MARKET", btc, "LONG", "0.2", 10, null);
+        placeOrder(memberBearer, seasonId, "MARKET", btc, "LONG", "0.3", 10, null);
+
+        String ordersPage1 = mvc.perform(get("/api/v1/trading/contest/seasons/" + seasonId + "/orders")
+                        .header("Authorization", memberBearer)
+                        .param("limit", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andReturn().getResponse().getContentAsString();
+        long firstOrderId = json.readTree(ordersPage1).get(0).path("orderId").asLong();
+
+        String ordersPage2 = mvc.perform(get("/api/v1/trading/contest/seasons/" + seasonId + "/orders")
+                        .header("Authorization", memberBearer)
+                        .param("limit", "1")
+                        .param("beforeId", Long.toString(firstOrderId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andReturn().getResponse().getContentAsString();
+        long secondOrderId = json.readTree(ordersPage2).get(0).path("orderId").asLong();
+        assertThat(secondOrderId).isLessThan(firstOrderId);
+
+        String fillsPage1 = mvc.perform(get("/api/v1/trading/contest/seasons/" + seasonId + "/fills")
+                        .header("Authorization", memberBearer)
+                        .param("limit", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andReturn().getResponse().getContentAsString();
+        long firstFillId = json.readTree(fillsPage1).get(0).path("fillId").asLong();
+
+        String fillsPage2 = mvc.perform(get("/api/v1/trading/contest/seasons/" + seasonId + "/fills")
+                        .header("Authorization", memberBearer)
+                        .param("limit", "1")
+                        .param("beforeId", Long.toString(firstFillId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andReturn().getResponse().getContentAsString();
+        long secondFillId = json.readTree(fillsPage2).get(0).path("fillId").asLong();
+        assertThat(secondFillId).isLessThan(firstFillId);
+
+        // Open position + pending limit order on withdrawMemberId, then withdraw member
+        placeOrder(withdrawBearer, seasonId, "MARKET", btc, "LONG", "0.5", 10, null);
+        placeOrder(withdrawBearer, seasonId, "LIMIT", btc, "LONG", "0.5", 10, "900");
+        memberWithdrawal.withdraw(withdrawMemberId);
+
+        assertThat(jdbc.queryForObject("select status from trading.trading_account where id=?", String.class, withdrawContestAccId))
+                .isEqualTo("WITHDRAWN");
+        assertThat(jdbc.queryForObject("select count(*) from trading.position where account_id=? and status='OPEN'", Long.class, withdrawContestAccId))
+                .isZero();
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'", Long.class, withdrawContestAccId))
+                .isZero();
+        assertThat(reconciler.check(withdrawContestAccId).status()).isEqualTo("MATCHED");
+
+        // Hidden season leaderboard returns 404 CONTEST_SEASON_NOT_FOUND
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/trading/admin/contest/seasons/" + seasonId + "/status")
+                        .header("Authorization", adminBearer)
+                        .contentType("application/json")
+                        .content("{\"isPublic\":false}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/v1/trading/contest/public/seasons/" + seasonId + "/leaderboard"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("CONTEST_SEASON_NOT_FOUND"));
+
+        // Restore public visibility, settle season, and verify /account/seasons separates active vs past
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/trading/admin/contest/seasons/" + seasonId + "/status")
+                        .header("Authorization", adminBearer)
+                        .contentType("application/json")
+                        .content("{\"isPublic\":true}"))
+                .andExpect(status().isOk());
+
+        settlementService.settleSeason(seasonId, "ADMIN:" + adminId, true);
+
+        mvc.perform(get("/api/v1/trading/contest/account/seasons")
+                        .header("Authorization", memberBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activeSeason").doesNotExist())
+                .andExpect(jsonPath("$.participatingSeasons.length()").value(0))
+                .andExpect(jsonPath("$.pastSeasons.length()").value(1));
     }
 
     private long createSeasonViaAdmin(

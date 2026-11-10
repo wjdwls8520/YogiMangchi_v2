@@ -47,25 +47,47 @@ public class MemberWithdrawal {
             wallets.save(Wallet.emptyMemberWallet(created.getId())); return created.getId();
         });
         var account=locks.lockIncludingWithdrawn(id);
-        if(account.getStatus()==TradingAccount.Status.WITHDRAWN) return;
-        // A concurrent order may commit while this request waits for the account lock.
-        Instant now=Instant.now().truncatedTo(ChronoUnit.MICROS);
-        var wallet=wallets.findById(id).orElseThrow();
-        var open=positions.findByAccountIdAndStatusOrderByIdAsc(id,Position.Status.OPEN);
-        var byId=open.stream().collect(Collectors.toMap(Position::getId,Function.identity()));
-        BigDecimal released=BigDecimal.ZERO,reserved=BigDecimal.ZERO;
-        for(var order:orders.findByAccountIdAndStatusOrderByIdAsc(id,TradingOrder.Status.PENDING)) {
-            if(order.getAction()==TradingOrder.Action.OPEN) reserved=reserved.add(order.getReservedMargin());
-            else byId.get(order.getPositionId()).releaseCloseReservation(order.getQuantity());
-            order.cancelForWithdrawal(now); events.record(order,null);
+        if(account.getStatus()!=TradingAccount.Status.WITHDRAWN) {
+            // A concurrent order may commit while this request waits for the account lock.
+            Instant now=Instant.now().truncatedTo(ChronoUnit.MICROS);
+            var wallet=wallets.findById(id).orElseThrow();
+            var open=positions.findByAccountIdAndStatusOrderByIdAsc(id,Position.Status.OPEN);
+            var byId=open.stream().collect(Collectors.toMap(Position::getId,Function.identity()));
+            BigDecimal released=BigDecimal.ZERO,reserved=BigDecimal.ZERO;
+            for(var order:orders.findByAccountIdAndStatusOrderByIdAsc(id,TradingOrder.Status.PENDING)) {
+                if(order.getAction()==TradingOrder.Action.OPEN) reserved=reserved.add(order.getReservedMargin());
+                else byId.get(order.getPositionId()).releaseCloseReservation(order.getQuantity());
+                order.cancelForWithdrawal(now); events.record(order,null);
+            }
+            rounds.captureRetirement(id);
+            for(var position:open) {released=released.add(position.closeForWithdrawal(now));events.recordStopLoss(position);}
+            wallet.releaseExposure(released,reserved);
+            if(wallet.getUsedMargin().signum()!=0 || wallet.getReservedMargin().signum()!=0)
+                throw new IllegalStateException("Withdrawal found inconsistent reservations");
+            rounds.finish(id,wallet,"MEMBER_WITHDRAWAL",now);
+            account.withdraw(now);
+            risk.retireWithdrawal(id);
         }
-        rounds.captureRetirement(id);
-        for(var position:open) {released=released.add(position.closeForWithdrawal(now));events.recordStopLoss(position);}
-        wallet.releaseExposure(released,reserved);
-        if(wallet.getUsedMargin().signum()!=0 || wallet.getReservedMargin().signum()!=0)
-            throw new IllegalStateException("Withdrawal found inconsistent reservations");
-        rounds.finish(id,wallet,"MEMBER_WITHDRAWAL",now);
-        account.withdraw(now);
-        risk.retireWithdrawal(id);
+
+        for(Long contestId:accounts.findNonWithdrawnContestAccountIdsByMemberId(memberId)) {
+            var contestAccount=locks.lockIncludingWithdrawn(contestId);
+            if(contestAccount.getStatus()==TradingAccount.Status.WITHDRAWN) continue;
+            Instant now=Instant.now().truncatedTo(ChronoUnit.MICROS);
+            var contestWallet=wallets.findById(contestId).orElseThrow();
+            var open=positions.findByAccountIdAndStatusOrderByIdAsc(contestId,Position.Status.OPEN);
+            var byId=open.stream().collect(Collectors.toMap(Position::getId,Function.identity()));
+            BigDecimal released=BigDecimal.ZERO,reserved=BigDecimal.ZERO;
+            for(var order:orders.findByAccountIdAndStatusOrderByIdAsc(contestId,TradingOrder.Status.PENDING)) {
+                if(order.getAction()==TradingOrder.Action.OPEN) reserved=reserved.add(order.getReservedMargin());
+                else byId.get(order.getPositionId()).releaseCloseReservation(order.getQuantity());
+                order.cancelForWithdrawal(now); events.record(order,null);
+            }
+            for(var position:open) {released=released.add(position.closeForWithdrawal(now));events.recordStopLoss(position);}
+            contestWallet.releaseExposure(released,reserved);
+            if(contestWallet.getUsedMargin().signum()!=0 || contestWallet.getReservedMargin().signum()!=0)
+                throw new IllegalStateException("Contest withdrawal found inconsistent reservations");
+            contestAccount.withdraw(now);
+            risk.retireWithdrawal(contestId);
+        }
     }
 }
