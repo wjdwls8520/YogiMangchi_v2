@@ -110,6 +110,8 @@ import {
   patchAdminContestSeasonStatus,
   rejectAdminContestApplicant,
   settleAdminContestSeason,
+  loadInitialContestSidebarSnapshot,
+  selectDefaultContestSidebarSeasonId,
   updateAdminContestSeason,
 } from "../src/features/contest/api/contest-client";
 import { parseAccess } from "../src/features/member/api/contracts";
@@ -2947,6 +2949,195 @@ test("GNB는 대칭 3열 그리드로 정중앙 고정되고 우측 유틸 영�
     assert.equal(adminHeaderHtml.includes("md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"), true);
     assert.equal(adminHeaderHtml.includes('aria-label="관리자 메뉴" class="hidden md:flex md:justify-self-center'), true);
     assert.equal(adminHeaderHtml.includes("lg:w-[268px] lg:min-w-[268px]"), true);
+  } finally {
+    client.clear();
+  }
+});
+
+test("커뮤니티 우측 대회투자 TOP5는 가짜 목업 없이 Redis 기반 실시간 시즌·랭킹·S3 프로필·탈퇴 회원 보호를 렌더링한다", async () => {
+  const client = new QueryClient();
+  try {
+    // 1. 초기 로딩 상태: 가짜 트레이더(알파트레이더/+148.60%/정기 시즌) 미노출 및 스켈레톤 상태 검증
+    const loadingSidebarHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard />
+      </MemberProvider>,
+    );
+    assert.equal(loadingSidebarHtml.includes('data-contest-top5-card="true"'), true);
+    assert.equal(loadingSidebarHtml.includes('data-contest-top5-state="loading"'), true);
+    assert.equal(loadingSidebarHtml.includes("알파트레이더"), false);
+    assert.equal(loadingSidebarHtml.includes("퀀트매니저"), false);
+    assert.equal(loadingSidebarHtml.includes("+148.60%"), false);
+    assert.equal(loadingSidebarHtml.includes("정기 시즌"), false);
+    assert.equal(loadingSidebarHtml.includes("대회 참여하기 →"), true);
+
+    // 2. loadInitialContestSidebarSnapshot 서버 프리패치 + LIVE 시즌 우선 선택 + S3 프로필/404 탈퇴 가드 검증
+    const snapshot = await loadInitialContestSidebarSnapshot({
+      tradingBaseUrl: "http://localhost:8081",
+      contentBaseUrl: "http://localhost:8080",
+      transport: async input => {
+        const url = String(input);
+        if (url.includes("/contest/public/seasons/2/leaderboard")) {
+          return Response.json({
+            season: {
+              id: 2,
+              title: "요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP",
+              description: "실시간 수익률 랭킹 대회",
+              seedMoney: "10000",
+              recruitmentStartAt: "2026-11-05T14:33:13Z",
+              recruitmentEndAt: "2026-11-24T14:33:13Z",
+              contestStartAt: "2026-11-08T14:33:13Z",
+              contestEndAt: "2026-11-24T14:33:13Z",
+              isPublic: true,
+              isCanceled: false,
+              settledAt: null,
+              displayStatus: "LIVE",
+              statusLabel: "대회 진행중",
+              participantCount: 2,
+              applicantCount: 0,
+              pendingOrderCount: 0,
+              openPositionCount: 1,
+              createdAt: "2026-11-10T14:33:13Z",
+              updatedAt: "2026-11-10T14:33:13Z",
+            },
+            items: [
+              {
+                rank: 1,
+                participantId: 2,
+                memberId: 1,
+                nickname: "구닉네임",
+                accountId: 34,
+                seedMoney: "10000",
+                totalEquity: "12840.5",
+                balance: "11000",
+                realizedPnl: "1000",
+                unrealizedPnl: "1840.5",
+                roiPct: "28.405",
+                openPositionCount: 1,
+                settled: false,
+                settledAt: null,
+              },
+              {
+                rank: 2,
+                participantId: 3,
+                memberId: 999,
+                nickname: "탈퇴전닉네임",
+                accountId: 35,
+                seedMoney: "10000",
+                totalEquity: "9450",
+                balance: "9450",
+                realizedPnl: "-550",
+                unrealizedPnl: "0",
+                roiPct: "-5.5",
+                openPositionCount: 0,
+                settled: false,
+                settledAt: null,
+              },
+            ],
+            nextCursorId: null,
+            hasNext: false,
+          });
+        }
+        if (url.includes("/contest/public/seasons")) {
+          return Response.json({
+            recruiting: [],
+            running: [
+              {
+                id: 2,
+                title: "요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP",
+                description: "실시간 수익률 랭킹 대회",
+                seedMoney: "10000",
+                recruitmentStartAt: "2026-11-05T14:33:13Z",
+                recruitmentEndAt: "2026-11-24T14:33:13Z",
+                contestStartAt: "2026-11-08T14:33:13Z",
+                contestEndAt: "2026-11-24T14:33:13Z",
+                isPublic: true,
+                isCanceled: false,
+                settledAt: null,
+                displayStatus: "LIVE",
+                statusLabel: "대회 진행중",
+                participantCount: 2,
+                applicantCount: 0,
+                pendingOrderCount: 0,
+                openPositionCount: 1,
+                createdAt: "2026-11-10T14:33:13Z",
+                updatedAt: "2026-11-10T14:33:13Z",
+              },
+            ],
+            finished: [
+              {
+                id: 1,
+                title: "요기망치 제1회 선물 트레이딩 챌린지",
+                description: "정산 완료 시즌",
+                seedMoney: "10000",
+                recruitmentStartAt: "2026-10-06T14:33:13Z",
+                recruitmentEndAt: "2026-10-20T14:33:13Z",
+                contestStartAt: "2026-10-20T14:33:13Z",
+                contestEndAt: "2026-11-03T14:33:13Z",
+                isPublic: true,
+                isCanceled: false,
+                settledAt: "2026-11-03T14:33:13Z",
+                displayStatus: "FINISHED",
+                statusLabel: "정산완료",
+                participantCount: 1,
+                applicantCount: 0,
+                pendingOrderCount: 0,
+                openPositionCount: 0,
+                createdAt: "2026-11-10T14:33:13Z",
+                updatedAt: "2026-11-10T14:33:13Z",
+              },
+            ],
+            seasons: [],
+          });
+        }
+        if (url.endsWith("/api/v1/members/1")) {
+          return Response.json({
+            memberId: 1,
+            nickname: "안녕4",
+            profileMessage: "실전 트레이딩",
+            profileImgUrl: "https://yogimangchi-bucket.s3.ap-northeast-2.amazonaws.com/member/profile/1/avatar.png",
+            createdAt: "2026-10-22T18:04:40Z",
+          });
+        }
+        if (url.endsWith("/api/v1/members/999")) {
+          return Response.json({ code: "RESOURCE_NOT_FOUND" }, { status: 404 });
+        }
+        return Response.json({ code: "RESOURCE_NOT_FOUND" }, { status: 404 });
+      },
+    });
+
+    assert.equal(selectDefaultContestSidebarSeasonId(snapshot.seasons), 2);
+    assert.equal(snapshot.profiles[1]?.nickname, "안녕4");
+    assert.equal(snapshot.profiles[999]?.withdrawn, true);
+
+    const readySidebarHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialContestSeasons={snapshot.seasons}
+          initialContestLeaderboard={snapshot.leaderboard}
+          initialContestProfiles={snapshot.profiles}
+        />
+      </MemberProvider>,
+    );
+
+    assert.equal(readySidebarHtml.includes('data-contest-top5-state="ready"'), true);
+    assert.equal(readySidebarHtml.includes("실시간 LIVE"), true);
+    assert.equal(readySidebarHtml.includes('label="진행 중 (LIVE)"'), true);
+    assert.equal(readySidebarHtml.includes('label="종료 · 정산 완료"'), true);
+    assert.equal(readySidebarHtml.includes("요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP"), true);
+    assert.equal(readySidebarHtml.includes('href="/members/1"'), true);
+    assert.equal(readySidebarHtml.includes(">안녕4</a>"), true);
+    assert.equal(
+      readySidebarHtml.includes(
+        'src="https://yogimangchi-bucket.s3.ap-northeast-2.amazonaws.com/member/profile/1/avatar.png"',
+      ),
+      true,
+    );
+    assert.equal(readySidebarHtml.includes("12,840.50 USDT"), true);
+    assert.equal(readySidebarHtml.includes("+28.40%"), true);
+    assert.equal(readySidebarHtml.includes("탈퇴한회원"), true);
+    assert.equal(readySidebarHtml.includes("/members/999"), false);
+    assert.equal(readySidebarHtml.includes("-5.50%"), true);
   } finally {
     client.clear();
   }

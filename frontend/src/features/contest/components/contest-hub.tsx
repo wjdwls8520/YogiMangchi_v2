@@ -18,6 +18,7 @@ import {
   formatContestUsdt,
   formatContestWinRate,
   isNonNegativeContestDecimal,
+  selectDefaultContestSidebarSeasonId,
   type ContestSeasonView,
   type LeaderboardPageResponse,
   type MyContestOverviewResponse,
@@ -992,90 +993,115 @@ export function ContestHub() {
   useEffect(() => {
     const controller = new AbortController();
 
-    void fetchPublicContestSeasons({ signal: controller.signal })
-      .then(res => {
-        if (!res || !Array.isArray(res.seasons)) return;
-        setPublicRunningContests(res.running.map(s => mapSeasonViewToItem(s, "live")));
-        if (!isLoggedIn) {
-          setAvailableContests(res.recruiting.map(s => mapSeasonViewToItem(s, "apply")));
-          setHistoryContests(res.finished.map(s => mapSeasonViewToItem(s, "past")));
-        }
-        const candidateSeasons = [...res.running, ...res.finished];
-        if (candidateSeasons.length > 0) {
-          const mappedCandidates: ContestLeaderboardSeason[] = candidateSeasons.map(s => {
-            const isFinished = s.displayStatus === "FINISHED" || Boolean(s.settledAt);
-            return {
-              seasonId: s.id,
-              seasonTitle: s.title,
-              statusLabel: isFinished ? "최종 확정 순위" : "실시간 랭킹",
-              period: `${formatContestDateOnly(s.contestStartAt)} ~ ${formatContestDateOnly(s.contestEndAt)}`,
-              settledAt: s.settledAt
-                ? `${formatContestDateTime(s.settledAt)} 정산 확정`
-                : undefined,
-              participantCount: s.participantCount,
-              entries: [],
-            };
-          });
-          setLeaderboardSeasons(prev =>
-            mappedCandidates.map(cand => {
-              const existing = prev.find(p => p.seasonId === cand.seasonId);
-              return existing && existing.entries.length > 0
-                ? { ...cand, entries: existing.entries }
-                : cand;
-            }),
-          );
-          const firstId = candidateSeasons[0]!.id;
-          setSelectedLeaderboardSeasonId(prev =>
-            candidateSeasons.some(s => s.id === prev) ? prev : firstId,
-          );
-        } else {
-          setLeaderboardSeasons([]);
-          setSelectedLeaderboardSeasonId(0);
-        }
-      })
-      .catch(() => {
-        // Keep fallback seed data when server is unreachable
-      });
-
-    if (isLoggedIn && memberCtx?.session) {
-      void memberCtx.session
-        .authorized(cred =>
-          fetchMyContestOverview(cred.accessToken, { signal: controller.signal }),
-        )
-        .then(overview => {
-          if (!overview || !Array.isArray(overview.participatingSeasons)) return;
-          applyMyOverviewResponse(overview);
+    const refreshContestOverview = () => {
+      void fetchPublicContestSeasons({ signal: controller.signal })
+        .then(res => {
+          if (!res || !Array.isArray(res.seasons)) return;
+          setPublicRunningContests(res.running.map(s => mapSeasonViewToItem(s, "live")));
+          if (!isLoggedIn) {
+            setAvailableContests(res.recruiting.map(s => mapSeasonViewToItem(s, "apply")));
+            setHistoryContests(res.finished.map(s => mapSeasonViewToItem(s, "past")));
+          }
+          const candidateSeasons = [...res.running, ...res.finished];
+          if (candidateSeasons.length > 0) {
+            const mappedCandidates: ContestLeaderboardSeason[] = candidateSeasons.map(s => {
+              const isFinished = s.displayStatus === "FINISHED" || Boolean(s.settledAt);
+              return {
+                seasonId: s.id,
+                seasonTitle: s.title,
+                statusLabel: isFinished ? "최종 확정 순위" : "실시간 랭킹",
+                period: `${formatContestDateOnly(s.contestStartAt)} ~ ${formatContestDateOnly(s.contestEndAt)}`,
+                settledAt: s.settledAt
+                  ? `${formatContestDateTime(s.settledAt)} 정산 확정`
+                  : undefined,
+                participantCount: s.participantCount,
+                entries: [],
+              };
+            });
+            setLeaderboardSeasons(prev =>
+              mappedCandidates.map(cand => {
+                const existing = prev.find(p => p.seasonId === cand.seasonId);
+                return existing && existing.entries.length > 0
+                  ? { ...cand, entries: existing.entries }
+                  : cand;
+              }),
+            );
+            const preferredId =
+              selectDefaultContestSidebarSeasonId(res) ?? candidateSeasons[0]!.id;
+            setSelectedLeaderboardSeasonId(prev =>
+              candidateSeasons.some(s => s.id === prev) ? prev : preferredId,
+            );
+          } else {
+            setLeaderboardSeasons([]);
+            setSelectedLeaderboardSeasonId(0);
+          }
         })
         .catch(() => {
           // Keep fallback seed data when server is unreachable
         });
-    }
 
-    return () => controller.abort();
+      if (isLoggedIn && memberCtx?.session) {
+        void memberCtx.session
+          .authorized(cred =>
+            fetchMyContestOverview(cred.accessToken, { signal: controller.signal }),
+          )
+          .then(overview => {
+            if (!overview || !Array.isArray(overview.participatingSeasons)) return;
+            applyMyOverviewResponse(overview);
+          })
+          .catch(() => {
+            // Keep fallback seed data when server is unreachable
+          });
+      }
+    };
+
+    refreshContestOverview();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      refreshContestOverview();
+    }, 10_000);
+
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
   }, [isLoggedIn, memberCtx?.session, memberCtx?.snapshot.generation]);
 
   useEffect(() => {
     if (!selectedLeaderboardSeasonId || selectedLeaderboardSeasonId <= 0) return;
     const controller = new AbortController();
-    void fetchPublicContestLeaderboard(selectedLeaderboardSeasonId, {
-      size: 20,
-      signal: controller.signal,
-    })
-      .then(page => {
-        if (!page || !page.season) return;
-        const mapped = mapLeaderboardPageToSeason(page);
-        setLeaderboardSeasons(prev => {
-          const exists = prev.some(item => item.seasonId === mapped.seasonId);
-          if (exists) {
-            return prev.map(item => (item.seasonId === mapped.seasonId ? mapped : item));
-          }
-          return [mapped, ...prev];
-        });
+
+    const refreshLeaderboard = () => {
+      void fetchPublicContestLeaderboard(selectedLeaderboardSeasonId, {
+        size: 20,
+        signal: controller.signal,
       })
-      .catch(() => {
-        // Keep fallback leaderboard seed data when server is unreachable
-      });
-    return () => controller.abort();
+        .then(page => {
+          if (!page || !page.season) return;
+          const mapped = mapLeaderboardPageToSeason(page);
+          setLeaderboardSeasons(prev => {
+            const exists = prev.some(item => item.seasonId === mapped.seasonId);
+            if (exists) {
+              return prev.map(item => (item.seasonId === mapped.seasonId ? mapped : item));
+            }
+            return [mapped, ...prev];
+          });
+        })
+        .catch(() => {
+          // Keep fallback leaderboard seed data when server is unreachable
+        });
+    };
+
+    refreshLeaderboard();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      refreshLeaderboard();
+    }, 3_000);
+
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
   }, [selectedLeaderboardSeasonId]);
 
   const currentLeaderboard =
