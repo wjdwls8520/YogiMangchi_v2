@@ -31,9 +31,9 @@ export function oauthUrl(origin: string, provider: "google" | "kakao") {
   return `${contentOrigin(origin)}/oauth2/authorization/${provider}`;
 }
 export async function contentJson(origin: string, path: string, options: {
-  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; access?: string; csrf?: string; body?: object | FormData; signal?: AbortSignal;
+  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; access?: string; csrf?: string; anonViewerId?: string; body?: object | FormData; signal?: AbortSignal;
 } = {}, transport: typeof fetch = fetch): Promise<unknown> {
-  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout)|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?|news(?:\/(?:highlights|stream|[0-9]+(?:\/reactions)?))?|community\/(?:posts(?:\/latest-check|\/[0-9]+(?:\/(?:likes|reports|comments(?:\/[0-9]+(?:\/(?:likes|reports))?)?))?)?|comments\/[0-9]+(?:\/(?:likes|reports))?|report-reasons|ux\/subscribe\/feed))(?:\?[^#]*)?$/.test(path)
+  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout)|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?|news(?:\/(?:highlights|stream|[0-9]+(?:\/(?:reactions|views))?))?|community\/(?:posts(?:\/latest-check|\/[0-9]+(?:\/(?:likes|reports|comments(?:\/[0-9]+(?:\/(?:likes|reports))?)?))?)?|comments\/[0-9]+(?:\/(?:likes|reports))?|report-reasons|ux\/subscribe\/feed))(?:\?[^#]*)?$/.test(path)
     || path.includes("..") || path.includes("\\")) throw new ContentApiError(400);
   const cookie = path.startsWith("/auth/") || path === "/members/me/withdrawal";
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
@@ -44,6 +44,7 @@ export async function contentJson(origin: string, path: string, options: {
       headers: {
         ...(options.access ? { Authorization: `Bearer ${options.access}` } : {}),
         ...(options.csrf ? { "X-CSRF-TOKEN": options.csrf } : {}),
+        ...(options.anonViewerId ? { "X-Anon-Viewer-Id": options.anonViewerId } : {}),
         ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
       },
       body: options.body ? (isFormData ? (options.body as FormData) : JSON.stringify(options.body)) : undefined,
