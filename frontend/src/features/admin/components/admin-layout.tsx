@@ -24,7 +24,7 @@ const ADMIN_NAV_TABS: AdminNavTabItem[] = [
   { key: "contest", label: "대회 관리", href: "/admin/contest", ready: true },
   { key: "users", label: "회원 관리", href: "/admin/users", ready: true },
   { key: "community", label: "커뮤니티 관리", href: "/admin/community", ready: true },
-  { key: "reports", label: "신고 관리", href: "/admin/community", ready: false },
+  { key: "reports", label: "신고 관리", href: "/admin/reports", ready: true },
 ];
 
 export function AdminHeader({
@@ -72,7 +72,8 @@ export function AdminHeader({
                 tab.key === activeSection ||
                 (tab.key === "contest" && pathname?.startsWith("/admin/contest")) ||
                 (tab.key === "users" && pathname?.startsWith("/admin/users")) ||
-                (tab.key === "community" && pathname?.startsWith("/admin/community"));
+                (tab.key === "community" && pathname?.startsWith("/admin/community")) ||
+                (tab.key === "reports" && pathname?.startsWith("/admin/reports"));
 
               return (
                 <Link
