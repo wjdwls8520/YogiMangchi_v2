@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -26,11 +27,17 @@ public class ContestSettlementService {
 
     private final JdbcTemplate jdbc;
     private final ContestSettlementChunkExecutor chunkExecutor;
+    private final RedisContestLeaderboardStore leaderboardStore;
     private final ConcurrentHashMap<Long, AtomicBoolean> activeSeasonLocks = new ConcurrentHashMap<>();
 
-    public ContestSettlementService(JdbcTemplate jdbc, ContestSettlementChunkExecutor chunkExecutor) {
+    @Autowired
+    public ContestSettlementService(
+            JdbcTemplate jdbc,
+            ContestSettlementChunkExecutor chunkExecutor,
+            RedisContestLeaderboardStore leaderboardStore) {
         this.jdbc = jdbc;
         this.chunkExecutor = chunkExecutor;
+        this.leaderboardStore = leaderboardStore;
     }
 
     public ContestSettlementResultResponse settleSeason(Long seasonId, String triggeredBy, boolean earlyTerminate) {
@@ -116,6 +123,9 @@ public class ContestSettlementService {
                     totalCanceledOrders,
                     totalLiquidatedPositions,
                     Instant.now());
+            if (leaderboardStore != null) {
+                leaderboardStore.evictSeason(seasonId);
+            }
 
             log.info("[Contest settlement] completed seasonId={} runId={} triggeredBy={} canceledOrders={} liquidatedPositions={} participants={}",
                     seasonId, result.runId(), triggeredBy, totalCanceledOrders, totalLiquidatedPositions, result.finalizedParticipantCount());

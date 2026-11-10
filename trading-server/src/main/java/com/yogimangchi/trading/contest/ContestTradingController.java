@@ -170,7 +170,9 @@ public class ContestTradingController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateOrderRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
-        return orderService.create(accountId, idempotencyKey, request);
+        OrderResponse response = orderService.create(accountId, idempotencyKey, request);
+        contestService.evictContestCache(seasonId);
+        return response;
     }
 
     @PostMapping("/orders/{orderId:[0-9]+}/cancel")
@@ -180,7 +182,9 @@ public class ContestTradingController {
             @PathVariable Long seasonId,
             @PathVariable Long orderId) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
-        return orderService.cancel(accountId, orderId);
+        OrderResponse response = orderService.cancel(accountId, orderId);
+        contestService.evictContestCache(seasonId);
+        return response;
     }
 
     @PostMapping("/positions/{positionId:[0-9]+}/close")
@@ -192,7 +196,9 @@ public class ContestTradingController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody(required = false) ClosePositionRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
-        return orderService.close(accountId, positionId, idempotencyKey, request);
+        OrderResponse response = orderService.close(accountId, positionId, idempotencyKey, request);
+        contestService.evictContestCache(seasonId);
+        return response;
     }
 
     @PostMapping("/positions/{positionId:[0-9]+}/close-orders")
@@ -204,7 +210,9 @@ public class ContestTradingController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody LimitCloseRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
-        return orderService.createLimitClose(accountId, positionId, idempotencyKey, request);
+        OrderResponse response = orderService.createLimitClose(accountId, positionId, idempotencyKey, request);
+        contestService.evictContestCache(seasonId);
+        return response;
     }
 
     @GetMapping("/positions/{positionId:[0-9]+}/stop-loss")
@@ -226,7 +234,9 @@ public class ContestTradingController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody StopLossRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
-        return stopLossService.put(accountId, positionId, idempotencyKey, request);
+        StopLossResponse response = stopLossService.put(accountId, positionId, idempotencyKey, request);
+        contestService.evictContestCache(seasonId);
+        return response;
     }
 
     @DeleteMapping("/positions/{positionId:[0-9]+}/stop-loss")
@@ -238,7 +248,9 @@ public class ContestTradingController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestParam long expectedVersion) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
-        return stopLossService.delete(accountId, positionId, idempotencyKey, expectedVersion);
+        StopLossResponse response = stopLossService.delete(accountId, positionId, idempotencyKey, expectedVersion);
+        contestService.evictContestCache(seasonId);
+        return response;
     }
 
     @GetMapping("/orders/pending")

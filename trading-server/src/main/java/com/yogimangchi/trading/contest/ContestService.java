@@ -43,6 +43,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,7 +60,9 @@ public class ContestService {
     private final PositionRepository positions;
     private final AccountValuation valuation;
     private final TradingAccountService tradingAccountService;
+    private final RedisContestLeaderboardStore leaderboardStore;
 
+    @Autowired
     public ContestService(
             JdbcTemplate jdbc,
             EntityManager entities,
@@ -67,7 +70,8 @@ public class ContestService {
             WalletRepository wallets,
             PositionRepository positions,
             AccountValuation valuation,
-            TradingAccountService tradingAccountService) {
+            TradingAccountService tradingAccountService,
+            RedisContestLeaderboardStore leaderboardStore) {
         this.jdbc = jdbc;
         this.entities = entities;
         this.accounts = accounts;
@@ -75,6 +79,7 @@ public class ContestService {
         this.positions = positions;
         this.valuation = valuation;
         this.tradingAccountService = tradingAccountService;
+        this.leaderboardStore = leaderboardStore;
     }
 
     private static final String SEASON_SELECT = """
@@ -90,6 +95,15 @@ public class ContestService {
 
     @Transactional(readOnly = true, timeout = 5)
     public PublicSeasonsOverviewResponse getPublicSeasons() {
+        PublicSeasonsOverviewResponse cached = leaderboardStore != null ? leaderboardStore.readPublicSeasons() : null;
+        if (cached != null) {
+            return cached;
+        }
+        return refreshPublicSeasonsSnapshot();
+    }
+
+    @Transactional(readOnly = true, timeout = 5)
+    public PublicSeasonsOverviewResponse refreshPublicSeasonsSnapshot() {
         Instant now = Instant.now();
         List<SeasonView> all = jdbc.query(
                 SEASON_SELECT + " WHERE s.is_public = true AND s.is_canceled = false ORDER BY s.contest_start_at DESC, s.id DESC",
@@ -110,11 +124,39 @@ public class ContestService {
                 recruiting.add(s);
             }
         }
-        return new PublicSeasonsOverviewResponse(
+        PublicSeasonsOverviewResponse response = new PublicSeasonsOverviewResponse(
                 List.copyOf(recruiting),
                 List.copyOf(running),
                 List.copyOf(finished),
                 List.copyOf(all));
+        if (leaderboardStore != null) {
+            leaderboardStore.writePublicSeasons(response);
+        }
+        return response;
+    }
+
+    @Transactional(readOnly = true, timeout = 5)
+    public List<LeaderboardEntry> refreshLeaderboardSnapshot(Long seasonId) {
+        if (seasonId == null || seasonId <= 0) {
+            return List.of();
+        }
+        Instant now = Instant.now();
+        SeasonView season = requireSeasonView(seasonId, now);
+        if (!season.isPublic() || season.isCanceled()) {
+            evictContestCache(seasonId);
+            return List.of();
+        }
+        List<LeaderboardEntry> ranked = buildRankedLeaderboard(seasonId);
+        if (leaderboardStore != null) {
+            leaderboardStore.writeLeaderboard(seasonId, ranked, season.settledAt() != null);
+        }
+        return ranked;
+    }
+
+    public void evictContestCache(Long seasonId) {
+        if (leaderboardStore != null) {
+            leaderboardStore.evictSeason(seasonId != null ? seasonId : 0L);
+        }
     }
 
     @Transactional(readOnly = true, timeout = 5)
@@ -127,7 +169,17 @@ public class ContestService {
         if (!season.isPublic() || season.isCanceled()) {
             throw new BusinessException(ErrorCode.CONTEST_SEASON_NOT_FOUND);
         }
-        List<LeaderboardEntry> allRanked = buildRankedLeaderboard(seasonId);
+        RedisContestLeaderboardStore.ContestLeaderboardSnapshot cached =
+                leaderboardStore != null ? leaderboardStore.readLeaderboard(seasonId) : null;
+        List<LeaderboardEntry> allRanked;
+        if (cached != null) {
+            allRanked = cached.entries();
+        } else {
+            allRanked = buildRankedLeaderboard(seasonId);
+            if (leaderboardStore != null) {
+                leaderboardStore.writeLeaderboard(seasonId, allRanked, season.settledAt() != null);
+            }
+        }
 
         int startIndex = 0;
         if (cursorId != null) {
@@ -273,6 +325,7 @@ public class ContestService {
         if ("APPROVED".equals(row.get("status"))) {
             throw new BusinessException(ErrorCode.CONTEST_APPLICATION_ALREADY_PROCESSED);
         }
+        evictContestCache(seasonId);
         return mapApplicationRow(row, now);
     }
 
@@ -450,6 +503,7 @@ public class ContestService {
                 tsNow,
                 tsNow);
 
+        evictContestCache(seasonId);
         return requireSeasonView(seasonId, now);
     }
 
@@ -497,6 +551,7 @@ public class ContestService {
                 at(now),
                 seasonId);
 
+        evictContestCache(seasonId);
         return requireSeasonView(seasonId, now);
     }
 
@@ -517,6 +572,7 @@ public class ContestService {
                     updated_at = ?
                 WHERE id = ?
                 """, nextPublic, nextCanceled, at(now), seasonId);
+        evictContestCache(seasonId);
 
         return requireSeasonView(seasonId, now);
     }
@@ -591,6 +647,7 @@ public class ContestService {
                 WHERE id = ?
                 """, tsNow, adminMemberId, applicationId);
 
+        evictContestCache(seasonId);
         return buildAdminParticipantViews(seasonId).stream()
                 .filter(p -> applicantMemberId == p.memberId())
                 .findFirst()
@@ -659,6 +716,7 @@ public class ContestService {
                 JOIN trading.contest_season s ON s.id = a.contest_season_id
                 WHERE a.id = ?
                 """, applicationId);
+        evictContestCache(seasonId);
         return mapApplicationRow(updated, now);
     }
 
