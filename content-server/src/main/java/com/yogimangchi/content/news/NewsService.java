@@ -76,8 +76,21 @@ public class NewsService {
             long totalBearVotes,
             int bullPct,
             int bearPct,
-            String dominantSentiment
-    ) { }
+            String dominantSentiment,
+            int bullishArticleCount,
+            int bearishArticleCount,
+            int neutralArticleCount,
+            String summary
+    ) {
+        public SentimentSummary(
+                long totalBullVotes,
+                long totalBearVotes,
+                int bullPct,
+                int bearPct,
+                String dominantSentiment) {
+            this(totalBullVotes, totalBearVotes, bullPct, bearPct, dominantSentiment, 0, 0, 0, "");
+        }
+    }
 
     public record NewsLiveStatus(
             boolean live,
@@ -395,18 +408,105 @@ public class NewsService {
         return bull >= bear ? "BULLISH" : "BEARISH";
     }
 
-    private static SentimentSummary buildSentimentSummary(List<NewsItemResponse> recentPool) {
-        long totalBull = 0L;
-        long totalBear = 0L;
-        for (NewsItemResponse item : recentPool) {
-            totalBull += item.bullCount();
-            totalBear += item.bearCount();
+    static SentimentSummary buildSentimentSummary(List<NewsItemResponse> recentPool) {
+        if (recentPool == null || recentPool.isEmpty()) {
+            return new SentimentSummary(
+                    0L,
+                    0L,
+                    50,
+                    50,
+                    "NEUTRAL",
+                    0,
+                    0,
+                    0,
+                    "실시간 뉴스 데이터를 수집 중이며 현재 강·약세 중립(50% · 50%) 관망 구간입니다.");
         }
-        long sum = totalBull + totalBear;
-        int bullPct = sum > 0 ? Math.round((totalBull * 100.0f) / sum) : 50;
-        int bearPct = sum > 0 ? (100 - bullPct) : 50;
+
+        List<NewsItemResponse> liveArticles = recentPool.stream()
+                .filter(a -> a.sourceUrl() != null && !a.sourceUrl().isBlank())
+                .toList();
+        List<NewsItemResponse> targetPool = liveArticles.size() >= 5 ? liveArticles : recentPool;
+
+        long totalBullVotes = 0L;
+        long totalBearVotes = 0L;
+        int bullishArticleCount = 0;
+        int bearishArticleCount = 0;
+        int neutralArticleCount = 0;
+
+        java.util.Map<String, Integer> categoryCounts = new java.util.LinkedHashMap<>();
+        java.util.Map<String, Integer> symbolCounts = new java.util.LinkedHashMap<>();
+
+        for (NewsItemResponse item : targetPool) {
+            totalBullVotes += Math.max(0, item.bullCount());
+            totalBearVotes += Math.max(0, item.bearCount());
+            if ("BULLISH".equals(item.sentiment())) {
+                bullishArticleCount++;
+            } else if ("BEARISH".equals(item.sentiment())) {
+                bearishArticleCount++;
+            } else {
+                neutralArticleCount++;
+            }
+            if (item.category() != null && !item.category().isBlank()) {
+                categoryCounts.merge(item.category(), 1, Integer::sum);
+            }
+            if (item.symbolTag() != null && !item.symbolTag().isBlank()) {
+                symbolCounts.merge(item.symbolTag(), 1, Integer::sum);
+            }
+        }
+
+        long bullWeight = bullishArticleCount * 3L + neutralArticleCount + totalBullVotes;
+        long bearWeight = bearishArticleCount * 3L + neutralArticleCount + totalBearVotes;
+        long totalWeight = bullWeight + bearWeight;
+
+        int bullPct = totalWeight > 0 ? Math.round((bullWeight * 100.0f) / totalWeight) : 50;
+        int bearPct = totalWeight > 0 ? (100 - bullPct) : 50;
         String dominant = bullPct >= 55 ? "BULLISH" : (bearPct >= 55 ? "BEARISH" : "NEUTRAL");
-        return new SentimentSummary(totalBull, totalBear, bullPct, bearPct, dominant);
+
+        String topCategory = categoryCounts.entrySet().stream()
+                .max(java.util.Map.Entry.comparingByValue())
+                .map(java.util.Map.Entry::getKey)
+                .orElse("CRYPTO");
+        String categoryLabel = switch (topCategory) {
+            case "MACRO" -> "거시경제·금리";
+            case "ONCHAIN" -> "온체인·스테이킹";
+            case "REGULATION" -> "규제·정책";
+            default -> "가상자산·수급";
+        };
+        String topSymbol = symbolCounts.entrySet().stream()
+                .max(java.util.Map.Entry.comparingByValue())
+                .map(java.util.Map.Entry::getKey)
+                .orElse(null);
+        String focusTopic = topSymbol != null ? ("#" + topSymbol + " 및 " + categoryLabel) : categoryLabel;
+
+        int analyzedCount = targetPool.size();
+        String summary;
+        if ("BULLISH".equals(dominant)) {
+            summary = String.format(
+                    Locale.ROOT,
+                    "최근 실시간 뉴스 %d건(강세 %d·약세 %d·중립 %d) 분석 결과, %s 이슈를 중심으로 단기 매수·강세 심리(%d%%)가 우위를 보이고 있습니다.",
+                    analyzedCount, bullishArticleCount, bearishArticleCount, neutralArticleCount, focusTopic, bullPct);
+        } else if ("BEARISH".equals(dominant)) {
+            summary = String.format(
+                    Locale.ROOT,
+                    "최근 실시간 뉴스 %d건(강세 %d·약세 %d·중립 %d) 분석 결과, %s 이슈를 중심으로 단기 매도·경계 심리(%d%%)가 우위를 보이고 있습니다.",
+                    analyzedCount, bullishArticleCount, bearishArticleCount, neutralArticleCount, focusTopic, bearPct);
+        } else {
+            summary = String.format(
+                    Locale.ROOT,
+                    "최근 실시간 뉴스 %d건(강세 %d·약세 %d·중립 %d) 분석 결과, %s 이슈 속에서 강·약세 수급 공방 및 관망세(강세 %d%% · 약세 %d%%)가 이어지고 있습니다.",
+                    analyzedCount, bullishArticleCount, bearishArticleCount, neutralArticleCount, focusTopic, bullPct, bearPct);
+        }
+
+        return new SentimentSummary(
+                totalBullVotes,
+                totalBearVotes,
+                bullPct,
+                bearPct,
+                dominant,
+                bullishArticleCount,
+                bearishArticleCount,
+                neutralArticleCount,
+                summary);
     }
 
     static NewsItemResponse mapRow(ResultSet rs, int rowNum) throws SQLException {
