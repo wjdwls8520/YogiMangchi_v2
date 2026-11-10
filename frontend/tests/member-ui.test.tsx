@@ -37,7 +37,7 @@ import {
   parseReportReasons,
   readCommunityOrPublic,
 } from "../src/features/member/api/community-news";
-import { NewsFeed } from "../src/features/member/components/news-feed";
+import { NewsFeed, computeLiveNewsSentiment } from "../src/features/member/components/news-feed";
 import { CommunityBoard } from "../src/features/member/components/community-board";
 import { MainPortal } from "../src/features/member/components/main-portal";
 import { MemberSignupPage } from "../src/features/member/components/member-auth";
@@ -1225,6 +1225,11 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
         data: [{ value: "74", value_classification: "Greed" }],
       });
     }
+    if (target.includes("fapi.binance.com/futures/data/takerlongshortRatio")) {
+      return Response.json([
+        { buyVol: "620.0", sellVol: "380.0", buySellRatio: "1.6316" },
+      ]);
+    }
     return new Response("not found", { status: 404 });
   });
 
@@ -1234,6 +1239,9 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
   assert.equal(liveOverview.openInterestBillionsUsd, 41.3);
   assert.equal(liveOverview.fearGreedValue, 74);
   assert.equal(liveOverview.fearGreedLabelKr, "탐욕");
+  assert.equal(liveOverview.futuresBullPct, 62);
+  assert.equal(liveOverview.futuresBearPct, 38);
+  assert.equal(liveOverview.btcChange24h, 3.1);
 
   const fallbackOverview = await fetchLiveMarketOverview(async () => {
     throw new Error("network down");
@@ -1269,4 +1277,133 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
     client.clear();
   }
 });
+
+test("NewsFeed 실시간 뉴스 투자 심리 card dynamically binds real news sentiment, user reactions, and live market overview metrics", () => {
+  const highlightsWithSummary = parseNewsHighlights({
+    mustReadBreaking: [],
+    popularByViews: [],
+    popularByReactions: [],
+    keywordIssues: [],
+    recommendedNewsroom: [],
+    sentimentSummary: {
+      totalBullVotes: 15,
+      totalBearVotes: 45,
+      bullPct: 25,
+      bearPct: 75,
+      dominantSentiment: "BEARISH",
+      bullishArticleCount: 2,
+      bearishArticleCount: 7,
+      neutralArticleCount: 1,
+      summary: "거시 긴축 우려 및 선물 롱 청산 확대로 단기 매도 심리가 우세합니다.",
+    },
+  });
+  assert.equal(highlightsWithSummary.sentimentSummary.bullishArticleCount, 2);
+  assert.equal(highlightsWithSummary.sentimentSummary.bearishArticleCount, 7);
+  assert.equal(highlightsWithSummary.sentimentSummary.neutralArticleCount, 1);
+  assert.equal(
+    highlightsWithSummary.sentimentSummary.summary,
+    "거시 긴축 우려 및 선물 롱 청산 확대로 단기 매도 심리가 우세합니다.",
+  );
+
+  const bearishMarket = parseMarketOverviewPayload({
+    btcDominancePercent: 57.2,
+    btcDominanceChange24h: -0.25,
+    kimchiPremiumPercent: -0.4,
+    openInterestBillionsUsd: 36.1,
+    fearGreedValue: 28,
+    fearGreedLabelKr: "공포",
+    futuresBullPct: 36,
+    futuresBearPct: 64,
+    btcChange24h: -4.2,
+    updatedAt: "2026-11-10T09:40:00Z",
+  });
+
+  const computedBearish = computeLiveNewsSentiment({
+    articles: [],
+    highlights: highlightsWithSummary,
+    marketOverview: bearishMarket,
+  });
+  assert.equal(computedBearish.bullPct + computedBearish.bearPct, 100);
+  assert.equal(computedBearish.bullPct < 40, true);
+  assert.match(
+    computedBearish.summaryText,
+    /거시 긴축 우려 및 선물 롱 청산 확대로 단기 매도 심리가 우세합니다\. \(공포·탐욕 28 공포 · 선물 매수수급 36%\)/,
+  );
+
+  const samplePage = parseNewsPage({
+    items: [
+      {
+        id: 501,
+        category: "CRYPTO",
+        title: "비트코인 현물 ETF 순유입 및 기관 매수세 확대",
+        summary: "기관 수요 유입으로 단기 반등 모멘텀이 강화되었습니다.",
+        content: "본문",
+        sourceName: "Desk",
+        sentiment: "BULLISH",
+        bullCount: 10,
+        bearCount: 2,
+        symbolTag: "BTC",
+        publishedAt: "2026-11-10T09:00:00Z",
+      },
+      {
+        id: 502,
+        category: "MACRO",
+        title: "미 국채 금리 급락에 따른 위험자산 선호 회복",
+        summary: "거시 지표 안정으로 매수 심리가 유입되고 있습니다.",
+        content: "본문",
+        sourceName: "Desk",
+        sentiment: "BULLISH",
+        bullCount: 8,
+        bearCount: 2,
+        symbolTag: null,
+        publishedAt: "2026-11-10T08:30:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+
+  const beforeReaction = computeLiveNewsSentiment({
+    articles: samplePage.items,
+  });
+  const afterBearSurge = computeLiveNewsSentiment({
+    articles: samplePage.items,
+    liveReactions: {
+      501: { bullCount: 10, bearCount: 90 },
+    },
+    userReactions: {
+      502: "bear",
+    },
+  });
+  assert.equal(beforeReaction.bullPct + beforeReaction.bearPct, 100);
+  assert.equal(afterBearSurge.bullPct + afterBearSurge.bearPct, 100);
+  assert.equal(afterBearSurge.bullPct < beforeReaction.bullPct, true);
+  assert.match(afterBearSurge.summaryText, /실시간 뉴스\(강세 2건·약세 0건, 투표 111표\)/);
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed
+          initialPage={samplePage}
+          initialHighlights={highlightsWithSummary}
+          initialMarketOverview={bearishMarket}
+        />
+      </MemberProvider>,
+    );
+    assert.match(html, new RegExp(`강세 ${computedBearish.bullPct}%`));
+    assert.match(html, new RegExp(`약세 ${computedBearish.bearPct}%`));
+    assert.match(
+      html,
+      /거시 긴축 우려 및 선물 롱 청산 확대로 단기 매도 심리가 우세합니다\. \(공포·탐욕 28 공포 · 선물 매수수급 36%\)/,
+    );
+    assert.equal(
+      html.includes("현물 ETF 자금 유입 및 거시 금리 동결 기조로 단기 매수 심리가 우위를 보이고 있습니다."),
+      false,
+    );
+  } finally {
+    client.clear();
+  }
+});
+
 

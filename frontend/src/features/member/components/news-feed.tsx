@@ -38,6 +38,11 @@ import {
   type NewsPage,
   type NewsSort,
 } from "../api/community-news";
+import {
+  FALLBACK_MARKET_OVERVIEW,
+  parseMarketOverviewPayload,
+  type MarketOverviewData,
+} from "../api/market-overview";
 
 function kst(value: string) {
   return new Date(value).toLocaleString("sv-SE", {
@@ -276,9 +281,219 @@ function newsroomSubHashtag(item: NewsItem): string {
   return "#암호화폐";
 }
 
+const BULL_SENTIMENT_KEYWORDS =
+  /상승|반등|순유입|돌파|급등|강세|호재|경신|확대|회복|승인|유입|동결|인하|매수/;
+const BEAR_SENTIMENT_KEYWORDS =
+  /하락|급락|순유출|이탈|약세|악재|우려|충격|경고|지연|축소|매도|청산|인상|기소|해킹/;
+
+function inferItemSentiment(item: NewsItem): "BULLISH" | "BEARISH" | "NEUTRAL" {
+  if (item.sentiment === "BULLISH" || item.sentiment === "BEARISH") {
+    return item.sentiment;
+  }
+  const combined = `${item.title} ${item.summary} ${item.aiSummary ?? ""}`;
+  const hasBull = BULL_SENTIMENT_KEYWORDS.test(combined);
+  const hasBear = BEAR_SENTIMENT_KEYWORDS.test(combined);
+  if (hasBull && !hasBear) return "BULLISH";
+  if (hasBear && !hasBull) return "BEARISH";
+  const bull = item.bullCount ?? 0;
+  const bear = item.bearCount ?? 0;
+  if (bull > bear * 1.3 && bull - bear >= 3) return "BULLISH";
+  if (bear > bull * 1.3 && bear - bull >= 3) return "BEARISH";
+  return "NEUTRAL";
+}
+
+export interface LiveNewsSentimentInput {
+  articles: NewsItem[];
+  incomingArticles?: NewsItem[];
+  highlights?: NewsHighlights;
+  liveReactions?: Record<number, { bullCount: number; bearCount: number }>;
+  userReactions?: Record<number, "bull" | "bear">;
+  marketOverview?: MarketOverviewData;
+}
+
+export interface LiveNewsSentimentResult {
+  bullPct: number;
+  bearPct: number;
+  bullArticleCount: number;
+  bearArticleCount: number;
+  neutralArticleCount: number;
+  totalBullVotes: number;
+  totalBearVotes: number;
+  summaryText: string;
+}
+
+export function computeLiveNewsSentiment({
+  articles,
+  incomingArticles = [],
+  highlights,
+  liveReactions = {},
+  userReactions = {},
+  marketOverview,
+}: LiveNewsSentimentInput): LiveNewsSentimentResult {
+  const seenIds = new Set<number>();
+  const uniqueArticles: NewsItem[] = [];
+  const candidatePool = [
+    ...incomingArticles,
+    ...articles,
+    ...(highlights?.mustReadBreaking ?? []),
+    ...(highlights?.popularByViews ?? []),
+    ...(highlights?.popularByReactions ?? []),
+    ...(highlights?.recommendedNewsroom ?? []),
+  ];
+  for (const item of candidatePool) {
+    if (!seenIds.has(item.id)) {
+      seenIds.add(item.id);
+      uniqueArticles.push(item);
+    }
+  }
+
+  let measuredBullArticles = 0;
+  let measuredBearArticles = 0;
+  let measuredNeutralArticles = 0;
+  let articleBullVotes = 0;
+  let articleBearVotes = 0;
+  let deltaBullVotes = 0;
+  let deltaBearVotes = 0;
+
+  for (const item of uniqueArticles) {
+    const sentiment = inferItemSentiment(item);
+    if (sentiment === "BULLISH") measuredBullArticles += 1;
+    else if (sentiment === "BEARISH") measuredBearArticles += 1;
+    else measuredNeutralArticles += 1;
+
+    const baseBull = item.bullCount ?? 0;
+    const baseBear = item.bearCount ?? 0;
+    const liveOverride = liveReactions[item.id];
+    const userChoice = userReactions[item.id];
+
+    const effectiveBull = liveOverride
+      ? liveOverride.bullCount
+      : baseBull + (userChoice === "bull" ? 1 : 0);
+    const effectiveBear = liveOverride
+      ? liveOverride.bearCount
+      : baseBear + (userChoice === "bear" ? 1 : 0);
+
+    articleBullVotes += effectiveBull;
+    articleBearVotes += effectiveBear;
+    deltaBullVotes += Math.max(0, effectiveBull - baseBull);
+    deltaBearVotes += Math.max(0, effectiveBear - baseBear);
+  }
+
+  for (const [idStr, counts] of Object.entries(liveReactions)) {
+    const id = Number(idStr);
+    if (!seenIds.has(id)) {
+      articleBullVotes += counts.bullCount;
+      articleBearVotes += counts.bearCount;
+      deltaBullVotes += counts.bullCount;
+      deltaBearVotes += counts.bearCount;
+    }
+  }
+  for (const [idStr, choice] of Object.entries(userReactions)) {
+    const id = Number(idStr);
+    if (!seenIds.has(id) && !(id in liveReactions)) {
+      if (choice === "bull") {
+        articleBullVotes += 1;
+        deltaBullVotes += 1;
+      } else {
+        articleBearVotes += 1;
+        deltaBearVotes += 1;
+      }
+    }
+  }
+
+  const summaryObj = highlights?.sentimentSummary;
+  const bullArticleCount = Math.max(measuredBullArticles, summaryObj?.bullishArticleCount ?? 0);
+  const bearArticleCount = Math.max(measuredBearArticles, summaryObj?.bearishArticleCount ?? 0);
+  const neutralArticleCount = Math.max(
+    measuredNeutralArticles,
+    summaryObj?.neutralArticleCount ?? 0,
+  );
+
+  const highlightBullVotes = (summaryObj?.totalBullVotes ?? 0) + deltaBullVotes;
+  const highlightBearVotes = (summaryObj?.totalBearVotes ?? 0) + deltaBearVotes;
+  const totalBullVotes = Math.max(articleBullVotes, highlightBullVotes);
+  const totalBearVotes = Math.max(articleBearVotes, highlightBearVotes);
+
+  const hasClientReactionDelta =
+    deltaBullVotes > 0 || deltaBearVotes > 0 || incomingArticles.length > 0;
+  const hasServerVoteBase =
+    summaryObj !== undefined && summaryObj.totalBullVotes + summaryObj.totalBearVotes > 0;
+
+  let newsBullPct = 50;
+  const hasNewsSignal =
+    totalBullVotes + totalBearVotes > 0 ||
+    bullArticleCount + bearArticleCount > 0 ||
+    summaryObj !== undefined;
+
+  if (hasServerVoteBase && !hasClientReactionDelta) {
+    newsBullPct = summaryObj.bullPct;
+  } else {
+    const bullScore = totalBullVotes + bullArticleCount * 6;
+    const bearScore = totalBearVotes + bearArticleCount * 6;
+    if (bullScore + bearScore > 0) {
+      newsBullPct = (bullScore / (bullScore + bearScore)) * 100;
+    } else if (summaryObj) {
+      newsBullPct = summaryObj.bullPct;
+    }
+  }
+
+  const effectiveMarket = marketOverview ?? FALLBACK_MARKET_OVERVIEW;
+  const btcMomentumPct = Math.max(20, Math.min(80, 50 + effectiveMarket.btcChange24h * 4));
+  const marketBullPct =
+    effectiveMarket.futuresBullPct * 0.5 +
+    effectiveMarket.fearGreedValue * 0.35 +
+    btcMomentumPct * 0.15;
+
+  let combinedBull: number;
+  if (marketOverview) {
+    combinedBull = hasNewsSignal ? newsBullPct * 0.65 + marketBullPct * 0.35 : marketBullPct;
+  } else if (hasNewsSignal) {
+    combinedBull = newsBullPct;
+  } else {
+    combinedBull = marketBullPct;
+  }
+
+  const bullPct = Math.max(5, Math.min(95, Math.round(combinedBull)));
+  const bearPct = 100 - bullPct;
+
+  const stanceText =
+    bullPct >= 55
+      ? `단기 매수(강세 ${bullPct}%) 심리가 우위를 보이고 있습니다.`
+      : bullPct <= 45
+        ? `단기 매도(약세 ${bearPct}%) 심리가 우위를 보이고 있습니다.`
+        : `강세(${bullPct}%)와 약세(${bearPct}%) 심리가 균형을 이루고 있습니다.`;
+
+  let summaryText: string;
+  if (summaryObj?.summary && summaryObj.summary.trim().length > 0) {
+    summaryText = summaryObj.summary.includes("공포·탐욕")
+      ? summaryObj.summary
+      : `${summaryObj.summary} (공포·탐욕 ${effectiveMarket.fearGreedValue} ${effectiveMarket.fearGreedLabelKr} · 선물 매수수급 ${effectiveMarket.futuresBullPct}%)`;
+  } else if (bullArticleCount + bearArticleCount > 0 || totalBullVotes + totalBearVotes > 0) {
+    const totalVotes = totalBullVotes + totalBearVotes;
+    summaryText = `실시간 뉴스(강세 ${bullArticleCount}건·약세 ${bearArticleCount}건${
+      totalVotes > 0 ? `, 투표 ${totalVotes.toLocaleString("ko-KR")}표` : ""
+    })와 공포·탐욕 ${effectiveMarket.fearGreedValue}(${effectiveMarket.fearGreedLabelKr})·선물 매수수급 ${effectiveMarket.futuresBullPct}% 기준으로 ${stanceText}`;
+  } else {
+    const btcSign = effectiveMarket.btcChange24h >= 0 ? "+" : "";
+    summaryText = `글로벌 공포·탐욕 지수 ${effectiveMarket.fearGreedValue}(${effectiveMarket.fearGreedLabelKr}), 선물 매수수급 ${effectiveMarket.futuresBullPct}%, BTC 24h(${btcSign}${effectiveMarket.btcChange24h.toFixed(2)}%) 지표를 종합해 ${stanceText}`;
+  }
+
+  return {
+    bullPct,
+    bearPct,
+    bullArticleCount,
+    bearArticleCount,
+    neutralArticleCount,
+    totalBullVotes,
+    totalBearVotes,
+    summaryText,
+  };
+}
+
 export function NewsFeed({
   initialPage,
   initialHighlights,
+  initialMarketOverview,
   initialCategory = "",
   initialSymbolTag = "",
   initialSection,
@@ -293,6 +508,7 @@ export function NewsFeed({
 }: {
   initialPage?: NewsPage;
   initialHighlights?: NewsHighlights;
+  initialMarketOverview?: MarketOverviewData;
   initialCategory?: "" | NewsCategory;
   initialSymbolTag?: string;
   initialSection?: "BREAKING" | "NEWSROOM";
@@ -596,6 +812,20 @@ export function NewsFeed({
     staleTime: 30_000,
     queryFn: async ({ signal }) =>
       parseNewsHighlights(await contentJson(origin, "/news/highlights", { signal })),
+  });
+
+  const marketOverviewQuery = useQuery<MarketOverviewData>({
+    queryKey: ["portal-market-overview"],
+    initialData: initialMarketOverview,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async ({ signal }) => {
+      const response = await fetch("/api/market-overview", { signal });
+      if (!response.ok) {
+        throw new Error(`market-overview HTTP ${response.status}`);
+      }
+      return parseMarketOverviewPayload(await response.json());
+    },
   });
 
   function resetPagination() {
@@ -962,8 +1192,17 @@ export function NewsFeed({
 
   const activeIssue = keywordIssueList[issueIndex % keywordIssueList.length] ?? KEYWORD_ISSUES[0];
 
-  const sentimentBullPct = highlights?.sentimentSummary.bullPct ?? 68;
-  const sentimentBearPct = highlights?.sentimentSummary.bearPct ?? 32;
+  const liveSentiment = computeLiveNewsSentiment({
+    articles: visibleItems,
+    incomingArticles: prependedNews,
+    highlights,
+    liveReactions,
+    userReactions: reactions,
+    marketOverview: marketOverviewQuery.data,
+  });
+  const sentimentBullPct = liveSentiment.bullPct;
+  const sentimentBearPct = liveSentiment.bearPct;
+  const sentimentSummaryText = liveSentiment.summaryText;
 
   const serverLiveStatus = sseLiveStatus ?? highlights?.liveStatus;
   const isLiveActive =
@@ -1096,7 +1335,7 @@ export function NewsFeed({
               </div>
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
-              현물 ETF 자금 유입 및 거시 금리 동결 기조로 단기 매수 심리가 우위를 보이고 있습니다.
+              {sentimentSummaryText}
             </p>
             <Link
               href="/trading"

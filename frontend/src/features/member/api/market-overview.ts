@@ -5,6 +5,9 @@ export interface MarketOverviewData {
   openInterestBillionsUsd: number;
   fearGreedValue: number;
   fearGreedLabelKr: string;
+  futuresBullPct: number;
+  futuresBearPct: number;
+  btcChange24h: number;
   updatedAt: string;
 }
 
@@ -15,6 +18,9 @@ export const FALLBACK_MARKET_OVERVIEW: MarketOverviewData = {
   openInterestBillionsUsd: 38.4,
   fearGreedValue: 68,
   fearGreedLabelKr: "탐욕",
+  futuresBullPct: 54,
+  futuresBearPct: 46,
+  btcChange24h: 1.85,
   updatedAt: "2026-11-10T00:00:00Z",
 };
 
@@ -104,6 +110,14 @@ export function parseMarketOverviewPayload(value: unknown): MarketOverviewData {
       ? data.fearGreedLabelKr.trim()
       : classifyFearGreedLabelKr(fearGreedValue);
 
+  const rawFuturesBull = Math.max(
+    5,
+    Math.min(
+      95,
+      Math.round(finiteOr(data.futuresBullPct, FALLBACK_MARKET_OVERVIEW.futuresBullPct)),
+    ),
+  );
+
   return {
     btcDominancePercent: Number(
       finiteOr(data.btcDominancePercent, FALLBACK_MARKET_OVERVIEW.btcDominancePercent).toFixed(1),
@@ -124,6 +138,11 @@ export function parseMarketOverviewPayload(value: unknown): MarketOverviewData {
     ),
     fearGreedValue,
     fearGreedLabelKr: rawLabel,
+    futuresBullPct: rawFuturesBull,
+    futuresBearPct: 100 - rawFuturesBull,
+    btcChange24h: Number(
+      finiteOr(data.btcChange24h, FALLBACK_MARKET_OVERVIEW.btcChange24h).toFixed(2),
+    ),
     updatedAt:
       typeof data.updatedAt === "string" && data.updatedAt.trim().length > 0
         ? data.updatedAt
@@ -162,6 +181,7 @@ export async function fetchLiveMarketOverview(
     fxResult,
     derivativesResult,
     fngResult,
+    takerRatioResult,
   ] = await Promise.allSettled([
     fetchJsonWithTimeout("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=BTCUSDT", fetchImpl),
     fetchJsonWithTimeout("https://api.coingecko.com/api/v3/global", fetchImpl),
@@ -172,6 +192,10 @@ export async function fetchLiveMarketOverview(
       fetchImpl,
     ),
     fetchJsonWithTimeout("https://api.alternative.me/fng/?limit=1", fetchImpl),
+    fetchJsonWithTimeout(
+      "https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=BTCUSDT&period=5m&limit=1",
+      fetchImpl,
+    ),
   ]);
 
   // 1. Binance BTC Price & 24h Change (with Spot fallback)
@@ -326,6 +350,61 @@ export async function fetchLiveMarketOverview(
     }
   }
 
+  // 6. Binance Futures Taker Buy/Sell Ratio (fallback: Global Long/Short Account Ratio)
+  let futuresBullPct = FALLBACK_MARKET_OVERVIEW.futuresBullPct;
+  let ratioResolved = false;
+  if (
+    takerRatioResult.status === "fulfilled" &&
+    Array.isArray(takerRatioResult.value) &&
+    takerRatioResult.value[0] &&
+    typeof takerRatioResult.value[0] === "object"
+  ) {
+    const first = takerRatioResult.value[0] as Record<string, unknown>;
+    const buyVol = Number(first.buyVol);
+    const sellVol = Number(first.sellVol);
+    const buySellRatio = Number(first.buySellRatio);
+    if (Number.isFinite(buyVol) && Number.isFinite(sellVol) && buyVol + sellVol > 0) {
+      futuresBullPct = Math.max(
+        5,
+        Math.min(95, Math.round((buyVol / (buyVol + sellVol)) * 100)),
+      );
+      ratioResolved = true;
+    } else if (Number.isFinite(buySellRatio) && buySellRatio > 0) {
+      futuresBullPct = Math.max(
+        5,
+        Math.min(95, Math.round((buySellRatio / (1 + buySellRatio)) * 100)),
+      );
+      ratioResolved = true;
+    }
+  }
+  if (!ratioResolved) {
+    try {
+      const accountRatio = await fetchJsonWithTimeout(
+        "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=5m&limit=1",
+        fetchImpl,
+      );
+      if (Array.isArray(accountRatio) && accountRatio[0] && typeof accountRatio[0] === "object") {
+        const first = accountRatio[0] as Record<string, unknown>;
+        const longAccount = Number(first.longAccount);
+        const longShortRatio = Number(first.longShortRatio);
+        if (Number.isFinite(longAccount) && longAccount > 0 && longAccount <= 1) {
+          futuresBullPct = Math.max(5, Math.min(95, Math.round(longAccount * 100)));
+        } else if (Number.isFinite(longShortRatio) && longShortRatio > 0) {
+          futuresBullPct = Math.max(
+            5,
+            Math.min(95, Math.round((longShortRatio / (1 + longShortRatio)) * 100)),
+          );
+        }
+      }
+    } catch {
+      // Keep fallback
+    }
+  }
+
+  const btcChange24h = Number.isFinite(btcChange24hPct)
+    ? Number(btcChange24hPct.toFixed(2))
+    : FALLBACK_MARKET_OVERVIEW.btcChange24h;
+
   return {
     btcDominancePercent,
     btcDominanceChange24h,
@@ -333,6 +412,9 @@ export async function fetchLiveMarketOverview(
     openInterestBillionsUsd,
     fearGreedValue,
     fearGreedLabelKr,
+    futuresBullPct,
+    futuresBearPct: 100 - futuresBullPct,
+    btcChange24h,
     updatedAt: new Date().toISOString(),
   };
 }
