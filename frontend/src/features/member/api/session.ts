@@ -3,7 +3,7 @@ import { parseAccess, parseCsrf, parseWithdrawal, type MemberAccess } from "./co
 import { memberTabVisible } from "./activity";
 
 export type MemberSnapshot = { phase: "loading" | "anonymous" | "authenticating" | "ready" | "ending" | "withdrawing" | "recovering" | "error";
-  memberId: number | null; nickname: string; expiresAt: string | null; generation: number; recovery?: { retryable: boolean; retryAt: number; uncertain: boolean }; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
+  memberId: number | null; nickname: string; expiresAt: string | null; generation: number; role?: "MEMBER" | "ADMIN"; recovery?: { retryable: boolean; retryAt: number; uncertain: boolean }; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
 export const initialMember: MemberSnapshot = { phase: "loading", memberId: null, nickname: "", expiresAt: null, generation: 0 };
 export type CookieLock = <T>(operation: () => Promise<T>) => Promise<T>;
 export function clearRefreshPending(error: unknown) {

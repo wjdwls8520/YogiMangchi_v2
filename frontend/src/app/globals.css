@@ -1622,6 +1622,8 @@ body:has(.member-shell) :focus-visible {
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
+  width: 64px;
+  height: 64px;
   overflow: hidden;
   border: 1px solid #DEE1E6;
   border-radius: 50%;
@@ -1629,13 +1631,13 @@ body:has(.member-shell) :focus-visible {
 }
 
 .ym-avatar-frame.is-compact {
-  width: 52px;
-  height: 52px;
+  width: 64px;
+  height: 64px;
 }
 
 .ym-avatar-frame.is-large {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
 }
 
 .ym-avatar-img {
@@ -1659,9 +1661,12 @@ body:has(.member-shell) :focus-visible {
   min-width: 0;
 }
 
+.member-shell .ym-file-display,
 .ym-file-display {
   flex: 1;
   min-width: 160px;
+  height: 64px;
+  min-height: 64px;
   background-color: #F8F9FB !important;
 }
 
@@ -1669,7 +1674,8 @@ body:has(.member-shell) :focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 50px;
+  height: 64px;
+  min-height: 64px;
   padding: 0 16px;
   border: 1px solid #7242FF;
   border-radius: 8px;
@@ -1682,7 +1688,11 @@ body:has(.member-shell) :focus-visible {
 }
 
 .ym-file-reset {
-  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 64px;
+  min-height: 64px;
   padding: 0 12px;
   border: 1px solid #DEE1E6;
   border-radius: 8px;
@@ -1690,7 +1700,27 @@ body:has(.member-shell) :focus-visible {
   font-size: 12px;
   font-weight: 600;
   color: #6E6E73;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+@media (max-width: 639px) {
+  .ym-avatar-frame,
+  .ym-avatar-frame.is-large,
+  .ym-avatar-frame.is-compact {
+    width: 48px;
+    height: 48px;
+  }
+
+  .member-shell .ym-file-display,
+  .ym-file-display,
+  .ym-file-trigger,
+  .ym-file-reset {
+    height: 48px;
+    min-height: 48px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
 }
 
 /* [Order 3] Account Edit Page (/account) */

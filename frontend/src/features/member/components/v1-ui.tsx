@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
+  useEffect,
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -258,6 +260,99 @@ export function V1IconTrophy(props: V1FlatIconProps) {
       <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
       <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
       <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconMedal(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="medal" {...props}>
+      <circle cx="12" cy="8" r="6" />
+      <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconUsers(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="users" {...props}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconChevronDown(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="chevron-down" {...props}>
+      <polyline points="6 9 12 15 18 9" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconChevronLeft(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="chevron-left" {...props}>
+      <polyline points="15 18 9 12 15 6" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconChevronRight(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="chevron-right" {...props}>
+      <polyline points="9 18 15 12 9 6" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconAlert(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="alert" {...props}>
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconRefresh(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="refresh" {...props}>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconPlus(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="plus" {...props}>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconClock(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="clock" {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconInfo(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="info" {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
     </BaseFlatIcon>
   );
 }
@@ -863,14 +958,53 @@ export function V1ProfileSidebar({
 
 export function V1Header({
   theme = "light",
+  role,
 }: {
   theme?: "light" | "dark";
+  role?: "MEMBER" | "USER" | "ADMIN";
   rightExtra?: ReactNode;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [resolvedAdminKey, setResolvedAdminKey] = useState<string | null>(null);
+  const pathname = usePathname();
   const memberCtx = useOptionalMember();
   const isLoggedIn = memberCtx?.snapshot.phase === "ready";
-  const isDark = theme === "dark";
+  const isDarkTrading = Boolean(
+    pathname?.startsWith("/trading") ||
+      (pathname?.startsWith("/contest/") && pathname?.endsWith("/trading")),
+  );
+  const isDark = theme === "dark" || isDarkTrading;
+  const sessionKey =
+    isLoggedIn && memberCtx?.snapshot.memberId
+      ? `${memberCtx.snapshot.memberId}:${memberCtx.snapshot.generation}`
+      : null;
+
+  useEffect(() => {
+    if (!isLoggedIn || !memberCtx || !sessionKey || role || memberCtx.snapshot.role) {
+      return;
+    }
+    const controller = new AbortController();
+    void memberCtx.session
+      .request("/members/me", { signal: controller.signal })
+      .then(data => {
+        if (
+          data &&
+          typeof data === "object" &&
+          (data as { role?: unknown }).role === "ADMIN"
+        ) {
+          setResolvedAdminKey(sessionKey);
+        }
+      })
+      .catch(() => {
+        // Ignore unverified role lookup errors in header
+      });
+    return () => controller.abort();
+  }, [isLoggedIn, memberCtx, role, sessionKey]);
+
+  const isAdmin =
+    role === "ADMIN" ||
+    memberCtx?.snapshot.role === "ADMIN" ||
+    (sessionKey !== null && resolvedAdminKey === sessionKey);
 
   useDimScrollLock(isMenuOpen);
 
@@ -941,8 +1075,22 @@ export function V1Header({
             ))}
           </nav>
 
-          {/* 3. 오른쪽 액션 영역 (마이페이지 또는 로그인 버튼 1개만) */}
+          {/* 3. 오른쪽 액션 영역 (관리자 배지 + 마이페이지 또는 로그인 버튼) */}
           <div className="ym-gnb-right flex shrink-0 items-center gap-2">
+            {isLoggedIn && isAdmin ? (
+              <Link
+                href="/admin/contest"
+                className={cn(
+                  "inline-flex h-9 shrink-0 items-center justify-center rounded-full border px-3.5 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                  isDark
+                    ? "border-blue-400/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
+                    : "border-blue-200 bg-blue-50 text-[#0058FF] hover:bg-blue-100",
+                )}
+              >
+                관리자
+              </Link>
+            ) : null}
+
             <Link
               href={isLoggedIn ? "/me" : "/login"}
               onClick={() => {
@@ -1008,7 +1156,7 @@ export function V1Header({
                 모의투자 · 선물 터미널
               </Link>
               <Link href="/contest" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                대회 · 시즌 랭킹 (준비중)
+                대회 · 시즌 랭킹
               </Link>
               <Link href="/community" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 커뮤니티 · 전체/인기/최신글
@@ -1019,6 +1167,15 @@ export function V1Header({
               <Link href="/me/settings" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 회원정보 수정
               </Link>
+              {isLoggedIn && isAdmin ? (
+                <Link
+                  href="/admin/contest"
+                  className="rounded-xl bg-blue-50 px-3 py-2.5 text-[#0058FF] hover:bg-blue-100"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  관리자 · 대회 운영
+                </Link>
+              ) : null}
             </nav>
             <div className="mt-6 flex flex-col gap-2 border-t border-gray-100 pt-4">
               {isLoggedIn ? (

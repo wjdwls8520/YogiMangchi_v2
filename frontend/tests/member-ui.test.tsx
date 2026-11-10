@@ -74,6 +74,13 @@ import {
   parseMarketOverviewPayload,
 } from "../src/features/member/api/market-overview";
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
+import { ContestHub } from "../src/features/contest/components/contest-hub";
+import { ContestTradingSubheader } from "../src/features/contest/components/contest-trading-terminal";
+import {
+  AdminContestList,
+  ContestCreateEditModal,
+} from "../src/features/admin/components/admin-contest-list";
+import { AdminContestDetail } from "../src/features/admin/components/admin-contest-detail";
 
 test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
   const html = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending={false}/></MemberProvider>);
@@ -1939,6 +1946,162 @@ test("기존 회원 로그인 시 원래 보던 페이지 또는 메인 페이�
   clearLoginReturnPath(mockStorage);
   assert.equal(consumeLoginReturnPath(mockStorage), "/");
 });
+
+test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더(/contest/[seasonId]/trading), 관리자 대회 목록(/admin/contest) 및 상세/청크500 정산(/admin/contest/[seasonId]) 화면이 정상 렌더링된다", async () => {
+  const client = new QueryClient();
+  const epoch = Date.now();
+  const loggedInSession = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "트레이더7",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await loggedInSession.restore();
+
+  try {
+    // 1. V1Header: 관리자 권한일 때 우측 '관리자'(/admin/contest) 이동 배지 노출
+    const adminHeaderHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <V1Header theme="light" role="ADMIN" />
+      </MemberProvider>,
+    );
+    assert.match(adminHeaderHtml, /href="\/admin\/contest"[^>]*>관리자<\/a>/);
+    assert.match(adminHeaderHtml, /href="\/me"[^>]*>마이페이지<\/a>/);
+    assert.equal(adminHeaderHtml.includes("준비중"), false);
+
+    // 2. 비로그인/게스트 ContestHub: 로그인 유도 앰버 배너 + 공개 대회 3단 섹션 + 리더보드
+    const anonContestHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <ContestHub />
+      </MemberProvider>,
+    );
+    assert.match(anonContestHtml, /시즌별 선물 모의투자 대회/);
+    assert.match(anonContestHtml, /대회 규칙·상금 안내/);
+    assert.match(
+      anonContestHtml,
+      /현재 대회 목록만 열람하고 계십니다\. 대회에 참가 신청하고 수익률 랭킹에 도전하려면 로그인이 필요합니다\./,
+    );
+    assert.match(anonContestHtml, /href="\/login"[^>]*>지금 로그인하기<\/a>/);
+    assert.match(anonContestHtml, /data-public-contest-stage="running"/);
+    assert.match(anonContestHtml, /data-public-contest-stage="recruiting"/);
+    assert.match(anonContestHtml, /data-public-contest-stage="finished"/);
+    assert.match(anonContestHtml, /data-contest-section="leaderboard"/);
+    assert.match(anonContestHtml, /1위 · 골드 메달/);
+    assert.match(anonContestHtml, /2위 · 실버 메달/);
+    assert.match(anonContestHtml, /3위 · 브론즈 메달/);
+    assert.equal(anonContestHtml.includes("cursor-not-allowed"), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(anonContestHtml), false);
+
+    // 3. 정식 로그인 회원 ContestHub: 내 진행 중인 대회 캐러셀 + 참가 신청 가능/참가 심사 중/종료 및 반려 3탭 + 리더보드
+    const memberContestHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <ContestHub />
+      </MemberProvider>,
+    );
+    assert.match(memberContestHtml, /data-contest-section="ongoing"/);
+    assert.match(memberContestHtml, /내 진행 중인 대회/);
+    assert.match(memberContestHtml, /href="\/contest\/202602\/trading"/);
+    assert.match(memberContestHtml, /대회장 입장/);
+    assert.match(memberContestHtml, /data-contest-section="catalog"/);
+    assert.match(memberContestHtml, /참가 신청 가능 \(3\)/);
+    assert.match(memberContestHtml, /참가 심사 중 \(1\)/);
+    assert.match(memberContestHtml, /종료 및 반려 \(2\)/);
+    assert.match(memberContestHtml, /초기 시드머니/);
+    assert.match(memberContestHtml, /10,000 USDT/);
+    assert.equal(memberContestHtml.includes("cursor-not-allowed"), false);
+
+    // 4. 대회 전용 선물 트레이딩 48px 서브헤더 (/contest/[seasonId]/trading)
+    const subheaderHtml = renderToStaticMarkup(
+      <ContestTradingSubheader seasonId={202602} />,
+    );
+    assert.match(subheaderHtml, /data-contest-trading-subheader="202602"/);
+    assert.match(subheaderHtml, /href="\/contest"/);
+    assert.match(subheaderHtml, /대회 목록/);
+    assert.match(subheaderHtml, /2026 정규 시즌 2 선물 수익률 대회/);
+    assert.match(subheaderHtml, /ACTIVE/);
+    assert.match(subheaderHtml, /시즌 시드/);
+    assert.match(subheaderHtml, /대회 평가자산/);
+    assert.match(subheaderHtml, /대회 가용증거금/);
+    assert.match(subheaderHtml, /CONTEST MODE/);
+
+    // 5. 관리자 대회 목록 (/admin/contest) 및 시즌 생성/수정 모달 (ContestCreateEditModal)
+    const adminListHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <AdminContestList />
+      </MemberProvider>,
+    );
+    assert.match(adminListHtml, /data-admin-header="true"/);
+    assert.match(adminListHtml, /ADMIN/);
+    assert.match(adminListHtml, /대회 관리/);
+    assert.match(adminListHtml, /회원 관리/);
+    assert.match(adminListHtml, /커뮤니티 관리/);
+    assert.match(adminListHtml, /신고 관리/);
+    assert.match(adminListHtml, /서비스 홈으로/);
+    assert.match(adminListHtml, /대회 시즌 관리/);
+    assert.match(adminListHtml, /\+ 새 대회 시즌 생성/);
+    assert.match(adminListHtml, /전체 대회 시즌/);
+    assert.match(adminListHtml, /참가 모집중 시즌/);
+    assert.match(adminListHtml, /진행중\(LIVE\) 시즌/);
+    assert.match(adminListHtml, /role="switch"/);
+    assert.equal(adminListHtml.includes("cursor-not-allowed"), false);
+
+    const createModalHtml = renderToStaticMarkup(
+      <ContestCreateEditModal
+        open={true}
+        mode="create"
+        onClose={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    assert.match(createModalHtml, /새 대회 시즌 생성/);
+    assert.match(createModalHtml, /시즌 초기 시드머니 \(USDT\)/);
+    assert.match(createModalHtml, /참가 신청 시작 일시/);
+    assert.match(createModalHtml, /참가 신청 마감 일시/);
+    assert.match(createModalHtml, /대회 진행 시작 일시/);
+    assert.match(createModalHtml, /대회 진행 종료 일시/);
+    assert.match(createModalHtml, /즉시 공개 여부/);
+
+    // 6. 관리자 대회 시즌 상세 및 청크 500 정산/신청자 운영 (/admin/contest/[seasonId])
+    const adminDetailHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <AdminContestDetail seasonId={202602} />
+      </MemberProvider>,
+    );
+    assert.match(adminDetailHtml, /대회 목록으로 돌아가기/);
+    assert.match(adminDetailHtml, /data-admin-action="early-finish-settle"/);
+    assert.match(adminDetailHtml, /대회 조기 종료 및 강제 정산/);
+    assert.match(adminDetailHtml, /data-admin-action="cleanup-remaining"/);
+    assert.match(adminDetailHtml, /남은 포지션·미체결 주문 재정리/);
+    assert.match(adminDetailHtml, /대회 개요 및 상태 제어/);
+    assert.match(adminDetailHtml, /주요 일정 및 자동 종료 스케줄/);
+    assert.match(adminDetailHtml, /청크 500 정산 시스템 상태 &amp; 실행 이력/);
+    assert.match(
+      adminDetailHtml,
+      /가격 스냅샷 → 지갑 비활성화 → 미체결 주문 500청크 소프트 취소 → 오픈 포지션 500청크 강제청산 → 올림픽 순위 확정/,
+    );
+    assert.match(adminDetailHtml, /신청자 관리 \(3\)/);
+    assert.match(adminDetailHtml, /참가자 및 시즌 지갑 목록 \(4\)/);
+    assert.match(adminDetailHtml, /반려 이력 \(1\)/);
+    assert.match(adminDetailHtml, /선택 일괄 승인 \(0\)/);
+    assert.match(adminDetailHtml, /델타헤저/);
+    assert.equal(adminDetailHtml.includes("cursor-not-allowed"), false);
+  } finally {
+    client.clear();
+  }
+});
+
 
 
 
