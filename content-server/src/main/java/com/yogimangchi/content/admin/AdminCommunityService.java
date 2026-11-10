@@ -59,6 +59,35 @@ public class AdminCommunityService {
             boolean hasNext
     ) { }
 
+    public record AdminReportDto(
+            String reportKey,
+            String targetType,
+            Long targetId,
+            Long postId,
+            String postTitle,
+            String targetContent,
+            Long targetAuthorId,
+            String targetAuthorNickname,
+            String targetDeleteYn,
+            long targetReportCount,
+            Long reporterId,
+            String reporterNickname,
+            String reasonType,
+            Instant createdAt
+    ) { }
+
+    public record AdminReportPageResponse(
+            List<AdminReportDto> content,
+            int page,
+            int size,
+            long totalElements,
+            int totalPages,
+            boolean hasNext,
+            long postReportCount,
+            long commentReportCount,
+            long activeTargetReportCount
+    ) { }
+
     private record PostStatusRow(Long id, String status, Timestamp deletedAt) { }
 
     private record CommentHierarchyRow(Long id, Long postId, Long parentCommentId, String status, Timestamp deletedAt) { }
@@ -297,6 +326,204 @@ public class AdminCommunityService {
         }
     }
 
+    @Transactional(readOnly = true, timeout = 5)
+    public AdminReportPageResponse listReports(
+            Long adminId,
+            String targetType,
+            String targetStatus,
+            String reasonType,
+            String keyword,
+            Integer page,
+            Integer size) {
+        requireAdmin(adminId);
+        int resolvedPage = page == null ? 0 : page;
+        if (resolvedPage < 0) {
+            throw invalidRequest();
+        }
+        int limit = validateSize(size == null ? 20 : size);
+        String normalizedTargetType = normalizeReportTargetType(targetType);
+        String normalizedTargetStatus = normalizeReportTargetStatus(targetStatus);
+        String normalizedReasonType = normalizeReportReasonFilter(reasonType);
+
+        String baseCte = "with unified_reports as ("
+                + "select 'POST' as target_type, pr.post_id as target_id, p.id as post_id, p.title as post_title, "
+                + "p.content as target_content, p.member_id as target_author_id, ta.nickname as target_author_nickname, "
+                + "ta.status as target_author_status, p.status as target_status, p.deleted_at as target_deleted_at, "
+                + "p.report_count as target_report_count, pr.member_id as reporter_id, rm.nickname as reporter_nickname, "
+                + "rm.status as reporter_status, pr.reason_type, pr.created_at "
+                + "from content.community_post_report pr "
+                + "join content.community_post p on p.id = pr.post_id "
+                + "join content.member ta on ta.id = p.member_id "
+                + "join content.member rm on rm.id = pr.member_id "
+                + "union all "
+                + "select 'COMMENT' as target_type, cr.comment_id as target_id, p.id as post_id, p.title as post_title, "
+                + "c.content as target_content, c.member_id as target_author_id, ta.nickname as target_author_nickname, "
+                + "ta.status as target_author_status, c.status as target_status, c.deleted_at as target_deleted_at, "
+                + "c.report_count as target_report_count, cr.member_id as reporter_id, rm.nickname as reporter_nickname, "
+                + "rm.status as reporter_status, cr.reason_type, cr.created_at "
+                + "from content.community_comment_report cr "
+                + "join content.community_comment c on c.id = cr.comment_id "
+                + "join content.community_post p on p.id = c.post_id "
+                + "join content.member ta on ta.id = c.member_id "
+                + "join content.member rm on rm.id = cr.member_id"
+                + ") ";
+
+        StringBuilder whereClause = new StringBuilder(" where 1=1");
+        List<Object> filterParams = new ArrayList<>();
+
+        if (!"ALL".equals(normalizedTargetType)) {
+            whereClause.append(" and u.target_type = ?");
+            filterParams.add(normalizedTargetType);
+        }
+
+        if ("ACTIVE".equals(normalizedTargetStatus)) {
+            whereClause.append(" and u.target_status = 'ACTIVE' and u.target_deleted_at is null");
+        } else if ("DELETED".equals(normalizedTargetStatus)) {
+            whereClause.append(" and (u.target_status = 'DELETED' or u.target_deleted_at is not null)");
+        }
+
+        if (!"ALL".equals(normalizedReasonType)) {
+            whereClause.append(" and u.reason_type = ?");
+            filterParams.add(normalizedReasonType);
+        }
+
+        if (keyword != null && !keyword.isBlank()) {
+            String escaped = "%" + escapeLike(keyword.trim()) + "%";
+            whereClause.append(" and (u.post_title ilike ? escape '\\' or u.target_content ilike ? escape '\\' "
+                    + "or coalesce(u.target_author_nickname, '') ilike ? escape '\\' "
+                    + "or coalesce(u.reporter_nickname, '') ilike ? escape '\\')");
+            filterParams.add(escaped);
+            filterParams.add(escaped);
+            filterParams.add(escaped);
+            filterParams.add(escaped);
+        }
+
+        Long totalElementsObj = jdbc.queryForObject(
+                baseCte + "select count(*) from unified_reports u" + whereClause,
+                Long.class,
+                filterParams.toArray());
+        long totalElements = totalElementsObj == null ? 0L : totalElementsObj;
+
+        List<Object> pageParams = new ArrayList<>(filterParams);
+        pageParams.add(limit);
+        pageParams.add((long) resolvedPage * limit);
+
+        List<AdminReportDto> content = jdbc.query(
+                baseCte + "select * from unified_reports u" + whereClause
+                        + " order by u.created_at desc, u.target_type asc, u.target_id desc, u.reporter_id desc limit ? offset ?",
+                (rs, n) -> mapReport(rs),
+                pageParams.toArray());
+
+        Long postReportsObj = jdbc.queryForObject(
+                "select count(*) from content.community_post_report",
+                Long.class);
+        Long commentReportsObj = jdbc.queryForObject(
+                "select count(*) from content.community_comment_report",
+                Long.class);
+        Long activeTargetReportsObj = jdbc.queryForObject(
+                "select ("
+                        + "  (select count(*) from content.community_post_report pr join content.community_post p on p.id = pr.post_id where p.status = 'ACTIVE' and p.deleted_at is null)"
+                        + "  + "
+                        + "  (select count(*) from content.community_comment_report cr join content.community_comment c on c.id = cr.comment_id where c.status = 'ACTIVE' and c.deleted_at is null)"
+                        + ")",
+                Long.class);
+
+        int totalPages = totalElements == 0 ? 0 : (int) Math.ceil((double) totalElements / limit);
+        boolean hasNext = (long) (resolvedPage + 1) * limit < totalElements;
+
+        return new AdminReportPageResponse(
+                content,
+                resolvedPage,
+                limit,
+                totalElements,
+                totalPages,
+                hasNext,
+                postReportsObj == null ? 0L : postReportsObj,
+                commentReportsObj == null ? 0L : commentReportsObj,
+                activeTargetReportsObj == null ? 0L : activeTargetReportsObj);
+    }
+
+    @Transactional(timeout = 5)
+    public void dismissReport(Long adminId, String targetType, Long targetId, Long reporterId) {
+        if (targetId == null || targetId <= 0 || reporterId == null || reporterId <= 0) {
+            throw invalidRequest();
+        }
+        String normalizedType = normalizeSingleReportTargetType(targetType);
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        requireAdmin(adminId);
+
+        if ("POST".equals(normalizedType)) {
+            List<Long> locked = jdbc.queryForList(
+                    "select id from content.community_post where id = ? for update",
+                    Long.class,
+                    targetId);
+            if (locked.isEmpty()) {
+                throw new AuthFailure("POST_NOT_FOUND", HttpStatus.NOT_FOUND);
+            }
+            jdbc.update(
+                    "delete from content.community_post_report where post_id = ? and member_id = ?",
+                    targetId, reporterId);
+            jdbc.update(
+                    "update content.community_post set report_count = (select count(*) from content.community_post_report where post_id = ?) where id = ?",
+                    targetId, targetId);
+        } else {
+            List<Long> locked = jdbc.queryForList(
+                    "select id from content.community_comment where id = ? for update",
+                    Long.class,
+                    targetId);
+            if (locked.isEmpty()) {
+                throw new AuthFailure("COMMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+            }
+            jdbc.update(
+                    "delete from content.community_comment_report where comment_id = ? and member_id = ?",
+                    targetId, reporterId);
+            jdbc.update(
+                    "update content.community_comment set report_count = (select count(*) from content.community_comment_report where comment_id = ?) where id = ?",
+                    targetId, targetId);
+        }
+    }
+
+    @Transactional(timeout = 5)
+    public void moderateReportedTarget(Long adminId, String targetType, Long targetId, String action) {
+        if (targetId == null || targetId <= 0) {
+            throw invalidRequest();
+        }
+        String normalizedType = normalizeSingleReportTargetType(targetType);
+        String normalizedAction = normalizeModerationAction(action);
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        requireAdmin(adminId);
+
+        if ("POST".equals(normalizedType)) {
+            if ("DELETE_TARGET".equals(normalizedAction)) {
+                deletePost(adminId, targetId);
+            } else {
+                List<Long> locked = jdbc.queryForList(
+                        "select id from content.community_post where id = ? for update",
+                        Long.class,
+                        targetId);
+                if (locked.isEmpty()) {
+                    throw new AuthFailure("POST_NOT_FOUND", HttpStatus.NOT_FOUND);
+                }
+            }
+            jdbc.update("delete from content.community_post_report where post_id = ?", targetId);
+            jdbc.update("update content.community_post set report_count = 0 where id = ?", targetId);
+        } else {
+            if ("DELETE_TARGET".equals(normalizedAction)) {
+                deleteReply(adminId, targetId);
+            } else {
+                List<Long> locked = jdbc.queryForList(
+                        "select id from content.community_comment where id = ? for update",
+                        Long.class,
+                        targetId);
+                if (locked.isEmpty()) {
+                    throw new AuthFailure("COMMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+                }
+            }
+            jdbc.update("delete from content.community_comment_report where comment_id = ?", targetId);
+            jdbc.update("update content.community_comment set report_count = 0 where id = ?", targetId);
+        }
+    }
+
     private AdminPostDto mapPost(ResultSet rs) throws SQLException {
         String postStatus = rs.getString("post_status");
         Timestamp deletedAt = rs.getTimestamp("deleted_at");
@@ -350,6 +577,47 @@ public class AdminCommunityService {
                 displayNickname);
     }
 
+    private AdminReportDto mapReport(ResultSet rs) throws SQLException {
+        String targetType = rs.getString("target_type");
+        long targetId = rs.getLong("target_id");
+        long reporterId = rs.getLong("reporter_id");
+        String targetStatus = rs.getString("target_status");
+        Timestamp targetDeletedAt = rs.getTimestamp("target_deleted_at");
+        boolean targetDeleted = targetDeletedAt != null || "DELETED".equals(targetStatus);
+
+        String targetAuthorStatus = rs.getString("target_author_status");
+        String rawTargetAuthorNickname = rs.getString("target_author_nickname");
+        String displayTargetAuthorNickname = "ACTIVE".equals(targetAuthorStatus)
+                && rawTargetAuthorNickname != null && !rawTargetAuthorNickname.isBlank()
+                ? rawTargetAuthorNickname
+                : CommunityService.WITHDRAWN_AUTHOR_NICKNAME;
+
+        String reporterStatus = rs.getString("reporter_status");
+        String rawReporterNickname = rs.getString("reporter_nickname");
+        String displayReporterNickname = "ACTIVE".equals(reporterStatus)
+                && rawReporterNickname != null && !rawReporterNickname.isBlank()
+                ? rawReporterNickname
+                : CommunityService.WITHDRAWN_AUTHOR_NICKNAME;
+
+        Timestamp createdTs = rs.getTimestamp("created_at");
+
+        return new AdminReportDto(
+                targetType + ":" + targetId + ":" + reporterId,
+                targetType,
+                targetId,
+                rs.getLong("post_id"),
+                rs.getString("post_title"),
+                rs.getString("target_content"),
+                rs.getLong("target_author_id"),
+                displayTargetAuthorNickname,
+                targetDeleted ? "Y" : "N",
+                rs.getLong("target_report_count"),
+                reporterId,
+                displayReporterNickname,
+                rs.getString("reason_type"),
+                createdTs == null ? null : createdTs.toInstant());
+    }
+
     private void requireAdmin(Long adminId) {
         if (adminId == null) {
             throw AuthFailure.unauthorized();
@@ -369,6 +637,66 @@ public class AdminCommunityService {
         }
         String upper = authorStatus.trim().toUpperCase(Locale.ROOT);
         if ("ALL".equals(upper) || "ACTIVE".equals(upper) || "WITHDRAWN".equals(upper)) {
+            return upper;
+        }
+        throw invalidRequest();
+    }
+
+    private String normalizeReportTargetType(String targetType) {
+        if (targetType == null || targetType.isBlank()) {
+            return "ALL";
+        }
+        String upper = targetType.trim().toUpperCase(Locale.ROOT);
+        if ("ALL".equals(upper) || "POST".equals(upper) || "COMMENT".equals(upper)) {
+            return upper;
+        }
+        throw invalidRequest();
+    }
+
+    private String normalizeSingleReportTargetType(String targetType) {
+        if (targetType == null || targetType.isBlank()) {
+            throw invalidRequest();
+        }
+        String upper = targetType.trim().toUpperCase(Locale.ROOT);
+        if ("POST".equals(upper) || "COMMENT".equals(upper)) {
+            return upper;
+        }
+        throw invalidRequest();
+    }
+
+    private String normalizeReportTargetStatus(String targetStatus) {
+        if (targetStatus == null || targetStatus.isBlank()) {
+            return "ALL";
+        }
+        String upper = targetStatus.trim().toUpperCase(Locale.ROOT);
+        if ("ALL".equals(upper) || "ACTIVE".equals(upper) || "DELETED".equals(upper)) {
+            return upper;
+        }
+        throw invalidRequest();
+    }
+
+    private String normalizeReportReasonFilter(String reasonType) {
+        if (reasonType == null || reasonType.isBlank()) {
+            return "ALL";
+        }
+        String upper = reasonType.trim().toUpperCase(Locale.ROOT);
+        if ("ALL".equals(upper)
+                || "SPAM".equals(upper)
+                || "ABUSE".equals(upper)
+                || "FRAUD".equals(upper)
+                || "INAPPROPRIATE".equals(upper)
+                || "OTHER".equals(upper)) {
+            return upper;
+        }
+        throw invalidRequest();
+    }
+
+    private String normalizeModerationAction(String action) {
+        if (action == null || action.isBlank()) {
+            return "DELETE_TARGET";
+        }
+        String upper = action.trim().toUpperCase(Locale.ROOT);
+        if ("DELETE_TARGET".equals(upper) || "CLEAR_REPORTS".equals(upper)) {
             return upper;
         }
         throw invalidRequest();

@@ -1348,6 +1348,67 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         mvc.perform(get("/api/v1/community/posts/" + activeAuthorPost.id()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.commentCount").value(1));
+
+        // 8. Admin community report moderation (list / dismiss single report / moderate target)
+        var reporterUser = signup();
+        Long reporterId = reporterUser.access().memberId();
+        String reporterBearer = "Bearer " + reporterUser.access().accessToken();
+
+        mvc.perform(get("/api/v1/admin/community/reports"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
+        mvc.perform(get("/api/v1/admin/community/reports").header("Authorization", normalBearer))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        // Reporter reports activeAuthorPost (SPAM) and activeReply (ABUSE)
+        mvc.perform(put("/api/v1/community/posts/" + activeAuthorPost.id() + "/reports")
+                        .header("Authorization", reporterBearer)
+                        .contentType("application/json")
+                        .content("{\"reasonType\":\"SPAM\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportCount").value(1));
+
+        mvc.perform(put("/api/v1/community/comments/" + activeReply.id() + "/reports")
+                        .header("Authorization", reporterBearer)
+                        .contentType("application/json")
+                        .content("{\"reasonType\":\"ABUSE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportCount").value(1));
+
+        mvc.perform(get("/api/v1/admin/community/reports")
+                        .header("Authorization", adminBearer)
+                        .param("keyword", "어드민검색용활성"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.postReportCount").isNumber())
+                .andExpect(jsonPath("$.commentReportCount").isNumber())
+                .andExpect(jsonPath("$.activeTargetReportCount").isNumber())
+                .andExpect(jsonPath("$.content.length()").value(2));
+
+        // Dismiss single comment report -> activeReply reportCount becomes 0
+        mvc.perform(delete("/api/v1/admin/community/reports/COMMENT/" + activeReply.id() + "/reporters/" + reporterId)
+                        .header("Authorization", adminBearer))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/v1/admin/community/replies")
+                        .header("Authorization", adminBearer)
+                        .param("replyContent", "어드민검색용활성댓글"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].reportCount").value(0));
+
+        // Moderate reported post with DELETE_TARGET -> soft-deletes activeAuthorPost and clears its reports
+        mvc.perform(post("/api/v1/admin/community/reports/POST/" + activeAuthorPost.id() + "/moderate")
+                        .header("Authorization", adminBearer)
+                        .param("action", "DELETE_TARGET"))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/v1/admin/community/posts")
+                        .header("Authorization", adminBearer)
+                        .param("title", "어드민검색용활성글제목"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].deleteYn").value("Y"))
+                .andExpect(jsonPath("$.content[0].reportCount").value(0));
     }
 
     private AuthService.Issued signup() {
