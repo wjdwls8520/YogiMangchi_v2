@@ -21,13 +21,13 @@ public class SecurityConfig {
         http.authorizeHttpRequests(a -> {
             a.requestMatchers(HttpMethod.GET,"/.well-known/jwks.json","/api/v1/auth/csrf","/api/v1/auth/flow","/api/v1/policies/current","/api/v1/policies/{type:TERMS|PRIVACY}/{version}").permitAll();
             a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout","/api/v1/news/{newsId:[0-9]+}/reactions").permitAll();
-            a.requestMatchers(HttpMethod.GET,"/api/v1/members/me","/api/v1/members/me/consents","/api/v1/members/me/withdrawal").authenticated();
+            a.requestMatchers(HttpMethod.GET,"/api/v1/members/me","/api/v1/members/me/consents","/api/v1/members/me/withdrawal","/api/v1/members/me/community/posts","/api/v1/members/me/community/comments","/api/v1/members/me/community/liked-posts","/api/v1/members/me/community/liked-comments","/api/v1/members/me/community/reports").authenticated();
             a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/consents","/api/v1/members/me/profile").authenticated();
             a.requestMatchers(HttpMethod.PATCH,"/api/v1/members/me/profile").authenticated();
             a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/withdrawal").authenticated();
             a.requestMatchers(HttpMethod.PUT,"/api/v1/members/{memberId:[0-9]+}/follows").authenticated();
             a.requestMatchers(HttpMethod.DELETE,"/api/v1/members/{memberId:[0-9]+}/follows").authenticated();
-            a.requestMatchers(HttpMethod.GET,"/api/v1/members/{memberId:[0-9]+}/follows","/api/v1/members/{memberId:[0-9]+}/followers","/api/v1/members/{memberId:[0-9]+}/followings").permitAll();
+            a.requestMatchers(HttpMethod.GET,"/api/v1/members/{memberId:[0-9]+}/follows","/api/v1/members/{memberId:[0-9]+}/followers","/api/v1/members/{memberId:[0-9]+}/followings","/api/v1/members/{memberId:[0-9]+}/community/posts","/api/v1/members/{memberId:[0-9]+}/community/comments","/api/v1/members/{memberId:[0-9]+}/community/liked-posts","/api/v1/members/{memberId:[0-9]+}/community/liked-comments").permitAll();
             a.requestMatchers(HttpMethod.GET,"/api/v1/members/{memberId:[0-9]+}","/api/v1/members/nickname/availability").permitAll();
             a.requestMatchers(HttpMethod.GET,"/api/v1/news","/api/v1/news/highlights","/api/v1/news/stream","/api/v1/news/{newsId:[0-9]+}","/api/v1/community/posts","/api/v1/community/posts/latest-check","/api/v1/community/posts/{postId:[0-9]+}","/api/v1/community/posts/{postId:[0-9]+}/comments","/api/v1/community/ux/subscribe/feed","/api/v1/community/report-reasons","/api/v1/report/type/community").permitAll();
             a.requestMatchers(HttpMethod.POST,"/api/v1/community/posts","/api/v1/community/posts/{postId:[0-9]+}/comments").authenticated();

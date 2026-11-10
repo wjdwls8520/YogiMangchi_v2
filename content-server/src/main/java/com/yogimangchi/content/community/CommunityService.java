@@ -231,7 +231,61 @@ public class CommunityService {
     }
 
     public record CommunityCommentListResponse(
-            List<CommunityCommentResponse> items
+            List<CommunityCommentResponse> items,
+            boolean hasNext,
+            Long nextCursorId
+    ) {
+        public CommunityCommentListResponse(List<CommunityCommentResponse> items) {
+            this(items, false, null);
+        }
+    }
+
+    public record MemberCommunityCommentItem(
+            Long id,
+            Long postId,
+            String postTitle,
+            String postCategory,
+            String postSymbolTag,
+            Long memberId,
+            String authorNickname,
+            String authorProfileImgUrl,
+            boolean authorWithdrawn,
+            Long parentCommentId,
+            Long targetCommentId,
+            Long targetMemberId,
+            String targetNickname,
+            String content,
+            int likeCount,
+            int reportCount,
+            boolean likedByMe,
+            boolean reportedByMe,
+            boolean mine,
+            Instant createdAt,
+            Instant updatedAt
+    ) { }
+
+    public record MemberCommunityCommentPageResponse(
+            List<MemberCommunityCommentItem> items,
+            boolean hasNext,
+            Long nextCursorId
+    ) { }
+
+    public record MemberCommunityReportItem(
+            Long id,
+            String targetType,
+            Long targetId,
+            Long postId,
+            String title,
+            String reasonType,
+            String reasonDescription,
+            String status,
+            Instant createdAt
+    ) { }
+
+    public record MemberCommunityReportPageResponse(
+            List<MemberCommunityReportItem> items,
+            boolean hasNext,
+            Long nextCursorId
     ) { }
 
     private final MemberRepository members;
@@ -667,8 +721,17 @@ public class CommunityService {
 
     @Transactional(readOnly = true, timeout = 3)
     public CommunityCommentListResponse listComments(Long postId, Long viewerId) {
+        return listComments(postId, null, null, viewerId);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public CommunityCommentListResponse listComments(Long postId, Long cursorId, Integer size, Long viewerId) {
         if (postId == null || postId <= 0) {
             throw notFound();
+        }
+        int limit = size == null ? 20 : size;
+        if (limit < 1 || limit > 100 || (cursorId != null && cursorId <= 0)) {
+            throw invalidRequest();
         }
         Boolean activePost = jdbc.queryForObject(
                 "select exists(select 1 from content.community_post where id = ? and status = 'ACTIVE')",
@@ -678,7 +741,7 @@ public class CommunityService {
             throw notFound();
         }
 
-        String sql = "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
+        String selectCols = "select c.id, c.post_id, c.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
                 + "c.parent_comment_id, c.target_comment_id, c.target_member_id, "
                 + "tm.nickname as target_member_nickname, tm.status as target_member_status, "
                 + "c.content, c.status as comment_status, c.like_count, c.report_count, c.created_at, c.updated_at, "
@@ -688,18 +751,72 @@ public class CommunityService {
                   + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
                 + "from content.community_comment c "
                 + "join content.member m on m.id = c.member_id "
-                + "left join content.member tm on tm.id = c.target_member_id "
-                + "where c.post_id = ? "
-                + "and (c.status = 'ACTIVE' or exists("
-                + "  select 1 from content.community_comment child "
-                + "  where child.post_id = c.post_id and child.parent_comment_id = c.id and child.status = 'ACTIVE'"
-                + ")) "
+                + "left join content.member tm on tm.id = c.target_member_id ";
+
+        StringBuilder rootSql = new StringBuilder(selectCols)
+                .append("where c.post_id = ? and c.parent_comment_id is null ")
+                .append("and (c.status = 'ACTIVE' or exists(")
+                .append("  select 1 from content.community_comment child ")
+                .append("  where child.post_id = c.post_id and child.parent_comment_id = c.id and child.status = 'ACTIVE'")
+                .append(")) ");
+
+        List<Object> rootParams = new ArrayList<>();
+        if (viewerId != null) {
+            rootParams.add(viewerId);
+            rootParams.add(viewerId);
+        }
+        rootParams.add(postId);
+        if (cursorId != null) {
+            rootSql.append("and c.id > ? ");
+            rootParams.add(cursorId);
+        }
+        rootSql.append("order by c.id asc limit ?");
+        rootParams.add(limit + 1);
+
+        List<CommunityCommentResponse> rootRows = jdbc.query(
+                rootSql.toString(),
+                (rs, n) -> mapComment(rs, viewerId),
+                rootParams.toArray());
+
+        boolean hasNext = rootRows.size() > limit;
+        List<CommunityCommentResponse> pagedRoots = rootRows.subList(0, Math.min(limit, rootRows.size()));
+        Long nextCursorId = hasNext && !pagedRoots.isEmpty() ? pagedRoots.get(pagedRoots.size() - 1).id() : null;
+        if (pagedRoots.isEmpty()) {
+            return new CommunityCommentListResponse(List.of(), false, null);
+        }
+
+        List<Long> rootIds = pagedRoots.stream().map(CommunityCommentResponse::id).toList();
+        String placeholders = rootIds.stream().map(id -> "?").collect(Collectors.joining(","));
+        String childSql = selectCols
+                + "where c.post_id = ? and c.parent_comment_id in (" + placeholders + ") and c.status = 'ACTIVE' "
                 + "order by c.id asc";
 
-        var items = viewerId == null
-                ? jdbc.query(sql, (rs, n) -> mapComment(rs, null), postId)
-                : jdbc.query(sql, (rs, n) -> mapComment(rs, viewerId), viewerId, viewerId, postId);
-        return new CommunityCommentListResponse(items);
+        List<Object> childParams = new ArrayList<>();
+        if (viewerId != null) {
+            childParams.add(viewerId);
+            childParams.add(viewerId);
+        }
+        childParams.add(postId);
+        childParams.addAll(rootIds);
+
+        List<CommunityCommentResponse> childRows = jdbc.query(
+                childSql,
+                (rs, n) -> mapComment(rs, viewerId),
+                childParams.toArray());
+
+        Map<Long, List<CommunityCommentResponse>> childrenByParent = new HashMap<>();
+        for (CommunityCommentResponse child : childRows) {
+            if (child.parentCommentId() != null) {
+                childrenByParent.computeIfAbsent(child.parentCommentId(), k -> new ArrayList<>()).add(child);
+            }
+        }
+
+        List<CommunityCommentResponse> combined = new ArrayList<>(pagedRoots.size() + childRows.size());
+        for (CommunityCommentResponse root : pagedRoots) {
+            combined.add(root);
+            combined.addAll(childrenByParent.getOrDefault(root.id(), List.of()));
+        }
+        return new CommunityCommentListResponse(combined, hasNext, nextCursorId);
     }
 
     @Transactional(timeout = 5)
@@ -733,12 +850,35 @@ public class CommunityService {
 
         if (parentCommentId != null) {
             var parentRows = jdbc.query(
-                    "select id, member_id, status from content.community_comment where id = ? and post_id = ?",
-                    (rs, n) -> new OwnerStatus(rs.getLong("member_id"), rs.getString("status")),
+                    "select id, member_id, parent_comment_id, status from content.community_comment where id = ? and post_id = ?",
+                    (rs, n) -> {
+                        long pRaw = rs.getLong("parent_comment_id");
+                        Long pId = rs.wasNull() ? null : pRaw;
+                        return new CommentNodeRow(rs.getLong("id"), rs.getLong("member_id"), pId, rs.getString("status"));
+                    },
                     parentCommentId, postId);
             if (parentRows.isEmpty() || !"ACTIVE".equals(parentRows.get(0).status())) {
                 throw invalidRequest();
             }
+            CommentNodeRow parentNode = parentRows.get(0);
+            if (parentNode.parentCommentId() != null) {
+                // Depth >= 2 reply to a child reply: normalize parentCommentId to the root comment
+                // and preserve @targetNickname pointing to the replied-to child comment.
+                Long rootCommentId = parentNode.parentCommentId();
+                var rootRows = jdbc.query(
+                        "select id from content.community_comment where id = ? and post_id = ?",
+                        (rs, n) -> rs.getLong("id"),
+                        rootCommentId, postId);
+                if (rootRows.isEmpty()) {
+                    throw invalidRequest();
+                }
+                parentCommentId = rootCommentId;
+                if (targetCommentId == null) {
+                    targetCommentId = parentNode.id();
+                    targetMemberId = parentNode.memberId();
+                }
+            }
+
             if (targetCommentId != null) {
                 var targetRows = jdbc.query(
                         "select member_id from content.community_comment where id = ? and post_id = ?",
@@ -753,6 +893,8 @@ public class CommunityService {
             }
         } else if (targetCommentId != null) {
             throw invalidRequest();
+        } else {
+            targetMemberId = null;
         }
 
         if (targetMemberId != null) {
@@ -931,6 +1073,242 @@ public class CommunityService {
                 Integer.class,
                 commentId, commentId);
         return new ReportResponse(commentId, reportCount == null ? 0 : reportCount, report);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public CommunityPostPageResponse listMemberPosts(Long targetMemberId, Long cursorId, Integer size, Long viewerId) {
+        int limit = validateActivityPageLimit(cursorId, size);
+        requirePublicActiveMember(targetMemberId);
+
+        StringBuilder sql = new StringBuilder(
+                "select p.id, p.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
+                        + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
+                        + "p.shared_position_json, p.created_at, p.updated_at, "
+                        + (viewerId == null
+                        ? "false as liked_by_me, false as reported_by_me "
+                        : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me, "
+                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ?) as reported_by_me ")
+                        + "from content.community_post p "
+                        + "join content.member m on m.id = p.member_id "
+                        + "where p.status = 'ACTIVE' and p.member_id = ?");
+
+        List<Object> params = new ArrayList<>();
+        if (viewerId != null) {
+            params.add(viewerId);
+            params.add(viewerId);
+        }
+        params.add(targetMemberId);
+        if (cursorId != null) {
+            sql.append(" and p.id < ?");
+            params.add(cursorId);
+        }
+        sql.append(" order by p.id desc limit ?");
+        params.add(limit + 1);
+
+        var rawRows = jdbc.query(sql.toString(), (rs, n) -> mapRawPost(rs, viewerId), params.toArray());
+        boolean hasNext = rawRows.size() > limit;
+        var pageRaw = rawRows.subList(0, Math.min(limit, rawRows.size()));
+        var hydrated = hydratePostFiles(pageRaw);
+        Long nextCursorId = hasNext && !hydrated.isEmpty() ? hydrated.get(hydrated.size() - 1).id() : null;
+        return new CommunityPostPageResponse(hydrated, hasNext, nextCursorId);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public MemberCommunityCommentPageResponse listMemberComments(Long targetMemberId, Long cursorId, Integer size, Long viewerId) {
+        int limit = validateActivityPageLimit(cursorId, size);
+        requirePublicActiveMember(targetMemberId);
+
+        StringBuilder sql = new StringBuilder(
+                "select c.id, c.post_id, p.title as post_title, p.category as post_category, p.symbol_tag as post_symbol_tag, "
+                        + "c.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
+                        + "c.parent_comment_id, c.target_comment_id, c.target_member_id, "
+                        + "tm.nickname as target_member_nickname, tm.status as target_member_status, "
+                        + "c.content, c.like_count, c.report_count, c.created_at, c.updated_at, "
+                        + (viewerId == null
+                        ? "false as liked_by_me, false as reported_by_me "
+                        : "exists(select 1 from content.community_comment_like l where l.comment_id = c.id and l.member_id = ?) as liked_by_me, "
+                          + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
+                        + "from content.community_comment c "
+                        + "join content.community_post p on p.id = c.post_id "
+                        + "join content.member m on m.id = c.member_id "
+                        + "left join content.member tm on tm.id = c.target_member_id "
+                        + "where c.member_id = ? and c.status = 'ACTIVE' and p.status = 'ACTIVE'");
+
+        List<Object> params = new ArrayList<>();
+        if (viewerId != null) {
+            params.add(viewerId);
+            params.add(viewerId);
+        }
+        params.add(targetMemberId);
+        if (cursorId != null) {
+            sql.append(" and c.id < ?");
+            params.add(cursorId);
+        }
+        sql.append(" order by c.id desc limit ?");
+        params.add(limit + 1);
+
+        var rows = jdbc.query(sql.toString(), (rs, n) -> mapMemberCommentItem(rs, viewerId), params.toArray());
+        boolean hasNext = rows.size() > limit;
+        var page = rows.subList(0, Math.min(limit, rows.size()));
+        Long nextCursorId = hasNext && !page.isEmpty() ? page.get(page.size() - 1).id() : null;
+        return new MemberCommunityCommentPageResponse(page, hasNext, nextCursorId);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public CommunityPostPageResponse listMemberLikedPosts(Long targetMemberId, Long cursorId, Integer size, Long viewerId) {
+        int limit = validateActivityPageLimit(cursorId, size);
+        requirePublicActiveMember(targetMemberId);
+
+        StringBuilder sql = new StringBuilder(
+                "select p.id, p.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
+                        + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
+                        + "p.shared_position_json, p.created_at, p.updated_at, "
+                        + (viewerId == null
+                        ? "false as liked_by_me, false as reported_by_me "
+                        : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me, "
+                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ?) as reported_by_me ")
+                        + "from content.community_post p "
+                        + "join content.member m on m.id = p.member_id "
+                        + "where p.status = 'ACTIVE' "
+                        + "and exists(select 1 from content.community_post_like pl where pl.post_id = p.id and pl.member_id = ?)");
+
+        List<Object> params = new ArrayList<>();
+        if (viewerId != null) {
+            params.add(viewerId);
+            params.add(viewerId);
+        }
+        params.add(targetMemberId);
+        if (cursorId != null) {
+            sql.append(" and p.id < ?");
+            params.add(cursorId);
+        }
+        sql.append(" order by p.id desc limit ?");
+        params.add(limit + 1);
+
+        var rawRows = jdbc.query(sql.toString(), (rs, n) -> mapRawPost(rs, viewerId), params.toArray());
+        boolean hasNext = rawRows.size() > limit;
+        var pageRaw = rawRows.subList(0, Math.min(limit, rawRows.size()));
+        var hydrated = hydratePostFiles(pageRaw);
+        Long nextCursorId = hasNext && !hydrated.isEmpty() ? hydrated.get(hydrated.size() - 1).id() : null;
+        return new CommunityPostPageResponse(hydrated, hasNext, nextCursorId);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public MemberCommunityCommentPageResponse listMemberLikedComments(Long targetMemberId, Long cursorId, Integer size, Long viewerId) {
+        int limit = validateActivityPageLimit(cursorId, size);
+        requirePublicActiveMember(targetMemberId);
+
+        StringBuilder sql = new StringBuilder(
+                "select c.id, c.post_id, p.title as post_title, p.category as post_category, p.symbol_tag as post_symbol_tag, "
+                        + "c.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
+                        + "c.parent_comment_id, c.target_comment_id, c.target_member_id, "
+                        + "tm.nickname as target_member_nickname, tm.status as target_member_status, "
+                        + "c.content, c.like_count, c.report_count, c.created_at, c.updated_at, "
+                        + (viewerId == null
+                        ? "false as liked_by_me, false as reported_by_me "
+                        : "exists(select 1 from content.community_comment_like l where l.comment_id = c.id and l.member_id = ?) as liked_by_me, "
+                          + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
+                        + "from content.community_comment c "
+                        + "join content.community_post p on p.id = c.post_id "
+                        + "join content.member m on m.id = c.member_id "
+                        + "left join content.member tm on tm.id = c.target_member_id "
+                        + "where c.status = 'ACTIVE' and p.status = 'ACTIVE' "
+                        + "and exists(select 1 from content.community_comment_like cl where cl.comment_id = c.id and cl.member_id = ?)");
+
+        List<Object> params = new ArrayList<>();
+        if (viewerId != null) {
+            params.add(viewerId);
+            params.add(viewerId);
+        }
+        params.add(targetMemberId);
+        if (cursorId != null) {
+            sql.append(" and c.id < ?");
+            params.add(cursorId);
+        }
+        sql.append(" order by c.id desc limit ?");
+        params.add(limit + 1);
+
+        var rows = jdbc.query(sql.toString(), (rs, n) -> mapMemberCommentItem(rs, viewerId), params.toArray());
+        boolean hasNext = rows.size() > limit;
+        var page = rows.subList(0, Math.min(limit, rows.size()));
+        Long nextCursorId = hasNext && !page.isEmpty() ? page.get(page.size() - 1).id() : null;
+        return new MemberCommunityCommentPageResponse(page, hasNext, nextCursorId);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public MemberCommunityReportPageResponse listMyReports(Long memberId, Long cursorId, Integer size) {
+        if (memberId == null || memberId <= 0) {
+            throw AuthFailure.unauthorized();
+        }
+        int limit = validateActivityPageLimit(cursorId, size);
+        members.findById(memberId)
+                .filter(m -> m.getStatus() == Member.Status.ACTIVE)
+                .orElseThrow(() -> new AuthFailure("MEMBER_NOT_ACTIVE", HttpStatus.UNAUTHORIZED));
+
+        StringBuilder sql = new StringBuilder(
+                "select synthetic_id, target_type, target_id, post_id, title, reason_type, created_at from ("
+                        + "select (pr.post_id * 2 + 1) as synthetic_id, 'POST' as target_type, pr.post_id as target_id, "
+                        + "pr.post_id as post_id, p.title as title, pr.reason_type as reason_type, pr.created_at as created_at "
+                        + "from content.community_post_report pr "
+                        + "join content.community_post p on p.id = pr.post_id "
+                        + "where pr.member_id = ? and p.status = 'ACTIVE' "
+                        + "union all "
+                        + "select (cr.comment_id * 2) as synthetic_id, 'COMMENT' as target_type, cr.comment_id as target_id, "
+                        + "c.post_id as post_id, c.content as title, cr.reason_type as reason_type, cr.created_at as created_at "
+                        + "from content.community_comment_report cr "
+                        + "join content.community_comment c on c.id = cr.comment_id "
+                        + "join content.community_post p on p.id = c.post_id "
+                        + "where cr.member_id = ? and c.status = 'ACTIVE' and p.status = 'ACTIVE'"
+                        + ") combined ");
+
+        List<Object> params = new ArrayList<>();
+        params.add(memberId);
+        params.add(memberId);
+        if (cursorId != null) {
+            sql.append("where combined.synthetic_id < ? ");
+            params.add(cursorId);
+        }
+        sql.append("order by combined.synthetic_id desc limit ?");
+        params.add(limit + 1);
+
+        var rows = jdbc.query(
+                sql.toString(),
+                (rs, n) -> {
+                    String reasonType = rs.getString("reason_type");
+                    return new MemberCommunityReportItem(
+                            rs.getLong("synthetic_id"),
+                            rs.getString("target_type"),
+                            rs.getLong("target_id"),
+                            rs.getLong("post_id"),
+                            rs.getString("title"),
+                            reasonType,
+                            REPORT_REASONS.getOrDefault(reasonType, "기타"),
+                            "RECEIVED",
+                            rs.getTimestamp("created_at").toInstant());
+                },
+                params.toArray());
+
+        boolean hasNext = rows.size() > limit;
+        var page = rows.subList(0, Math.min(limit, rows.size()));
+        Long nextCursorId = hasNext && !page.isEmpty() ? page.get(page.size() - 1).id() : null;
+        return new MemberCommunityReportPageResponse(page, hasNext, nextCursorId);
+    }
+
+    private static int validateActivityPageLimit(Long cursorId, Integer size) {
+        int limit = size == null ? 10 : size;
+        if (limit < 1 || limit > 30 || (cursorId != null && cursorId <= 0)) {
+            throw invalidRequest();
+        }
+        return limit;
+    }
+
+    private void requirePublicActiveMember(Long targetMemberId) {
+        if (targetMemberId == null || targetMemberId <= 0) {
+            throw notFound();
+        }
+        members.findById(targetMemberId)
+                .filter(m -> m.getStatus() == Member.Status.ACTIVE)
+                .orElseThrow(CommunityService::notFound);
     }
 
     private void insertUploadedFiles(Long postId, List<CommunityS3Service.UploadResult> uploadedFiles) {
@@ -1234,6 +1612,56 @@ public class CommunityService {
         );
     }
 
+    private static MemberCommunityCommentItem mapMemberCommentItem(ResultSet rs, Long viewerId) throws SQLException {
+        long authorId = rs.getLong("member_id");
+        String nickname = rs.getString("member_nickname");
+        String memberStatus = rs.getString("member_status");
+        boolean authorWithdrawn = "WITHDRAWN".equals(memberStatus) || nickname == null;
+        String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
+        String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
+
+        long parentRaw = rs.getLong("parent_comment_id");
+        Long parentCommentId = rs.wasNull() ? null : parentRaw;
+
+        long targetCommentRaw = rs.getLong("target_comment_id");
+        Long targetCommentId = rs.wasNull() ? null : targetCommentRaw;
+
+        long targetMemberRaw = rs.getLong("target_member_id");
+        Long targetMemberId = rs.wasNull() ? null : targetMemberRaw;
+
+        String targetNickname = null;
+        if (targetMemberId != null) {
+            String rawTargetNick = rs.getString("target_member_nickname");
+            String rawTargetStatus = rs.getString("target_member_status");
+            boolean targetWithdrawn = "WITHDRAWN".equals(rawTargetStatus) || rawTargetNick == null;
+            targetNickname = targetWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : rawTargetNick;
+        }
+
+        return new MemberCommunityCommentItem(
+                rs.getLong("id"),
+                rs.getLong("post_id"),
+                rs.getString("post_title"),
+                rs.getString("post_category"),
+                rs.getString("post_symbol_tag"),
+                authorId,
+                displayNickname,
+                displayProfileImgUrl,
+                authorWithdrawn,
+                parentCommentId,
+                targetCommentId,
+                targetMemberId,
+                targetNickname,
+                rs.getString("content"),
+                rs.getInt("like_count"),
+                rs.getInt("report_count"),
+                rs.getBoolean("liked_by_me"),
+                rs.getBoolean("reported_by_me"),
+                viewerId != null && viewerId.equals(authorId),
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getTimestamp("updated_at").toInstant()
+        );
+    }
+
     private record LockedPost(
             Long id,
             Long memberId,
@@ -1246,6 +1674,8 @@ public class CommunityService {
     ) { }
 
     private record OwnerStatus(Long memberId, String status) { }
+
+    private record CommentNodeRow(Long id, Long memberId, Long parentCommentId, String status) { }
 
     private record CommentOwnerStatus(Long postId, Long memberId, String status) { }
 
