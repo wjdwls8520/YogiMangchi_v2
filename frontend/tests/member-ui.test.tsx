@@ -46,6 +46,14 @@ import { MemberMyProfilePage } from "../src/features/member/components/member-pr
 import { PublicMember } from "../src/features/member/components/public-member";
 import { V1Header } from "../src/features/member/components/v1-ui";
 import { SiteFooter } from "../src/components/site-footer";
+import {
+  FALLBACK_MARKET_OVERVIEW,
+  classifyFearGreedLabelKr,
+  computeBtcDominanceChange24h,
+  computeKimchiPremiumPercent,
+  fetchLiveMarketOverview,
+  parseMarketOverviewPayload,
+} from "../src/features/member/api/market-overview";
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
 
 test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
@@ -1173,3 +1181,92 @@ test("MemberShell and MemberLoginView render the official /images/logo.webp bran
     client.clear();
   }
 });
+
+test("Market overview helpers and MainPortal top ticker bar bind free public market metrics with safe fallbacks", async () => {
+  assert.equal(classifyFearGreedLabelKr(15), "극단적 공포");
+  assert.equal(classifyFearGreedLabelKr(35), "공포");
+  assert.equal(classifyFearGreedLabelKr(50), "중립");
+  assert.equal(classifyFearGreedLabelKr(68), "탐욕");
+  assert.equal(classifyFearGreedLabelKr(82), "극단적 탐욕");
+
+  assert.equal(computeKimchiPremiumPercent(135_000_000, 96_500, 1_385), 1.01);
+  const domDelta = computeBtcDominanceChange24h(58.2, 1.8, 4.2);
+  assert.equal(domDelta > 0, true);
+
+  const liveOverview = await fetchLiveMarketOverview(async url => {
+    const target = String(url);
+    if (target.includes("api.coingecko.com/api/v3/global")) {
+      return Response.json({
+        data: {
+          market_cap_percentage: { btc: 58.34 },
+          market_cap_change_percentage_24h_usd: 1.5,
+        },
+      });
+    }
+    if (target.includes("fapi.binance.com/fapi/v1/ticker/24hr")) {
+      return Response.json({
+        lastPrice: "97200.00",
+        priceChangePercent: "3.10",
+      });
+    }
+    if (target.includes("api.upbit.com/v1/ticker")) {
+      return Response.json([{ trade_price: 136_500_000 }]);
+    }
+    if (target.includes("open.er-api.com")) {
+      return Response.json({ rates: { KRW: 1390 } });
+    }
+    if (target.includes("api.coingecko.com/api/v3/derivatives/exchanges")) {
+      return Response.json([
+        { id: "binance_futures", open_interest_btc: 425_000 },
+      ]);
+    }
+    if (target.includes("api.alternative.me/fng")) {
+      return Response.json({
+        data: [{ value: "74", value_classification: "Greed" }],
+      });
+    }
+    return new Response("not found", { status: 404 });
+  });
+
+  assert.equal(liveOverview.btcDominancePercent, 58.3);
+  assert.equal(liveOverview.btcDominanceChange24h > 0, true);
+  assert.equal(liveOverview.kimchiPremiumPercent, 1.03);
+  assert.equal(liveOverview.openInterestBillionsUsd, 41.3);
+  assert.equal(liveOverview.fearGreedValue, 74);
+  assert.equal(liveOverview.fearGreedLabelKr, "탐욕");
+
+  const fallbackOverview = await fetchLiveMarketOverview(async () => {
+    throw new Error("network down");
+  });
+  assert.equal(fallbackOverview.btcDominancePercent, FALLBACK_MARKET_OVERVIEW.btcDominancePercent);
+  assert.equal(fallbackOverview.kimchiPremiumPercent, FALLBACK_MARKET_OVERVIEW.kimchiPremiumPercent);
+  assert.equal(fallbackOverview.openInterestBillionsUsd, FALLBACK_MARKET_OVERVIEW.openInterestBillionsUsd);
+  assert.equal(fallbackOverview.fearGreedValue, FALLBACK_MARKET_OVERVIEW.fearGreedValue);
+  assert.equal(fallbackOverview.fearGreedLabelKr, FALLBACK_MARKET_OVERVIEW.fearGreedLabelKr);
+
+  const parsed = parseMarketOverviewPayload({
+    btcDominancePercent: 59.1,
+    btcDominanceChange24h: -0.45,
+    kimchiPremiumPercent: -0.32,
+    openInterestBillionsUsd: 44.8,
+    fearGreedValue: 22,
+    fearGreedLabelKr: "극단적 공포",
+    updatedAt: "2026-11-10T09:30:00Z",
+  });
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal initialMarketOverview={parsed} />
+      </MemberProvider>,
+    );
+    assert.match(html, /BTC 도미넌스[\s\S]*?>59\.1%<\/strong>[\s\S]*?text-blue-600">-0\.45%<\/em>/);
+    assert.match(html, /김치프리미엄[\s\S]*?>-0\.32%<\/strong>/);
+    assert.match(html, /24h 선물 미결제약정[\s\S]*?>\$44\.8B<\/strong>/);
+    assert.match(html, /공포·탐욕 지수[\s\S]*?>22 \(극단적 공포\)<\/strong>/);
+  } finally {
+    client.clear();
+  }
+});
+

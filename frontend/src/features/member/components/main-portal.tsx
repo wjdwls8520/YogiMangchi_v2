@@ -13,6 +13,11 @@ import {
   type CommunityPost,
   type NewsItem,
 } from "../api/community-news";
+import {
+  FALLBACK_MARKET_OVERVIEW,
+  parseMarketOverviewPayload,
+  type MarketOverviewData,
+} from "../api/market-overview";
 import { DimModal } from "./dim-modal";
 import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
 import {
@@ -178,7 +183,11 @@ const POPULAR_COINS = [
   },
 ] as const;
 
-export function MainPortal() {
+export function MainPortal({
+  initialMarketOverview,
+}: {
+  initialMarketOverview?: MarketOverviewData;
+} = {}) {
   const { origin, session, snapshot } = useMember();
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
   const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false);
@@ -194,6 +203,20 @@ export function MainPortal() {
   const [simLeverage, setSimLeverage] = useState<number>(10);
   const [simMargin, setSimMargin] = useState<number>(1000);
   const [simMovePercent, setSimMovePercent] = useState<number>(3.5);
+
+  const marketOverviewQuery = useQuery<MarketOverviewData>({
+    queryKey: ["portal-market-overview"],
+    initialData: initialMarketOverview,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async ({ signal }) => {
+      const response = await fetch("/api/market-overview", { signal });
+      if (!response.ok) {
+        throw new Error(`market-overview HTTP ${response.status}`);
+      }
+      return parseMarketOverviewPayload(await response.json());
+    },
+  });
 
   const newsQuery = useQuery({
     queryKey: ["portal-news", origin, snapshot.generation],
@@ -216,6 +239,7 @@ export function MainPortal() {
       ),
   });
 
+  const marketOverview = marketOverviewQuery.data ?? FALLBACK_MARKET_OVERVIEW;
   const newsItems = newsQuery.data?.items?.length ? newsQuery.data.items : FALLBACK_NEWS;
   const postItems = postsQuery.data?.items?.length ? postsQuery.data.items : FALLBACK_POSTS;
 
@@ -272,17 +296,39 @@ export function MainPortal() {
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-3 px-4 md:px-6">
           <div className="flex flex-wrap items-center gap-4">
             <span className="font-bold text-gray-500">
-              BTC 도미넌스 <strong className="text-gray-900">56.4%</strong>{" "}
-              <em className="not-italic font-bold text-red-500">+0.32%</em>
+              BTC 도미넌스{" "}
+              <strong className="text-gray-900">
+                {marketOverview.btcDominancePercent.toFixed(1)}%
+              </strong>{" "}
+              <em
+                className={
+                  marketOverview.btcDominanceChange24h >= 0
+                    ? "not-italic font-bold text-red-500"
+                    : "not-italic font-bold text-blue-600"
+                }
+              >
+                {marketOverview.btcDominanceChange24h >= 0 ? "+" : ""}
+                {marketOverview.btcDominanceChange24h.toFixed(2)}%
+              </em>
             </span>
             <span className="font-bold text-gray-500">
-              김치프리미엄 <strong className="text-gray-900">+0.85%</strong>
+              김치프리미엄{" "}
+              <strong className="text-gray-900">
+                {marketOverview.kimchiPremiumPercent >= 0 ? "+" : ""}
+                {marketOverview.kimchiPremiumPercent.toFixed(2)}%
+              </strong>
             </span>
             <span className="font-bold text-gray-500">
-              24h 선물 미결제약정 <strong className="text-gray-900">$38.4B</strong>
+              24h 선물 미결제약정{" "}
+              <strong className="text-gray-900">
+                ${marketOverview.openInterestBillionsUsd.toFixed(1)}B
+              </strong>
             </span>
             <span className="font-bold text-gray-500">
-              공포·탐욕 지수 <strong className="text-[#0058FF]">68 (탐욕)</strong>
+              공포·탐욕 지수{" "}
+              <strong className="text-[#0058FF]">
+                {marketOverview.fearGreedValue} ({marketOverview.fearGreedLabelKr})
+              </strong>
             </span>
           </div>
           <Link href="/trading" className="font-bold text-[#0058FF] hover:underline">
