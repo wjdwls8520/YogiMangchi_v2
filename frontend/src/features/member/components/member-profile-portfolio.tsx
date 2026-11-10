@@ -925,12 +925,6 @@ export function MemberMyProfilePage({
                         가상 USDT 기반 선물 모의투자 원장 및 실시간 증거금 비중을 확인합니다.
                       </p>
                     </div>
-                    <Link
-                      href="/trading"
-                      className="inline-flex h-9 items-center justify-center rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white hover:bg-blue-700"
-                    >
-                      터미널에서 주문하기 →
-                    </Link>
                   </div>
 
                   <div className="grid grid-cols-1 gap-6 md:grid-cols-2">

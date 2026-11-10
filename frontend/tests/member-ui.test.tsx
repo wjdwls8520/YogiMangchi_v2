@@ -1075,6 +1075,7 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
       </MemberProvider>,
     );
     assert.match(meLoggedInHtml, /내 모의투자 자산/);
+    assert.equal(meLoggedInHtml.includes("터미널에서 주문하기"), false);
     assert.match(meLoggedInHtml, /data-tab-variant="bookmark"/);
     assert.equal(meLoggedInHtml.includes("border-t-[3px]"), false);
     assert.equal(meLoggedInHtml.includes("transition-all"), false);
