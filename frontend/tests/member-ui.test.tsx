@@ -39,7 +39,7 @@ import {
 } from "../src/features/member/api/community-news";
 import { NewsFeed, computeLiveNewsSentiment } from "../src/features/member/components/news-feed";
 import { CommunityBoard } from "../src/features/member/components/community-board";
-import { MainPortal } from "../src/features/member/components/main-portal";
+import { MainPortal, mapRedisTickersToPopularCoins } from "../src/features/member/components/main-portal";
 import { MemberSignupPage } from "../src/features/member/components/member-auth";
 import { MemberAccount } from "../src/features/member/components/member-account";
 import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
@@ -48,6 +48,8 @@ import { V1Header } from "../src/features/member/components/v1-ui";
 import { SiteFooter } from "../src/components/site-footer";
 import {
   FALLBACK_MARKET_OVERVIEW,
+  buildDeterministicUsdKrwHistory,
+  buildExchangeRateChartGeometry,
   classifyFearGreedLabelKr,
   computeBtcDominanceChange24h,
   computeKimchiPremiumPercent,
@@ -1405,5 +1407,157 @@ test("NewsFeed 실시간 뉴스 투자 심리 card dynamically binds real news s
     client.clear();
   }
 });
+
+test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-server Redis Top 3 popular coins", async () => {
+  const detHistory = buildDeterministicUsdKrwHistory(1405.2);
+  assert.equal(detHistory.length, 14);
+  assert.equal(detHistory[13], 1405.2);
+
+  const chartGeo = buildExchangeRateChartGeometry([
+    1390.0, 1392.0, 1391.5, 1394.0, 1395.5, 1396.0, 1397.2, 1398.4, 1400.1, 1401.5,
+    1403.0, 1404.2, 1408.6, 1405.2,
+  ]);
+  assert.equal(chartGeo.twoWeeksAgoRate, 1390.0);
+  assert.equal(chartGeo.oneWeekAgoRate, 1398.4);
+  assert.equal(chartGeo.todayRate, 1405.2);
+  assert.match(chartGeo.polylinePoints, /^10,\d+\.\d+ .* 410,\d+\.\d+$/);
+
+  const mappedCoins = mapRedisTickersToPopularCoins([
+    {
+      tradingSymbolId: 1,
+      symbol: "BTC",
+      quoteAsset: "USDT",
+      markPrice: "96840.25",
+      changePercent24h: "3.42",
+      highPrice24h: "97500.00",
+      lowPrice24h: "93200.00",
+      quoteVolume24h: "2450800000",
+      status: "FRESH",
+    },
+    {
+      tradingSymbolId: 2,
+      symbol: "ETH",
+      quoteAsset: "USDT",
+      markPrice: "3085.50",
+      changePercent24h: "-1.75",
+      highPrice24h: "3180.00",
+      lowPrice24h: "3050.00",
+      quoteVolume24h: "980400000",
+      status: "FRESH",
+    },
+    {
+      tradingSymbolId: 3,
+      symbol: "SOL",
+      quoteAsset: "USDT",
+      markPrice: "228.90",
+      changePercent24h: "6.15",
+      highPrice24h: "232.00",
+      lowPrice24h: "214.00",
+      quoteVolume24h: "745200000",
+      status: "FRESH",
+    },
+  ]);
+
+  assert.equal(mappedCoins.length, 3);
+  assert.equal(mappedCoins[0].price, "$96,840.25");
+  assert.equal(mappedCoins[0].changeRate, 3.42);
+  assert.equal(mappedCoins[0].volume, "2,450.8M USDT");
+  assert.equal(mappedCoins[0].strokeColor, "#EF4444");
+
+  assert.equal(mappedCoins[1].price, "$3,085.50");
+  assert.equal(mappedCoins[1].changeRate, -1.75);
+  assert.equal(mappedCoins[1].volume, "980.4M USDT");
+  assert.equal(mappedCoins[1].strokeColor, "#2563EB");
+
+  assert.equal(mappedCoins[2].price, "$228.90");
+  assert.equal(mappedCoins[2].changeRate, 6.15);
+  assert.equal(mappedCoins[2].volume, "745.2M USDT");
+  assert.equal(mappedCoins[2].strokeColor, "#EF4444");
+
+  const customOverview = parseMarketOverviewPayload({
+    btcDominancePercent: 58.1,
+    btcDominanceChange24h: 0.41,
+    kimchiPremiumPercent: 1.12,
+    openInterestBillionsUsd: 40.5,
+    fearGreedValue: 71,
+    fearGreedLabelKr: "탐욕",
+    futuresBullPct: 58,
+    futuresBearPct: 42,
+    btcChange24h: 3.42,
+    usdKrwRate: 1405.2,
+    usdKrwChangeAmount: -3.4,
+    usdKrwChangePct: -0.24,
+    usdKrwHistory: [
+      1390.0, 1392.0, 1391.5, 1394.0, 1395.5, 1396.0, 1397.2, 1398.4, 1400.1, 1401.5,
+      1403.0, 1404.2, 1408.6, 1405.2,
+    ],
+    updatedAt: "2026-11-10T10:00:00Z",
+  });
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal
+          initialMarketOverview={customOverview}
+          initialTickers={[
+            {
+              tradingSymbolId: 1,
+              symbol: "BTC",
+              quoteAsset: "USDT",
+              markPrice: "96840.25",
+              changePercent24h: "3.42",
+              highPrice24h: "97500.00",
+              lowPrice24h: "93200.00",
+              quoteVolume24h: "2450800000",
+              status: "FRESH",
+            },
+            {
+              tradingSymbolId: 2,
+              symbol: "ETH",
+              quoteAsset: "USDT",
+              markPrice: "3085.50",
+              changePercent24h: "-1.75",
+              highPrice24h: "3180.00",
+              lowPrice24h: "3050.00",
+              quoteVolume24h: "980400000",
+              status: "FRESH",
+            },
+            {
+              tradingSymbolId: 3,
+              symbol: "SOL",
+              quoteAsset: "USDT",
+              markPrice: "228.90",
+              changePercent24h: "6.15",
+              highPrice24h: "232.00",
+              lowPrice24h: "214.00",
+              quoteVolume24h: "745200000",
+              status: "FRESH",
+            },
+          ]}
+        />
+      </MemberProvider>,
+    );
+
+    assert.match(html, /1 YD = 1,405\.20 KRW/);
+    assert.match(html, /▼ -3\.40 \(-0\.24%\)/);
+    assert.match(html, /2주 전 \(1,390\.0원\)/);
+    assert.match(html, /1주 전 \(1,398\.4원\)/);
+    assert.match(html, /오늘 \(1,405\.2원\)/);
+    assert.match(html, /value="140,520"/);
+
+    assert.match(html, /\$96,840\.25/);
+    assert.match(html, /\+3\.42%/);
+    assert.match(html, /24h 거래대금 2,450\.8M USDT/);
+
+    assert.match(html, /\$3,085\.50/);
+    assert.match(html, /text-blue-600">-1\.75%<\/span>/);
+    assert.match(html, /24h 거래대금 980\.4M USDT/);
+    assert.match(html, /stroke="#2563EB"/);
+  } finally {
+    client.clear();
+  }
+});
+
 
 

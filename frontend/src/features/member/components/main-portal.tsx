@@ -15,9 +15,11 @@ import {
 } from "../api/community-news";
 import {
   FALLBACK_MARKET_OVERVIEW,
+  buildExchangeRateChartGeometry,
   parseMarketOverviewPayload,
   type MarketOverviewData,
 } from "../api/market-overview";
+import { marketTickersJson } from "../../trading/api/client";
 import { DimModal } from "./dim-modal";
 import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
 import {
@@ -148,15 +150,10 @@ const FALLBACK_POSTS: CommunityPost[] = [
   },
 ];
 
-const EXCHANGE_RATE_HISTORY = [
-  1368.2, 1370.5, 1369.1, 1372.4, 1375.0, 1373.8, 1376.2, 1378.9, 1377.5, 1380.1,
-  1382.4, 1381.0, 1383.6, 1384.5,
-];
-
 const POPULAR_COINS = [
   {
     symbol: "BTCUSDT",
-    base: "BTC",
+    base: "BTC" as const,
     nameKr: "비트코인",
     price: "$94,280.50",
     changeRate: 2.84,
@@ -165,7 +162,7 @@ const POPULAR_COINS = [
   },
   {
     symbol: "ETHUSDT",
-    base: "ETH",
+    base: "ETH" as const,
     nameKr: "이더리움",
     price: "$3,142.10",
     changeRate: 1.92,
@@ -174,7 +171,7 @@ const POPULAR_COINS = [
   },
   {
     symbol: "SOLUSDT",
-    base: "SOL",
+    base: "SOL" as const,
     nameKr: "솔라나",
     price: "$212.40",
     changeRate: 4.65,
@@ -183,20 +180,158 @@ const POPULAR_COINS = [
   },
 ] as const;
 
+export interface PopularCoinCardData {
+  symbol: string;
+  base: "BTC" | "ETH" | "SOL";
+  nameKr: string;
+  price: string;
+  changeRate: number;
+  volume: string;
+  sparkline: string;
+  strokeColor: "#EF4444" | "#2563EB";
+}
+
+function buildCoinSparkline(
+  changeRate: number,
+  markPrice: number,
+  lowPrice24h: number,
+  highPrice24h: number,
+  fallbackSparkline: string,
+): string {
+  if (!Number.isFinite(markPrice) || markPrice <= 0) {
+    return fallbackSparkline;
+  }
+  const hasRange =
+    Number.isFinite(lowPrice24h) &&
+    Number.isFinite(highPrice24h) &&
+    highPrice24h > lowPrice24h &&
+    lowPrice24h > 0;
+  const ratio = hasRange
+    ? Math.max(0.08, Math.min(0.92, (markPrice - lowPrice24h) / (highPrice24h - lowPrice24h)))
+    : changeRate >= 0
+      ? 0.82
+      : 0.18;
+
+  const yEnd = Math.round(38 - ratio * 28);
+  if (changeRate >= 0) {
+    const yStart = Math.min(40, Math.max(yEnd + 14, 36));
+    const span = yStart - yEnd;
+    const ys = [
+      yStart,
+      Math.round(yStart - span * 0.22),
+      Math.round(yStart - span * 0.14),
+      Math.round(yStart - span * 0.48),
+      Math.round(yStart - span * 0.42),
+      Math.round(yStart - span * 0.78),
+      yEnd,
+    ];
+    return ys.map((y, idx) => `${idx === 0 ? "M" : "L"} ${idx * 20} ${y}`).join(" ");
+  }
+
+  const yStart = Math.max(6, Math.min(yEnd - 14, 12));
+  const span = yEnd - yStart;
+  const ys = [
+    yStart,
+    Math.round(yStart + span * 0.24),
+    Math.round(yStart + span * 0.16),
+    Math.round(yStart + span * 0.52),
+    Math.round(yStart + span * 0.44),
+    Math.round(yStart + span * 0.8),
+    yEnd,
+  ];
+  return ys.map((y, idx) => `${idx === 0 ? "M" : "L"} ${idx * 20} ${y}`).join(" ");
+}
+
+export function mapRedisTickersToPopularCoins(rawTickers: unknown): PopularCoinCardData[] {
+  const list = Array.isArray(rawTickers) ? rawTickers : [];
+  return POPULAR_COINS.map(baseCoin => {
+    const matched = list.find(item => {
+      if (!item || typeof item !== "object") return false;
+      const row = item as Record<string, unknown>;
+      const sym = String(row.symbol ?? "").toUpperCase();
+      const quote = String(row.quoteAsset ?? "USDT").toUpperCase();
+      return (sym === baseCoin.base || sym === baseCoin.symbol) && quote === "USDT";
+    }) as Record<string, unknown> | undefined;
+
+    if (!matched || matched.status === "UNAVAILABLE") {
+      return {
+        ...baseCoin,
+        strokeColor: baseCoin.changeRate >= 0 ? "#EF4444" : "#2563EB",
+      };
+    }
+
+    const rawMark = matched.markPrice;
+    const markNum =
+      rawMark !== null && rawMark !== undefined && rawMark !== "" ? Number(rawMark) : Number.NaN;
+    const price =
+      Number.isFinite(markNum) && markNum > 0
+        ? `$${markNum.toLocaleString("en-US", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`
+        : baseCoin.price;
+
+    const rawChange = matched.changePercent24h;
+    const changeNum =
+      rawChange !== null && rawChange !== undefined && rawChange !== ""
+        ? Number(rawChange)
+        : Number.NaN;
+    const changeRate = Number.isFinite(changeNum)
+      ? Number(changeNum.toFixed(2))
+      : baseCoin.changeRate;
+
+    const rawVol = matched.quoteVolume24h;
+    const volNum =
+      rawVol !== null && rawVol !== undefined && rawVol !== "" ? Number(rawVol) : Number.NaN;
+    const volume =
+      Number.isFinite(volNum) && volNum > 0
+        ? `${(volNum / 1_000_000).toLocaleString("en-US", {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1,
+          })}M USDT`
+        : baseCoin.volume;
+
+    const lowNum = Number(matched.lowPrice24h);
+    const highNum = Number(matched.highPrice24h);
+    const sparkline =
+      Number.isFinite(markNum) && markNum > 0
+        ? buildCoinSparkline(changeRate, markNum, lowNum, highNum, baseCoin.sparkline)
+        : baseCoin.sparkline;
+
+    return {
+      symbol: baseCoin.symbol,
+      base: baseCoin.base,
+      nameKr: baseCoin.nameKr,
+      price,
+      changeRate,
+      volume,
+      sparkline,
+      strokeColor: changeRate >= 0 ? "#EF4444" : "#2563EB",
+    };
+  });
+}
+
 export function MainPortal({
   initialMarketOverview,
+  initialTickers,
 }: {
   initialMarketOverview?: MarketOverviewData;
+  initialTickers?: unknown;
 } = {}) {
   const { origin, session, snapshot } = useMember();
+  const tradingBase =
+    process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ??
+    process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
+    "http://localhost:8081";
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
   const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false);
   const [reportFiles, setReportFiles] = useState<SelectedS3File[]>([]);
 
-  // V1 환율 계산기 상태 (1 YD = 1,384.50 KRW)
-  const exchangeRate = 1384.5;
   const [ydInput, setYdInput] = useState("100");
-  const [krwInput, setKrwInput] = useState(() => Math.round(100 * 1384.5).toLocaleString("ko-KR"));
+  const [krwInput, setKrwInput] = useState(() =>
+    Math.round(100 * FALLBACK_MARKET_OVERVIEW.usdKrwRate).toLocaleString("ko-KR"),
+  );
+  const [userEditedCalc, setUserEditedCalc] = useState(false);
 
   // 선물 모의투자 퀵 시뮬레이터 상태
   const [simSide, setSimSide] = useState<"LONG" | "SHORT">("LONG");
@@ -216,6 +351,14 @@ export function MainPortal({
       }
       return parseMarketOverviewPayload(await response.json());
     },
+  });
+
+  const tickersQuery = useQuery({
+    queryKey: ["portal-redis-tickers", tradingBase],
+    initialData: initialTickers,
+    staleTime: 2_000,
+    refetchInterval: 3_000,
+    queryFn: async ({ signal }) => marketTickersJson(tradingBase, signal),
   });
 
   const newsQuery = useQuery({
@@ -240,6 +383,14 @@ export function MainPortal({
   });
 
   const marketOverview = marketOverviewQuery.data ?? FALLBACK_MARKET_OVERVIEW;
+  const exchangeRate = marketOverview.usdKrwRate;
+  const exchangeChart = buildExchangeRateChartGeometry(marketOverview.usdKrwHistory);
+  const popularCoins = mapRedisTickersToPopularCoins(tickersQuery.data);
+  const displayedKrwInput = userEditedCalc
+    ? krwInput
+    : ydInput && Number.isFinite(Number(ydInput))
+      ? Math.round(Number(ydInput) * exchangeRate).toLocaleString("ko-KR")
+      : krwInput;
   const newsItems = newsQuery.data?.items?.length ? newsQuery.data.items : FALLBACK_NEWS;
   const postItems = postsQuery.data?.items?.length ? postsQuery.data.items : FALLBACK_POSTS;
 
@@ -259,6 +410,7 @@ export function MainPortal({
   }, [simLeverage, simMargin, simMovePercent, simSide]);
 
   function handleYdChange(value: string) {
+    setUserEditedCalc(true);
     const raw = value.replace(/[^0-9.]/g, "");
     setYdInput(raw);
     const num = Number(raw);
@@ -270,6 +422,7 @@ export function MainPortal({
   }
 
   function handleKrwChange(value: string) {
+    setUserEditedCalc(true);
     const raw = value.replace(/[^0-9]/g, "");
     const num = Number(raw);
     if (!raw || Number.isNaN(num)) {
@@ -282,6 +435,7 @@ export function MainPortal({
   }
 
   function handleResetCalculator() {
+    setUserEditedCalc(true);
     setYdInput("1");
     setKrwInput(Math.round(exchangeRate).toLocaleString("ko-KR"));
   }
@@ -394,10 +548,23 @@ export function MainPortal({
                     <span className="text-xs font-bold text-gray-400">실시간 환율 변동 (USD/KRW)</span>
                     <div className="mt-1 flex items-baseline gap-2.5">
                       <strong className="text-2xl font-black text-gray-900 sm:text-3xl">
-                        1 YD = 1,384.50 KRW
+                        1 YD ={" "}
+                        {exchangeRate.toLocaleString("ko-KR", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{" "}
+                        KRW
                       </strong>
-                      <span className="rounded-md bg-red-50 px-2 py-0.5 text-xs font-bold text-red-500">
-                        ▲ +5.80 (+0.42%)
+                      <span
+                        className={
+                          marketOverview.usdKrwChangeAmount >= 0
+                            ? "rounded-md bg-red-50 px-2 py-0.5 text-xs font-bold text-red-500"
+                            : "rounded-md bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-600"
+                        }
+                      >
+                        {marketOverview.usdKrwChangeAmount >= 0
+                          ? `▲ +${marketOverview.usdKrwChangeAmount.toFixed(2)} (+${marketOverview.usdKrwChangePct.toFixed(2)}%)`
+                          : `▼ ${marketOverview.usdKrwChangeAmount.toFixed(2)} (${marketOverview.usdKrwChangePct.toFixed(2)}%)`}
                       </span>
                     </div>
                   </div>
@@ -418,17 +585,34 @@ export function MainPortal({
                       strokeWidth="3"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      points={EXCHANGE_RATE_HISTORY.map((rate, idx) => {
-                        const x = (idx / (EXCHANGE_RATE_HISTORY.length - 1)) * 400 + 10;
-                        const y = 115 - ((rate - 1365) / 22) * 95;
-                        return `${x},${y.toFixed(1)}`;
-                      }).join(" ")}
+                      points={exchangeChart.polylinePoints}
                     />
                   </svg>
                   <div className="flex justify-between text-[11px] font-bold text-gray-400">
-                    <span>2주 전 (1,368.2원)</span>
-                    <span>1주 전 (1,376.2원)</span>
-                    <span className="text-[#0058FF]">오늘 (1,384.5원)</span>
+                    <span>
+                      2주 전 (
+                      {exchangeChart.twoWeeksAgoRate.toLocaleString("ko-KR", {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      })}
+                      원)
+                    </span>
+                    <span>
+                      1주 전 (
+                      {exchangeChart.oneWeekAgoRate.toLocaleString("ko-KR", {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      })}
+                      원)
+                    </span>
+                    <span className="text-[#0058FF]">
+                      오늘 (
+                      {exchangeChart.todayRate.toLocaleString("ko-KR", {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      })}
+                      원)
+                    </span>
                   </div>
                 </div>
               </div>
@@ -489,7 +673,7 @@ export function MainPortal({
                         type="text"
                         inputMode="numeric"
                         aria-label="대한민국 원 입력"
-                        value={krwInput}
+                        value={displayedKrwInput}
                         onChange={e => handleKrwChange(e.target.value)}
                         placeholder="0"
                         className="w-full bg-transparent text-right text-lg font-extrabold text-[#0058FF] focus:outline-none"
@@ -523,7 +707,7 @@ export function MainPortal({
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:gap-6">
-            {POPULAR_COINS.map(coin => (
+            {popularCoins.map(coin => (
               <Link
                 key={coin.symbol}
                 href="/trading"
@@ -541,8 +725,15 @@ export function MainPortal({
                       <p className="text-xs font-bold text-gray-400">{coin.symbol} Perp</p>
                     </div>
                   </div>
-                  <span className="rounded-lg bg-red-50 px-2.5 py-1 text-xs font-black text-red-500">
-                    +{coin.changeRate}%
+                  <span
+                    className={
+                      coin.changeRate >= 0
+                        ? "rounded-lg bg-red-50 px-2.5 py-1 text-xs font-black text-red-500"
+                        : "rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-black text-blue-600"
+                    }
+                  >
+                    {coin.changeRate >= 0 ? "+" : ""}
+                    {coin.changeRate.toFixed(2)}%
                   </span>
                 </div>
 
@@ -555,7 +746,7 @@ export function MainPortal({
                     <path
                       d={coin.sparkline}
                       fill="none"
-                      stroke="#EF4444"
+                      stroke={coin.strokeColor}
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
