@@ -2530,6 +2530,69 @@ test("GNB admin button role gate, contest trading path routing, and AdminUsers/A
   }
 });
 
+test("메인페이지(/) 새로고침 시 SSR과 클라이언트 초기 Hydration(localStorage ADMIN 힌트 존재) 마크업이 100% 일치하여 Hydration Mismatch가 발생하지 않는다", async () => {
+  const client = new QueryClient();
+  const globalRef = globalThis as Record<string, unknown>;
+  const prevWindow = globalRef.window;
+  const prevDocument = globalRef.document;
+
+  try {
+    // 1. 서버 SSR 환경 (window === undefined, phase === "loading")
+    delete globalRef.window;
+    delete globalRef.document;
+
+    const ssrHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+
+    assert.match(ssrHtml, /ym-gnb-auth-loading/);
+    assert.match(ssrHtml, /ym-auth-slot-admin/);
+    assert.match(ssrHtml, /ym-auth-slot-member/);
+    assert.match(ssrHtml, /ym-auth-slot-anon/);
+
+    // 2. 브라우저 초기 Hydration 환경 (window.localStorage에 ADMIN 힌트 존재, useEffect 전 phase === "loading")
+    const store = new Map<string, string>([
+      ["yogimangchi:header-auth-hint:v1", JSON.stringify({ loggedIn: true, role: "ADMIN" })],
+    ]);
+    const dataset: Record<string, string> = { ymAuthHint: "admin" };
+    globalRef.window = {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, val: string) => {
+          store.set(key, val);
+        },
+      },
+    };
+    globalRef.document = {
+      documentElement: { dataset },
+    };
+
+    const clientHydrationHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+
+    // SSR과 클라이언트 첫 렌더 HTML이 바이트 단위로 100% 일치해야 React 19 Hydration Mismatch가 발생하지 않음
+    assert.equal(ssrHtml, clientHydrationHtml);
+  } finally {
+    if (prevWindow === undefined) {
+      delete globalRef.window;
+    } else {
+      globalRef.window = prevWindow;
+    }
+    if (prevDocument === undefined) {
+      delete globalRef.document;
+    } else {
+      globalRef.document = prevDocument;
+    }
+    client.clear();
+  }
+});
+
+
 
 
 

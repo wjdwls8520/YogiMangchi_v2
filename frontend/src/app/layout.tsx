@@ -40,11 +40,16 @@ export const metadata: Metadata = {
   },
 };
 
+const HEADER_AUTH_HINT_INIT_SCRIPT = `(function(){try{var r=window.localStorage.getItem("yogimangchi:header-auth-hint:v1");var h=r?JSON.parse(r):null;document.documentElement.dataset.ymAuthHint=h&&h.loggedIn?(h.role==="ADMIN"?"admin":"member"):"anon";}catch(e){document.documentElement.dataset.ymAuthHint="anon";}})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ko">
+    <html lang="ko" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: HEADER_AUTH_HINT_INIT_SCRIPT }} />
+      </head>
       <body><MemberProvider>{children}<SiteFooter /></MemberProvider></body>
     </html>
   );

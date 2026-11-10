@@ -14,7 +14,6 @@ import { useDimScrollLock } from "./dim-modal";
 import { useOptionalMember } from "./member-provider";
 import type { MemberRole } from "../api/contracts";
 import {
-  readHeaderAuthHint,
   writeHeaderAuthHint,
   type HeaderAuthHint,
 } from "../api/session";
@@ -975,16 +974,11 @@ export function V1Header({
     key: string;
     role: MemberRole;
   } | null>(null);
-  const [authHint, setAuthHint] = useState<HeaderAuthHint | null>(() =>
-    readHeaderAuthHint(),
-  );
   const pathname = usePathname();
   const memberCtx = useOptionalMember();
   const phase = memberCtx?.snapshot.phase;
-  const effectiveHint = readHeaderAuthHint() ?? authHint;
-  const isLoggedIn =
-    phase === "ready" ||
-    (phase === "loading" && Boolean(effectiveHint?.loggedIn));
+  const isInitialAuthLoading = role === undefined && phase === "loading";
+  const isLoggedIn = phase === "ready";
   const isDarkTrading = Boolean(
     pathname?.startsWith("/trading") ||
       (pathname?.startsWith("/contest/") && pathname?.endsWith("/trading")),
@@ -1012,7 +1006,6 @@ export function V1Header({
           setVerifiedRole({ key: sessionKey, role: resolved });
           const nextHint: HeaderAuthHint = { loggedIn: true, role: resolved };
           writeHeaderAuthHint(nextHint);
-          setAuthHint(nextHint);
           memberCtx.session.setRole(resolved, memberId, generation);
         }
       })
@@ -1031,15 +1024,8 @@ export function V1Header({
     role !== undefined
       ? role === "ADMIN"
       : phase === "ready"
-        ? (verifiedSessionRole ??
-            (memberCtx?.snapshot.role === "ADMIN"
-              ? "ADMIN"
-              : effectiveHint?.role === "ADMIN"
-                ? "ADMIN"
-                : (memberCtx?.snapshot.role ?? "MEMBER"))) === "ADMIN"
-        : phase === "loading"
-          ? Boolean(effectiveHint?.loggedIn && effectiveHint?.role === "ADMIN")
-          : false;
+        ? (verifiedSessionRole ?? memberCtx?.snapshot.role ?? "MEMBER") === "ADMIN"
+        : false;
 
   useDimScrollLock(isMenuOpen);
 
@@ -1115,34 +1101,75 @@ export function V1Header({
 
           {/* 3. 오른쪽 액션 영역 (관리자 배지 + 마이페이지 또는 로그인 버튼) */}
           <div className="ym-gnb-right flex min-h-[38px] md:min-w-[196px] shrink-0 items-center justify-end gap-2">
-            {isAdmin ? (
-              <Link
-                href="/admin/contest"
-                className={cn(
-                  "inline-flex h-9 shrink-0 items-center justify-center rounded-full border px-3.5 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
-                  isDark
-                    ? "border-blue-400/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
-                    : "border-blue-200 bg-blue-50 text-[#0058FF] hover:bg-blue-100",
-                )}
-              >
-                관리자
-              </Link>
-            ) : null}
+            {isInitialAuthLoading ? (
+              <div className="ym-gnb-auth-loading flex items-center justify-end gap-2">
+                <Link
+                  href="/admin/contest"
+                  className={cn(
+                    "ym-auth-slot-admin h-9 shrink-0 items-center justify-center rounded-full border px-3.5 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    isDark
+                      ? "border-blue-400/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
+                      : "border-blue-200 bg-blue-50 text-[#0058FF] hover:bg-blue-100",
+                  )}
+                >
+                  관리자
+                </Link>
+                <Link
+                  href="/me"
+                  className={cn(
+                    "ym-auth-slot-member h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    isDark
+                      ? "bg-white text-gray-900 hover:bg-gray-200"
+                      : "bg-gray-900 text-white hover:bg-gray-800",
+                  )}
+                >
+                  마이페이지
+                </Link>
+                <Link
+                  href="/login"
+                  onClick={rememberCurrentPageForLogin}
+                  className={cn(
+                    "ym-auth-slot-anon h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    isDark
+                      ? "bg-white text-gray-900 hover:bg-gray-200"
+                      : "bg-gray-900 text-white hover:bg-gray-800",
+                  )}
+                >
+                  로그인
+                </Link>
+              </div>
+            ) : (
+              <>
+                {isAdmin ? (
+                  <Link
+                    href="/admin/contest"
+                    className={cn(
+                      "inline-flex h-9 shrink-0 items-center justify-center rounded-full border px-3.5 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                      isDark
+                        ? "border-blue-400/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
+                        : "border-blue-200 bg-blue-50 text-[#0058FF] hover:bg-blue-100",
+                    )}
+                  >
+                    관리자
+                  </Link>
+                ) : null}
 
-            <Link
-              href={isLoggedIn ? "/me" : "/login"}
-              onClick={() => {
-                if (!isLoggedIn) rememberCurrentPageForLogin();
-              }}
-              className={cn(
-                "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
-                isDark
-                  ? "bg-white text-gray-900 hover:bg-gray-200"
-                  : "bg-gray-900 text-white hover:bg-gray-800",
-              )}
-            >
-              {isLoggedIn ? "마이페이지" : "로그인"}
-            </Link>
+                <Link
+                  href={isLoggedIn ? "/me" : "/login"}
+                  onClick={() => {
+                    if (!isLoggedIn) rememberCurrentPageForLogin();
+                  }}
+                  className={cn(
+                    "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    isDark
+                      ? "bg-white text-gray-900 hover:bg-gray-200"
+                      : "bg-gray-900 text-white hover:bg-gray-800",
+                  )}
+                >
+                  {isLoggedIn ? "마이페이지" : "로그인"}
+                </Link>
+              </>
+            )}
 
             {/* 모바일 햄버거 버튼 */}
             <button
