@@ -121,7 +121,7 @@ const KEYWORD_ISSUES = [
 function parseUrlTabState(search: string): {
   section?: "BREAKING" | "NEWSROOM";
   breakingSub?: "ALL" | "COIN" | "ECONOMY";
-  breakingSort?: "LATEST" | "OLDEST";
+  breakingSort?: NewsSort;
   newsroomSub?: "ALL" | "CRYPTO" | "STOCKS" | "FX_RATES";
   newsroomSort?: NewsSort;
 } {
@@ -141,7 +141,13 @@ function parseUrlTabState(search: string): {
           ? "ALL"
           : undefined;
   const breakingSort =
-    sort === "oldest" ? "OLDEST" : sort === "latest" ? "LATEST" : undefined;
+    sort === "popular"
+      ? "POPULAR"
+      : sort === "oldest"
+        ? "OLDEST"
+        : sort === "latest"
+          ? "LATEST"
+          : undefined;
   const newsroomSub =
     sub === "crypto"
       ? "CRYPTO"
@@ -166,7 +172,7 @@ function parseUrlTabState(search: string): {
 function buildNewsUrlQuery(
   sectionTab: "BREAKING" | "NEWSROOM",
   breakingSubTab: "ALL" | "COIN" | "ECONOMY",
-  breakingSort: "LATEST" | "OLDEST",
+  breakingSort: NewsSort,
   newsroomTab: "ALL" | "CRYPTO" | "STOCKS" | "FX_RATES",
   newsroomSort: NewsSort,
 ): string {
@@ -194,7 +200,14 @@ function buildNewsUrlQuery(
       "sub",
       breakingSubTab === "ECONOMY" ? "economy" : breakingSubTab === "COIN" ? "coin" : "all",
     );
-    params.set("sort", breakingSort === "OLDEST" ? "oldest" : "latest");
+    params.set(
+      "sort",
+      breakingSort === "POPULAR"
+        ? "popular"
+        : breakingSort === "OLDEST"
+          ? "oldest"
+          : "latest",
+    );
   }
   return `?${params.toString()}`;
 }
@@ -213,7 +226,159 @@ function isCoinBreakingItem(item: NewsItem): boolean {
   return !isEconomyBreakingItem(item);
 }
 
-function sortNewsItems(items: NewsItem[], sort: NewsSort): NewsItem[] {
+const ANON_NEWS_VIEWER_STORAGE_KEY = "yogimangchi:news-anon-viewer:v1";
+const ANON_NEWS_DAILY_VIEWS_STORAGE_KEY = "yogimangchi:news-anon-daily-views:v1";
+const MEMBER_NEWS_VIEWS_STORAGE_PREFIX = "yogimangchi:news-member-views:v1:";
+
+export type SimpleStorage = Pick<Storage, "getItem" | "setItem"> | null | undefined;
+
+function resolveNewsStorage(storage?: SimpleStorage): Pick<Storage, "getItem" | "setItem"> | null {
+  if (storage !== undefined) return storage;
+  if (typeof window !== "undefined" && typeof window.localStorage?.getItem === "function") {
+    return window.localStorage;
+  }
+  return null;
+}
+
+export function getKstDateString(now: Date = new Date()): string {
+  return now.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+}
+
+export function getOrCreateAnonNewsViewerId(storage?: SimpleStorage): string {
+  const store = resolveNewsStorage(storage);
+  if (store) {
+    try {
+      const existing = store.getItem(ANON_NEWS_VIEWER_STORAGE_KEY);
+      if (existing && /^[A-Za-z0-9._:-]{8,64}$/.test(existing.trim())) {
+        return existing.trim();
+      }
+    } catch {
+      // Ignore storage read failure
+    }
+  }
+  const randomPart =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID().replace(/-/g, "")
+      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+  const generated = `anon-${randomPart}`.slice(0, 48);
+  if (store) {
+    try {
+      store.setItem(ANON_NEWS_VIEWER_STORAGE_KEY, generated);
+    } catch {
+      // Ignore storage write failure
+    }
+  }
+  return generated;
+}
+
+export function hasAnonViewedNewsToday(
+  newsId: number,
+  today: string = getKstDateString(),
+  storage?: SimpleStorage,
+): boolean {
+  const store = resolveNewsStorage(storage);
+  if (!store) return false;
+  try {
+    const raw = store.getItem(ANON_NEWS_DAILY_VIEWS_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" && parsed[String(newsId)] === today;
+  } catch {
+    return false;
+  }
+}
+
+export function markAnonViewedNewsToday(
+  newsId: number,
+  today: string = getKstDateString(),
+  storage?: SimpleStorage,
+): void {
+  const store = resolveNewsStorage(storage);
+  if (!store) return;
+  try {
+    const raw = store.getItem(ANON_NEWS_DAILY_VIEWS_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const next: Record<string, string> = {};
+    if (parsed && typeof parsed === "object") {
+      for (const [key, val] of Object.entries(parsed)) {
+        if (val === today) {
+          next[key] = today;
+        }
+      }
+    }
+    next[String(newsId)] = today;
+    store.setItem(ANON_NEWS_DAILY_VIEWS_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore storage quota / write failure
+  }
+}
+
+export function hasMemberViewedNews(
+  memberId: number,
+  newsId: number,
+  storage?: SimpleStorage,
+): boolean {
+  const store = resolveNewsStorage(storage);
+  if (!store || !memberId) return false;
+  try {
+    const raw = store.getItem(`${MEMBER_NEWS_VIEWS_STORAGE_PREFIX}${memberId}`);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.includes(newsId);
+  } catch {
+    return false;
+  }
+}
+
+export function markMemberViewedNews(
+  memberId: number,
+  newsId: number,
+  storage?: SimpleStorage,
+): void {
+  const store = resolveNewsStorage(storage);
+  if (!store || !memberId) return;
+  try {
+    const key = `${MEMBER_NEWS_VIEWS_STORAGE_PREFIX}${memberId}`;
+    const raw = store.getItem(key);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    const list = Array.isArray(parsed)
+      ? parsed.filter((id): id is number => typeof id === "number")
+      : [];
+    if (!list.includes(newsId)) {
+      const next = [newsId, ...list].slice(0, 500);
+      store.setItem(key, JSON.stringify(next));
+    }
+  } catch {
+    // Ignore storage write failure
+  }
+}
+
+export function applyIdempotentNewsView(
+  item: NewsItem,
+  options: {
+    memberId?: number | null;
+    today?: string;
+    storage?: SimpleStorage;
+  } = {},
+): { incremented: boolean; viewCount: number; anonViewerId?: string } {
+  const currentViews = item.viewCount ?? 0;
+  if (options.memberId && options.memberId > 0) {
+    if (hasMemberViewedNews(options.memberId, item.id, options.storage)) {
+      return { incremented: false, viewCount: currentViews };
+    }
+    markMemberViewedNews(options.memberId, item.id, options.storage);
+    return { incremented: true, viewCount: currentViews + 1 };
+  }
+  const today = options.today ?? getKstDateString();
+  const anonViewerId = getOrCreateAnonNewsViewerId(options.storage);
+  if (hasAnonViewedNewsToday(item.id, today, options.storage)) {
+    return { incremented: false, viewCount: currentViews, anonViewerId };
+  }
+  markAnonViewedNewsToday(item.id, today, options.storage);
+  return { incremented: true, viewCount: currentViews + 1, anonViewerId };
+}
+
+export function sortNewsItems(items: NewsItem[], sort: NewsSort): NewsItem[] {
   return [...items].sort((a, b) => {
     const timeA = Number.isNaN(Date.parse(a.publishedAt)) ? 0 : Date.parse(a.publishedAt);
     const timeB = Number.isNaN(Date.parse(b.publishedAt)) ? 0 : Date.parse(b.publishedAt);
@@ -221,9 +386,9 @@ function sortNewsItems(items: NewsItem[], sort: NewsSort): NewsItem[] {
       return timeA - timeB || a.id - b.id;
     }
     if (sort === "POPULAR") {
-      const scoreA = (a.bullCount ?? 0) + (a.bearCount ?? 0) + (a.viewCount ?? 0);
-      const scoreB = (b.bullCount ?? 0) + (b.bearCount ?? 0) + (b.viewCount ?? 0);
-      return scoreB - scoreA || timeB - timeA || b.id - a.id;
+      const viewsA = a.viewCount ?? 0;
+      const viewsB = b.viewCount ?? 0;
+      return viewsB - viewsA || timeB - timeA || b.id - a.id;
     }
     return timeB - timeA || b.id - a.id;
   });
@@ -513,7 +678,7 @@ export function NewsFeed({
   initialSymbolTag?: string;
   initialSection?: "BREAKING" | "NEWSROOM";
   initialBreakingSubTab?: "ALL" | "COIN" | "ECONOMY";
-  initialBreakingSort?: "LATEST" | "OLDEST";
+  initialBreakingSort?: NewsSort;
   initialNewsroomTab?: "ALL" | "CRYPTO" | "STOCKS" | "FX_RATES";
   initialNewsroomSort?: NewsSort;
   initialPendingNewNewsCount?: number;
@@ -521,7 +686,7 @@ export function NewsFeed({
   initialPendingEconomyCount?: number;
   initialLiveActive?: boolean;
 } = {}) {
-  const { origin, snapshot } = useMember();
+  const { origin, session, snapshot } = useMember();
   const queryClient = useQueryClient();
   const accountStorageKey =
     snapshot.phase === "ready" && snapshot.memberId
@@ -542,7 +707,7 @@ export function NewsFeed({
     }
     return "ALL";
   });
-  const [breakingSort, setBreakingSort] = useState<"LATEST" | "OLDEST">(() => {
+  const [breakingSort, setBreakingSort] = useState<NewsSort>(() => {
     if (initialBreakingSort) return initialBreakingSort;
     if (typeof window !== "undefined") {
       return parseUrlTabState(window.location.search).breakingSort ?? "LATEST";
@@ -583,6 +748,7 @@ export function NewsFeed({
   const [liveReactions, setLiveReactions] = useState<
     Record<number, { bullCount: number; bearCount: number }>
   >({});
+  const [liveViewCounts, setLiveViewCounts] = useState<Record<number, number>>({});
   const [failedThumbIds, setFailedThumbIds] = useState<Record<number, boolean>>({});
   const [sseConnected, setSseConnected] = useState<boolean | null>(null);
   const [sseError, setSseError] = useState(false);
@@ -834,15 +1000,31 @@ export function NewsFeed({
     setHasNextOverride(undefined);
   }
 
-  const baseItems = query.data?.items ?? [];
+  const cachedDefaultPage = queryClient.getQueryData<NewsPage>([
+    "public-news",
+    origin,
+    category,
+    symbolTag,
+    submittedKeyword,
+    undefined,
+  ]);
+  const baseItems =
+    query.data?.items ??
+    (sectionTab === "NEWSROOM" ? (cachedDefaultPage?.items ?? initialPage?.items) : undefined) ??
+    [];
   const prependedIdSet = new Set(prependedNews.map(item => item.id));
   const allItems = (() => {
     const seen = new Set<number>();
     const merged: NewsItem[] = [];
-    for (const item of [...prependedNews, ...baseItems, ...extraItems]) {
-      if (!seen.has(item.id)) {
-        seen.add(item.id);
-        merged.push(item);
+    for (const rawItem of [...prependedNews, ...baseItems, ...extraItems]) {
+      if (!seen.has(rawItem.id)) {
+        seen.add(rawItem.id);
+        const liveViews = liveViewCounts[rawItem.id];
+        merged.push(
+          liveViews !== undefined && liveViews !== rawItem.viewCount
+            ? { ...rawItem, viewCount: liveViews }
+            : rawItem,
+        );
       }
     }
     return orderNewsWithPrependedFirst(merged, prependedIdSet, activeSort);
@@ -1112,15 +1294,95 @@ export function NewsFeed({
 
   async function inspectArticle(id: number, fallback?: NewsItem) {
     setDetailError(null);
+    const activeMemberId =
+      snapshot.phase === "ready" && snapshot.memberId ? snapshot.memberId : null;
+    const today = getKstDateString();
+    const alreadyViewed = activeMemberId
+      ? hasMemberViewedNews(activeMemberId, id)
+      : hasAnonViewedNewsToday(id, today);
+    const anonViewerId = activeMemberId ? undefined : getOrCreateAnonNewsViewerId();
+    const path = alreadyViewed ? `/news/${id}?countView=false` : `/news/${id}`;
+
     try {
-      const item = parseNewsItem(await contentJson(origin, `/news/${id}`));
-      setSelectedDetail(item);
+      let raw: unknown;
+      if (activeMemberId) {
+        try {
+          raw = await session.request(path);
+        } catch {
+          raw = await contentJson(origin, path);
+        }
+      } else {
+        raw = await contentJson(origin, path, { anonViewerId });
+      }
+      const item = parseNewsItem(raw);
+      if (!alreadyViewed) {
+        if (activeMemberId) {
+          markMemberViewedNews(activeMemberId, id);
+        } else {
+          markAnonViewedNewsToday(id, today);
+        }
+      }
+      const nextViews = item.viewCount ?? 0;
+      setLiveViewCounts(prev => ({ ...prev, [id]: nextViews }));
+      setSelectedDetail({ ...item, viewCount: nextViews });
+      void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
     } catch (error) {
       if (fallback) {
-        setSelectedDetail(fallback);
+        const baseFallback = {
+          ...fallback,
+          viewCount: liveViewCounts[id] ?? fallback.viewCount ?? 0,
+        };
+        const fallbackResult = applyIdempotentNewsView(baseFallback, {
+          memberId: activeMemberId,
+          today,
+        });
+        setLiveViewCounts(prev => ({ ...prev, [id]: fallbackResult.viewCount }));
+        setSelectedDetail({ ...baseFallback, viewCount: fallbackResult.viewCount });
       } else {
         setDetailError(contentMessage(error));
       }
+    }
+  }
+
+  async function recordArticleViewOnly(id: number, fallback?: NewsItem) {
+    const activeMemberId =
+      snapshot.phase === "ready" && snapshot.memberId ? snapshot.memberId : null;
+    const today = getKstDateString();
+    const currentViews = liveViewCounts[id] ?? fallback?.viewCount ?? 0;
+
+    if (activeMemberId) {
+      if (hasMemberViewedNews(activeMemberId, id)) return;
+      markMemberViewedNews(activeMemberId, id);
+      setLiveViewCounts(prev => ({ ...prev, [id]: currentViews + 1 }));
+      try {
+        const raw = await session.request(`/news/${id}/views`, { method: "POST" });
+        const item = parseNewsItem(raw);
+        if (item.viewCount !== undefined) {
+          setLiveViewCounts(prev => ({ ...prev, [id]: item.viewCount ?? currentViews + 1 }));
+        }
+        void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
+      } catch {
+        // Keep optimistic idempotent view count
+      }
+      return;
+    }
+
+    if (hasAnonViewedNewsToday(id, today)) return;
+    const anonViewerId = getOrCreateAnonNewsViewerId();
+    markAnonViewedNewsToday(id, today);
+    setLiveViewCounts(prev => ({ ...prev, [id]: currentViews + 1 }));
+    try {
+      const raw = await contentJson(origin, `/news/${id}/views`, {
+        method: "POST",
+        anonViewerId,
+      });
+      const item = parseNewsItem(raw);
+      if (item.viewCount !== undefined) {
+        setLiveViewCounts(prev => ({ ...prev, [id]: item.viewCount ?? currentViews + 1 }));
+      }
+      void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
+    } catch {
+      // Keep optimistic idempotent view count
     }
   }
 
@@ -1162,7 +1424,13 @@ export function NewsFeed({
     const serverList =
       popularMode === "QUOTE" ? highlights?.popularByViews : highlights?.popularByReactions;
     if (serverList && serverList.length > 0) {
-      return serverList.slice(0, 4).map((item, idx) => ({
+      const withLiveViews = serverList.map(item => ({
+        ...item,
+        viewCount: liveViewCounts[item.id] ?? item.viewCount ?? 0,
+      }));
+      const sorted =
+        popularMode === "QUOTE" ? sortNewsItems(withLiveViews, "POPULAR") : withLiveViews;
+      return sorted.slice(0, 4).map((item, idx) => ({
         rank: idx + 1,
         id: item.id,
         title: item.title,
@@ -1632,6 +1900,21 @@ export function NewsFeed({
                     </button>
                     <button
                       type="button"
+                      aria-pressed={breakingSort === "POPULAR"}
+                      onClick={() => {
+                        setBreakingSort("POPULAR");
+                        resetPagination();
+                      }}
+                      className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                        breakingSort === "POPULAR"
+                          ? "bg-gray-900 text-white"
+                          : "text-gray-500 hover:text-gray-900"
+                      }`}
+                    >
+                      많이 본 순
+                    </button>
+                    <button
+                      type="button"
                       aria-pressed={breakingSort === "OLDEST"}
                       onClick={() => {
                         setBreakingSort("OLDEST");
@@ -1993,6 +2276,7 @@ export function NewsFeed({
                                   href={item.sourceUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
+                                  onClick={() => void recordArticleViewOnly(item.id, item)}
                                   className="rounded-md border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] font-bold text-gray-600 hover:border-[#0058FF] hover:text-[#0058FF]"
                                 >
                                   <span>원문 기사 보기</span>
@@ -2033,6 +2317,12 @@ export function NewsFeed({
                                   <V1IconTrendDown className="h-3.5 w-3.5" />
                                   <span>{bearCount}</span>
                                 </button>
+                                <span
+                                  data-news-view-count={item.id}
+                                  className="text-[11px] font-semibold text-gray-400"
+                                >
+                                  조회 {(item.viewCount ?? 0).toLocaleString("ko-KR")}
+                                </span>
                               </div>
 
                               <button
@@ -2088,6 +2378,13 @@ export function NewsFeed({
                               <span className="font-bold text-gray-500">
                                 {newsCategoryLabel(item.category)}
                               </span>
+                              <span>·</span>
+                              <span
+                                data-news-view-count={item.id}
+                                className="font-semibold text-gray-500"
+                              >
+                                조회 {(item.viewCount ?? 0).toLocaleString("ko-KR")}
+                              </span>
                             </div>
 
                             <h3
@@ -2133,6 +2430,7 @@ export function NewsFeed({
                                   href={item.sourceUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
+                                  onClick={() => void recordArticleViewOnly(item.id, item)}
                                   className="font-bold text-gray-600 hover:text-[#0058FF] hover:underline"
                                 >
                                   <span>원문 기사 보기</span>
@@ -2208,7 +2506,7 @@ export function NewsFeed({
         title={selectedDetail?.title ?? "뉴스 상세"}
         subtitle={
           selectedDetail
-            ? `[${newsCategoryLabel(selectedDetail.category)}] · 출처 ${selectedDetail.sourceName} · ${kst(selectedDetail.publishedAt)} KST`
+            ? `[${newsCategoryLabel(selectedDetail.category)}] · 출처 ${selectedDetail.sourceName} · ${kst(selectedDetail.publishedAt)} KST · 조회 ${(selectedDetail.viewCount ?? 0).toLocaleString("ko-KR")}`
             : undefined
         }
         footer={

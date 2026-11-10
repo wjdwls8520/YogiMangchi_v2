@@ -37,7 +37,18 @@ import {
   parseReportReasons,
   readCommunityOrPublic,
 } from "../src/features/member/api/community-news";
-import { NewsFeed, computeLiveNewsSentiment } from "../src/features/member/components/news-feed";
+import {
+  NewsFeed,
+  applyIdempotentNewsView,
+  computeLiveNewsSentiment,
+  getKstDateString,
+  getOrCreateAnonNewsViewerId,
+  hasAnonViewedNewsToday,
+  hasMemberViewedNews,
+  markAnonViewedNewsToday,
+  markMemberViewedNews,
+  sortNewsItems,
+} from "../src/features/member/components/news-feed";
 import { CommunityBoard } from "../src/features/member/components/community-board";
 import { MainPortal, mapRedisTickersToPopularCoins } from "../src/features/member/components/main-portal";
 import { MemberSignupPage } from "../src/features/member/components/member-auth";
@@ -1654,6 +1665,196 @@ test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커�
     client.clear();
   }
 });
+
+test("뉴스 조회수 멱등 카운트(로그인 계정당 1회·비로그인 일일 1회) 및 많이 본 뉴스 정렬(조회수 내림차순, 동률 시 최신순)이 동작한다", async () => {
+  const storeData = new Map<string, string>();
+  const mockStorage = {
+    getItem: (key: string) => storeData.get(key) ?? null,
+    setItem: (key: string, val: string) => {
+      storeData.set(key, val);
+    },
+  };
+
+  // 1. KST 날짜 포맷 및 비로그인 익명 뷰어 식별자 유지 검증
+  const kstDay1 = getKstDateString(new Date("2026-11-10T01:00:00Z"));
+  assert.equal(kstDay1, "2026-11-10");
+  const viewerId1 = getOrCreateAnonNewsViewerId(mockStorage);
+  const viewerId2 = getOrCreateAnonNewsViewerId(mockStorage);
+  assert.match(viewerId1, /^anon-[A-Za-z0-9._:-]+$/);
+  assert.equal(viewerId1, viewerId2);
+
+  // 2. 비로그인 유저: 같은 날(2026-11-10)에는 1번만 조회수가 증가하고, 다음 날(2026-11-11)에는 다시 1번 증가
+  const baseArticle = {
+    id: 501,
+    category: "CRYPTO" as const,
+    section: "NEWSROOM" as const,
+    subCategory: "CRYPTO" as const,
+    title: "비트코인 기관 수급 분석",
+    summary: "요약",
+    content: "본문",
+    sourceName: "Yogimangchi Desk",
+    sourceUrl: "https://example.com/news/501",
+    thumbnailUrl: null,
+    aiSummary: null,
+    sentiment: "BULLISH" as const,
+    bullCount: 10,
+    bearCount: 2,
+    viewCount: 100,
+    symbolTag: "BTC",
+    publishedAt: "2026-11-10T08:00:00Z",
+  };
+
+  assert.equal(hasAnonViewedNewsToday(501, "2026-11-10", mockStorage), false);
+  const firstAnon = applyIdempotentNewsView(baseArticle, {
+    today: "2026-11-10",
+    storage: mockStorage,
+  });
+  assert.equal(firstAnon.incremented, true);
+  assert.equal(firstAnon.viewCount, 101);
+  assert.equal(hasAnonViewedNewsToday(501, "2026-11-10", mockStorage), true);
+
+  const secondAnonSameDay = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: firstAnon.viewCount },
+    { today: "2026-11-10", storage: mockStorage },
+  );
+  assert.equal(secondAnonSameDay.incremented, false);
+  assert.equal(secondAnonSameDay.viewCount, 101);
+
+  // 다음 날(2026-11-11)에는 이전 날짜 기록이 정리되고 다시 1회 카운트 가능
+  assert.equal(hasAnonViewedNewsToday(501, "2026-11-11", mockStorage), false);
+  markAnonViewedNewsToday(502, "2026-11-11", mockStorage);
+  const nextDayAnon = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: 101 },
+    { today: "2026-11-11", storage: mockStorage },
+  );
+  assert.equal(nextDayAnon.incremented, true);
+  assert.equal(nextDayAnon.viewCount, 102);
+
+  // 3. 로그인 회원: 계정당 영구 1회만 증가하고 다른 계정은 별도로 1회 증가
+  assert.equal(hasMemberViewedNews(77, 501, mockStorage), false);
+  const member77First = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: 200 },
+    { memberId: 77, storage: mockStorage },
+  );
+  assert.equal(member77First.incremented, true);
+  assert.equal(member77First.viewCount, 201);
+  assert.equal(hasMemberViewedNews(77, 501, mockStorage), true);
+
+  const member77Second = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: 201 },
+    { memberId: 77, storage: mockStorage },
+  );
+  assert.equal(member77Second.incremented, false);
+  assert.equal(member77Second.viewCount, 201);
+
+  markMemberViewedNews(88, 999, mockStorage);
+  const member88First = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: 201 },
+    { memberId: 88, storage: mockStorage },
+  );
+  assert.equal(member88First.incremented, true);
+  assert.equal(member88First.viewCount, 202);
+
+  // 4. contentJson `/news/{id}/views` 경로 및 `X-Anon-Viewer-Id` 헤더 전달 검증
+  let capturedUrl = "";
+  let capturedAnonHeader = "";
+  await contentJson(
+    "http://localhost:8080",
+    "/news/501/views",
+    { method: "POST", anonViewerId: viewerId1 },
+    async (input, init) => {
+      capturedUrl = String(input);
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      capturedAnonHeader = headers["X-Anon-Viewer-Id"] ?? "";
+      return new Response(JSON.stringify({ ...baseArticle, viewCount: 105 }), { status: 200 });
+    },
+  );
+  assert.equal(capturedUrl, "http://localhost:8080/api/v1/news/501/views");
+  assert.equal(capturedAnonHeader, viewerId1);
+
+  // 5. sortNewsItems(items, "POPULAR"): 반응수(bull+bear)와 무관하게 실제 viewCount 내림차순,
+  //    조회수가 같을 때는 publishedAt 최신순(동일 시각이면 id 내림차순)으로 정렬
+  const sampleItems = [
+    {
+      ...baseArticle,
+      id: 1,
+      title: "조회수 50 · 오래된 기사 (반응 매우 많음)",
+      bullCount: 999,
+      bearCount: 500,
+      viewCount: 50,
+      publishedAt: "2026-11-10T06:00:00Z",
+    },
+    {
+      ...baseArticle,
+      id: 2,
+      title: "조회수 50 · 최신 기사",
+      bullCount: 1,
+      bearCount: 0,
+      viewCount: 50,
+      publishedAt: "2026-11-10T09:30:00Z",
+    },
+    {
+      ...baseArticle,
+      id: 3,
+      title: "조회수 120 · 최다 조회 기사",
+      bullCount: 2,
+      bearCount: 1,
+      viewCount: 120,
+      publishedAt: "2026-11-10T07:00:00Z",
+    },
+    {
+      ...baseArticle,
+      id: 4,
+      title: "조회수 50 · 중간 시각 기사",
+      bullCount: 50,
+      bearCount: 50,
+      viewCount: 50,
+      publishedAt: "2026-11-10T08:15:00Z",
+    },
+  ];
+
+  const popularSorted = sortNewsItems(sampleItems, "POPULAR");
+  assert.deepEqual(
+    popularSorted.map(item => item.id),
+    [3, 2, 4, 1],
+  );
+
+  // 모든 기사의 조회수가 동일할 때(예: 모두 0회) 최신순으로 정렬되는지 검증
+  const equalViewItems = sampleItems.map(item => ({ ...item, viewCount: 0 }));
+  const tieBrokenPopular = sortNewsItems(equalViewItems, "POPULAR");
+  assert.deepEqual(
+    tieBrokenPopular.map(item => item.id),
+    [2, 4, 3, 1],
+  );
+
+  // 6. NewsFeed 렌더링 시 조회수 표기 및 POPULAR 정렬 순서 확인
+  const client = new QueryClient();
+  try {
+    const popularNewsroomHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed
+          initialPage={{ items: sampleItems, hasNext: false, nextCursorId: null }}
+          initialSection="NEWSROOM"
+          initialNewsroomSort="POPULAR"
+        />
+      </MemberProvider>,
+    );
+    assert.match(popularNewsroomHtml, /조회 120/);
+    assert.match(popularNewsroomHtml, /조회 50/);
+    assert.equal(
+      popularNewsroomHtml.indexOf("조회수 120 · 최다 조회 기사") <
+        popularNewsroomHtml.indexOf("조회수 50 · 최신 기사") &&
+        popularNewsroomHtml.indexOf("조회수 50 · 최신 기사") <
+          popularNewsroomHtml.indexOf("조회수 50 · 중간 시각 기사") &&
+        popularNewsroomHtml.indexOf("조회수 50 · 중간 시각 기사") <
+          popularNewsroomHtml.indexOf("조회수 50 · 오래된 기사 (반응 매우 많음)"),
+      true,
+    );
+  } finally {
+    client.clear();
+  }
+});
+
 
 
 
