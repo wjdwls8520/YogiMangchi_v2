@@ -47,6 +47,9 @@ springdoc:
 marketdata:
   websocket:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  overview:
+    enabled: ${MARKET_OVERVIEW_COLLECTOR_ENABLED:true}
+    interval-ms: ${MARKET_OVERVIEW_INTERVAL_MS:5000}
 
 binance:
   order-book:
