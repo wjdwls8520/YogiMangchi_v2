@@ -106,13 +106,20 @@ public class MemberRounds {
         var page=rows.stream().limit(limit).toList();return new Page(page,rows.size()>limit?page.get(page.size()-1).roundId():null);
     }
     @Transactional(timeout=5)
-    public RoundLedger.Page<RoundLedger.Order> orders(Long accountId,Long roundId,Long beforeId,int limit) {return ledger(accountId,roundId,"orders",beforeId,limit,RoundLedger.Order.class);}
+    public RoundLedger.Page<RoundLedger.Order> orders(Long accountId,Long roundId,Long beforeId,int limit) {return orders(accountId,roundId,beforeId,limit,null);}
     @Transactional(timeout=5)
-    public RoundLedger.Page<RoundLedger.Fill> fills(Long accountId,Long roundId,Long beforeId,int limit) {return ledger(accountId,roundId,"fills",beforeId,limit,RoundLedger.Fill.class);}
+    public RoundLedger.Page<RoundLedger.Order> orders(Long accountId,Long roundId,Long beforeId,int limit,String symbol) {return ledger(accountId,roundId,"orders",beforeId,limit,symbol,RoundLedger.Order.class);}
     @Transactional(timeout=5)
-    public RoundLedger.Page<RoundLedger.Position> positions(Long accountId,Long roundId,Long beforeId,int limit) {return ledger(accountId,roundId,"positions",beforeId,limit,RoundLedger.Position.class);}
-    private <T> RoundLedger.Page<T> ledger(Long accountId,Long roundId,String kind,Long beforeId,int limit,Class<T> type) {
+    public RoundLedger.Page<RoundLedger.Fill> fills(Long accountId,Long roundId,Long beforeId,int limit) {return fills(accountId,roundId,beforeId,limit,null);}
+    @Transactional(timeout=5)
+    public RoundLedger.Page<RoundLedger.Fill> fills(Long accountId,Long roundId,Long beforeId,int limit,String symbol) {return ledger(accountId,roundId,"fills",beforeId,limit,symbol,RoundLedger.Fill.class);}
+    @Transactional(timeout=5)
+    public RoundLedger.Page<RoundLedger.Position> positions(Long accountId,Long roundId,Long beforeId,int limit) {return positions(accountId,roundId,beforeId,limit,null);}
+    @Transactional(timeout=5)
+    public RoundLedger.Page<RoundLedger.Position> positions(Long accountId,Long roundId,Long beforeId,int limit,String symbol) {return ledger(accountId,roundId,"positions",beforeId,limit,symbol,RoundLedger.Position.class);}
+    private <T> RoundLedger.Page<T> ledger(Long accountId,Long roundId,String kind,Long beforeId,int limit,String symbol,Class<T> type) {
         member(accountId);owned(accountId,roundId);validate(beforeId,limit);
+        String pattern=com.yogimangchi.trading.execution.TradingOrderService.normalizeSymbolPattern(symbol);
         // All values remain decimal strings. No Entity/internal credential columns returned.
         String sql=switch(kind) {
             case "orders" -> "select id,round_id,position_id,trading_symbol_id,type,action,side,status,quantity::text,filled_price::text,limit_price::text,leverage,created_at,completed_at,reason from trading.trading_order where account_id=? and round_id=?";
@@ -121,7 +128,14 @@ public class MemberRounds {
             default -> throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
         };
         String alias=kind.equals("fills")?"f.":kind.equals("positions")?"p.":"";
-        var rows=jdbc.queryForList(sql+" and "+alias+"id<? order by "+alias+"id desc limit ?",accountId,roundId,beforeId==null?Long.MAX_VALUE:beforeId,limit+1);
+        String symbolColumn=kind.equals("fills")?"o.trading_symbol_id":kind.equals("positions")?"p.trading_symbol_id":"trading_symbol_id";
+        List<Object> args=new ArrayList<>(List.of(accountId,roundId));
+        if(pattern!=null) {
+            sql+=" and exists (select 1 from trading.trading_symbol s where s.id="+symbolColumn+" and (upper(s.symbol) like ? or upper(s.provider_symbol) like ? or upper(s.symbol||s.quote_asset) like ?))";
+            args.add(pattern);args.add(pattern);args.add(pattern);
+        }
+        args.add(beforeId==null?Long.MAX_VALUE:beforeId);args.add(limit+1);
+        var rows=jdbc.queryForList(sql+" and "+alias+"id<? order by "+alias+"id desc limit ?",args.toArray());
         // Stable camelCase names and ISO timestamps are part of the API contract.
         var page=rows.stream().limit(limit).map(row->{Map<String,Object> item=new LinkedHashMap<>();row.forEach((k,v)->{
             StringBuilder name=new StringBuilder();boolean upper=false;for(char c:k.toCharArray()){if(c=='_')upper=true;else {name.append(upper?Character.toUpperCase(c):c);upper=false;}}

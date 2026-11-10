@@ -30,6 +30,7 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/tickers").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/candles").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/status").permitAll();
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/portfolios/members/{memberId:[0-9]+}").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
             // /ws/trading requires an authenticated first frame before any account data is read/sent.
             authorize.requestMatchers(HttpMethod.GET, "/ws/trading").permitAll();

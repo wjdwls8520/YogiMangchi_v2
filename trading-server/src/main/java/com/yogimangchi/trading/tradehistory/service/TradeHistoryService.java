@@ -25,11 +25,19 @@ public class TradeHistoryService {
     @Transactional(timeout=5)
     public List<FillHistoryResponse> fills(Long accountId, Long beforeId, int limit, Long symbolId,
             Position.Side side, TradingOrder.Action action, TradingOrder.Type type, Instant from, Instant before) {
+        return fills(accountId, beforeId, limit, symbolId, null, side, action, type, from, before);
+    }
+
+    @Transactional(timeout=5)
+    public List<FillHistoryResponse> fills(Long accountId, Long beforeId, int limit, Long symbolId, String symbol,
+            Position.Side side, TradingOrder.Action action, TradingOrder.Type type, Instant from, Instant before) {
         validate(beforeId,limit,symbolId,from,before);
+        String pattern=com.yogimangchi.trading.execution.TradingOrderService.normalizeSymbolPattern(symbol);
         locks.lock(accountId);
         StringBuilder sql=new StringBuilder("select f.id,f.order_id,o.position_id,coalesce(p.merged_into_position_id,p.id) lifecycle_id,o.trading_symbol_id,o.type,o.action,o.side,o.leverage,f.quantity,f.price,f.realized_pnl,f.fee,f.settlement_adjustment,f.margin_mode,f.price_event_time,f.executed_at,case when o.reason='STOP_LOSS' then o.reason end reason from trading.fill f join trading.trading_order o on o.id=f.order_id join trading.position p on p.id=o.position_id where o.account_id=? and f.id<?");
         List<Object> args=new ArrayList<>(List.of(accountId,beforeId==null ? Long.MAX_VALUE : beforeId));
-        add(sql,args,"o.trading_symbol_id",symbolId); add(sql,args,"o.side",side);
+        add(sql,args,"o.trading_symbol_id",symbolId); addSymbol(sql,args,"o.trading_symbol_id",pattern);
+        add(sql,args,"o.side",side);
         add(sql,args,"o.action",action); add(sql,args,"o.type",type);
         times(sql,args,"f.executed_at",from,before);
         sql.append(" order by f.id desc limit ?"); args.add(limit);
@@ -42,14 +50,22 @@ public class TradeHistoryService {
     @Transactional(timeout=5)
     public ClosedPositionPage closed(Long accountId, String cursor, int limit, Long symbolId,
             Position.Side side, Position.Status status, Instant from, Instant before) {
+        return closed(accountId, cursor, limit, symbolId, null, side, status, from, before);
+    }
+
+    @Transactional(timeout=5)
+    public ClosedPositionPage closed(Long accountId, String cursor, int limit, Long symbolId, String symbol,
+            Position.Side side, Position.Status status, Instant from, Instant before) {
         validate(null,limit,symbolId,from,before);
+        String pattern=com.yogimangchi.trading.execution.TradingOrderService.normalizeSymbolPattern(symbol);
         if (status!=null && status!=Position.Status.CLOSED && status!=Position.Status.LIQUIDATED) invalid();
         Cursor key=decode(cursor);
         locks.lock(accountId);
         StringBuilder sql=new StringBuilder("select id,trading_symbol_id,side,status,initial_quantity,entry_price,exit_price,leverage,initial_margin,realized_pnl,opened_margin_mode,opened_at,closed_at from trading.position where account_id=? and status in ('CLOSED','LIQUIDATED') and close_reason is null");
         List<Object> args=new ArrayList<>(List.of(accountId));
         if (key!=null) { sql.append(" and (closed_at,id)<(?,?)"); args.add(at(key.time())); args.add(key.id()); }
-        add(sql,args,"trading_symbol_id",symbolId); add(sql,args,"side",side); add(sql,args,"status",status);
+        add(sql,args,"trading_symbol_id",symbolId); addSymbol(sql,args,"trading_symbol_id",pattern);
+        add(sql,args,"side",side); add(sql,args,"status",status);
         times(sql,args,"closed_at",from,before);
         sql.append(" order by closed_at desc,id desc limit ?"); args.add(limit+1);
         var rows=jdbc.query(sql.toString(),(r,row) -> new ClosedPositionResponse(r.getLong("id"),r.getLong("trading_symbol_id"),r.getString("side"),r.getString("status"),
@@ -100,6 +116,13 @@ public class TradeHistoryService {
     private static void invalid() { throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST); }
     private static void add(StringBuilder sql,List<Object> args,String column,Object value) {
         if (value!=null) { sql.append(" and ").append(column).append("=?"); args.add(value instanceof Enum<?> e ? e.name() : value); }
+    }
+    private static void addSymbol(StringBuilder sql,List<Object> args,String symbolIdColumn,String pattern) {
+        if (pattern!=null) {
+            sql.append(" and exists (select 1 from trading.trading_symbol s where s.id=").append(symbolIdColumn)
+               .append(" and (upper(s.symbol) like ? or upper(s.provider_symbol) like ? or upper(s.symbol||s.quote_asset) like ?))");
+            args.add(pattern); args.add(pattern); args.add(pattern);
+        }
     }
     private static void times(StringBuilder sql,List<Object> args,String column,Instant from,Instant before) {
         if (from!=null) { sql.append(" and ").append(column).append(">=?"); args.add(at(from)); }

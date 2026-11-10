@@ -21,7 +21,8 @@ public class TradingTokenFilter extends OncePerRequestFilter {
         String path = request.getRequestURI().substring(request.getContextPath().length());
         return !path.startsWith("/api/v1/trading/")
                 || "OPTIONS".equals(request.getMethod())
-                || ("POST".equals(request.getMethod()) && path.equals("/api/v1/trading/accounts/guest"));
+                || ("POST".equals(request.getMethod()) && path.equals("/api/v1/trading/accounts/guest"))
+                || ("GET".equals(request.getMethod()) && path.startsWith("/api/v1/trading/portfolios/members/"));
     }
 
     @Override

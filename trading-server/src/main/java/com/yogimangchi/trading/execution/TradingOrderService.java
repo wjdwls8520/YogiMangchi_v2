@@ -221,14 +221,46 @@ public class TradingOrderService {
     @Transactional
     public List<OrderResponse> history(Long accountId,Long beforeId,int limit,Long symbolId,Position.Side side,
             TradingOrder.Action action,TradingOrder.Status status,TradingOrder.Type type) {
+        return history(accountId,beforeId,limit,symbolId,null,side,action,status,type,null,null);
+    }
+
+    @Transactional
+    public List<OrderResponse> history(Long accountId,Long beforeId,int limit,Long symbolId,String symbol,Position.Side side,
+            TradingOrder.Action action,TradingOrder.Status status,TradingOrder.Type type,Instant createdFrom,Instant createdBefore) {
         if (limit < 1 || limit > 100 || beforeId != null && beforeId <= 0) throw new BusinessException(ErrorCode.INVALID_ORDER);
         if (symbolId!=null && symbolId<=0) throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
+        if (createdFrom!=null && !validHistoryTime(createdFrom) || createdBefore!=null && !validHistoryTime(createdBefore)
+                || createdFrom!=null && createdBefore!=null && !createdFrom.isBefore(createdBefore)) {
+            throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
+        }
+        String pattern = normalizeSymbolPattern(symbol);
         locks.lock(accountId);
-        List<TradingOrder> result = orders.filteredHistory(accountId, beforeId == null ? Long.MAX_VALUE : beforeId,
-                symbolId,side,action,status,type,PageRequest.of(0, limit));
+        List<TradingOrder> result;
+        if (pattern == null && createdFrom == null && createdBefore == null) {
+            result = orders.filteredHistory(accountId, beforeId == null ? Long.MAX_VALUE : beforeId,
+                    symbolId,side,action,status,type,PageRequest.of(0, limit));
+        } else {
+            Instant start = createdFrom == null ? Instant.EPOCH : createdFrom;
+            Instant end = createdBefore == null ? Instant.parse("9999-12-31T23:59:59.999999Z") : createdBefore;
+            result = orders.filteredHistoryExtended(accountId, beforeId == null ? Long.MAX_VALUE : beforeId,
+                    symbolId, pattern == null ? "%" : pattern, side, action, status, type, start, end, PageRequest.of(0, limit));
+        }
         Map<Long, Fill> byOrder = fills.findByOrderIdIn(result.stream().map(TradingOrder::getId).toList())
                 .stream().collect(Collectors.toMap(Fill::getOrderId, fill -> fill));
         return result.stream().map(order -> OrderResponse.from(order, byOrder.get(order.getId()))).toList();
+    }
+
+    public static String normalizeSymbolPattern(String symbol) {
+        if (symbol == null || symbol.isBlank()) return null;
+        String cleaned = symbol.strip().toUpperCase(java.util.Locale.ROOT).replace(" ", "");
+        if (cleaned.length() > 32 || !cleaned.matches("[A-Z0-9/_-]+")) {
+            throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
+        }
+        return cleaned.replace("/", "") + "%";
+    }
+
+    private static boolean validHistoryTime(Instant time) {
+        return !time.isBefore(Instant.EPOCH) && time.isBefore(Instant.parse("9999-12-31T23:59:59.999999Z")) && time.getNano() % 1000 == 0;
     }
 
     @Transactional

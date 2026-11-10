@@ -46,13 +46,16 @@ public class OrderController {
     }
     @GetMapping("/orders")
     @Operation(summary="Read own order/fill history, newest first",
-            description="Use last orderId as beforeId; limit1-100 default50. Optional tradingSymbolId/side/action/status/type filters preserve the existing array response. Reading is account-private and creates no financial data.")
+            description="Use last orderId as beforeId; limit1-100 default50. Optional tradingSymbolId/symbol/side/action/status/type/createdFrom/createdBefore filters preserve the existing array response. Reading is account-private and creates no financial data.")
     public List<OrderResponse> history(@AuthenticationPrincipal TradingPrincipal principal,
             @RequestParam(required=false) Long beforeId, @RequestParam(defaultValue="50") int limit,
-            @RequestParam(required=false) Long tradingSymbolId,@RequestParam(required=false) Position.Side side,
+            @RequestParam(required=false) Long tradingSymbolId,@RequestParam(required=false) String symbol,
+            @RequestParam(required=false) Position.Side side,
             @RequestParam(required=false) TradingOrder.Action action,@RequestParam(required=false) TradingOrder.Status status,
-            @RequestParam(required=false) TradingOrder.Type type) {
-        return engine.history(principal.accountId(),beforeId,limit,tradingSymbolId,side,action,status,type);
+            @RequestParam(required=false) TradingOrder.Type type,
+            @RequestParam(required=false) java.time.Instant createdFrom,
+            @RequestParam(required=false) java.time.Instant createdBefore) {
+        return engine.history(principal.accountId(),beforeId,limit,tradingSymbolId,symbol,side,action,status,type,createdFrom,createdBefore);
     }
     @GetMapping("/orders/pending")
     @Operation(summary="Read own pending OPEN/CLOSE orders and their margin/quantity reservations")
