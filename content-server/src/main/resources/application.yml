@@ -76,6 +76,6 @@ content:
   news:
     collector:
       enabled: ${CONTENT_NEWS_COLLECTOR_ENABLED:true}
-      interval-ms: ${CONTENT_NEWS_COLLECTOR_INTERVAL_MS:120000}
-      initial-delay-ms: ${CONTENT_NEWS_COLLECTOR_INITIAL_DELAY_MS:120000}
+      interval-ms: ${CONTENT_NEWS_COLLECTOR_INTERVAL_MS:60000}
+      initial-delay-ms: ${CONTENT_NEWS_COLLECTOR_INITIAL_DELAY_MS:60000}
       max-items-per-feed: ${CONTENT_NEWS_COLLECTOR_MAX_ITEMS_PER_FEED:8}

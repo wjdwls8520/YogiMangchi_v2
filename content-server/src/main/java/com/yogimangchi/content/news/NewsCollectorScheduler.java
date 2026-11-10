@@ -24,8 +24,8 @@ public class NewsCollectorScheduler {
     }
 
     @Scheduled(
-            fixedDelayString = "${content.news.collector.interval-ms:120000}",
-            initialDelayString = "${content.news.collector.initial-delay-ms:120000}"
+            fixedDelayString = "${content.news.collector.interval-ms:60000}",
+            initialDelayString = "${content.news.collector.initial-delay-ms:60000}"
     )
     public void collectPeriodically() {
         ingestion.collectAllDefaultFeeds();

@@ -121,7 +121,13 @@ public class NewsIngestionService {
         }
 
         Instant now = Instant.now();
-        purgeExpiredBreakingAndOverflowArticles(now);
+        int purged = purgeExpiredBreakingAndOverflowArticles(now);
+        if (totalInserted == 0 && purged > 0) {
+            List<NewsService.NewsItemResponse> recentPool = jdbc.query(
+                    "select " + NewsService.SELECT_COLUMNS + " from content.news_article order by published_at desc, id desc limit 40",
+                    NewsService::mapRow);
+            sse.publishSentimentUpdatedAfterCommit(NewsService.buildSentimentSummary(recentPool));
+        }
 
         if (succeededFeeds > 0) {
             consecutiveFailures = 0;
@@ -232,6 +238,12 @@ public class NewsIngestionService {
                 newlyInserted.add(saved);
                 sse.publishNewsCreatedAfterCommit(saved);
             }
+        }
+        if (!newlyInserted.isEmpty()) {
+            List<NewsService.NewsItemResponse> recentPool = jdbc.query(
+                    "select " + NewsService.SELECT_COLUMNS + " from content.news_article order by published_at desc, id desc limit 40",
+                    NewsService::mapRow);
+            sse.publishSentimentUpdatedAfterCommit(NewsService.buildSentimentSummary(recentPool));
         }
         return newlyInserted;
     }
