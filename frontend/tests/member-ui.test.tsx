@@ -271,8 +271,14 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /최근 6시간 실시간 속보/);
     assert.match(html, /data-live-status="on"/);
     assert.match(html, /뉴스룸/);
+    assert.match(html, /전체 속보/);
     assert.match(html, /코인 속보/);
     assert.match(html, /경제 속보/);
+    assert.equal(
+      html.indexOf("전체 속보") < html.indexOf("코인 속보") &&
+        html.indexOf("코인 속보") < html.indexOf("경제 속보"),
+      true,
+    );
     assert.match(html, /최신순/);
     assert.match(html, /오래된순/);
     assert.match(html, /지금 꼭 봐야할 속보/);
@@ -318,6 +324,22 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     );
     assert.match(toastNewsHtml, /fixed left-1\/2 top-20/);
     assert.match(toastNewsHtml, /새 실시간 속보 2건 보기/);
+
+    const partitionedBadgeHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed
+          initialPage={page}
+          initialBreakingSubTab="COIN"
+          initialPendingCoinCount={1}
+          initialPendingEconomyCount={3}
+        />
+      </MemberProvider>,
+    );
+    assert.match(partitionedBadgeHtml, /data-breaking-badge="all"[^>]*>4<\/span>/);
+    assert.match(partitionedBadgeHtml, /data-breaking-badge="coin"[^>]*>1<\/span>/);
+    assert.match(partitionedBadgeHtml, /data-breaking-badge="economy"[^>]*>3<\/span>/);
+    assert.match(partitionedBadgeHtml, /새 실시간 속보 1건 보기/);
+    assert.equal(partitionedBadgeHtml.includes("미 연준 금리 동결 시사 및 달러 인덱스 보합"), false);
 
     const newsroomHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
