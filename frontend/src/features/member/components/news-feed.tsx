@@ -1299,6 +1299,13 @@ export function NewsFeed({
     const anonViewerId = activeMemberId ? undefined : getOrCreateAnonNewsViewerId();
     const path = alreadyViewed ? `/news/${id}?countView=false` : `/news/${id}`;
 
+    if (fallback) {
+      const currentViews = liveViewCounts[id] ?? fallback.viewCount ?? 0;
+      const optimisticViews = alreadyViewed ? currentViews : currentViews + 1;
+      setLiveViewCounts(prev => ({ ...prev, [id]: optimisticViews }));
+      setSelectedDetail({ ...fallback, viewCount: optimisticViews });
+    }
+
     try {
       let raw: unknown;
       if (activeMemberId) {
@@ -1337,48 +1344,6 @@ export function NewsFeed({
       } else {
         setDetailError(contentMessage(error));
       }
-    }
-  }
-
-  async function recordArticleViewOnly(id: number, fallback?: NewsItem) {
-    const activeMemberId =
-      snapshot.phase === "ready" && snapshot.memberId ? snapshot.memberId : null;
-    const today = getKstDateString();
-    const currentViews = liveViewCounts[id] ?? fallback?.viewCount ?? 0;
-
-    if (activeMemberId) {
-      if (hasMemberViewedNews(activeMemberId, id)) return;
-      markMemberViewedNews(activeMemberId, id);
-      setLiveViewCounts(prev => ({ ...prev, [id]: currentViews + 1 }));
-      try {
-        const raw = await session.request(`/news/${id}/views`, { method: "POST" });
-        const item = parseNewsItem(raw);
-        if (item.viewCount !== undefined) {
-          setLiveViewCounts(prev => ({ ...prev, [id]: item.viewCount ?? currentViews + 1 }));
-        }
-        void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
-      } catch {
-        // Keep optimistic idempotent view count
-      }
-      return;
-    }
-
-    if (hasAnonViewedNewsToday(id, today)) return;
-    const anonViewerId = getOrCreateAnonNewsViewerId();
-    markAnonViewedNewsToday(id, today);
-    setLiveViewCounts(prev => ({ ...prev, [id]: currentViews + 1 }));
-    try {
-      const raw = await contentJson(origin, `/news/${id}/views`, {
-        method: "POST",
-        anonViewerId,
-      });
-      const item = parseNewsItem(raw);
-      if (item.viewCount !== undefined) {
-        setLiveViewCounts(prev => ({ ...prev, [id]: item.viewCount ?? currentViews + 1 }));
-      }
-      void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
-    } catch {
-      // Keep optimistic idempotent view count
     }
   }
 
@@ -1713,7 +1678,7 @@ export function NewsFeed({
                           if (mustReadCards[0].item) {
                             void inspectArticle(mustReadCards[0].id, mustReadCards[0].item);
                           } else if (visibleItems[0]) {
-                            setSelectedDetail(visibleItems[0]);
+                            void inspectArticle(visibleItems[0].id, visibleItems[0]);
                           }
                         }}
                         className="cursor-pointer rounded-xl bg-[#F7F8FA] p-4 transition-colors hover:bg-gray-100"
@@ -1735,7 +1700,7 @@ export function NewsFeed({
                             if (card.item) {
                               void inspectArticle(card.id, card.item);
                             } else if (visibleItems[0]) {
-                              setSelectedDetail(visibleItems[0]);
+                              void inspectArticle(visibleItems[0].id, visibleItems[0]);
                             }
                           }}
                           className="cursor-pointer rounded-xl bg-[#F7F8FA] p-3.5 transition-colors hover:bg-gray-100"
@@ -2215,17 +2180,9 @@ export function NewsFeed({
                               </span>
 
                               {item.symbolTag && (
-                                <>
-                                  <span className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] font-extrabold text-gray-800">
-                                    #{item.symbolTag}
-                                  </span>
-                                  <Link
-                                    href="/trading"
-                                    className="rounded-md bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold text-[#0058FF] hover:underline"
-                                  >
-                                    {item.symbolTag} 선물 거래 바로가기 ({item.symbolTag} 선물 모의투자 이동)
-                                  </Link>
-                                </>
+                                <span className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] font-extrabold text-gray-800">
+                                  #{item.symbolTag}
+                                </span>
                               )}
 
                               {item.sourceUrl && (
@@ -2233,7 +2190,6 @@ export function NewsFeed({
                                   href={item.sourceUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  onClick={() => void recordArticleViewOnly(item.id, item)}
                                   className="rounded-md border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] font-bold text-gray-600 hover:border-[#0058FF] hover:text-[#0058FF]"
                                 >
                                   <span>원문 기사 보기</span>
@@ -2387,20 +2343,11 @@ export function NewsFeed({
                                   href={item.sourceUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  onClick={() => void recordArticleViewOnly(item.id, item)}
                                   className="font-bold text-gray-600 hover:text-[#0058FF] hover:underline"
                                 >
                                   <span>원문 기사 보기</span>
                                   <V1IconExternal className="ml-1 inline h-3 w-3" />
                                 </a>
-                              )}
-                              {item.symbolTag && (
-                                <Link
-                                  href="/trading"
-                                  className="font-bold text-[#0058FF] hover:underline"
-                                >
-                                  {item.symbolTag} 선물 모의투자 이동 →
-                                </Link>
                               )}
                               <button
                                 type="button"
@@ -2478,15 +2425,6 @@ export function NewsFeed({
                 <span>원문 기사 보기</span>
                 <V1IconExternal className="ml-1 inline h-3 w-3" />
               </a>
-            )}
-            {selectedDetail?.symbolTag && (
-              <Link
-                href="/trading"
-                className="login-button ym-btn-inline"
-                onClick={() => setSelectedDetail(null)}
-              >
-                {selectedDetail.symbolTag} 선물 모의투자 바로가기
-              </Link>
             )}
             <button
               type="button"

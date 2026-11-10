@@ -325,7 +325,8 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /<select[^>]*aria-label="뉴스 종목 태그 필터"/);
     assert.match(html, /<select[^>]*aria-label="뉴스 브리핑 보기 방식"/);
     assert.match(html, /미국 현물 ETF 순유입과 함께 BTC 선물 시장의 유동성이 확대되고 있습니다\./);
-    assert.match(html, /BTC 선물 모의투자 이동/);
+    assert.equal(html.includes("선물 모의투자 이동"), false);
+    assert.equal(html.includes("선물 거래 바로가기"), false);
     assert.match(html, /이전 뉴스 더보기/);
     assert.match(html, /href="\/news">실시간 뉴스/);
     assert.match(html, /href="\/community">커뮤니티/);
@@ -384,6 +385,8 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(newsroomHtml, /최신 뉴스/);
     assert.match(newsroomHtml, /많이 본 뉴스/);
     assert.match(newsroomHtml, /오래된 순/);
+    assert.equal(newsroomHtml.includes("선물 모의투자 이동"), false);
+    assert.equal(newsroomHtml.includes("선물 거래 바로가기"), false);
     assert.equal((newsroomHtml.match(/data-s3-slot="news-thumbnail"/g) ?? []).length, 1);
     assert.equal((newsroomHtml.match(/data-newsroom-hashtags="true"/g) ?? []).length, 2);
     assert.equal(
