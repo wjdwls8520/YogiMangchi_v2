@@ -108,7 +108,7 @@ function MemberSimulationContent() {
         <RoundLedger key={`${snapshot.generation}:${selectedId}:${kind}`} roundId={summary.round.roundId} kind={kind} />
       </>}
     </>}
-    {snapshot.mode === "member" && <><p className="member-note">다음 다시시작 가능 시각: {nextAt ? new Date(nextAt).toLocaleString("ko-KR") : !current.isError && current.data ? "서버에서 제한 없음으로 확인" : "서버 확인 필요"}. 최종 허용 여부는 서버가 판단합니다.</p><button className="member-primary" disabled={pending || snapshot.retrying || !intent && !canRestart} onClick={() => { setAcknowledged(false); dialog.current?.showModal(); }}>모의투자 다시시작하기</button><p className="member-note"><Link href="/trading">현재 회차 거래 화면으로 이동</Link></p></>}
+    {snapshot.mode === "member" && <><p className="member-note">다음 다시시작 가능 시각: {nextAt ? new Date(nextAt).toLocaleString("ko-KR") : !current.isError && current.data ? "서버에서 제한 없음으로 확인" : "서버 확인 필요"}. 최종 허용 여부는 서버가 판단합니다.</p><button className="member-primary" disabled={pending || snapshot.retrying || !intent && !canRestart} onClick={() => { setAcknowledged(false); dialog.current?.showModal(); }}>모의투자 다시시작하기</button><p className="member-note"><Link href="/trading">모의투자 하러가기 →</Link></p></>}
     {message && <p role="status" className="member-message">{message}</p>}
     <dialog ref={dialog} className="position-close-dialog member-withdrawal-dialog" aria-labelledby="member-restart-title" onCancel={event => { if (pending) event.preventDefault(); }}>
       <RestartConfirmation acknowledged={acknowledged} pending={pending} uncertain={!!intent} error={error} blocked={!canRestart ? "서버가 다시시작 가능 여부를 확인하기 전에는 새로운 요청을 보낼 수 없습니다." : undefined} onAcknowledge={setAcknowledged} onExecute={() => void restart()} onClose={() => dialog.current?.close()} />

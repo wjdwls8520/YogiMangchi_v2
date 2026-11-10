@@ -511,7 +511,7 @@ export function MainPortal({
             </span>
           </div>
           <Link href="/trading" className="whitespace-nowrap font-bold text-[#0058FF] hover:underline">
-            실시간 선물 호가·차트 바로가기 →
+            모의투자 하러가기 →
           </Link>
         </div>
       </section>
@@ -545,7 +545,7 @@ export function MainPortal({
               href="/contest"
               className="flex h-14 w-full items-center justify-center rounded-xl border border-gray-300 bg-white px-8 text-base font-bold text-gray-700 transition-colors hover:bg-gray-50 sm:w-auto"
             >
-              실전 랭킹전 참여 (대회 안내)
+              대회 참여하기
             </Link>
           </div>
         </div>
@@ -727,7 +727,7 @@ export function MainPortal({
               href="/trading"
               className="shrink-0 whitespace-nowrap text-sm font-semibold text-[#0058FF] hover:underline"
             >
-              전체 마켓 보기 &rarr;
+              모의투자 하러가기 &rarr;
             </Link>
           </div>
 
@@ -1007,7 +1007,7 @@ export function MainPortal({
                       전문 팝업 보기
                     </button>
                     <Link href="/trading" className="text-xs font-bold text-[#0058FF] hover:underline">
-                      {article.symbolTag ?? "BTC"} 모의투자 →
+                      {article.symbolTag ?? "BTC"} 모의투자 하러가기 →
                     </Link>
                   </div>
                 </article>
@@ -1165,7 +1165,7 @@ export function MainPortal({
               className="rounded-xl bg-[#0058FF] px-4 py-2.5 text-xs font-bold text-white"
               onClick={() => setSelectedNews(null)}
             >
-              {selectedNews?.symbolTag ?? "BTC"} 선물 모의투자 이동
+              {selectedNews?.symbolTag ?? "BTC"} 모의투자 하러가기
             </Link>
             <V1Button variant="gray" size="sm" onClick={() => setSelectedNews(null)}>
               닫기

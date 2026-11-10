@@ -3,7 +3,7 @@ import { TradingWorkspace } from "@/features/trading/components/trading-workspac
 
 export const metadata: Metadata = {
   title: "선물 모의투자",
-  description: "요기망치 선물 모의투자 Trading 화면 미리보기",
+  description: "실시간 시세 기반 요기망치 선물 모의투자",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };

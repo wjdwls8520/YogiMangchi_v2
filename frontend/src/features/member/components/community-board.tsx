@@ -295,7 +295,7 @@ export function SharedPositionCard({
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-gray-400">
         <span>실제 자금을 사용하지 않는 모의투자 포지션 공유 스냅샷입니다.</span>
         <Link href="/trading" className="font-bold text-[#0058FF] hover:underline">
-          {snapshot.pair} 차트·호가 보러가기 →
+          {snapshot.pair} 모의투자 하러가기 →
         </Link>
       </div>
     </div>
@@ -2642,7 +2642,7 @@ export function CommunityBoard({
                 href="/contest"
                 className="mt-4 flex h-10 w-full items-center justify-center rounded-xl bg-gray-100 text-xs font-bold text-gray-700 hover:bg-gray-200"
               >
-                대회 안내 보기 →
+                대회 참여하기 →
               </Link>
             </div>
           </aside>

@@ -1027,7 +1027,7 @@ export function MemberMyProfilePage({
                       : "1회차 시드머니: 10,000 USDT"}
                   </span>
                   <Link href="/trading" className="font-bold text-blue-400 hover:underline">
-                    선물 거래소 이동 →
+                    모의투자 하러가기 →
                   </Link>
                 </div>
               }
@@ -1644,7 +1644,7 @@ export function MemberMyProfilePage({
                                       href={`/contest/${item.seasonId}/trading`}
                                       className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-[#0058FF] px-3 text-xs font-bold text-white hover:bg-blue-700"
                                     >
-                                      대회장 입장 →
+                                      대회 참여하기 →
                                     </Link>
                                   )}
                                 </div>
@@ -1689,7 +1689,7 @@ export function MemberMyProfilePage({
                           href="/contest"
                           className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white hover:bg-blue-700"
                         >
-                          대회 목록 및 참가 신청 보러가기 →
+                          대회 참여하기 →
                         </Link>
                       </div>
                     )
