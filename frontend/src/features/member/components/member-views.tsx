@@ -50,9 +50,6 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
       <div className="ym-login-logo-wrap mb-4 flex flex-col items-center text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/images/logo.webp" alt="요기망치 로고" className="ym-login-logo-img h-10 w-auto object-contain" />
-        <span className="mt-3 inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-[#0058FF]">
-          YOGIMANGCHI V1 · V2 통합 인증
-        </span>
       </div>
 
       <div className="ym-login-intro mb-6 text-center">
@@ -60,7 +57,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
           Google 또는 Kakao 계정으로 간편하게 시작하세요
         </p>
         <p className="ym-login-sub mt-1.5 break-keep text-xs font-medium leading-relaxed text-gray-500">
-          요기망치는 별도 비밀번호를 저장하지 않고 OAuth2 인증으로 모의투자·커뮤니티·뉴스·자산을 연결합니다.
+          요기망치는 별도 비밀번호를 저장하지 않고 소셜 계정으로 모의투자·커뮤니티·뉴스·자산을 연결합니다.
         </p>
       </div>
 
@@ -93,7 +90,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
             checked={rememberSession}
             onChange={event => setRememberSession(event.currentTarget.checked)}
           />
-          <span className="sm:whitespace-nowrap">로그인 상태 유지 안내 확인 (7일 Refresh 쿠키)</span>
+          <span className="sm:whitespace-nowrap">로그인 상태 유지</span>
         </label>
         <button
           type="button"
@@ -128,7 +125,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
       >
         <div className="ym-modal-prose">
           <p>
-            <strong>1. 지원 로그인 수단</strong> 요기망치는 Google 및 Kakao 공식 OAuth2 인증만 지원하며, 별도의 아이디/비밀번호 입력을 요구하지 않습니다.
+            <strong>1. 지원 로그인 수단</strong> 요기망치는 Google 및 Kakao 소셜 로그인만 지원하며, 별도의 아이디/비밀번호 입력을 요구하지 않습니다.
           </p>
           <p>
             <strong>2. 신규 가입 절차</strong> 처음 로그인하는 소셜 계정은 약관 동의 및 닉네임(1~8자) 설정 화면으로 자동 이동합니다.
@@ -204,7 +201,7 @@ export function ProfileEditForm({
             className="member-primary login-button flex h-12 flex-1 items-center justify-center rounded-2xl bg-[#0058FF] text-sm font-bold text-white transition-colors hover:bg-blue-700"
             type="submit"
           >
-            {pending ? "저장 중…" : "변경사항 저장 (프로필 저장)"}
+            {pending ? "저장 중…" : "변경사항 저장"}
           </button>
         </div>
       </fieldset>

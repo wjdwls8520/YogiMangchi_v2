@@ -1259,9 +1259,6 @@ export function CommunityBoard({
                   <V1IconArrowLeft className="h-3.5 w-3.5" />
                   <span>커뮤니티 피드로 돌아가기</span>
                 </Link>
-                <span className="text-xs font-bold text-gray-400">
-                  게시글 상세 #{highlightPostId}
-                </span>
               </div>
             ) : (
               /* V1 CommunityTabs (전체글 | 주간 인기글 | 최신글) */
@@ -1295,7 +1292,7 @@ export function CommunityBoard({
                       >
                         {COMMUNITY_CATEGORIES.map(item => (
                           <option key={item.key || "ALL_CAT"} value={item.key}>
-                            {item.key ? `${item.label} (${item.key})` : "전체 카테고리"}
+                            {item.key ? item.label : "전체 카테고리"}
                           </option>
                         ))}
                       </select>
@@ -1337,8 +1334,8 @@ export function CommunityBoard({
                         }}
                         className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
                       >
-                        <option value="LATEST">최신글 (LATEST)</option>
-                        <option value="POPULAR">인기글 (POPULAR)</option>
+                        <option value="LATEST">최신글</option>
+                        <option value="POPULAR">인기글</option>
                       </select>
                     </label>
                   </div>

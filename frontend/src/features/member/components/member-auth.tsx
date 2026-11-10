@@ -228,7 +228,7 @@ export function MemberSignupPage() {
         </div>
         <h2 className="ym-verify-title">소셜 계정 본인인증</h2>
         <p className="ym-verify-desc">
-          요기망치는 별도 비밀번호 없이 Google 또는 Kakao OAuth2 본인확인으로 안전하게 가입을 진행합니다.
+          요기망치는 별도 비밀번호 없이 Google 또는 Kakao 계정 본인확인으로 안전하게 가입을 진행합니다.
         </p>
         <div className="ym-verify-btn-group">
           <a href={google} className="ym-dark-verify-btn">

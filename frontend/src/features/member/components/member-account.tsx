@@ -108,22 +108,9 @@ export function MemberAccount() {
     >
       <div className="mx-auto max-w-2xl space-y-6">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
-              회원정보 수정
-            </h2>
-            <p className="mt-1 text-xs font-medium text-gray-500">
-              자산·포트폴리오·커뮤니티 활동 조회는 마이페이지(/me)에서 확인할 수 있습니다.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/me"
-              className="inline-flex h-9 items-center justify-center rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
-            >
-              마이페이지 (/me)
-            </Link>
-          </div>
+          <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+            회원정보 수정
+          </h2>
         </div>
 
         {/* V1 기본 정보 카드 (아바타 업로더 + 닉네임 + 프로필 메시지) */}
@@ -136,9 +123,7 @@ export function MemberAccount() {
               <span className="inline-block h-4 w-1.5 rounded-full bg-[#0058FF]" />
               기본 정보
             </h3>
-            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-[#0058FF]">
-              일반회원 · S3 프리뷰 지원
-            </span>
+            {snapshot.phase === "ready" && profile.data && <MemberLogout />}
           </div>
 
           <div className="flex flex-col items-center justify-center">
@@ -215,26 +200,6 @@ export function MemberAccount() {
               )}
               {profile.data && (
                 <div className="space-y-6">
-                  <div className="flex items-center justify-between rounded-xl bg-gray-50 px-4 py-3 text-xs">
-                    <div>
-                      <span className="font-bold text-gray-500">
-                        회원 #{profile.data.memberId} · {profile.data.role}
-                      </span>
-                      <strong className="ml-2 font-black text-gray-900">
-                        {profile.data.nickname}
-                      </strong>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/members/${profile.data.memberId}`}
-                        className="font-bold text-[#0058FF] hover:underline"
-                      >
-                        공개 프로필 보기
-                      </Link>
-                      <MemberLogout />
-                    </div>
-                  </div>
-
                   <ProfileEditForm
                     key={`${profile.data.nickname}:${profile.data.profileMessage}`}
                     nickname={profile.data.nickname}

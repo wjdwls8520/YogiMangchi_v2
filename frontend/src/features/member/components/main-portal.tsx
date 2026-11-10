@@ -947,7 +947,7 @@ export function MainPortal({
                   onClick={() => setThumbnailModalOpen(true)}
                   className="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100"
                 >
-                  속보 이미지 제보 (S3)
+                  속보 이미지 제보
                 </button>
                 <Link href="/news" className="text-xs font-bold text-[#0058FF] hover:underline">
                   전체 뉴스 →
@@ -990,11 +990,7 @@ export function MainPortal({
             </div>
 
             {/* S3 썸네일 슬롯 (테스트 호환) */}
-            <div className="mt-6 border-t border-gray-100 pt-4" data-s3-slot="news-thumbnail">
-              <p className="text-xs font-bold text-gray-500">
-                대표 뉴스 썸네일 S3 업로드 슬롯 준비 완료
-              </p>
-            </div>
+            <div className="sr-only" data-s3-slot="news-thumbnail" />
           </div>
 
           {/* 우측: 선물 모의투자 퀵 시뮬레이터 */}
@@ -1148,12 +1144,12 @@ export function MainPortal({
         )}
       </DimModal>
 
-      {/* S3 제보 모달 */}
+      {/* 제보 모달 */}
       <DimModal
         open={thumbnailModalOpen}
         onClose={() => setThumbnailModalOpen(false)}
         title="속보 차트/캡처 이미지 제보"
-        subtitle="S3 연동 준비가 완료된 클라이언트 프리뷰 업로더입니다."
+        subtitle="차트나 시장 캡처 이미지를 첨부해 제보할 수 있습니다."
       >
         <CommunityImageUploadSlot
           files={reportFiles}

@@ -549,7 +549,7 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
         <CommunityBoard initialPage={postPage} initialComments={{ 21: commentList.items }} />
       </MemberProvider>,
     );
-    assert.match(html, /최신글 \(LATEST\)/);
+    assert.match(html, /<option value="LATEST"[^>]*>최신글<\/option>/);
     assert.match(html, /<select[^>]*aria-label="카테고리 필터"/);
     assert.match(html, /<select[^>]*aria-label="종목 태그 필터"/);
     assert.match(html, /<select[^>]*aria-label="정렬 선택"/);
@@ -558,7 +558,7 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     assert.match(html, /data-flat-icon="pen"[\s\S]*?<span>글쓰기 모달 열기<\/span>/);
     assert.match(html, /data-flat-icon="chart-bar"[\s\S]*?<span>포지션 공유하기<\/span>/);
     assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(html), false);
-    assert.match(html, /인기글 \(POPULAR\)/);
+    assert.match(html, /<option value="POPULAR"[^>]*>인기글<\/option>/);
     assert.equal(html.includes("새 게시글 보기"), false);
     assert.match(html, /data-infinite-scroll="community-sentinel"/);
     assert.equal(html.includes('id="community-inline-write-form"'), false);
@@ -598,6 +598,7 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
       </MemberProvider>,
     );
     assert.match(detailHtml, /커뮤니티 피드로 돌아가기/);
+    assert.equal(detailHtml.includes("게시글 상세 #"), false);
     assert.match(detailHtml, /좋은 관점이네요\./);
     assert.match(
       detailHtml,
@@ -1045,6 +1046,12 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     assert.match(accountHtml, /data-s3-slot="account-profile-image"/);
     assert.equal(accountHtml.includes('href="/signup"'), false);
     assert.equal(accountHtml.includes('href="/assets"'), false);
+    assert.equal(accountHtml.includes("마이페이지(/me)"), false);
+    assert.equal(accountHtml.includes("마이페이지 (/me)"), false);
+    assert.equal(accountHtml.includes("S3 프리뷰 지원"), false);
+    assert.equal(accountHtml.includes("S3 스토리지 업로드"), false);
+    assert.equal(accountHtml.includes("공개 프로필 보기"), false);
+    assert.equal(accountHtml.includes("회원 #"), false);
 
     // 비로그인 시 마이페이지(/me): 오직 2탭(포트폴리오, 커뮤니티활동)만 노출, 자산 2탭 숨김
     const meAnonHtml = renderToStaticMarkup(

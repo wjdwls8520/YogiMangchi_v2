@@ -1936,7 +1936,7 @@ export function NewsFeed({
                   </button>
                 </div>
                 <span className="text-xs font-medium text-gray-400">
-                  최근 6시간 실시간 속보 · 4시간 경과 자동 정리 · KST 기준
+                  최근 6시간 실시간 속보 · KST 기준
                 </span>
               </div>
             </>
@@ -2466,7 +2466,7 @@ export function NewsFeed({
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
-                {loadingMore ? "불러오는 중…" : "다음 뉴스 더보기 (이전 뉴스 더보기)"}
+                {loadingMore ? "불러오는 중…" : "이전 뉴스 더보기"}
               </button>
             )}
           </div>

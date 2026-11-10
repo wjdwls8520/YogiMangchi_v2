@@ -584,9 +584,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                       }
                     >
                       <div className="py-6 text-xs font-bold text-gray-600">
-                        내 모의투자 자산 원장 ({ledgerTab})을 확인합니다. 상세 회차 초기화는{" "}
+                        내 모의투자 자산 원장을 확인합니다. 상세 회차 초기화는{" "}
                         <Link href="/me" className="text-[#0058FF] underline">
-                          마이페이지(/me)
+                          마이페이지
                         </Link>
                         에서 관리할 수 있습니다.
                       </div>

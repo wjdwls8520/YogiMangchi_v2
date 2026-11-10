@@ -214,7 +214,7 @@ export function ProfileImageUploadSlot({
         </div>
       </div>
       <small className="ym-helper-violet">
-        JPG, PNG, WEBP, GIF · 최대 5MB · S3 스토리지 업로드 연동 준비 완료 ({activeSelected ? "프리뷰 적용됨" : "선택 사항"})
+        JPG, PNG, WEBP (최대 5MB) · GIF (최대 3MB)
       </small>
       {error && (
         <div
