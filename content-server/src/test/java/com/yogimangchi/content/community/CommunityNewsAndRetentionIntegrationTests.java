@@ -1034,7 +1034,54 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.recommendedNewsroom").isArray())
                 .andExpect(jsonPath("$.sentimentSummary.bullPct").isNumber())
                 .andExpect(jsonPath("$.sentimentSummary.bearPct").isNumber())
+                .andExpect(jsonPath("$.sentimentSummary.bullishArticleCount").isNumber())
+                .andExpect(jsonPath("$.sentimentSummary.bearishArticleCount").isNumber())
+                .andExpect(jsonPath("$.sentimentSummary.neutralArticleCount").isNumber())
+                .andExpect(jsonPath("$.sentimentSummary.summary").isNotEmpty())
                 .andExpect(jsonPath("$.liveStatus.retentionHours").value(6));
+
+        // 8. Verify live RSS sentiment calculation prefers >=5 real sourceUrl articles and reflects article sentiment + user votes
+        String liveRss5 = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <rss version="2.0">
+                  <channel>
+                    <title>Live Sentiment Feed</title>
+                    <item>
+                      <title>연준 금리 동결 시사에도 경기 침체·하락 경계 확산 - 글로벌경제</title>
+                      <link>https://news.example.com/live/macro-bear-1</link>
+                      <published>%s</published>
+                      <description>하락 압력과 매도 우위 경계가 커지고 있습니다.</description>
+                    </item>
+                    <item>
+                      <title>비트코인 단기 급락 및 선물 청산 확대 우려 - 코인속보</title>
+                      <link>https://news.example.com/live/btc-bear-2</link>
+                      <published>%s</published>
+                      <description>선물 롱 포지션 청산과 약세 전환 우려가 부각됩니다.</description>
+                    </item>
+                    <item>
+                      <title>글로벌 규제 당국 조사 착수 및 투자 유의 경고 - 정책브리핑</title>
+                      <link>https://news.example.com/live/reg-bear-3</link>
+                      <published>%s</published>
+                      <description>규제 리스크와 폭락 경계 심리가 확산되고 있습니다.</description>
+                    </item>
+                    <item>
+                      <title>주요 거래소 유출입 동향 주시 속 단기 조정 국면 - 마켓워치</title>
+                      <link>https://news.example.com/live/mkt-bear-4</link>
+                      <published>%s</published>
+                      <description>하락세와 약세 압력이 이어지고 있습니다.</description>
+                    </item>
+                  </channel>
+                </rss>
+                """.formatted(recentPub1, recentPub1, recentPub1, recentPub1);
+        newsIngestion.ingestRssXml(liveRss5, "BREAKING", "ECONOMY_FLASH", 10);
+
+        var updatedHighlights = json.readTree(mvc.perform(get("/api/v1/news/highlights"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        var sentimentNode = updatedHighlights.path("sentimentSummary");
+        assertThat(sentimentNode.path("bullPct").asInt() + sentimentNode.path("bearPct").asInt()).isEqualTo(100);
+        assertThat(sentimentNode.path("bearishArticleCount").asInt()).isGreaterThanOrEqualTo(3);
+        assertThat(sentimentNode.path("summary").asText()).contains("최근 실시간 뉴스");
     }
 
     private AuthService.Issued signup() {
