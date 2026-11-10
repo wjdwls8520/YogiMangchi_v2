@@ -51,7 +51,13 @@ import {
 } from "../src/features/member/components/news-feed";
 import { CommunityBoard } from "../src/features/member/components/community-board";
 import { MainPortal, mapRedisTickersToPopularCoins } from "../src/features/member/components/main-portal";
-import { MemberSignupPage } from "../src/features/member/components/member-auth";
+import {
+  MemberSignupPage,
+  clearLoginReturnPath,
+  consumeLoginReturnPath,
+  normalizeLoginReturnPath,
+  saveLoginReturnPath,
+} from "../src/features/member/components/member-auth";
 import { MemberAccount } from "../src/features/member/components/member-account";
 import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
 import { PublicMember } from "../src/features/member/components/public-member";
@@ -1882,6 +1888,50 @@ test("뉴스 조회수 멱등 카운트(로그인 계정당 1회·비로그인 �
     client.clear();
   }
 });
+
+test("기존 회원 로그인 시 원래 보던 페이지 또는 메인 페이지로 복귀하고 회원가입 완료 시 메인 페이지로 이동한다", () => {
+  const storeMap = new Map<string, string>();
+  const mockStorage = {
+    getItem: (key: string) => storeMap.get(key) ?? null,
+    setItem: (key: string, val: string) => {
+      storeMap.set(key, val);
+    },
+    removeItem: (key: string) => {
+      storeMap.delete(key);
+    },
+  };
+
+  // 1. 저장된 경로가 없을 때 기본값은 메인 페이지("/")
+  assert.equal(consumeLoginReturnPath(mockStorage), "/");
+  assert.equal(normalizeLoginReturnPath(null), "/");
+  assert.equal(normalizeLoginReturnPath(""), "/");
+
+  // 2. 인증/계정 전용 경로 및 외부 URL은 안전하게 메인 페이지("/")로 정규화
+  assert.equal(normalizeLoginReturnPath("/login"), "/");
+  assert.equal(normalizeLoginReturnPath("/signup"), "/");
+  assert.equal(normalizeLoginReturnPath("/auth/callback?code=123"), "/");
+  assert.equal(normalizeLoginReturnPath("/account"), "/");
+  assert.equal(normalizeLoginReturnPath("https://evil.example.com/phish"), "/");
+  assert.equal(normalizeLoginReturnPath("//evil.example.com"), "/");
+
+  // 3. 원래 보던 내부 페이지(/community, /news?tab=newsroom, /trading 등) 저장 후 로그인 완료 시 정확히 복원 및 1회 소비
+  assert.equal(
+    saveLoginReturnPath("/news?tab=newsroom&sub=all&sort=popular", mockStorage),
+    "/news?tab=newsroom&sub=all&sort=popular",
+  );
+  assert.equal(
+    consumeLoginReturnPath(mockStorage),
+    "/news?tab=newsroom&sub=all&sort=popular",
+  );
+  // 소비 후 다시 조회하면 메인 페이지("/")로 초기화됨
+  assert.equal(consumeLoginReturnPath(mockStorage), "/");
+
+  // 4. 회원가입 완료 시 clearLoginReturnPath로 기존 저장 경로를 비우고 메인 페이지("/")로 이동
+  saveLoginReturnPath("/community", mockStorage);
+  clearLoginReturnPath(mockStorage);
+  assert.equal(consumeLoginReturnPath(mockStorage), "/");
+});
+
 
 
 

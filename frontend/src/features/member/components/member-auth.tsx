@@ -14,8 +14,155 @@ import { V1IconCheck } from "./v1-ui";
 import { validPolicyVersion } from "../api/policies";
 import { clearWithdrawalIntent, readWithdrawalIntent, saveWithdrawalIntent } from "../api/withdrawal-intent";
 
+export const LOGIN_RETURN_PATH_KEY = "yogimangchi:login-return-to:v1";
+
+type ReturnPathStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+function isAuthOnlyPath(path: string): boolean {
+  return /^\/(login|signup|auth\/callback|account)(\/|$|\?|#)/i.test(path.trim());
+}
+
+function resolveReturnPathStorage(storage?: ReturnPathStorage | null): ReturnPathStorage | null {
+  if (storage !== undefined) return storage;
+  if (typeof window === "undefined") return null;
+  try {
+    if (typeof window.sessionStorage?.getItem === "function") {
+      return window.sessionStorage;
+    }
+  } catch {
+    // Fallback to localStorage if sessionStorage is unavailable
+  }
+  try {
+    if (typeof window.localStorage?.getItem === "function") {
+      return window.localStorage;
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return null;
+}
+
+export function normalizeLoginReturnPath(raw?: string | null): string {
+  if (!raw || typeof raw !== "string") return "/";
+  const trimmed = raw.trim();
+  if (
+    !trimmed.startsWith("/") ||
+    trimmed.startsWith("//") ||
+    trimmed.includes("://") ||
+    isAuthOnlyPath(trimmed)
+  ) {
+    return "/";
+  }
+  return trimmed;
+}
+
+export function saveLoginReturnPath(
+  path?: string | null,
+  storage?: ReturnPathStorage | null,
+): string {
+  if (!path || typeof path !== "string") return "/";
+  const trimmed = path.trim();
+  if (
+    !trimmed.startsWith("/") ||
+    trimmed.startsWith("//") ||
+    trimmed.includes("://") ||
+    isAuthOnlyPath(trimmed)
+  ) {
+    return "/";
+  }
+  const store = resolveReturnPathStorage(storage);
+  try {
+    store?.setItem(LOGIN_RETURN_PATH_KEY, trimmed);
+  } catch {
+    // Ignore storage quota errors
+  }
+  return trimmed;
+}
+
+export function clearLoginReturnPath(storage?: ReturnPathStorage | null): void {
+  if (storage !== undefined) {
+    try {
+      storage?.removeItem(LOGIN_RETURN_PATH_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    return;
+  }
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage?.removeItem(LOGIN_RETURN_PATH_KEY);
+  } catch {
+    // Ignore
+  }
+  try {
+    window.localStorage?.removeItem(LOGIN_RETURN_PATH_KEY);
+  } catch {
+    // Ignore
+  }
+}
+
+export function consumeLoginReturnPath(storage?: ReturnPathStorage | null): string {
+  const store = resolveReturnPathStorage(storage);
+  let raw: string | null = null;
+  try {
+    raw = store?.getItem(LOGIN_RETURN_PATH_KEY) ?? null;
+    if (!raw && storage === undefined && typeof window !== "undefined") {
+      raw = window.localStorage?.getItem(LOGIN_RETURN_PATH_KEY) ?? null;
+    }
+  } catch {
+    raw = null;
+  }
+  clearLoginReturnPath(storage);
+  return normalizeLoginReturnPath(raw);
+}
+
+function useSafeRouter() {
+  try {
+    return useRouter();
+  } catch {
+    return null;
+  }
+}
+
 export function MemberLogin() {
   const { origin, snapshot } = useMember();
+  const router = useSafeRouter();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const explicitReturn = params.get("returnTo") ?? params.get("redirect");
+    if (explicitReturn && !isAuthOnlyPath(explicitReturn)) {
+      saveLoginReturnPath(explicitReturn);
+      return;
+    }
+    try {
+      const existing = resolveReturnPathStorage()?.getItem(LOGIN_RETURN_PATH_KEY);
+      if (!existing && document.referrer) {
+        const refUrl = new URL(document.referrer);
+        if (refUrl.origin === window.location.origin) {
+          const candidate = `${refUrl.pathname}${refUrl.search}`;
+          if (!isAuthOnlyPath(candidate)) {
+            saveLoginReturnPath(candidate);
+          }
+        }
+      }
+    } catch {
+      // Ignore referrer parse errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (snapshot.phase === "ready" && !snapshot.recovery) {
+      const target = consumeLoginReturnPath();
+      if (router) {
+        router.replace(target);
+      } else if (typeof window !== "undefined") {
+        window.location.replace(target);
+      }
+    }
+  }, [snapshot.phase, snapshot.recovery, router]);
+
   return (
     <MemberShell
       title="로그인"
@@ -31,14 +178,6 @@ export function MemberLogin() {
       )}
     </MemberShell>
   );
-}
-
-function useSafeRouter() {
-  try {
-    return useRouter();
-  } catch {
-    return null;
-  }
 }
 
 export function MemberSignupPage() {
@@ -122,7 +261,11 @@ export function MemberCallback() {
   const [completionReady, setCompletionReady] = useState(false);
   const [withdrawalIntent] = useState(readWithdrawalIntent);
   const flowGeneration = useRef<number | null>(null);
-  useEffect(() => { if (snapshot.phase === "ready" && !withdrawalIntent) router.replace("/account"); }, [snapshot.phase, router, withdrawalIntent]);
+  useEffect(() => {
+    if (snapshot.phase === "ready" && !withdrawalIntent) {
+      router.replace(consumeLoginReturnPath());
+    }
+  }, [snapshot.phase, router, withdrawalIntent]);
   useEffect(() => {
     const controller = new AbortController();
     const generation = session.getSnapshot().generation;
@@ -139,7 +282,13 @@ export function MemberCallback() {
           saveWithdrawalIntent(withdrawalIntent.memberId, true);
           router.replace("/account?withdraw=confirm"); return;
         }
-        if (value.status === "LOGIN_READY") { await session.complete(); if (!controller.signal.aborted) { announce("changed"); router.replace("/account"); } }
+        if (value.status === "LOGIN_READY") {
+          await session.complete();
+          if (!controller.signal.aborted) {
+            announce("changed");
+            router.replace(consumeLoginReturnPath());
+          }
+        }
       } catch (error) { if (!controller.signal.aborted) { setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null); } }
     })();
     return () => controller.abort();
@@ -154,7 +303,12 @@ export function MemberCallback() {
     }
     if (!validPolicyVersion(termsVersion) || !validPolicyVersion(privacyVersion)) { setError("최신 이용약관과 개인정보 동의 원문을 확인해 주세요."); return; }
     active.current = true; setPending(true); setError(null); setRequestError(null); setCompletionReady(false);
-    try { await session.signup({ nickname, profileMessage, termAgree: true, privateAgree: true, termsVersion, privacyVersion }); announce("changed"); router.replace("/account"); }
+    try {
+      await session.signup({ nickname, profileMessage, termAgree: true, privateAgree: true, termsVersion, privacyVersion });
+      clearLoginReturnPath();
+      announce("changed");
+      router.replace("/");
+    }
     catch (error) {
       setError(contentMessage(error));
       setRequestError(error instanceof ContentApiError ? error : null);
@@ -185,7 +339,11 @@ export function MemberCallback() {
         await session.restore();
         if (session.getSnapshot().memberId !== withdrawalIntent.memberId) throw new ContentApiError(401);
         saveWithdrawalIntent(withdrawalIntent.memberId, true); router.replace("/account?withdraw=confirm");
-      } else { await session.complete(); announce("changed"); router.replace("/account"); }
+      } else {
+        await session.complete();
+        announce("changed");
+        router.replace(consumeLoginReturnPath());
+      }
     }
     catch (error) {
       setCompletionReady(false); setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null);

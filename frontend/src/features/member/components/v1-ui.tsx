@@ -874,6 +874,21 @@ export function V1Header({
 
   useDimScrollLock(isMenuOpen);
 
+  function rememberCurrentPageForLogin() {
+    if (typeof window === "undefined") return;
+    const currentPath = `${window.location.pathname || "/"}${window.location.search || ""}`;
+    if (/^\/(login|signup|auth\/callback|account)(\/|$|\?|#)/i.test(currentPath)) return;
+    try {
+      window.sessionStorage?.setItem("yogimangchi:login-return-to:v1", currentPath);
+    } catch {
+      try {
+        window.localStorage?.setItem("yogimangchi:login-return-to:v1", currentPath);
+      } catch {
+        // Ignore storage errors
+      }
+    }
+  }
+
   return (
     <>
       <header
@@ -930,6 +945,9 @@ export function V1Header({
           <div className="ym-gnb-right flex shrink-0 items-center gap-2">
             <Link
               href={isLoggedIn ? "/me" : "/login"}
+              onClick={() => {
+                if (!isLoggedIn) rememberCurrentPageForLogin();
+              }}
               className={cn(
                 "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                 isDark
@@ -1015,7 +1033,10 @@ export function V1Header({
                 <Link
                   href="/login"
                   className="inline-flex h-9 w-full items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
-                  onClick={() => setIsMenuOpen(false)}
+                  onClick={() => {
+                    rememberCurrentPageForLogin();
+                    setIsMenuOpen(false);
+                  }}
                 >
                   로그인
                 </Link>
