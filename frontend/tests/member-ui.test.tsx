@@ -1167,6 +1167,16 @@ test("MemberShell and MemberLoginView render the official /images/logo.webp bran
     );
     assert.match(loginHtml, /src="\/images\/logo\.webp"/);
     assert.match(loginHtml, /ym-login-logo-img/);
+    assert.match(loginHtml, /max-w-\[520px\]/);
+    assert.match(loginHtml, /sm:whitespace-nowrap/);
+    assert.match(loginHtml, /sm:flex-nowrap/);
+
+    const globalsCss = fs.readFileSync(
+      path.join(process.cwd(), "src/app/globals.css"),
+      "utf8",
+    );
+    assert.match(globalsCss, /\.ym-container-auth\s*\{[\s\S]*?max-width:\s*560px;/);
+    assert.match(globalsCss, /\.ym-container-signup\s*\{[\s\S]*?max-width:\s*580px;/);
 
     const portalHtml = renderToStaticMarkup(
       <MemberProvider client={client}>

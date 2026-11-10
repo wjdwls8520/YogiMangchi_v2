@@ -30,7 +30,7 @@ export function MemberShell({
           {!hideCardHeading && (
             <div className="ym-card-heading mb-6">
               <h1 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">{title}</h1>
-              {subtitle && <p className="ym-card-subtitle mt-1.5 text-sm font-medium text-gray-500">{subtitle}</p>}
+              {subtitle && <p className="ym-card-subtitle mt-1.5 break-keep text-sm font-medium text-gray-500">{subtitle}</p>}
             </div>
           )}
           {hideCardHeading && <h1 className="sr-only">{title}</h1>}
@@ -46,7 +46,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
   const [helpOpen, setHelpOpen] = useState(false);
 
   return (
-    <div className="member-fields ym-login-container mx-auto w-full max-w-md rounded-[24px] border border-gray-200 bg-white p-6 sm:p-8">
+    <div className="member-fields ym-login-container mx-auto w-full max-w-[520px] break-keep rounded-[24px] border border-gray-200 bg-white p-6 sm:px-10 sm:py-9">
       <div className="ym-login-logo-wrap mb-4 flex flex-col items-center text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/images/logo.webp" alt="요기망치 로고" className="ym-login-logo-img h-10 w-auto object-contain" />
@@ -56,10 +56,10 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
       </div>
 
       <div className="ym-login-intro mb-6 text-center">
-        <p className="ym-login-lead text-lg font-black text-gray-900">
+        <p className="ym-login-lead break-keep text-lg font-black text-gray-900 sm:whitespace-nowrap">
           Google 또는 Kakao 계정으로 간편하게 시작하세요
         </p>
-        <p className="ym-login-sub mt-1.5 text-xs font-medium leading-relaxed text-gray-500">
+        <p className="ym-login-sub mt-1.5 break-keep text-xs font-medium leading-relaxed text-gray-500">
           요기망치는 별도 비밀번호를 저장하지 않고 OAuth2 인증으로 모의투자·커뮤니티·뉴스·자산을 연결합니다.
         </p>
       </div>
@@ -85,19 +85,19 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
         </a>
       </div>
 
-      <div className="ym-login-option-box mt-5 flex items-center justify-between gap-2 text-xs text-gray-500">
-        <label className="ym-custom-check flex items-center gap-2 cursor-pointer">
+      <div className="ym-login-option-box mt-5 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 sm:flex-nowrap">
+        <label className="ym-custom-check flex cursor-pointer items-center gap-2">
           <input
             type="checkbox"
             name="rememberSession"
             checked={rememberSession}
             onChange={event => setRememberSession(event.currentTarget.checked)}
           />
-          <span>로그인 상태 유지 안내 확인 (7일 Refresh 쿠키)</span>
+          <span className="sm:whitespace-nowrap">로그인 상태 유지 안내 확인 (7일 Refresh 쿠키)</span>
         </label>
         <button
           type="button"
-          className="ym-text-link-btn font-bold text-[#0058FF] hover:underline"
+          className="ym-text-link-btn shrink-0 whitespace-nowrap font-bold text-[#0058FF] hover:underline"
           onClick={() => setHelpOpen(true)}
         >
           이용 안내 / 도움말
@@ -105,8 +105,10 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
       </div>
 
       <div className="ym-login-bottom mt-6 flex flex-col gap-3 border-t border-gray-100 pt-5 text-center">
-        <p className="member-note text-xs text-gray-400">
-          최초 소셜 로그인 시 약관 동의 및 닉네임 설정 단계로 자동 연결됩니다. Guest 모의투자 기록은 회원 계정에 자동으로 합쳐지지 않습니다.
+        <p className="member-note break-keep text-xs leading-relaxed text-gray-400">
+          최초 소셜 로그인 시 약관 동의 및 닉네임 설정 단계로 자동 연결됩니다.{" "}
+          <br className="hidden sm:block" />
+          Guest 모의투자 기록은 회원 계정에 자동으로 합쳐지지 않습니다.
         </p>
         <Link href="/trading" className="ym-guest-return-link text-xs font-bold text-[#0058FF] hover:underline">
           게스트 모의투자로 바로 체험하기 →
