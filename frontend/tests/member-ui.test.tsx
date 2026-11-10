@@ -45,6 +45,7 @@ import { MemberAccount } from "../src/features/member/components/member-account"
 import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
 import { PublicMember } from "../src/features/member/components/public-member";
 import { V1Header } from "../src/features/member/components/v1-ui";
+import { SiteFooter } from "../src/components/site-footer";
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
 
 test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
@@ -1164,6 +1165,10 @@ test("MemberShell and MemberLoginView render the official /images/logo.webp bran
     );
     assert.match(portalHtml, /src="\/images\/logo\.webp"/);
     assert.match(portalHtml, /ym-brand-logo-img/);
+
+    const footerHtml = renderToStaticMarkup(<SiteFooter />);
+    assert.match(footerHtml, /© 2026 YogiMangchi\. All rights reserved\./);
+    assert.equal(footerHtml.includes("Yogi-Mangchi"), false);
   } finally {
     client.clear();
   }

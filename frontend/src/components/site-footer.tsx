@@ -43,7 +43,7 @@ export function SiteFooter() {
         </ul>
       </nav>
       <small className="block pt-5 text-xs text-gray-400">
-        © 2026 Yogi-Mangchi. All rights reserved.
+        © 2026 YogiMangchi. All rights reserved.
       </small>
     </footer>
   );
