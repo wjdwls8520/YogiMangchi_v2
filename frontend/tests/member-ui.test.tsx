@@ -43,6 +43,7 @@ import { MainPortal } from "../src/features/member/components/main-portal";
 import { MemberSignupPage } from "../src/features/member/components/member-auth";
 import { MemberAccount } from "../src/features/member/components/member-account";
 import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
+import { PublicMember } from "../src/features/member/components/public-member";
 import { V1Header } from "../src/features/member/components/v1-ui";
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
 
@@ -291,8 +292,10 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /인기 속보/);
     assert.match(html, /키워드로 보는 이슈/);
     assert.match(html, /강세 74%/);
-    assert.match(html, /✦ AI 분석: 기관 ETF 자금 유입 확대로 BTC 단기 매수 우위 지속/);
-    assert.match(html, /원문 기사 보기 ↗/);
+    assert.match(html, /data-flat-icon="sparkle"/);
+    assert.match(html, /AI 분석: 기관 ETF 자금 유입 확대로 BTC 단기 매수 우위 지속/);
+    assert.match(html, /<span>원문 기사 보기<\/span><svg[^>]*data-flat-icon="external"/);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(html), false);
     assert.match(html, /href="https:\/\/www\.coindesk\.com\/markets\/btc-etf-inflows"/);
     assert.match(html, /data-infinite-scroll="news-sentinel"/);
     assert.equal(html.includes("새 실시간 속보"), false);
@@ -504,9 +507,11 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     assert.match(html, /<select[^>]*aria-label="카테고리 필터"/);
     assert.match(html, /<select[^>]*aria-label="종목 태그 필터"/);
     assert.match(html, /<select[^>]*aria-label="정렬 선택"/);
-    assert.match(html, /원장 스냅샷 검증됨 ✓/);
+    assert.match(html, /<span>원장 스냅샷 검증됨<\/span><svg[^>]*data-flat-icon="check"/);
     assert.match(html, /BTCUSDT 무기한/);
-    assert.match(html, /📊 포지션 공유하기/);
+    assert.match(html, /data-flat-icon="pen"[\s\S]*?<span>글쓰기 모달 열기<\/span>/);
+    assert.match(html, /data-flat-icon="chart-bar"[\s\S]*?<span>포지션 공유하기<\/span>/);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(html), false);
     assert.match(html, /인기글 \(POPULAR\)/);
     assert.equal(html.includes("새 게시글 보기"), false);
     assert.match(html, /data-infinite-scroll="community-sentinel"/);
@@ -548,7 +553,11 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     );
     assert.match(detailHtml, /커뮤니티 피드로 돌아가기/);
     assert.match(detailHtml, /좋은 관점이네요\./);
-    assert.match(detailHtml, /↳ <a href="\/members\/7">트레이더7<\/a>: 감사합니다! 리스크 관리가 최우선입니다\./);
+    assert.match(
+      detailHtml,
+      /data-flat-icon="corner-down-right"[^>]*>[\s\S]*?<a href="\/members\/7">트레이더7<\/a>: 감사합니다! 리스크 관리가 최우선입니다\./,
+    );
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(detailHtml), false);
   } finally {
     client.clear();
   }
@@ -782,7 +791,8 @@ test("Community API binding supports FormData multipart, S3 files, sharedPositio
     assert.match(html, /data-deleted-comment="true">삭제된 댓글입니다\.<\/p>/);
     assert.match(html, /data-mention="솔라나고래">@솔라나고래<\/span>/);
     assert.match(html, /타겟 멘션 대댓글이 정상적으로 유지됩니다\./);
-    assert.match(html, /♥ 7/);
+    assert.match(html, /data-flat-icon="heart"[^>]*>[\s\S]*?<span>7<\/span>/);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(html), false);
     assert.match(html, /신고 취소/);
     assert.match(html, /data-comment-auth-notice="true"/);
     assert.match(html, /댓글 작성은 로그인 이후 가능합니다\./);
@@ -1060,6 +1070,23 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     const contestIdx = loggedInHeaderHtml.indexOf('href="/contest"');
     const communityIdx = loggedInHeaderHtml.indexOf('href="/community"');
     assert.equal(newsIdx > 0 && newsIdx < tradingIdx && tradingIdx < contestIdx && contestIdx < communityIdx, true);
+
+    const publicMemberHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <PublicMember memberId={11} />
+      </MemberProvider>,
+    );
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(portalHtml), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(signupAnonHtml), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(meAnonHtml), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(meLoggedInHtml), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(publicMemberHtml), false);
+    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="swap"/);
+    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="bolt"/);
+    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="trophy"/);
+    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="heart"/);
+    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="comment"/);
+    assert.match(signupAnonHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="check"/);
   } finally {
     client.clear();
   }

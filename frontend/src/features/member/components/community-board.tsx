@@ -32,7 +32,19 @@ import {
 } from "../api/community-news";
 import { DimModal } from "./dim-modal";
 import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
-import { V1Tabs, V1Button, V1UserAvatar } from "./v1-ui";
+import {
+  V1Tabs,
+  V1Button,
+  V1UserAvatar,
+  V1IconPen,
+  V1IconChartBar,
+  V1IconHeart,
+  V1IconComment,
+  V1IconCornerDownRight,
+  V1IconArrowUp,
+  V1IconArrowLeft,
+  V1IconCheck,
+} from "./v1-ui";
 
 export type { SharedPositionSnapshot };
 
@@ -166,8 +178,9 @@ export function SharedPositionCard({
           >
             {snapshot.side} {snapshot.leverage}x
           </span>
-          <span className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-bold text-gray-500">
-            원장 스냅샷 검증됨 ✓
+          <span className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-bold text-gray-500">
+            <span>원장 스냅샷 검증됨</span>
+            <V1IconCheck className="h-3 w-3" />
           </span>
         </div>
 
@@ -1202,7 +1215,8 @@ export function CommunityBoard({
                 setWriteModalOpen(true);
               }}
             >
-              ✎ 글쓰기 모달 열기
+              <V1IconPen className="mr-1.5 h-3.5 w-3.5" />
+              <span>글쓰기 모달 열기</span>
             </V1Button>
             <button
               type="button"
@@ -1221,7 +1235,8 @@ export function CommunityBoard({
                   : "inline-flex h-9 items-center justify-center rounded-xl border border-gray-200 bg-gray-200 px-3.5 text-xs font-bold text-gray-400 cursor-default"
               }
             >
-              📊 포지션 공유하기
+              <V1IconChartBar className="mr-1.5 h-3.5 w-3.5" />
+              <span>포지션 공유하기</span>
             </button>
             <Link
               href="/trading"
@@ -1241,7 +1256,7 @@ export function CommunityBoard({
                   href={`/community/${v1Tab}`}
                   className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-700 hover:text-[#0058FF]"
                 >
-                  <span aria-hidden="true">←</span>
+                  <V1IconArrowLeft className="h-3.5 w-3.5" />
                   <span>커뮤니티 피드로 돌아가기</span>
                 </Link>
                 <span className="text-xs font-bold text-gray-400">
@@ -1398,7 +1413,7 @@ export function CommunityBoard({
                   onClick={() => void handleLoadNewPosts()}
                   className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-blue-400 bg-[#0058FF] px-4 py-2 text-xs font-bold text-white shadow-lg transition-all hover:bg-blue-700"
                 >
-                  <span aria-hidden="true">↑</span>
+                  <V1IconArrowUp className="h-3.5 w-3.5" />
                   <span>새 게시글 보기</span>
                   <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] font-extrabold">
                     {pendingNewPostsCount}
@@ -1708,13 +1723,13 @@ export function CommunityBoard({
                             likeMutation.mutate(post);
                           }}
                         >
-                          <span>♥</span>
+                          <V1IconHeart className="h-3.5 w-3.5" />
                           <span>좋아요 {post.likeCount}</span>
                         </button>
 
                         {isDetailView ? (
                           <span className="inline-flex items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-1.5 text-xs font-bold text-[#0058FF]">
-                            <span>💬</span>
+                            <V1IconComment className="h-3.5 w-3.5" />
                             <span>댓글 {post.commentCount}</span>
                           </span>
                         ) : (
@@ -1722,7 +1737,7 @@ export function CommunityBoard({
                             href={`/community/${v1Tab}/${post.id}`}
                             className="inline-flex items-center gap-1.5 rounded-xl bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100"
                           >
-                            <span>💬</span>
+                            <V1IconComment className="h-3.5 w-3.5" />
                             <span>댓글 {post.commentCount}</span>
                           </Link>
                         )}
@@ -1796,7 +1811,8 @@ export function CommunityBoard({
                                           });
                                         }}
                                       >
-                                        ♥ {comment.likeCount ?? 0}
+                                        <V1IconHeart className="mr-1 inline h-3 w-3" />
+                                        <span>{comment.likeCount ?? 0}</span>
                                       </button>
                                       {isLoggedIn && (
                                         <button
@@ -1942,7 +1958,7 @@ export function CommunityBoard({
                                         >
                                           <div className="flex flex-wrap items-center justify-between gap-2">
                                             <span>
-                                              ↳{" "}
+                                              <V1IconCornerDownRight className="mr-1 inline h-3.5 w-3.5 text-gray-400" />
                                               <AuthorLabel
                                                 memberId={reply.memberId}
                                                 nickname={reply.authorNickname}
@@ -1992,7 +2008,8 @@ export function CommunityBoard({
                                                     });
                                                   }}
                                                 >
-                                                  ♥ {reply.likeCount ?? 0}
+                                                  <V1IconHeart className="mr-1 inline h-3 w-3" />
+                                                  <span>{reply.likeCount ?? 0}</span>
                                                 </button>
                                                 {isLoggedIn && (
                                                   <button
@@ -2325,14 +2342,7 @@ export function CommunityBoard({
               : "flex items-center justify-center rounded-full bg-gray-200 p-5 text-gray-400 cursor-default"
           }
         >
-          <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-            />
-          </svg>
+          <V1IconPen className="h-6 w-6" />
         </button>
       </div>
 

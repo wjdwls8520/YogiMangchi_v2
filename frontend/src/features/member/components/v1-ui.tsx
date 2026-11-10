@@ -1,9 +1,266 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import {
+  useState,
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type SVGProps,
+} from "react";
 import { useDimScrollLock } from "./dim-modal";
 import { useOptionalMember } from "./member-provider";
+
+export interface V1FlatIconProps extends SVGProps<SVGSVGElement> {
+  className?: string;
+}
+
+function BaseFlatIcon({
+  iconName,
+  className,
+  children,
+  ...props
+}: V1FlatIconProps & { iconName: string; children: ReactNode }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      data-flat-icon={iconName}
+      className={cn("shrink-0", className)}
+      {...props}
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function V1IconPen(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="pen" {...props}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconHeart(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="heart" {...props}>
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconComment(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="comment" {...props}>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconChartBar(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="chart-bar" {...props}>
+      <path d="M18 20V10" />
+      <path d="M12 20V4" />
+      <path d="M6 20v-6" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconTrendUp(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="trend-up" {...props}>
+      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+      <polyline points="17 6 23 6 23 12" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconTrendDown(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="trend-down" {...props}>
+      <polyline points="23 18 13.5 8.5 8.5 13.5 1 6" />
+      <polyline points="17 18 23 18 23 12" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconBolt(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="bolt" {...props}>
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconNews(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="news" {...props}>
+      <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2" />
+      <path d="M18 14h-8" />
+      <path d="M15 18h-5" />
+      <path d="M10 6h8v4h-8V6Z" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconSend(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="send" {...props}>
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconStar(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="star" {...props}>
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconMic(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="mic" {...props}>
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" y1="19" x2="12" y2="23" />
+      <line x1="8" y1="23" x2="16" y2="23" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconCalendar(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="calendar" {...props}>
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconSparkle(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="sparkle" {...props}>
+      <path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2L12 3z" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconCheck(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="check" {...props}>
+      <polyline points="20 6 9 17 4 12" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconClose(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="close" {...props}>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconSwap(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="swap" {...props}>
+      <polyline points="7 3 7 21" />
+      <polyline points="3 7 7 3 11 7" />
+      <polyline points="17 21 17 3" />
+      <polyline points="13 17 17 21 21 17" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconCornerDownRight(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="corner-down-right" {...props}>
+      <polyline points="15 10 20 15 15 20" />
+      <path d="M4 4v7a4 4 0 0 0 4 4h12" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconArrowUp(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="arrow-up" {...props}>
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconArrowLeft(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="arrow-left" {...props}>
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconArrowRight(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="arrow-right" {...props}>
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconExternal(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="external" {...props}>
+      <line x1="7" y1="17" x2="17" y2="7" />
+      <polyline points="7 7 17 7 17 17" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconShield(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="shield" {...props}>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconWallet(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="wallet" {...props}>
+      <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
+      <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
+      <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconTrophy(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="trophy" {...props}>
+      <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+      <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+      <path d="M4 22h16" />
+      <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+      <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+      <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+    </BaseFlatIcon>
+  );
+}
 
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -719,7 +976,7 @@ export function V1Header({
                 className="rounded-lg p-1 text-gray-500 hover:bg-gray-100"
                 aria-label="메뉴 닫기"
               >
-                ✕
+                <V1IconClose className="h-4 w-4" />
               </button>
             </div>
             <nav aria-label="모바일 전체 메뉴" className="mt-6 flex flex-col gap-3 text-sm font-bold">
