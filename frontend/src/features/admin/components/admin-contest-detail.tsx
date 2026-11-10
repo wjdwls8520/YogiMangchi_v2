@@ -747,7 +747,7 @@ export function AdminContestDetail({
             </Link>
 
             <div className="flex flex-wrap items-center gap-2.5">
-              <span className="rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-600 tabular-nums">
+              <span className="shrink-0 whitespace-nowrap rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-600 tabular-nums">
                 #{season.id}
               </span>
               <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-gray-900">
@@ -755,7 +755,7 @@ export function AdminContestDetail({
               </h1>
               <span
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold",
+                  "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold",
                   season.progressState === "모집중"
                     ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
                     : season.progressState === "Live"
@@ -770,7 +770,7 @@ export function AdminContestDetail({
               </span>
               <span
                 className={cn(
-                  "inline-flex rounded-full px-3 py-1 text-xs font-bold",
+                  "inline-flex shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold",
                   displayStatus === "공개중"
                     ? "border border-indigo-200 bg-indigo-50 text-indigo-700"
                     : displayStatus === "취소됨"
@@ -789,9 +789,9 @@ export function AdminContestDetail({
               type="button"
               data-admin-action="early-finish-settle"
               onClick={() => setEarlySettleModalOpen(true)}
-              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-4 text-xs font-black text-rose-700 transition-colors hover:bg-rose-100 cursor-pointer"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-rose-200 bg-rose-50 px-4 text-xs font-black text-rose-700 transition-colors hover:bg-rose-100 cursor-pointer"
             >
-              <V1IconAlert className="h-4 w-4 text-rose-600" />
+              <V1IconAlert className="h-4 w-4 shrink-0 text-rose-600" />
               <span>대회 조기 종료 및 강제 정산</span>
             </button>
 
@@ -799,9 +799,9 @@ export function AdminContestDetail({
               type="button"
               data-admin-action="cleanup-remaining"
               onClick={() => setCleanupModalOpen(true)}
-              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-4 text-xs font-black text-amber-800 transition-colors hover:bg-amber-100 cursor-pointer"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-amber-200 bg-amber-50 px-4 text-xs font-black text-amber-800 transition-colors hover:bg-amber-100 cursor-pointer"
             >
-              <V1IconRefresh className="h-4 w-4 text-amber-700" />
+              <V1IconRefresh className="h-4 w-4 shrink-0 text-amber-700" />
               <span>남은 포지션·미체결 주문 재정리</span>
             </button>
 
@@ -841,11 +841,11 @@ export function AdminContestDetail({
           {/* 카드 1: 대회 개요 및 상태 제어 */}
           <article className="flex flex-col justify-between gap-5 rounded-2xl border border-gray-200 bg-white p-6">
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h2 className="text-base font-black text-gray-900">
                   대회 개요 및 상태 제어
                 </h2>
-                <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-black text-[#0058FF]">
+                <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-black text-[#0058FF]">
                   시드 {season.seedMoney} USDT
                 </span>
               </div>
@@ -934,11 +934,11 @@ export function AdminContestDetail({
                   청크 500 정산 시스템 상태 & 실행 이력
                 </h2>
                 {season.settledAt ? (
-                  <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
+                  <span className="inline-flex shrink-0 whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
                     정산 완료 ({season.settledAt})
                   </span>
                 ) : (
-                  <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-700">
+                  <span className="inline-flex shrink-0 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-700">
                     미정산
                   </span>
                 )}
@@ -1060,7 +1060,7 @@ export function AdminContestDetail({
               <table className="w-full min-w-[720px] text-left text-xs">
                 <thead className="border-b border-gray-200 bg-[#F9FAFB] text-gray-500">
                   <tr>
-                    <th className="w-12 px-4 py-3 text-center">
+                    <th className="w-12 px-4 py-3 text-center whitespace-nowrap">
                       <input
                         type="checkbox"
                         aria-label="전체 신청자 선택"
@@ -1074,11 +1074,11 @@ export function AdminContestDetail({
                         }
                       />
                     </th>
-                    <th className="px-4 py-3 font-bold">신청 ID</th>
-                    <th className="px-4 py-3 font-bold">신청자 닉네임</th>
-                    <th className="px-4 py-3 font-bold">트레이딩 소개</th>
-                    <th className="px-4 py-3 font-bold">신청 일시</th>
-                    <th className="px-4 py-3 font-bold text-center">승인 · 반려</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">신청 ID</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">신청자 닉네임</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">트레이딩 소개</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">신청 일시</th>
+                    <th className="px-4 py-3 font-bold text-center whitespace-nowrap">승인 · 반려</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
@@ -1094,7 +1094,7 @@ export function AdminContestDetail({
                   ) : (
                     applicants.map(applicant => (
                       <tr key={applicant.applicantId} className="hover:bg-gray-50">
-                        <td className="px-4 py-3.5 text-center">
+                        <td className="px-4 py-3.5 text-center whitespace-nowrap">
                           <input
                             type="checkbox"
                             aria-label={`${applicant.nickname} 선택`}
@@ -1110,13 +1110,13 @@ export function AdminContestDetail({
                             }
                           />
                         </td>
-                        <td className="px-4 py-3.5 font-black text-gray-500 tabular-nums">
+                        <td className="px-4 py-3.5 font-black text-gray-500 tabular-nums whitespace-nowrap">
                           #{applicant.applicantId}
                         </td>
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5 whitespace-nowrap">
                           <Link
                             href={`/members/${applicant.memberId}`}
-                            className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF]"
+                            className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF] whitespace-nowrap"
                           >
                             <V1UserAvatar
                               memberId={applicant.memberId}
@@ -1126,21 +1126,21 @@ export function AdminContestDetail({
                             <span>{applicant.nickname}</span>
                           </Link>
                         </td>
-                        <td className="px-4 py-3.5 text-gray-600">
-                          {applicant.profileMsg}
+                        <td className="max-w-[260px] px-4 py-3.5 text-gray-600">
+                          <p className="truncate">{applicant.profileMsg}</p>
                         </td>
-                        <td className="px-4 py-3.5 font-medium text-gray-500 tabular-nums">
+                        <td className="px-4 py-3.5 font-medium text-gray-500 tabular-nums whitespace-nowrap">
                           {applicant.appliedAt}
                         </td>
-                        <td className="px-4 py-3.5 text-center">
-                          <div className="inline-flex items-center gap-1.5">
+                        <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
                             <button
                               type="button"
                               data-admin-approve-applicant={applicant.applicantId}
                               onClick={() =>
                                 approveApplicantsByIds([applicant.applicantId])
                               }
-                              className="inline-flex h-8 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700 cursor-pointer"
+                              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700 cursor-pointer"
                             >
                               승인
                             </button>
@@ -1151,7 +1151,7 @@ export function AdminContestDetail({
                                 setRejectTarget(applicant);
                                 setRejectReasonInput("");
                               }}
-                              className="inline-flex h-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-bold text-rose-700 hover:bg-rose-100 cursor-pointer"
+                              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-bold text-rose-700 hover:bg-rose-100 cursor-pointer"
                             >
                               반려
                             </button>
@@ -1171,27 +1171,27 @@ export function AdminContestDetail({
               <table className="w-full min-w-[920px] text-left text-xs">
                 <thead className="border-b border-gray-200 bg-[#F9FAFB] text-gray-500">
                   <tr>
-                    <th className="px-4 py-3 font-bold">참가자 ID</th>
-                    <th className="px-4 py-3 font-bold">닉네임</th>
-                    <th className="px-4 py-3 font-bold">시즌 전용 지갑 ID · 상태</th>
-                    <th className="px-4 py-3 font-bold text-right">초기 시드머니</th>
-                    <th className="px-4 py-3 font-bold text-right">평가자산</th>
-                    <th className="px-4 py-3 font-bold text-right">실현손익 · 수익률</th>
-                    <th className="px-4 py-3 font-bold text-center">미체결 주문</th>
-                    <th className="px-4 py-3 font-bold text-center">오픈 포지션</th>
-                    <th className="px-4 py-3 font-bold text-center">현재/최종 순위</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">참가자 ID</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">닉네임</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">시즌 전용 지갑 ID · 상태</th>
+                    <th className="px-4 py-3 font-bold text-right whitespace-nowrap">초기 시드머니</th>
+                    <th className="px-4 py-3 font-bold text-right whitespace-nowrap">평가자산</th>
+                    <th className="px-4 py-3 font-bold text-right whitespace-nowrap">실현손익 · 수익률</th>
+                    <th className="px-4 py-3 font-bold text-center whitespace-nowrap">미체결 주문</th>
+                    <th className="px-4 py-3 font-bold text-center whitespace-nowrap">오픈 포지션</th>
+                    <th className="px-4 py-3 font-bold text-center whitespace-nowrap">현재/최종 순위</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {participants.map(participant => (
                     <tr key={participant.participantId} className="hover:bg-gray-50">
-                      <td className="px-4 py-3.5 font-black text-gray-500 tabular-nums">
+                      <td className="px-4 py-3.5 font-black text-gray-500 tabular-nums whitespace-nowrap">
                         #{participant.participantId}
                       </td>
-                      <td className="px-4 py-3.5">
+                      <td className="px-4 py-3.5 whitespace-nowrap">
                         <Link
                           href={`/members/${participant.memberId}`}
-                          className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF]"
+                          className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF] whitespace-nowrap"
                         >
                           <V1UserAvatar
                             memberId={participant.memberId}
@@ -1201,14 +1201,14 @@ export function AdminContestDetail({
                           <span>{participant.nickname}</span>
                         </Link>
                       </td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2">
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        <div className="flex items-center gap-2 whitespace-nowrap">
                           <span className="font-bold text-gray-700 tabular-nums">
                             W-{participant.walletId}
                           </span>
                           <span
                             className={cn(
-                              "inline-flex rounded-full px-2 py-0.5 text-[10px] font-black",
+                              "inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-black",
                               participant.walletStatus === "ACTIVE"
                                 ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                                 : "bg-gray-100 text-gray-600 border border-gray-200",
@@ -1218,22 +1218,22 @@ export function AdminContestDetail({
                           </span>
                         </div>
                       </td>
-                      <td className="px-4 py-3.5 text-right font-medium text-gray-500 tabular-nums">
+                      <td className="px-4 py-3.5 text-right font-medium text-gray-500 tabular-nums whitespace-nowrap">
                         {participant.seedMoney}
                       </td>
-                      <td className="px-4 py-3.5 text-right font-bold text-gray-900 tabular-nums">
+                      <td className="px-4 py-3.5 text-right font-bold text-gray-900 tabular-nums whitespace-nowrap">
                         {participant.equity}
                       </td>
-                      <td className="px-4 py-3.5 text-right font-black text-red-500 tabular-nums">
+                      <td className="px-4 py-3.5 text-right font-black text-red-500 tabular-nums whitespace-nowrap">
                         {participant.realizedPnl} ({participant.roi})
                       </td>
-                      <td className="px-4 py-3.5 text-center font-bold text-gray-700 tabular-nums">
+                      <td className="px-4 py-3.5 text-center font-bold text-gray-700 tabular-nums whitespace-nowrap">
                         {participant.pendingOrderCount}건
                       </td>
-                      <td className="px-4 py-3.5 text-center font-bold text-gray-700 tabular-nums">
+                      <td className="px-4 py-3.5 text-center font-bold text-gray-700 tabular-nums whitespace-nowrap">
                         {participant.openPositionCount}건
                       </td>
-                      <td className="px-4 py-3.5 text-center font-black text-gray-900 tabular-nums">
+                      <td className="px-4 py-3.5 text-center font-black text-gray-900 tabular-nums whitespace-nowrap">
                         {participant.rank}위
                       </td>
                     </tr>
@@ -1249,20 +1249,20 @@ export function AdminContestDetail({
               <table className="w-full min-w-[720px] text-left text-xs">
                 <thead className="border-b border-gray-200 bg-[#F9FAFB] text-gray-500">
                   <tr>
-                    <th className="px-4 py-3 font-bold">신청자 닉네임</th>
-                    <th className="px-4 py-3 font-bold">신청 일시</th>
-                    <th className="px-4 py-3 font-bold">반려 사유</th>
-                    <th className="px-4 py-3 font-bold">반려 일시</th>
-                    <th className="px-4 py-3 font-bold">처리 관리자</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">신청자 닉네임</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">신청 일시</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">반려 사유</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">반려 일시</th>
+                    <th className="px-4 py-3 font-bold whitespace-nowrap">처리 관리자</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {rejectedList.map(item => (
                     <tr key={item.rejectedId} className="hover:bg-gray-50">
-                      <td className="px-4 py-3.5">
+                      <td className="px-4 py-3.5 whitespace-nowrap">
                         <Link
                           href={`/members/${item.memberId}`}
-                          className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF]"
+                          className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF] whitespace-nowrap"
                         >
                           <V1UserAvatar
                             memberId={item.memberId}
@@ -1272,20 +1272,20 @@ export function AdminContestDetail({
                           <span>{item.nickname}</span>
                         </Link>
                       </td>
-                      <td className="px-4 py-3.5 font-medium text-gray-500 tabular-nums">
+                      <td className="px-4 py-3.5 font-medium text-gray-500 tabular-nums whitespace-nowrap">
                         {item.appliedAt}
                       </td>
-                      <td className="px-4 py-3.5">
+                      <td className="max-w-[280px] px-4 py-3.5">
                         <span className="inline-flex rounded-xl border border-rose-200 bg-rose-50 px-3 py-1 font-bold text-rose-700">
                           {item.rejectReason}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 font-medium text-gray-500 tabular-nums">
+                      <td className="px-4 py-3.5 font-medium text-gray-500 tabular-nums whitespace-nowrap">
                         {item.rejectedAt}
                       </td>
-                      <td className="px-4 py-3.5 font-bold text-gray-700">
-                        <span className="inline-flex items-center gap-1">
-                          <V1IconShield className="h-3.5 w-3.5 text-[#0058FF]" />
+                      <td className="px-4 py-3.5 font-bold text-gray-700 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                          <V1IconShield className="h-3.5 w-3.5 shrink-0 text-[#0058FF]" />
                           <span>{item.processedBy}</span>
                         </span>
                       </td>

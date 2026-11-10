@@ -2093,6 +2093,15 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(adminListHtml, /참가 모집중 시즌/);
     assert.match(adminListHtml, /진행중\(LIVE\) 시즌/);
     assert.match(adminListHtml, /role="switch"/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>시즌 ID<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*w-\[220px\] max-w-\[220px\][^>]*whitespace-nowrap[^>]*>대회명<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>공개여부<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>취소여부<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>초기 시드머니<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>정산 상태<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>관리<\/th>/);
+    assert.match(adminListHtml, /<button[^>]*data-admin-edit-season="202602"[^>]*whitespace-nowrap[^>]*>수정<\/button>/);
+    assert.match(adminListHtml, /<a[^>]*whitespace-nowrap[^>]*>상세 운영<\/a>/);
     assert.equal(adminListHtml.includes("cursor-not-allowed"), false);
 
     const createModalHtml = renderToStaticMarkup(
@@ -2134,6 +2143,8 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(adminDetailHtml, /반려 이력 \(1\)/);
     assert.match(adminDetailHtml, /선택 일괄 승인 \(0\)/);
     assert.match(adminDetailHtml, /델타헤저/);
+    assert.match(adminDetailHtml, /data-admin-approve-applicant="501"[^>]*whitespace-nowrap[^>]*>승인<\/button>/);
+    assert.match(adminDetailHtml, /data-admin-reject-applicant="501"[^>]*whitespace-nowrap[^>]*>반려<\/button>/);
     assert.equal(adminDetailHtml.includes("cursor-not-allowed"), false);
 
     // 7. contest-client API 계약 검증 (공개·회원·관리자 엔드포인트, 메서드, Authorization 헤더, Decimal 포맷)
@@ -2406,6 +2417,8 @@ test("GNB admin button role gate, contest trading path routing, and AdminUsers/A
     assert.match(adminUsersHtml, /탈퇴 회원/);
     assert.match(adminUsersHtml, /href="\/admin\/users"/);
     assert.match(adminUsersHtml, /href="\/admin\/community"/);
+    assert.match(adminUsersHtml, /<th[^>]*whitespace-nowrap[^>]*>회원번호<\/th>/);
+    assert.match(adminUsersHtml, /<th[^>]*whitespace-nowrap[^>]*>관리 액션<\/th>/);
     assert.equal(adminUsersHtml.includes("cursor-not-allowed"), false);
 
     const adminCommunityHtml = renderToStaticMarkup(
@@ -2417,6 +2430,8 @@ test("GNB admin button role gate, contest trading path routing, and AdminUsers/A
     assert.match(adminCommunityHtml, /커뮤니티 관리/);
     assert.match(adminCommunityHtml, /게시글 관리/);
     assert.match(adminCommunityHtml, /댓글 관리/);
+    assert.match(adminCommunityHtml, /<th[^>]*whitespace-nowrap[^>]*>글 번호<\/th>/);
+    assert.match(adminCommunityHtml, /<th[^>]*whitespace-nowrap[^>]*>삭제 여부<\/th>/);
     assert.equal(adminCommunityHtml.includes("cursor-not-allowed"), false);
 
     // admin-api.ts contract verification

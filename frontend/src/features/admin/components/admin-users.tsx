@@ -285,14 +285,14 @@ export function AdminUsers() {
             <button
               type="button"
               onClick={handleResetFilters}
-              className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
+              className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
             >
               초기화
             </button>
             <button
               type="button"
               onClick={handleApplyFilters}
-              className="inline-flex h-9 items-center rounded-xl bg-[#0058FF] px-4 text-xs font-black text-white hover:bg-[#0047D1]"
+              className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl bg-[#0058FF] px-4 text-xs font-black text-white hover:bg-[#0047D1]"
             >
               조회하기
             </button>
@@ -308,13 +308,13 @@ export function AdminUsers() {
             <table className="w-full min-w-[920px] border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-gray-100 bg-[#F9FAFB] text-[11px] font-black uppercase tracking-wider text-gray-400">
-                  <th className="px-4 py-3.5">회원번호</th>
-                  <th className="px-4 py-3.5">프로필 · 닉네임</th>
-                  <th className="px-4 py-3.5">소셜 연동</th>
-                  <th className="px-4 py-3.5">권한</th>
-                  <th className="px-4 py-3.5">상태</th>
-                  <th className="px-4 py-3.5">가입일 / 탈퇴일</th>
-                  <th className="px-4 py-3.5 text-right">관리 액션</th>
+                  <th className="px-4 py-3.5 whitespace-nowrap">회원번호</th>
+                  <th className="px-4 py-3.5 whitespace-nowrap">프로필 · 닉네임</th>
+                  <th className="px-4 py-3.5 whitespace-nowrap">소셜 연동</th>
+                  <th className="px-4 py-3.5 whitespace-nowrap">권한</th>
+                  <th className="px-4 py-3.5 whitespace-nowrap">상태</th>
+                  <th className="px-4 py-3.5 whitespace-nowrap">가입일 / 탈퇴일</th>
+                  <th className="px-4 py-3.5 text-right whitespace-nowrap">관리 액션</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -335,43 +335,43 @@ export function AdminUsers() {
                         key={member.memberId}
                         className="transition-colors hover:bg-gray-50/70"
                       >
-                        <td className="px-4 py-3.5 font-black tabular-nums text-gray-900">
+                        <td className="px-4 py-3.5 font-black tabular-nums text-gray-900 whitespace-nowrap">
                           #{member.memberId}
                         </td>
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-2.5">
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          <div className="flex items-center gap-2.5 whitespace-nowrap">
                             <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[11px] font-black text-gray-600">
                               {member.nickname.slice(0, 1)}
                             </span>
                             <span className="font-bold text-gray-900">{member.nickname}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 text-gray-600">
+                        <td className="px-4 py-3.5 text-gray-600 whitespace-nowrap">
                           <span className="font-bold uppercase text-gray-800">
                             {member.oauthProvider ?? "-"}
                           </span>
                           <span className="mx-1.5 text-gray-300">·</span>
                           <span className="text-gray-500">{member.oauthEmail ?? "-"}</span>
                         </td>
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5 whitespace-nowrap">
                           <span
                             className={cn(
-                              "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-black",
+                              "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-black",
                               member.role === "ADMIN"
                                 ? "bg-blue-50 text-[#0058FF]"
                                 : "bg-gray-100 text-gray-700",
                             )}
                           >
                             {member.role === "ADMIN" ? (
-                              <V1IconShield className="h-3 w-3" />
+                              <V1IconShield className="h-3 w-3 shrink-0" />
                             ) : null}
                             <span>{member.role}</span>
                           </span>
                         </td>
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5 whitespace-nowrap">
                           <span
                             className={cn(
-                              "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-black",
+                              "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-black",
                               isWithdrawn
                                 ? "bg-gray-100 text-gray-500"
                                 : "bg-emerald-50 text-emerald-600",
@@ -380,25 +380,25 @@ export function AdminUsers() {
                             {isWithdrawn ? "WITHDRAWN" : "ACTIVE"}
                           </span>
                         </td>
-                        <td className="px-4 py-3.5 tabular-nums text-gray-500">
-                          <div>가입: {formatAdminDateTime(member.createdAt)}</div>
+                        <td className="px-4 py-3.5 tabular-nums text-gray-500 whitespace-nowrap">
+                          <div className="whitespace-nowrap">가입: {formatAdminDateTime(member.createdAt)}</div>
                           {member.withdrawnAt ? (
-                            <div className="text-[11px] text-rose-500">
+                            <div className="text-[11px] text-rose-500 whitespace-nowrap">
                               탈퇴: {formatAdminDateTime(member.withdrawnAt)}
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-4 py-3.5 text-right">
+                        <td className="px-4 py-3.5 text-right whitespace-nowrap">
                           {canWithdraw ? (
                             <button
                               type="button"
                               onClick={() => setWithdrawTarget(member)}
-                              className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-[11px] font-black text-rose-600 transition-colors hover:bg-rose-100"
+                              className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-rose-200 bg-rose-50 px-3 text-[11px] font-black text-rose-600 transition-colors hover:bg-rose-100"
                             >
                               강제 탈퇴
                             </button>
                           ) : (
-                            <span className="text-[11px] font-semibold text-gray-400">
+                            <span className="whitespace-nowrap text-[11px] font-semibold text-gray-400">
                               {isSelf ? "본인 계정" : "탈퇴 완료"}
                             </span>
                           )}
@@ -417,7 +417,7 @@ export function AdminUsers() {
                 type="button"
                 disabled={loadingMore}
                 onClick={() => void handleLoadMore()}
-                className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white px-5 text-xs font-black text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-5 text-xs font-black text-gray-800 hover:bg-gray-50 disabled:opacity-50"
               >
                 {loadingMore ? "불러오는 중..." : "더 보기"}
               </button>
@@ -444,7 +444,7 @@ export function AdminUsers() {
                   type="button"
                   disabled={withdrawing}
                   onClick={() => setWithdrawTarget(null)}
-                  className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   취소
                 </button>
@@ -452,7 +452,7 @@ export function AdminUsers() {
                   type="button"
                   disabled={withdrawing}
                   onClick={() => void handleConfirmWithdraw()}
-                  className="inline-flex h-9 items-center rounded-xl bg-rose-600 px-4 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl bg-rose-600 px-4 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50"
                 >
                   {withdrawing ? "처리 중..." : "강제 탈퇴 실행"}
                 </button>

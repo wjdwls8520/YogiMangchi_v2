@@ -539,24 +539,24 @@ export function ContestListCard({
                 event.stopPropagation();
                 onApply(contest);
               }}
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 cursor-pointer"
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 cursor-pointer"
             >
               <span>신청</span>
-              <V1IconArrowRight className="h-3.5 w-3.5" />
+              <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
             </button>
           ) : contest.cardType === "live" ? (
             <Link
               href={`/contest/${contest.id}/trading`}
               onClick={event => event.stopPropagation()}
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
             >
               <span>터미널 보기</span>
-              <V1IconArrowRight className="h-3.5 w-3.5" />
+              <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
             </Link>
           ) : (
             <span
               className={cn(
-                "inline-flex h-8 items-center justify-center rounded-xl px-3 text-xs font-bold",
+                "inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl px-3 text-xs font-bold",
                 contest.cardType === "wait"
                   ? "border border-amber-200 bg-amber-50 text-amber-700"
                   : contest.cardType === "reject"
@@ -569,7 +569,7 @@ export function ContestListCard({
           )}
           <V1IconChevronDown
             className={cn(
-              "h-4 w-4 text-gray-400 transition-transform",
+              "h-4 w-4 shrink-0 text-gray-400 transition-transform",
               isExpanded && "rotate-180",
             )}
           />
@@ -771,10 +771,10 @@ export function ContestOngoingSection({
                 <Link
                   href={`/contest/${contest.id}/trading`}
                   data-contest-enter={contest.id}
-                  className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+                  className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white transition-colors hover:bg-blue-700"
                 >
                   <span>대회장 입장</span>
-                  <V1IconArrowRight className="h-3.5 w-3.5" />
+                  <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
                 </Link>
               ) : (
                 <button
@@ -785,10 +785,10 @@ export function ContestOngoingSection({
                       `"${contest.title}" 시즌은 아직 대회 시작 전입니다. 대회 진행 기간(${contest.contestStartAt} 이후)에 입장할 수 있습니다.`,
                     )
                   }
-                  className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-gray-100 px-4 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200 cursor-pointer"
+                  className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-gray-200 bg-gray-100 px-4 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200 cursor-pointer"
                 >
                   <span>대회장 입장</span>
-                  <V1IconArrowRight className="h-3.5 w-3.5" />
+                  <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
                 </button>
               )}
             </article>
@@ -1441,25 +1441,25 @@ export function ContestHub() {
             <table className="w-full min-w-[720px] text-left text-xs">
               <thead className="border-b border-gray-200 bg-[#F9FAFB] text-gray-500">
                 <tr>
-                  <th className="px-4 py-3 font-bold">순위</th>
-                  <th className="px-4 py-3 font-bold">참가자 닉네임</th>
-                  <th className="px-4 py-3 font-bold text-right">초기 시드</th>
-                  <th className="px-4 py-3 font-bold text-right">평가자산</th>
-                  <th className="px-4 py-3 font-bold text-right">실현손익</th>
-                  <th className="px-4 py-3 font-bold text-right">수익률 ROI%</th>
-                  <th className="px-4 py-3 font-bold text-right">거래횟수 · 승률</th>
+                  <th className="px-4 py-3 font-bold whitespace-nowrap">순위</th>
+                  <th className="px-4 py-3 font-bold whitespace-nowrap">참가자 닉네임</th>
+                  <th className="px-4 py-3 font-bold text-right whitespace-nowrap">초기 시드</th>
+                  <th className="px-4 py-3 font-bold text-right whitespace-nowrap">평가자산</th>
+                  <th className="px-4 py-3 font-bold text-right whitespace-nowrap">실현손익</th>
+                  <th className="px-4 py-3 font-bold text-right whitespace-nowrap">수익률 ROI%</th>
+                  <th className="px-4 py-3 font-bold text-right whitespace-nowrap">거래횟수 · 승률</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
                 {visibleEntries.map(entry => (
                   <tr key={entry.memberId} className="hover:bg-gray-50">
-                    <td className="px-4 py-3.5 font-black text-gray-900 tabular-nums">
+                    <td className="px-4 py-3.5 font-black text-gray-900 tabular-nums whitespace-nowrap">
                       {entry.rank}위
                     </td>
-                    <td className="px-4 py-3.5">
+                    <td className="px-4 py-3.5 whitespace-nowrap">
                       <Link
                         href={`/members/${entry.memberId}`}
-                        className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF]"
+                        className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF] whitespace-nowrap"
                       >
                         <V1UserAvatar
                           memberId={entry.memberId}
@@ -1469,15 +1469,15 @@ export function ContestHub() {
                         <span>{entry.nickname}</span>
                       </Link>
                     </td>
-                    <td className="px-4 py-3.5 text-right font-medium text-gray-500 tabular-nums">
+                    <td className="px-4 py-3.5 text-right font-medium text-gray-500 tabular-nums whitespace-nowrap">
                       {entry.seedMoney}
                     </td>
-                    <td className="px-4 py-3.5 text-right font-bold text-gray-900 tabular-nums">
+                    <td className="px-4 py-3.5 text-right font-bold text-gray-900 tabular-nums whitespace-nowrap">
                       {entry.equity}
                     </td>
                     <td
                       className={cn(
-                        "px-4 py-3.5 text-right font-bold tabular-nums",
+                        "px-4 py-3.5 text-right font-bold tabular-nums whitespace-nowrap",
                         entry.isPositive ? "text-red-500" : "text-[#0058FF]",
                       )}
                     >
@@ -1485,13 +1485,13 @@ export function ContestHub() {
                     </td>
                     <td
                       className={cn(
-                        "px-4 py-3.5 text-right font-black tabular-nums",
+                        "px-4 py-3.5 text-right font-black tabular-nums whitespace-nowrap",
                         entry.isPositive ? "text-red-500" : "text-[#0058FF]",
                       )}
                     >
                       {entry.roi}
                     </td>
-                    <td className="px-4 py-3.5 text-right font-bold text-gray-600 tabular-nums">
+                    <td className="px-4 py-3.5 text-right font-bold text-gray-600 tabular-nums whitespace-nowrap">
                       {entry.tradeCount}회 · {entry.winRate}
                     </td>
                   </tr>

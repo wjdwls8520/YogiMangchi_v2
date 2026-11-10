@@ -612,7 +612,7 @@ export function V1Tabs({
             type="button"
             onClick={() => onChange(tab.value)}
             className={cn(
-              "relative transition-colors shrink-0",
+              "relative transition-colors shrink-0 whitespace-nowrap",
               resolvedSize === "sm"
                 ? "pt-1.5 pb-1.5 text-[12px]"
                 : "pt-2.5 pb-2.5 sm:pt-3 sm:pb-3 text-[13px] sm:text-base",
@@ -754,7 +754,7 @@ export function V1SegmentTabs({
             type="button"
             onClick={() => onChange(tab.value)}
             className={cn(
-              "border font-black transition-colors",
+              "border font-black transition-colors whitespace-nowrap shrink-0",
               sizeClass,
               radiusClass,
               fullWidth ? "flex-1" : "flex-none",

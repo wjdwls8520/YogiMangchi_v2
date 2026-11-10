@@ -235,9 +235,9 @@ export function ContestTradingSubheader({
       <div className="flex flex-wrap items-center gap-3 min-w-0">
         <Link
           href="/contest"
-          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] font-bold text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+          className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] font-bold text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
         >
-          <V1IconArrowLeft className="h-3.5 w-3.5" />
+          <V1IconArrowLeft className="h-3.5 w-3.5 shrink-0" />
           <span>대회 목록</span>
         </Link>
 
@@ -251,7 +251,7 @@ export function ContestTradingSubheader({
           </strong>
           <span
             className={cn(
-              "inline-flex shrink-0 items-center rounded px-2 py-0.5 text-[10px] font-black",
+              "inline-flex shrink-0 items-center whitespace-nowrap rounded px-2 py-0.5 text-[10px] font-black",
               isActive
                 ? "border border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
                 : "border border-gray-500/30 bg-gray-500/15 text-gray-300",
@@ -298,8 +298,8 @@ export function ContestTradingSubheader({
           </div>
         </dl>
 
-        <span className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-blue-400/30 bg-blue-500/15 px-3 text-[11px] font-black text-blue-300">
-          <V1IconTrophy className="h-3.5 w-3.5 text-blue-300" />
+        <span className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-400/30 bg-blue-500/15 px-3 text-[11px] font-black text-blue-300">
+          <V1IconTrophy className="h-3.5 w-3.5 shrink-0 text-blue-300" />
           <span>CONTEST MODE</span>
         </span>
       </div>

@@ -284,7 +284,7 @@ export function AdminCommunity() {
           <div
             role="tablist"
             aria-label="커뮤니티 관리 구분"
-            className="inline-flex rounded-2xl bg-gray-100 p-1"
+            className="inline-flex shrink-0 rounded-2xl bg-gray-100 p-1"
           >
             <button
               type="button"
@@ -292,7 +292,7 @@ export function AdminCommunity() {
               aria-selected={subTab === "posts"}
               onClick={() => setSubTab("posts")}
               className={cn(
-                "h-9 rounded-xl px-4 text-xs font-black transition-colors",
+                "h-9 shrink-0 whitespace-nowrap rounded-xl px-4 text-xs font-black transition-colors",
                 subTab === "posts"
                   ? "bg-white text-gray-900 shadow-sm"
                   : "text-gray-500 hover:text-gray-900",
@@ -306,7 +306,7 @@ export function AdminCommunity() {
               aria-selected={subTab === "replies"}
               onClick={() => setSubTab("replies")}
               className={cn(
-                "h-9 rounded-xl px-4 text-xs font-black transition-colors",
+                "h-9 shrink-0 whitespace-nowrap rounded-xl px-4 text-xs font-black transition-colors",
                 subTab === "replies"
                   ? "bg-white text-gray-900 shadow-sm"
                   : "text-gray-500 hover:text-gray-900",
@@ -438,14 +438,14 @@ export function AdminCommunity() {
             <button
               type="button"
               onClick={handleResetSearch}
-              className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
+              className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
             >
               초기화
             </button>
             <button
               type="button"
               onClick={handleApplySearch}
-              className="inline-flex h-9 items-center rounded-xl bg-[#0058FF] px-4 text-xs font-black text-white hover:bg-[#0047D1]"
+              className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl bg-[#0058FF] px-4 text-xs font-black text-white hover:bg-[#0047D1]"
             >
               조회하기
             </button>
@@ -462,14 +462,14 @@ export function AdminCommunity() {
               <table className="w-full min-w-[960px] border-collapse text-left text-xs">
                 <thead>
                   <tr className="border-b border-gray-100 bg-[#F9FAFB] text-[11px] font-black uppercase tracking-wider text-gray-400">
-                    <th className="px-4 py-3.5">글 번호</th>
-                    <th className="px-4 py-3.5">카테고리</th>
-                    <th className="px-4 py-3.5">제목 · 본문 요약</th>
-                    <th className="px-4 py-3.5">작성자</th>
-                    <th className="px-4 py-3.5">반응 지표</th>
-                    <th className="px-4 py-3.5">작성일</th>
-                    <th className="px-4 py-3.5">삭제 여부</th>
-                    <th className="px-4 py-3.5 text-right">관리 액션</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">글 번호</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">카테고리</th>
+                    <th className="w-[260px] max-w-[260px] px-4 py-3.5 whitespace-nowrap">제목 · 본문 요약</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">작성자</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">반응 지표</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">작성일</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">삭제 여부</th>
+                    <th className="px-4 py-3.5 text-right whitespace-nowrap">관리 액션</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -490,27 +490,27 @@ export function AdminCommunity() {
                           key={post.postId}
                           className="transition-colors hover:bg-gray-50/70"
                         >
-                          <td className="px-4 py-3.5 font-black tabular-nums text-gray-900">
+                          <td className="px-4 py-3.5 font-black tabular-nums text-gray-900 whitespace-nowrap">
                             #{post.postId}
                           </td>
-                          <td className="px-4 py-3.5">
-                            <span className="inline-flex rounded-lg bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-700">
+                          <td className="px-4 py-3.5 whitespace-nowrap">
+                            <span className="inline-flex shrink-0 whitespace-nowrap rounded-lg bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-700">
                               {post.category}
                             </span>
                           </td>
-                          <td className="max-w-[320px] px-4 py-3.5">
+                          <td className="w-[260px] max-w-[260px] px-4 py-3.5">
                             <div className="truncate font-bold text-gray-900">{post.title}</div>
                             <div className="mt-0.5 truncate text-[11px] text-gray-500">
                               {post.content}
                             </div>
                           </td>
-                          <td className="px-4 py-3.5 text-gray-700">
+                          <td className="px-4 py-3.5 text-gray-700 whitespace-nowrap">
                             <span className="font-bold">{post.authorNickname ?? "탈퇴회원"}</span>
                             <span className="ml-1 text-[11px] text-gray-400">
                               (#{post.authorId})
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 tabular-nums text-[11px] text-gray-600">
+                          <td className="px-4 py-3.5 tabular-nums text-[11px] text-gray-600 whitespace-nowrap">
                             <span>좋아요 {post.likeCount}</span>
                             <span className="mx-1.5 text-gray-300">·</span>
                             <span>댓글 {post.replyCount}</span>
@@ -523,13 +523,13 @@ export function AdminCommunity() {
                               신고 {post.reportCount}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 tabular-nums text-gray-500">
+                          <td className="px-4 py-3.5 tabular-nums text-gray-500 whitespace-nowrap">
                             {formatAdminDateTime(post.createdAt)}
                           </td>
-                          <td className="px-4 py-3.5">
+                          <td className="px-4 py-3.5 whitespace-nowrap">
                             <span
                               className={cn(
-                                "inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-black",
+                                "inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-black",
                                 isDeleted
                                   ? "bg-gray-100 text-gray-500"
                                   : "bg-emerald-50 text-emerald-600",
@@ -538,17 +538,17 @@ export function AdminCommunity() {
                               {isDeleted ? "삭제됨 (Y)" : "정상 (N)"}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 text-right">
+                          <td className="px-4 py-3.5 text-right whitespace-nowrap">
                             {!isDeleted ? (
                               <button
                                 type="button"
                                 onClick={() => setDeletePostTarget(post)}
-                                className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-[11px] font-black text-rose-600 transition-colors hover:bg-rose-100"
+                                className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-rose-200 bg-rose-50 px-3 text-[11px] font-black text-rose-600 transition-colors hover:bg-rose-100"
                               >
                                 삭제
                               </button>
                             ) : (
-                              <span className="text-[11px] font-semibold text-gray-400">
+                              <span className="whitespace-nowrap text-[11px] font-semibold text-gray-400">
                                 삭제 완료
                               </span>
                             )}
@@ -567,7 +567,7 @@ export function AdminCommunity() {
                   type="button"
                   disabled={loadingMore}
                   onClick={() => void handleLoadMorePosts()}
-                  className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white px-5 text-xs font-black text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-5 text-xs font-black text-gray-800 hover:bg-gray-50 disabled:opacity-50"
                 >
                   {loadingMore ? "불러오는 중..." : "더 보기"}
                 </button>
@@ -583,14 +583,14 @@ export function AdminCommunity() {
               <table className="w-full min-w-[960px] border-collapse text-left text-xs">
                 <thead>
                   <tr className="border-b border-gray-100 bg-[#F9FAFB] text-[11px] font-black uppercase tracking-wider text-gray-400">
-                    <th className="px-4 py-3.5">댓글 번호</th>
-                    <th className="px-4 py-3.5">원글</th>
-                    <th className="px-4 py-3.5">댓글 내용</th>
-                    <th className="px-4 py-3.5">작성자</th>
-                    <th className="px-4 py-3.5">반응 지표</th>
-                    <th className="px-4 py-3.5">작성일</th>
-                    <th className="px-4 py-3.5">삭제 여부</th>
-                    <th className="px-4 py-3.5 text-right">관리 액션</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">댓글 번호</th>
+                    <th className="w-[200px] max-w-[200px] px-4 py-3.5 whitespace-nowrap">원글</th>
+                    <th className="w-[260px] max-w-[260px] px-4 py-3.5 whitespace-nowrap">댓글 내용</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">작성자</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">반응 지표</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">작성일</th>
+                    <th className="px-4 py-3.5 whitespace-nowrap">삭제 여부</th>
+                    <th className="px-4 py-3.5 text-right whitespace-nowrap">관리 액션</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -611,25 +611,25 @@ export function AdminCommunity() {
                           key={reply.replyId}
                           className="transition-colors hover:bg-gray-50/70"
                         >
-                          <td className="px-4 py-3.5 font-black tabular-nums text-gray-900">
+                          <td className="px-4 py-3.5 font-black tabular-nums text-gray-900 whitespace-nowrap">
                             #{reply.replyId}
                           </td>
-                          <td className="max-w-[220px] px-4 py-3.5">
+                          <td className="w-[200px] max-w-[200px] px-4 py-3.5">
                             <div className="truncate font-bold text-gray-800">
                               {reply.postTitle ?? "(제목 없음)"}
                             </div>
-                            <div className="text-[11px] text-gray-400">글 #{reply.postId}</div>
+                            <div className="text-[11px] text-gray-400 whitespace-nowrap">글 #{reply.postId}</div>
                           </td>
-                          <td className="max-w-[300px] px-4 py-3.5">
+                          <td className="w-[260px] max-w-[260px] px-4 py-3.5">
                             <div className="truncate text-gray-800">{reply.content}</div>
                           </td>
-                          <td className="px-4 py-3.5 text-gray-700">
+                          <td className="px-4 py-3.5 text-gray-700 whitespace-nowrap">
                             <span className="font-bold">{reply.authorNickname ?? "탈퇴회원"}</span>
                             <span className="ml-1 text-[11px] text-gray-400">
                               (#{reply.authorId})
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 tabular-nums text-[11px] text-gray-600">
+                          <td className="px-4 py-3.5 tabular-nums text-[11px] text-gray-600 whitespace-nowrap">
                             <span>좋아요 {reply.likeCount}</span>
                             <span className="mx-1.5 text-gray-300">·</span>
                             <span
@@ -640,13 +640,13 @@ export function AdminCommunity() {
                               신고 {reply.reportCount}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 tabular-nums text-gray-500">
+                          <td className="px-4 py-3.5 tabular-nums text-gray-500 whitespace-nowrap">
                             {formatAdminDateTime(reply.createdAt)}
                           </td>
-                          <td className="px-4 py-3.5">
+                          <td className="px-4 py-3.5 whitespace-nowrap">
                             <span
                               className={cn(
-                                "inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-black",
+                                "inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-black",
                                 isDeleted
                                   ? "bg-gray-100 text-gray-500"
                                   : "bg-emerald-50 text-emerald-600",
@@ -655,17 +655,17 @@ export function AdminCommunity() {
                               {isDeleted ? "삭제됨 (Y)" : "정상 (N)"}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 text-right">
+                          <td className="px-4 py-3.5 text-right whitespace-nowrap">
                             {!isDeleted ? (
                               <button
                                 type="button"
                                 onClick={() => setDeleteReplyTarget(reply)}
-                                className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-rose-50 px-3 text-[11px] font-black text-rose-600 transition-colors hover:bg-rose-100"
+                                className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-rose-200 bg-rose-50 px-3 text-[11px] font-black text-rose-600 transition-colors hover:bg-rose-100"
                               >
                                 삭제
                               </button>
                             ) : (
-                              <span className="text-[11px] font-semibold text-gray-400">
+                              <span className="whitespace-nowrap text-[11px] font-semibold text-gray-400">
                                 삭제 완료
                               </span>
                             )}
@@ -684,7 +684,7 @@ export function AdminCommunity() {
                   type="button"
                   disabled={loadingMore}
                   onClick={() => void handleLoadMoreReplies()}
-                  className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white px-5 text-xs font-black text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-5 text-xs font-black text-gray-800 hover:bg-gray-50 disabled:opacity-50"
                 >
                   {loadingMore ? "불러오는 중..." : "더 보기"}
                 </button>
@@ -711,7 +711,7 @@ export function AdminCommunity() {
                   type="button"
                   disabled={deleting}
                   onClick={() => setDeletePostTarget(null)}
-                  className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   취소
                 </button>
@@ -719,7 +719,7 @@ export function AdminCommunity() {
                   type="button"
                   disabled={deleting}
                   onClick={() => void handleConfirmDeletePost()}
-                  className="inline-flex h-9 items-center rounded-xl bg-rose-600 px-4 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl bg-rose-600 px-4 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50"
                 >
                   {deleting ? "삭제 중..." : "삭제 실행"}
                 </button>
@@ -746,7 +746,7 @@ export function AdminCommunity() {
                   type="button"
                   disabled={deleting}
                   onClick={() => setDeleteReplyTarget(null)}
-                  className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   취소
                 </button>
@@ -754,7 +754,7 @@ export function AdminCommunity() {
                   type="button"
                   disabled={deleting}
                   onClick={() => void handleConfirmDeleteReply()}
-                  className="inline-flex h-9 items-center rounded-xl bg-rose-600 px-4 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl bg-rose-600 px-4 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50"
                 >
                   {deleting ? "삭제 중..." : "삭제 실행"}
                 </button>

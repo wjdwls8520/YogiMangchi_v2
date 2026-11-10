@@ -927,14 +927,14 @@ export function MemberMyProfilePage({
                   <div className="space-y-2">
                     <Link
                       href="/me/settings"
-                      className="flex h-10 w-full items-center justify-center rounded-xl border border-gray-300 bg-white text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
+                      className="flex h-10 w-full items-center justify-center whitespace-nowrap rounded-xl border border-gray-300 bg-white text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
                     >
                       회원정보 수정
                     </Link>
                     <button
                       type="button"
                       onClick={() => void session.logout()}
-                      className="flex h-9 w-full items-center justify-center rounded-xl bg-gray-100 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200"
+                      className="flex h-9 w-full items-center justify-center whitespace-nowrap rounded-xl bg-gray-100 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200"
                     >
                       로그아웃
                     </button>
@@ -1199,10 +1199,10 @@ export function MemberMyProfilePage({
                                   <div>{pos.pnl}</div>
                                   <div className="text-[11px]">{pos.roe}</div>
                                 </td>
-                                <td className="px-4 py-3.5 text-right">
+                                <td className="px-4 py-3.5 text-right whitespace-nowrap">
                                   <Link
                                     href={`/community/all?sharePosition=${pos.symbol.replace("USDT", "")}`}
-                                    className="inline-flex h-8 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
+                                    className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
                                   >
                                     포지션 공유
                                   </Link>
@@ -1473,10 +1473,10 @@ export function MemberMyProfilePage({
                               <td className="px-4 py-3.5 font-bold text-blue-600">{order.sideLabel}</td>
                               <td className="px-4 py-3.5 text-right font-bold">{order.orderPrice}</td>
                               <td className="px-4 py-3.5 text-right">{order.orderQuantity}</td>
-                              <td className="px-4 py-3.5 text-right">
+                              <td className="px-4 py-3.5 text-right whitespace-nowrap">
                                 <Link
                                   href="/trading"
-                                  className="inline-flex rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100"
+                                  className="inline-flex shrink-0 whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100"
                                 >
                                   터미널에서 취소
                                 </Link>
@@ -1792,10 +1792,10 @@ export function MemberMyProfilePage({
                                 <td className="px-4 py-3.5 text-right font-black text-red-500">
                                   {pos.pnl} ({pos.roe})
                                 </td>
-                                <td className="px-4 py-3.5 text-right">
+                                <td className="px-4 py-3.5 text-right whitespace-nowrap">
                                   <Link
                                     href={`/community/all?sharePosition=${pos.symbol.replace("USDT", "")}`}
-                                    className="inline-flex h-8 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
+                                    className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
                                   >
                                     포지션 공유
                                   </Link>

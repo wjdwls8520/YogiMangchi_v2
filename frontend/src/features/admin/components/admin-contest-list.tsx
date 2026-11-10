@@ -771,20 +771,20 @@ export function AdminContestList() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1060px] text-left text-xs">
+            <table className="w-full min-w-[1120px] text-left text-xs">
               <thead className="border-b border-gray-200 bg-[#F9FAFB] text-gray-500">
                 <tr>
-                  <th className="px-4 py-3.5 font-bold">시즌 ID</th>
-                  <th className="px-4 py-3.5 font-bold">대회명</th>
-                  <th className="px-4 py-3.5 font-bold text-center">진행 상태</th>
-                  <th className="px-4 py-3.5 font-bold text-center">운영상태</th>
-                  <th className="px-4 py-3.5 font-bold text-center">공개여부</th>
-                  <th className="px-4 py-3.5 font-bold text-center">취소여부</th>
-                  <th className="px-4 py-3.5 font-bold text-right">초기 시드머니</th>
-                  <th className="px-4 py-3.5 font-bold text-center">신청 기간</th>
-                  <th className="px-4 py-3.5 font-bold text-center">대회 기간</th>
-                  <th className="px-4 py-3.5 font-bold text-center">정산 상태</th>
-                  <th className="px-4 py-3.5 font-bold text-center">관리</th>
+                  <th className="w-[68px] px-3 py-3.5 font-bold whitespace-nowrap">시즌 ID</th>
+                  <th className="w-[220px] max-w-[220px] px-3 py-3.5 font-bold whitespace-nowrap">대회명</th>
+                  <th className="px-2.5 py-3.5 font-bold text-center whitespace-nowrap">진행 상태</th>
+                  <th className="px-2.5 py-3.5 font-bold text-center whitespace-nowrap">운영상태</th>
+                  <th className="px-2.5 py-3.5 font-bold text-center whitespace-nowrap">공개여부</th>
+                  <th className="px-2.5 py-3.5 font-bold text-center whitespace-nowrap">취소여부</th>
+                  <th className="px-3 py-3.5 font-bold text-right whitespace-nowrap">초기 시드머니</th>
+                  <th className="px-2.5 py-3.5 font-bold text-center whitespace-nowrap">신청 기간</th>
+                  <th className="px-2.5 py-3.5 font-bold text-center whitespace-nowrap">대회 기간</th>
+                  <th className="px-2.5 py-3.5 font-bold text-center whitespace-nowrap">정산 상태</th>
+                  <th className="px-3 py-3.5 font-bold text-center whitespace-nowrap">관리</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
@@ -810,51 +810,51 @@ export function AdminContestList() {
 
                   return (
                     <tr key={row.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-4 font-black text-gray-500 tabular-nums">
+                      <td className="w-[68px] px-3 py-3.5 font-black text-gray-500 tabular-nums whitespace-nowrap">
                         #{row.id}
                       </td>
-                      <td className="px-4 py-4 max-w-[260px]">
+                      <td className="w-[220px] max-w-[220px] px-3 py-3.5">
                         <Link
                           href={`/admin/contest/${row.id}`}
                           className="block truncate text-sm font-black text-gray-900 hover:text-[#0058FF]"
                         >
                           {row.title}
                         </Link>
-                        <p className="mt-0.5 truncate text-[11px] font-medium text-gray-400">
+                        <p className="mt-0.5 block truncate text-[11px] font-medium text-gray-400">
                           {row.description}
                         </p>
                       </td>
-                      <td className="px-4 py-4 text-center">
+                      <td className="px-2.5 py-3.5 text-center whitespace-nowrap">
                         <span
                           className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold",
+                            "inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold",
                             progressBadgeClass,
                           )}
                         >
                           {row.progressState === "Live" ? (
-                            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
                           ) : null}
                           <span>{row.progressState}</span>
                         </span>
                       </td>
-                      <td className="px-4 py-4 text-center">
+                      <td className="px-2.5 py-3.5 text-center whitespace-nowrap">
                         <span
                           className={cn(
-                            "inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold",
+                            "inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold",
                             statusBadgeClass,
                           )}
                         >
                           {displayStatus}
                         </span>
                       </td>
-                      <td className="px-4 py-4 text-center">
+                      <td className="px-2.5 py-3.5 text-center whitespace-nowrap">
                         <AdminToggleSwitch
                           checked={row.isPublic}
                           onChange={() => handleToggleField(row.id, "isPublic")}
                           label={`${row.title} 공개여부 토글`}
                         />
                       </td>
-                      <td className="px-4 py-4 text-center">
+                      <td className="px-2.5 py-3.5 text-center whitespace-nowrap">
                         <AdminToggleSwitch
                           checked={row.isCancel}
                           tone="rose"
@@ -862,42 +862,46 @@ export function AdminContestList() {
                           label={`${row.title} 취소여부 토글`}
                         />
                       </td>
-                      <td className="px-4 py-4 text-right font-black text-gray-900 tabular-nums">
+                      <td className="px-3 py-3.5 text-right font-black text-gray-900 tabular-nums whitespace-nowrap">
                         {row.seedMoney} USDT
                       </td>
-                      <td className="px-4 py-4 text-center text-[11px] font-bold text-gray-600 tabular-nums">
-                        <div>{formatReadableDateTime(row.recruitmentStartAt)}</div>
-                        <div className="text-gray-400">~</div>
-                        <div>{formatReadableDateTime(row.recruitmentEndAt)}</div>
+                      <td className="px-2.5 py-3.5 text-center text-[11px] font-bold text-gray-600 tabular-nums whitespace-nowrap">
+                        <div className="whitespace-nowrap">{formatReadableDateTime(row.recruitmentStartAt)}</div>
+                        <div className="whitespace-nowrap text-gray-400">
+                          ~ {formatReadableDateTime(row.recruitmentEndAt)}
+                        </div>
                       </td>
-                      <td className="px-4 py-4 text-center text-[11px] font-bold text-gray-600 tabular-nums">
-                        <div>{formatReadableDateTime(row.contestStartAt)}</div>
-                        <div className="text-gray-400">~</div>
-                        <div>{formatReadableDateTime(row.contestEndAt)}</div>
+                      <td className="px-2.5 py-3.5 text-center text-[11px] font-bold text-gray-600 tabular-nums whitespace-nowrap">
+                        <div className="whitespace-nowrap">{formatReadableDateTime(row.contestStartAt)}</div>
+                        <div className="whitespace-nowrap text-gray-400">
+                          ~ {formatReadableDateTime(row.contestEndAt)}
+                        </div>
                       </td>
-                      <td className="px-4 py-4 text-center">
+                      <td className="px-2.5 py-3.5 text-center whitespace-nowrap">
                         {row.settledAt ? (
-                          <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
+                          <span className="inline-flex shrink-0 whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
                             정산 완료
                           </span>
                         ) : (
-                          <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-700">
+                          <span className="inline-flex shrink-0 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-700">
                             미정산
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-4 text-center">
-                        <div className="inline-flex items-center gap-1.5">
+                      <td className="px-3 py-3.5 text-center whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
                           <button
                             type="button"
+                            data-admin-edit-season={row.id}
                             onClick={() => setEditingSeason(row)}
-                            className="inline-flex h-8 items-center justify-center rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                            className="inline-flex h-8 shrink-0 whitespace-nowrap items-center justify-center rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
                           >
                             수정
                           </button>
                           <Link
                             href={`/admin/contest/${row.id}`}
-                            className="inline-flex h-8 items-center justify-center rounded-lg bg-[#0058FF] px-2.5 text-xs font-bold text-white hover:bg-blue-700"
+                            data-admin-detail-link={row.id}
+                            className="inline-flex h-8 shrink-0 whitespace-nowrap items-center justify-center rounded-lg bg-[#0058FF] px-3 text-xs font-bold text-white hover:bg-blue-700"
                           >
                             상세 운영
                           </Link>

@@ -3070,3 +3070,9 @@ body:has(.member-shell) :focus-visible {
     justify-content: flex-end;
   }
 }
+
+/* Global Table Header Single-Line Defense */
+table th {
+  white-space: nowrap;
+  word-break: keep-all;
+}
