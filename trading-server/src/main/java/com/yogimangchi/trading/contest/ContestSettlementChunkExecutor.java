@@ -20,6 +20,7 @@ import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -38,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class ContestSettlementChunkExecutor {
+    public static final Duration STALE_RUN_TIMEOUT = Duration.ofMinutes(5);
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     private final JdbcTemplate jdbc;
@@ -75,11 +77,39 @@ public class ContestSettlementChunkExecutor {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 15)
     public RunContext beginSettlementRun(Long seasonId, String triggeredBy, boolean earlyTerminate, Instant now) {
-        var rows = jdbc.queryForList("SELECT id, contest_end_at FROM trading.contest_season WHERE id = ? FOR UPDATE", seasonId);
+        var rows = jdbc.queryForList(
+                "SELECT id, contest_end_at, settled_at FROM trading.contest_season WHERE id = ? FOR UPDATE",
+                seasonId);
         if (rows.isEmpty()) {
             throw new BusinessException(ErrorCode.CONTEST_SEASON_NOT_FOUND);
         }
+        if (!earlyTerminate && rows.get(0).get("settled_at") != null) {
+            throw new BusinessException(ErrorCode.TRADING_BUSY);
+        }
         OffsetDateTime tsNow = at(now);
+        OffsetDateTime staleThreshold = at(now.minus(STALE_RUN_TIMEOUT));
+
+        jdbc.update("""
+                UPDATE trading.contest_settlement_run
+                SET status = 'FAILED',
+                    failure_reason = 'Stale settlement run timed out (>5m)',
+                    completed_at = ?
+                WHERE contest_season_id = ?
+                  AND status = 'RUNNING'
+                  AND started_at < ?
+                """, tsNow, seasonId, staleThreshold);
+
+        Boolean hasActiveRun = jdbc.queryForObject("""
+                SELECT EXISTS(
+                    SELECT 1 FROM trading.contest_settlement_run
+                    WHERE contest_season_id = ?
+                      AND status = 'RUNNING'
+                )
+                """, Boolean.class, seasonId);
+        if (Boolean.TRUE.equals(hasActiveRun)) {
+            throw new BusinessException(ErrorCode.TRADING_BUSY);
+        }
+
         if (earlyTerminate) {
             jdbc.update("""
                     UPDATE trading.contest_season
