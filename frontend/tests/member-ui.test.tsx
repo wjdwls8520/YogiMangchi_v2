@@ -85,6 +85,7 @@ import {
   ContestCreateEditModal,
 } from "../src/features/admin/components/admin-contest-list";
 import { AdminContestDetail } from "../src/features/admin/components/admin-contest-detail";
+import { AdminHeader } from "../src/features/admin/components/admin-layout";
 import {
   applyForContestSeason,
   approveAdminContestApplicant,
@@ -2892,6 +2893,60 @@ test("전역 포인터 커서, KST 대회 시각 변환, 12종목 포지션 스�
     );
     assert.equal(textOnlyPositionPostHtml.includes("data-shared-position="), false);
     assert.match(textOnlyPositionPostHtml, /2026\.11\.11 00:00/);
+  } finally {
+    client.clear();
+  }
+});
+
+test("GNB는 대칭 3열 그리드로 정중앙 고정되고 우측 유틸 영역·버튼은 상태와 무관하게 동일 규격을 유지한다", async () => {
+  const client = new QueryClient();
+  const epoch = Date.now();
+  const memberSession = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 11,
+            nickname: "트레이더11",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  try {
+    const anonHtml = renderToStaticMarkup(<V1Header theme="light" />);
+    const loadingHtml = renderToStaticMarkup(
+      <MemberProvider session={memberSession} client={client}>
+        <V1Header theme="light" />
+      </MemberProvider>,
+    );
+    await memberSession.restore();
+    const memberHtml = renderToStaticMarkup(
+      <MemberProvider session={memberSession} client={client}>
+        <V1Header theme="light" />
+      </MemberProvider>,
+    );
+    const adminHtml = renderToStaticMarkup(<V1Header theme="light" role="ADMIN" />);
+    const adminHeaderHtml = renderToStaticMarkup(<AdminHeader activeSection="contest" />);
+
+    for (const html of [anonHtml, loadingHtml, memberHtml, adminHtml]) {
+      assert.equal(html.includes("md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"), true);
+      assert.equal(html.includes("ym-gnb-right flex min-h-[38px] md:w-[188px] md:min-w-[188px]"), true);
+      assert.equal(html.includes("h-9 min-w-[96px] w-[104px]"), true);
+      assert.equal(html.includes("-translate-x-1/2"), false);
+    }
+
+    assert.equal(adminHtml.includes("h-9 w-[72px]"), true);
+    assert.equal(adminHtml.includes(">관리자</a>"), true);
+    assert.equal(adminHeaderHtml.includes("md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"), true);
+    assert.equal(adminHeaderHtml.includes('aria-label="관리자 메뉴" class="hidden md:flex md:justify-self-center'), true);
+    assert.equal(adminHeaderHtml.includes("lg:w-[268px] lg:min-w-[268px]"), true);
   } finally {
     client.clear();
   }

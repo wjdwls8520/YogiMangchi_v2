@@ -44,66 +44,67 @@ export function AdminHeader({
       data-admin-header="true"
       className="sticky top-0 z-50 w-full border-b border-gray-200 bg-white font-sans text-sm leading-none tracking-normal text-gray-900 antialiased [word-break:keep-all]"
     >
-      <div className="mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between gap-4 px-4 sm:px-6">
+      <div className="mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between gap-4 px-4 sm:px-6 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
         {/* 좌측: 요기망치 ADMIN 로고 배지 */}
-        <div className="flex items-center gap-8 min-w-0">
-          <Link
-            href="/admin/contest"
-            className="flex shrink-0 items-center gap-2"
-            aria-label="요기망치 관리자 홈"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/images/logo.webp"
-              alt="YogiMangchi"
-              width={110}
-              height={32}
-              className="block h-[32px] w-[110px] object-contain object-left"
-            />
-            <span className="inline-flex h-5 items-center rounded bg-gray-900 px-2 text-[10px] font-black tracking-wider text-white">
-              ADMIN
-            </span>
-          </Link>
+        <Link
+          href="/admin/contest"
+          className="flex shrink-0 items-center gap-2 md:justify-self-start"
+          aria-label="요기망치 관리자 홈"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/images/logo.webp"
+            alt="YogiMangchi"
+            width={110}
+            height={32}
+            className="block h-[32px] w-[110px] object-contain object-left"
+          />
+          <span className="inline-flex h-5 items-center rounded bg-gray-900 px-2 text-[10px] font-black tracking-wider text-white">
+            ADMIN
+          </span>
+        </Link>
 
-          {/* 중앙: 확장형 관리자 GNB 탭 */}
-          <nav aria-label="관리자 메뉴" className="hidden md:flex items-center gap-2">
-            {ADMIN_NAV_TABS.map(tab => {
-              const isActive =
-                tab.key === activeSection ||
-                (tab.key === "contest" && pathname?.startsWith("/admin/contest")) ||
-                (tab.key === "users" && pathname?.startsWith("/admin/users")) ||
-                (tab.key === "community" && pathname?.startsWith("/admin/community")) ||
-                (tab.key === "reports" && pathname?.startsWith("/admin/reports"));
+        {/* 중앙: 확장형 관리자 GNB 탭 (1fr-auto-1fr 정중앙 고정) */}
+        <nav
+          aria-label="관리자 메뉴"
+          className="hidden md:flex md:justify-self-center items-center justify-center gap-2"
+        >
+          {ADMIN_NAV_TABS.map(tab => {
+            const isActive =
+              tab.key === activeSection ||
+              (tab.key === "contest" && pathname?.startsWith("/admin/contest")) ||
+              (tab.key === "users" && pathname?.startsWith("/admin/users")) ||
+              (tab.key === "community" && pathname?.startsWith("/admin/community")) ||
+              (tab.key === "reports" && pathname?.startsWith("/admin/reports"));
 
-              return (
-                <Link
-                  key={tab.key}
-                  href={tab.href}
-                  data-admin-nav-tab={tab.key}
-                  className={cn(
-                    "inline-flex h-9 items-center gap-1.5 rounded-xl px-3.5 text-xs font-bold transition-colors whitespace-nowrap",
-                    isActive
-                      ? "bg-[#0058FF] text-white"
-                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
-                  )}
-                >
-                  <span>{tab.label}</span>
-                  {!tab.ready ? (
-                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-400">
-                      확장슬롯
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
+            return (
+              <Link
+                key={tab.key}
+                href={tab.href}
+                data-admin-nav-tab={tab.key}
+                className={cn(
+                  "inline-flex h-9 items-center gap-1.5 rounded-xl px-3.5 text-xs font-bold transition-colors whitespace-nowrap",
+                  isActive
+                    ? "bg-[#0058FF] text-white"
+                    : "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
+                )}
+              >
+                <span>{tab.label}</span>
+                {!tab.ready ? (
+                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-400">
+                    확장슬롯
+                  </span>
+                ) : null}
+              </Link>
+            );
+          })}
+        </nav>
 
-        {/* 우측: 관리자 계정 배지 + 서비스 홈으로 이동 버튼 */}
-        <div className="flex shrink-0 items-center gap-2.5">
-          <div className="hidden sm:inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-gray-200 bg-[#F9FAFB] px-3.5 text-xs font-bold text-gray-800">
+        {/* 우측: 관리자 계정 배지 + 서비스 홈으로 이동 버튼 (고정 크기 유지) */}
+        <div className="flex min-h-[38px] shrink-0 items-center justify-end gap-2.5 md:justify-self-end lg:w-[268px] lg:min-w-[268px]">
+          <div className="hidden lg:inline-flex h-9 w-[148px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full border border-gray-200 bg-[#F9FAFB] px-3 text-xs font-bold text-gray-800">
             <V1IconShield className="h-3.5 w-3.5 shrink-0 text-[#0058FF]" />
-            <span className="max-w-[140px] truncate">{adminNickname}</span>
+            <span className="truncate">{adminNickname}</span>
             <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-[#0058FF]">
               관리자
             </span>
@@ -111,7 +112,7 @@ export function AdminHeader({
 
           <Link
             href="/"
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-4 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-50"
+            className="inline-flex h-9 w-[108px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3.5 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-50"
           >
             <span>서비스 홈으로</span>
             <V1IconExternal className="h-3.5 w-3.5 shrink-0 text-gray-500" />

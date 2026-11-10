@@ -1058,11 +1058,11 @@ export function V1Header({
             : "border-gray-200 bg-white text-gray-900",
         )}
       >
-        <div className="ym-gnb-inner mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between px-4 sm:px-6 relative">
+        <div className="ym-gnb-inner mx-auto flex h-16 w-full max-w-[1280px] items-center justify-between px-4 sm:px-6 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
           {/* 1. 왼쪽 로고 */}
           <Link
             href="/"
-            className="member-logo ym-brand-logo-link flex h-9 w-[124px] shrink-0 items-center"
+            className="member-logo ym-brand-logo-link flex h-9 w-[124px] shrink-0 items-center md:justify-self-start"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -1077,10 +1077,10 @@ export function V1Header({
             </span>
           </Link>
 
-          {/* 2. 중앙 네비게이션 (PC 전용) */}
+          {/* 2. 중앙 네비게이션 (PC 전용: 좌우 유틸 폭과 무관하게 1fr-auto-1fr 정중앙 고정) */}
           <nav
             aria-label="서비스 메뉴"
-            className="ym-gnb-nav hidden md:flex md:absolute md:left-1/2 md:-translate-x-1/2 items-center gap-7"
+            className="ym-gnb-nav hidden md:flex md:justify-self-center items-center justify-center gap-7"
           >
             {[
               { href: "/news", label: "실시간 뉴스" },
@@ -1103,14 +1103,14 @@ export function V1Header({
             ))}
           </nav>
 
-          {/* 3. 오른쪽 액션 영역 (관리자 배지 + 마이페이지 또는 로그인 버튼) */}
-          <div className="ym-gnb-right flex min-h-[38px] md:min-w-[196px] shrink-0 items-center justify-end gap-2">
+          {/* 3. 오른쪽 액션 영역 (관리자 배지 + 마이페이지 또는 로그인 버튼: 고정 슬롯 및 동일 버튼 규격 유지) */}
+          <div className="ym-gnb-right flex min-h-[38px] md:w-[188px] md:min-w-[188px] md:justify-self-end shrink-0 items-center justify-end gap-2">
             {isInitialAuthLoading ? (
               <div className="ym-gnb-auth-loading flex items-center justify-end gap-2">
                 <Link
                   href="/admin/contest"
                   className={cn(
-                    "ym-auth-slot-admin h-9 shrink-0 items-center justify-center rounded-full border px-3.5 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    "ym-auth-slot-admin h-9 w-[72px] shrink-0 items-center justify-center rounded-full border px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                     isDark
                       ? "border-blue-400/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
                       : "border-blue-200 bg-blue-50 text-[#0058FF] hover:bg-blue-100",
@@ -1121,7 +1121,7 @@ export function V1Header({
                 <Link
                   href="/me"
                   className={cn(
-                    "ym-auth-slot-member h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    "ym-auth-slot-member h-9 min-w-[96px] w-[104px] shrink-0 items-center justify-center rounded-full px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                     isDark
                       ? "bg-white text-gray-900 hover:bg-gray-200"
                       : "bg-gray-900 text-white hover:bg-gray-800",
@@ -1133,7 +1133,7 @@ export function V1Header({
                   href="/login"
                   onClick={rememberCurrentPageForLogin}
                   className={cn(
-                    "ym-auth-slot-anon h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    "ym-auth-slot-anon h-9 min-w-[96px] w-[104px] shrink-0 items-center justify-center rounded-full px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                     isDark
                       ? "bg-white text-gray-900 hover:bg-gray-200"
                       : "bg-gray-900 text-white hover:bg-gray-800",
@@ -1148,7 +1148,7 @@ export function V1Header({
                   <Link
                     href="/admin/contest"
                     className={cn(
-                      "inline-flex h-9 shrink-0 items-center justify-center rounded-full border px-3.5 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                      "inline-flex h-9 w-[72px] shrink-0 items-center justify-center rounded-full border px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                       isDark
                         ? "border-blue-400/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
                         : "border-blue-200 bg-blue-50 text-[#0058FF] hover:bg-blue-100",
@@ -1164,7 +1164,7 @@ export function V1Header({
                     if (!isLoggedIn) rememberCurrentPageForLogin();
                   }}
                   className={cn(
-                    "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    "inline-flex h-9 min-w-[96px] w-[104px] shrink-0 items-center justify-center rounded-full px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                     isDark
                       ? "bg-white text-gray-900 hover:bg-gray-200"
                       : "bg-gray-900 text-white hover:bg-gray-800",

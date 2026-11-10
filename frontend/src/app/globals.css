@@ -3128,19 +3128,28 @@ html[data-ym-auth-hint="admin"] .ym-gnb-auth-loading .ym-auth-slot-member {
   display: inline-flex;
 }
 
-@media (min-width: 769px) {
+@media (min-width: 768px) {
   .ym-gnb-inner {
-    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .ym-brand-logo-link {
+    justify-self: start;
   }
 
   .ym-gnb-nav {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
+    position: static;
+    transform: none;
+    translate: none;
+    justify-self: center;
   }
 
   .ym-gnb-right {
-    min-width: 196px;
+    width: 188px;
+    min-width: 188px;
+    justify-self: end;
     justify-content: flex-end;
   }
 }
