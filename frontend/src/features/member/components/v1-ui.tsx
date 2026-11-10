@@ -1218,7 +1218,7 @@ export function V1Header({
                 실시간 뉴스 · 시황/속보
               </Link>
               <Link href="/trading" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                모의투자 · 선물 터미널
+                모의투자 하러가기
               </Link>
               <Link href="/contest" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 대회 · 시즌 랭킹

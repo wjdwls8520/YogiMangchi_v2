@@ -27,11 +27,13 @@ import {
   parseNewsLiveStatus,
   parseNewsPage,
   parseNewsReaction,
+  parseNewsSentimentSummary,
   type NewsCategory,
   type NewsHighlights,
   type NewsItem,
   type NewsLiveStatus,
   type NewsPage,
+  type NewsSentimentSummary,
   type NewsSort,
 } from "../api/community-news";
 import {
@@ -578,8 +580,13 @@ export function computeLiveNewsSentiment({
 
   const hasClientReactionDelta =
     deltaBullVotes > 0 || deltaBearVotes > 0 || incomingArticles.length > 0;
-  const hasServerVoteBase =
-    summaryObj !== undefined && summaryObj.totalBullVotes + summaryObj.totalBearVotes > 0;
+  const hasServerSentimentBase =
+    summaryObj !== undefined &&
+    (summaryObj.totalBullVotes + summaryObj.totalBearVotes > 0 ||
+      (summaryObj.bullishArticleCount ?? 0) +
+        (summaryObj.bearishArticleCount ?? 0) +
+        (summaryObj.neutralArticleCount ?? 0) >
+        0);
 
   let newsBullPct = 50;
   const hasNewsSignal =
@@ -587,15 +594,21 @@ export function computeLiveNewsSentiment({
     bullArticleCount + bearArticleCount > 0 ||
     summaryObj !== undefined;
 
-  if (hasServerVoteBase && !hasClientReactionDelta) {
+  if (hasServerSentimentBase && !hasClientReactionDelta) {
     newsBullPct = summaryObj.bullPct;
+  } else if (summaryObj !== undefined) {
+    const bullWeight = bullArticleCount * 3 + neutralArticleCount + totalBullVotes;
+    const bearWeight = bearArticleCount * 3 + neutralArticleCount + totalBearVotes;
+    if (bullWeight + bearWeight > 0) {
+      newsBullPct = (bullWeight / (bullWeight + bearWeight)) * 100;
+    } else {
+      newsBullPct = summaryObj.bullPct;
+    }
   } else {
     const bullScore = totalBullVotes + bullArticleCount * 6;
     const bearScore = totalBearVotes + bearArticleCount * 6;
     if (bullScore + bearScore > 0) {
       newsBullPct = (bullScore / (bullScore + bearScore)) * 100;
-    } else if (summaryObj) {
-      newsBullPct = summaryObj.bullPct;
     }
   }
 
@@ -627,9 +640,26 @@ export function computeLiveNewsSentiment({
 
   let summaryText: string;
   if (summaryObj?.summary && summaryObj.summary.trim().length > 0) {
-    summaryText = summaryObj.summary.includes("공포·탐욕")
-      ? summaryObj.summary
-      : `${summaryObj.summary} (공포·탐욕 ${effectiveMarket.fearGreedValue} ${effectiveMarket.fearGreedLabelKr} · 선물 매수수급 ${effectiveMarket.futuresBullPct}%)`;
+    const rawSummaryText = summaryObj.summary.trim();
+    if (rawSummaryText.startsWith("최근 실시간 뉴스 ")) {
+      const topicMatch = rawSummaryText.match(/분석 결과,\s*(.+?)\s*이슈/);
+      const focusTopic = topicMatch?.[1]?.trim() || "가상자산·수급";
+      const analyzedCount = Math.max(
+        uniqueArticles.length,
+        bullArticleCount + bearArticleCount + neutralArticleCount,
+      );
+      const dynamicBase =
+        bullPct >= 55
+          ? `최근 실시간 뉴스 ${analyzedCount}건(강세 ${bullArticleCount}·약세 ${bearArticleCount}·중립 ${neutralArticleCount}) 분석 결과, ${focusTopic} 이슈를 중심으로 단기 매수·강세 심리(${bullPct}%)가 우위를 보이고 있습니다.`
+          : bearPct >= 55
+            ? `최근 실시간 뉴스 ${analyzedCount}건(강세 ${bullArticleCount}·약세 ${bearArticleCount}·중립 ${neutralArticleCount}) 분석 결과, ${focusTopic} 이슈를 중심으로 단기 매도·경계 심리(${bearPct}%)가 우위를 보이고 있습니다.`
+            : `최근 실시간 뉴스 ${analyzedCount}건(강세 ${bullArticleCount}·약세 ${bearArticleCount}·중립 ${neutralArticleCount}) 분석 결과, ${focusTopic} 이슈 속에서 강·약세 수급 공방 및 관망세(강세 ${bullPct}% · 약세 ${bearPct}%)가 이어지고 있습니다.`;
+      summaryText = `${dynamicBase} (공포·탐욕 ${effectiveMarket.fearGreedValue} ${effectiveMarket.fearGreedLabelKr} · 선물 매수수급 ${effectiveMarket.futuresBullPct}%)`;
+    } else {
+      summaryText = rawSummaryText.includes("공포·탐욕")
+        ? rawSummaryText
+        : `${rawSummaryText} (공포·탐욕 ${effectiveMarket.fearGreedValue} ${effectiveMarket.fearGreedLabelKr} · 선물 매수수급 ${effectiveMarket.futuresBullPct}%)`;
+    }
   } else if (bullArticleCount + bearArticleCount > 0 || totalBullVotes + totalBearVotes > 0) {
     const totalVotes = totalBullVotes + totalBearVotes;
     summaryText = `실시간 뉴스(강세 ${bullArticleCount}건·약세 ${bearArticleCount}건${
@@ -749,6 +779,9 @@ export function NewsFeed({
   const [sseConnected, setSseConnected] = useState<boolean | null>(null);
   const [sseError, setSseError] = useState(false);
   const [sseLiveStatus, setSseLiveStatus] = useState<NewsLiveStatus | null>(null);
+  const [sseSentimentSummary, setSseSentimentSummary] = useState<NewsSentimentSummary | null>(
+    null,
+  );
 
   // 실시간 SSE 속보 토스트, 탭별 미확인 카운트(전체/코인/경제) 및 무한스크롤 센티넬 상태
   const feedTopRef = useRef<HTMLDivElement>(null);
@@ -964,17 +997,21 @@ export function NewsFeed({
   const highlightsQuery = useQuery({
     queryKey: ["public-news-highlights", origin],
     initialData: initialHighlights,
-    staleTime: 30_000,
-    queryFn: async ({ signal }) =>
-      parseNewsHighlights(await contentJson(origin, "/news/highlights", { signal })),
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    queryFn: async ({ signal }) => {
+      const next = parseNewsHighlights(await contentJson(origin, "/news/highlights", { signal }));
+      setSseSentimentSummary(null);
+      return next;
+    },
   });
 
   const tradingBase = resolveTradingMarketBaseUrl();
   const marketOverviewQuery = useQuery<MarketOverviewData>({
     queryKey: ["portal-redis-market-overview", tradingBase],
     initialData: initialMarketOverview,
-    staleTime: 5_000,
-    refetchInterval: 10_000,
+    staleTime: 3_000,
+    refetchInterval: 5_000,
     queryFn: async ({ signal }) => fetchRedisMarketOverview(tradingBase, signal),
   });
 
@@ -1242,6 +1279,7 @@ export function NewsFeed({
           if (parsed.section === "NEWSROOM") {
             setPendingNewsroomCount(prev => prev + 1);
           }
+          void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
         } catch {
           setUnreadByAccount(prevMap => {
             const key = accountStorageKeyRef.current;
@@ -1263,21 +1301,34 @@ export function NewsFeed({
               bearCount: parsed.bearCount,
             },
           }));
+          void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
         } catch {
           // Ignore malformed reaction frame
+        }
+      };
+      const onSentimentUpdated = (event: MessageEvent) => {
+        try {
+          const parsed = parseNewsSentimentSummary(JSON.parse(String(event.data ?? "{}")));
+          setSseSentimentSummary(parsed);
+          queryClient.setQueryData<NewsHighlights>(["public-news-highlights", origin], prev =>
+            prev ? { ...prev, sentimentSummary: parsed } : prev,
+          );
+        } catch {
+          // Ignore malformed sentiment frame
         }
       };
       es.addEventListener("CONNECTED", onConnected as EventListener);
       es.addEventListener("NEWS_LIVE_STATUS", onLiveStatus as EventListener);
       es.addEventListener("NEWS_CREATED", onNewsCreated as EventListener);
       es.addEventListener("NEWS_REACTION_UPDATED", onReactionUpdated as EventListener);
+      es.addEventListener("NEWS_SENTIMENT_UPDATED", onSentimentUpdated as EventListener);
     } catch {
       es = null;
     }
     return () => {
       if (es) es.close();
     };
-  }, [origin, category, symbolTag]);
+  }, [origin, category, symbolTag, queryClient]);
 
   function handleLoadNewNews() {
     const allKnownIds = [
@@ -1462,10 +1513,25 @@ export function NewsFeed({
 
   const activeIssue = keywordIssueList[issueIndex % keywordIssueList.length] ?? KEYWORD_ISSUES[0];
 
+  const effectiveHighlights: NewsHighlights | undefined = highlights
+    ? sseSentimentSummary
+      ? { ...highlights, sentimentSummary: sseSentimentSummary }
+      : highlights
+    : sseSentimentSummary
+      ? {
+          mustReadBreaking: [],
+          popularByViews: [],
+          popularByReactions: [],
+          keywordIssues: [],
+          recommendedNewsroom: [],
+          sentimentSummary: sseSentimentSummary,
+        }
+      : undefined;
+
   const liveSentiment = computeLiveNewsSentiment({
     articles: visibleItems,
     incomingArticles: prependedNews,
-    highlights,
+    highlights: effectiveHighlights,
     liveReactions,
     userReactions: reactions,
     marketOverview: marketOverviewQuery.data,
@@ -1609,9 +1675,9 @@ export function NewsFeed({
             </p>
             <Link
               href="/trading"
-              className="mt-3 flex h-9 w-full items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-xs font-bold text-gray-700 hover:bg-gray-100"
+              className="mt-3 flex h-9 w-full items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 bg-gray-50 text-xs font-bold text-gray-700 hover:bg-gray-100"
             >
-              선물 모의투자 터미널 →
+              모의투자 하러가기 →
             </Link>
           </div>
         </aside>

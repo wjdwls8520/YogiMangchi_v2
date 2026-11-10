@@ -33,6 +33,7 @@ import {
   parseNewsHighlights,
   parseNewsPage,
   parseNewsReaction,
+  parseNewsSentimentSummary,
   parsePublicMemberPortfolio,
   parseReportReasons,
   readCommunityOrPublic,
@@ -2658,6 +2659,114 @@ test("fetchRedisMarketOverview는 trading-server의 Redis 기반 /api/v1/market/
       ),
     /not ready yet/,
   );
+});
+
+test("실시간 뉴스 투자 심리는 SSE 센티먼트 요약과 Redis 마켓 지표를 동기화해 상단 바와 요약 수치를 일치시키고 전체 화면에서 터미널 문구를 노출하지 않는다", () => {
+  const sseSentiment = parseNewsSentimentSummary({
+    totalBullVotes: 24,
+    totalBearVotes: 8,
+    bullPct: 63,
+    bearPct: 37,
+    dominantSentiment: "BULLISH",
+    bullishArticleCount: 10,
+    bearishArticleCount: 7,
+    neutralArticleCount: 23,
+    summary:
+      "최근 실시간 뉴스 40건(강세 10·약세 7·중립 23) 분석 결과, #BTC 및 거시경제·금리 이슈를 중심으로 단기 매수·강세 심리(63%)가 우위를 보이고 있습니다.",
+  });
+  assert.equal(sseSentiment.bullPct, 63);
+  assert.equal(sseSentiment.bearPct, 37);
+
+  const redisMarket = parseMarketOverviewPayload({
+    btcDominancePercent: 59.7,
+    btcDominanceChange24h: 1.85,
+    kimchiPremiumPercent: 1.26,
+    openInterestBillionsUsd: 30.4,
+    fearGreedValue: 32,
+    fearGreedLabelKr: "공포",
+    futuresBullPct: 64,
+    futuresBearPct: 36,
+    btcChange24h: -1.2,
+    updatedAt: "2026-11-10T18:00:00Z",
+  });
+
+  const highlights = parseNewsHighlights({
+    mustReadBreaking: [],
+    popularByViews: [],
+    popularByReactions: [],
+    keywordIssues: [],
+    recommendedNewsroom: [],
+    sentimentSummary: sseSentiment,
+  });
+
+  const synced = computeLiveNewsSentiment({
+    articles: [],
+    highlights,
+    marketOverview: redisMarket,
+  });
+  assert.equal(synced.bullPct + synced.bearPct, 100);
+  assert.equal(
+    synced.summaryText.includes(`심리(${synced.bullPct}%)`),
+    true,
+    `summaryText(${synced.summaryText})가 상단 바 강세 비율(${synced.bullPct}%)과 일치해야 합니다.`,
+  );
+  assert.equal(synced.summaryText.includes("심리(63%)"), false);
+  assert.equal(synced.summaryText.includes("(공포·탐욕 32 공포 · 선물 매수수급 64%)"), true);
+
+  const bearishShift = computeLiveNewsSentiment({
+    articles: [],
+    highlights,
+    liveReactions: {
+      9001: { bullCount: 0, bearCount: 120 },
+    },
+    marketOverview: parseMarketOverviewPayload({
+      ...redisMarket,
+      fearGreedValue: 20,
+      fearGreedLabelKr: "극단적 공포",
+      futuresBullPct: 30,
+      futuresBearPct: 70,
+      btcChange24h: -6.5,
+    }),
+  });
+  assert.equal(bearishShift.bullPct < synced.bullPct, true);
+  assert.equal(
+    bearishShift.summaryText.includes(`단기 매도·경계 심리(${bearishShift.bearPct}%)`),
+    true,
+  );
+
+  const client = new QueryClient();
+  try {
+    const newsHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialHighlights={highlights} initialMarketOverview={redisMarket} />
+      </MemberProvider>,
+    );
+    const portalHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal initialMarketOverview={redisMarket} />
+      </MemberProvider>,
+    );
+    const communityHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard />
+      </MemberProvider>,
+    );
+    const contestHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <ContestHub />
+      </MemberProvider>,
+    );
+
+    assert.equal(newsHtml.includes("모의투자 하러가기"), true);
+    assert.equal(portalHtml.includes("모의투자 하러가기"), true);
+    assert.equal(communityHtml.includes("모의투자 하러가기"), true);
+    assert.equal(newsHtml.includes("터미널"), false);
+    assert.equal(portalHtml.includes("터미널"), false);
+    assert.equal(communityHtml.includes("터미널"), false);
+    assert.equal(contestHtml.includes("터미널"), false);
+  } finally {
+    client.clear();
+  }
 });
 
 

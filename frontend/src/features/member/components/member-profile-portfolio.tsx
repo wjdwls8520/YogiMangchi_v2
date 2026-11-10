@@ -1478,7 +1478,7 @@ export function MemberMyProfilePage({
                                   href="/trading"
                                   className="inline-flex shrink-0 whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100"
                                 >
-                                  터미널에서 취소
+                                  모의투자에서 취소
                                 </Link>
                               </td>
                             </tr>

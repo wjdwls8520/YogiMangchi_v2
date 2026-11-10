@@ -1240,9 +1240,9 @@ export function CommunityBoard({
             </button>
             <Link
               href="/trading"
-              className="inline-flex h-9 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
+              className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-300 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
             >
-              모의투자 터미널 →
+              모의투자 하러가기 →
             </Link>
           </div>
         </div>

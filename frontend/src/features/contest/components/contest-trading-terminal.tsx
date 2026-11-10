@@ -326,7 +326,7 @@ export function ContestTradingTerminal({
       <ContestTradingSubheader seasonId={meta.seasonId} />
       <main id="contest-trading-main" tabIndex={-1} className="trading-workspace">
         <div className="trading-page-intro">
-          <h1 className="sr-only">{meta.title} 전용 선물 트레이딩 터미널</h1>
+          <h1 className="sr-only">{meta.title} 전용 선물 모의투자</h1>
           <p id="preview-notice">
             일반 모의투자 지갑과 분리된 시즌 전용 대회 지갑으로 주문을 실행합니다. 대회 종료 시각 도래 시 미체결 주문은 소프트 취소되고 오픈 포지션은 마크가격 스냅샷 기준으로 정산됩니다.
           </p>
