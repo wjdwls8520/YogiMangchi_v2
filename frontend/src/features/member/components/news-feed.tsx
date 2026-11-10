@@ -10,7 +10,6 @@ import {
   V1IconBolt,
   V1IconNews,
   V1IconArrowUp,
-  V1IconSend,
   V1IconCalendar,
   V1IconSparkle,
   V1IconTrendUp,
@@ -1643,73 +1642,56 @@ export function NewsFeed({
           )}
 
           {sectionTab === "BREAKING" ? (
-            /* ==================== [탭 1] 속보 (CoinNess /news 스타일) ==================== */
+            /* ==================== [탭 1] 속보 (뉴스룸과 동일한 헤더·중앙 세그먼트 탭 바) ==================== */
             <>
-              {/* 상단 헤더: 속보 | 전체 속보 | 코인 속보 | 경제 속보 + 기사제보 */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-baseline gap-4">
-                  <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
-                    속보
-                  </h2>
-                  <div
-                    className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-5"
-                    role="tablist"
-                    aria-label="속보 분야 탭"
-                  >
-                    {(
-                      [
-                        { key: "ALL", label: "전체 속보", count: allUnreadCount, badgeKey: "all" },
-                        { key: "COIN", label: "코인 속보", count: coinUnreadCount, badgeKey: "coin" },
-                        {
-                          key: "ECONOMY",
-                          label: "경제 속보",
-                          count: economyUnreadCount,
-                          badgeKey: "economy",
-                        },
-                      ] as const
-                    ).map((tab, idx) => (
-                      <div key={tab.key} className="flex items-center gap-3 sm:gap-4">
-                        {idx > 0 && (
-                          <span className="text-gray-300" aria-hidden="true">
-                            |
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={breakingSubTab === tab.key}
-                          onClick={() => setBreakingSubTab(tab.key)}
-                          className={`relative inline-flex items-center text-sm font-extrabold transition-colors ${
-                            tab.count > 0 ? "pr-2 " : ""
-                          }${
-                            breakingSubTab === tab.key
-                              ? "text-gray-900"
-                              : "text-gray-400 hover:text-gray-700"
-                          }`}
-                        >
-                          <span>{tab.label}</span>
-                          {tab.count > 0 && (
-                            <span
-                              data-breaking-badge={tab.badgeKey}
-                              aria-label={`${tab.label} 새 소식 ${tab.count}건`}
-                              className="absolute -right-2 -top-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold leading-none text-white shadow-xs"
-                            >
-                              {tab.count}
-                            </span>
-                          )}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+                  속보
+                </h2>
+              </div>
 
-                <Link
-                  href="/community"
-                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 text-xs font-bold text-gray-600 hover:bg-gray-50"
-                >
-                  <V1IconSend className="h-3.5 w-3.5" />
-                  <span>기사제보</span>
-                </Link>
+              {/* 중앙 세그먼트 탭 바: 전체 속보 | 코인 속보 | 경제 속보 */}
+              <div
+                className="mx-auto grid max-w-xl grid-cols-3 gap-1 rounded-2xl bg-[#F2F4F7] p-1.5"
+                role="tablist"
+                aria-label="속보 분야 탭"
+              >
+                {(
+                  [
+                    { key: "ALL", label: "전체 속보", count: allUnreadCount, badgeKey: "all" },
+                    { key: "COIN", label: "코인 속보", count: coinUnreadCount, badgeKey: "coin" },
+                    {
+                      key: "ECONOMY",
+                      label: "경제 속보",
+                      count: economyUnreadCount,
+                      badgeKey: "economy",
+                    },
+                  ] as const
+                ).map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={breakingSubTab === tab.key}
+                    onClick={() => setBreakingSubTab(tab.key)}
+                    className={`relative inline-flex items-center justify-center rounded-xl py-2 text-xs font-bold transition-colors sm:text-sm ${
+                      breakingSubTab === tab.key
+                        ? "bg-white text-gray-900"
+                        : "text-gray-500 hover:text-gray-800"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    {tab.count > 0 && (
+                      <span
+                        data-breaking-badge={tab.badgeKey}
+                        aria-label={`${tab.label} 새 소식 ${tab.count}건`}
+                        className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold leading-none text-white shadow-xs"
+                      >
+                        {tab.count}
+                      </span>
+                    )}
+                  </button>
+                ))}
               </div>
 
               {/* 지금 꼭 봐야할 속보 + 인기 속보 2단 하이라이트 박스 */}

@@ -1649,10 +1649,10 @@ test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커�
         <NewsFeed initialPendingCoinCount={2} initialPendingEconomyCount={1} />
       </MemberProvider>,
     );
-    // 속보 서브탭 반응형 래핑 및 뱃지 간격, 투자 심리 바 줄바꿈 방지
-    assert.match(newsHtml, /flex flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-5/);
+    // 속보 서브탭 뉴스룸과 동일한 중앙 세그먼트 탭 바 및 투자 심리 바 줄바꿈 방지
+    assert.match(newsHtml, /mx-auto grid max-w-xl grid-cols-3 gap-1 rounded-2xl bg-\[#F2F4F7\] p-1\.5/);
     assert.match(newsHtml, /bg-\[#2EBD85\] px-1\.5 whitespace-nowrap/);
-    assert.match(newsHtml, /-right-2 -top-2/);
+    assert.match(newsHtml, /data-breaking-badge="all"/);
 
     const communityHtml = renderToStaticMarkup(
       <MemberProvider client={client}>

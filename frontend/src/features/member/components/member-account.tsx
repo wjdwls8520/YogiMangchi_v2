@@ -123,7 +123,6 @@ export function MemberAccount() {
               <span className="inline-block h-4 w-1.5 rounded-full bg-[#0058FF]" />
               기본 정보
             </h3>
-            {snapshot.phase === "ready" && profile.data && <MemberLogout />}
           </div>
 
           <div className="flex flex-col items-center justify-center">
