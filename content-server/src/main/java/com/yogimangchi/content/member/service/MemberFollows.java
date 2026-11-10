@@ -43,15 +43,27 @@ public class MemberFollows {
     }
     @Transactional(readOnly=true,timeout=3)
     public FollowPage list(Long memberId,boolean followers,Long cursorId,Integer size,String keyword) {
+        return list(memberId,followers,cursorId,size,keyword,null);
+    }
+    @Transactional(readOnly=true,timeout=3)
+    public FollowPage list(Long memberId,boolean followers,Long cursorId,Integer size,String keyword,Long viewerId) {
         int limit=size==null ? 10 : size;
         if(limit<1 || limit>10 || cursorId!=null && cursorId<=0 || keyword!=null && (keyword.codePointCount(0,keyword.length())>12 || keyword.indexOf('\0')>=0)) throw invalid();
         active(memberId);
+        if(viewerId!=null) members.findById(viewerId).filter(m -> m.getStatus()==Member.Status.ACTIVE).orElseThrow(AuthFailure::unauthorized);
         String owner=followers ? "following_id" : "follower_id",other=followers ? "follower_id" : "following_id";
         String search=keyword==null ? "" : keyword.strip();
-        var rows=jdbc.query("select f.id,m.id member_id,m.nickname,m.profile_message,m.profile_img_url,f.created_at from content.member_follow f join content.member m on m.id=f."+other
-                +" where f."+owner+"=? and f.active and m.status='ACTIVE' and f.id<? and position(lower(?) in lower(m.nickname))>0 order by f.id desc limit ?",
-                (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),r.getString("profile_img_url"),r.getTimestamp("created_at").toInstant())),
-                memberId,cursorId==null ? Long.MAX_VALUE : cursorId,search,limit+1);
+        var rows=viewerId==null
+                ? jdbc.query("select f.id,m.id member_id,m.nickname,m.profile_message,m.profile_img_url,f.created_at from content.member_follow f join content.member m on m.id=f."+other
+                        +" where f."+owner+"=? and f.active and m.status='ACTIVE' and f.id<? and position(lower(?) in lower(m.nickname))>0 order by f.id desc limit ?",
+                        (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),r.getString("profile_img_url"),r.getTimestamp("created_at").toInstant(),null)),
+                        memberId,cursorId==null ? Long.MAX_VALUE : cursorId,search,limit+1)
+                : jdbc.query("select f.id,m.id member_id,m.nickname,m.profile_message,m.profile_img_url,f.created_at,"
+                        +"exists(select 1 from content.member_follow vf where vf.follower_id=? and vf.following_id=m.id and vf.active) followed_by_me "
+                        +"from content.member_follow f join content.member m on m.id=f."+other
+                        +" where f."+owner+"=? and f.active and m.status='ACTIVE' and f.id<? and position(lower(?) in lower(m.nickname))>0 order by f.id desc limit ?",
+                        (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),r.getString("profile_img_url"),r.getTimestamp("created_at").toInstant(),r.getBoolean("followed_by_me"))),
+                        viewerId,memberId,cursorId==null ? Long.MAX_VALUE : cursorId,search,limit+1);
         boolean hasNext=rows.size()>limit; var page=rows.subList(0,Math.min(limit,rows.size()));
         Long next=hasNext ? page.get(page.size()-1).id() : null;
         return new FollowPage(page.stream().map(Row::entry).toList(),next,hasNext);

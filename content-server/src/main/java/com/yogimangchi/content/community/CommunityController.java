@@ -97,7 +97,7 @@ public class CommunityController {
 
     @PostMapping(value = "/api/v1/community/posts", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Create a community post with image attachments (Multipart)", description = "Active member Bearer required. Supports up to 10 images (<=5MB each, no GIF) and optional sharedPosition JSON.")
+    @Operation(summary = "Create a community post with image attachments (Multipart)", description = "Active member Bearer required. Supports up to 10 images (JPG/JPEG/PNG/WEBP <=5MB, GIF <=3MB) and optional sharedPosition JSON.")
     public ResponseEntity<CommunityService.CommunityPostResponse> createPostMultipart(
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) String category,
@@ -136,7 +136,7 @@ public class CommunityController {
     @PatchMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @PutMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Update own community post with image attachments (Multipart)", description = "Post owner Bearer required. Supports deleteFileIds and new image files.")
+    @Operation(summary = "Update own community post with image attachments (Multipart)", description = "Post owner Bearer required. Supports deleteFileIds, clearSharedPosition, and new image files.")
     public ResponseEntity<CommunityService.CommunityPostResponse> updatePostMultipart(
             @PathVariable Long postId,
             @AuthenticationPrincipal Jwt jwt,
@@ -145,9 +145,12 @@ public class CommunityController {
             @RequestParam(required = false) String title,
             @RequestParam(required = false) String content,
             @RequestParam(required = false) String sharedPosition,
+            @RequestParam(required = false) Boolean clearSharedPosition,
             @RequestParam(required = false) List<Long> deleteFileIds,
             @RequestPart(name = "request", required = false) CommunityService.UpdatePostRequest requestPart,
             @RequestPart(name = "files", required = false) List<MultipartFile> files) {
+        boolean explicitClear = Boolean.TRUE.equals(clearSharedPosition)
+                || (sharedPosition != null && (sharedPosition.isBlank() || "null".equalsIgnoreCase(sharedPosition.strip())));
         CommunityService.UpdatePostRequest effective = requestPart != null
                 ? requestPart
                 : new CommunityService.UpdatePostRequest(
@@ -155,8 +158,9 @@ public class CommunityController {
                         symbolTag,
                         title,
                         content,
-                        community.parseSharedPositionJson(sharedPosition),
-                        deleteFileIds);
+                        explicitClear ? null : community.parseSharedPositionJson(sharedPosition),
+                        deleteFileIds,
+                        explicitClear ? Boolean.TRUE : null);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(community.updatePost(Long.valueOf(jwt.getSubject()), postId, effective, files));

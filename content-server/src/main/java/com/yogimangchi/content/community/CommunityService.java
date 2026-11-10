@@ -90,10 +90,21 @@ public class CommunityService {
             String title,
             String content,
             SharedPositionSnapshot sharedPosition,
-            List<Long> deleteFileIds
+            List<Long> deleteFileIds,
+            Boolean clearSharedPosition
     ) {
+        public UpdatePostRequest(
+                String category,
+                String symbolTag,
+                String title,
+                String content,
+                SharedPositionSnapshot sharedPosition,
+                List<Long> deleteFileIds) {
+            this(category, symbolTag, title, content, sharedPosition, deleteFileIds, null);
+        }
+
         public UpdatePostRequest(String category, String symbolTag, String title, String content) {
-            this(category, symbolTag, title, content, null, null);
+            this(category, symbolTag, title, content, null, null, null);
         }
     }
 
@@ -605,9 +616,14 @@ public class CommunityService {
         String symbolTag = body.symbolTag() == null ? existing.symbolTag() : normalizeSymbolTag(body.symbolTag());
         String title = body.title() == null ? existing.title() : validateTitle(body.title());
         String content = body.content() == null ? existing.content() : validatePostContent(body.content());
-        String sharedPositionJson = body.sharedPosition() == null
-                ? existing.sharedPositionJson()
-                : serializeSharedPosition(body.sharedPosition());
+        String sharedPositionJson;
+        if (Boolean.TRUE.equals(body.clearSharedPosition())) {
+            sharedPositionJson = null;
+        } else if (body.sharedPosition() != null) {
+            sharedPositionJson = serializeSharedPosition(body.sharedPosition());
+        } else {
+            sharedPositionJson = existing.sharedPositionJson();
+        }
 
         jdbc.update(
                 "update content.community_post set category = ?, symbol_tag = ?, title = ?, content = ?, shared_position_json = ?, updated_at = now() where id = ?",
@@ -1454,8 +1470,27 @@ public class CommunityService {
                 || snapshot.leverage() < 1 || snapshot.leverage() > 125) {
             throw invalidRequest();
         }
+        String normalizedSide = snapshot.side().strip().toUpperCase(Locale.ROOT);
+        if (!"LONG".equals(normalizedSide) && !"SHORT".equals(normalizedSide)) {
+            throw invalidRequest();
+        }
+        SharedPositionSnapshot canonical = new SharedPositionSnapshot(
+                snapshot.id(),
+                snapshot.marketLabel(),
+                snapshot.symbol().strip().toUpperCase(Locale.ROOT),
+                snapshot.pair(),
+                normalizedSide,
+                snapshot.leverage(),
+                snapshot.entryPrice(),
+                snapshot.markPrice(),
+                snapshot.liquidationPrice(),
+                snapshot.roePct(),
+                snapshot.pnlUsdt(),
+                snapshot.positive(),
+                snapshot.showPnlAmount(),
+                snapshot.verified());
         try {
-            return json.writeValueAsString(snapshot);
+            return json.writeValueAsString(canonical);
         } catch (JsonProcessingException e) {
             throw invalidRequest();
         }

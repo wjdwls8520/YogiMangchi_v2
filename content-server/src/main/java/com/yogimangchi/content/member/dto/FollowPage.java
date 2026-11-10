@@ -10,9 +10,13 @@ public record FollowPage(List<Entry> content,Long nextCursorId,boolean hasNext) 
             String nickname,
             String profileMessage,
             @JsonInclude(JsonInclude.Include.NON_NULL) String profileImgUrl,
-            Instant followedAt) {
+            Instant followedAt,
+            @JsonInclude(JsonInclude.Include.NON_NULL) Boolean followedByMe) {
+        public Entry(Long memberId,String nickname,String profileMessage,String profileImgUrl,Instant followedAt) {
+            this(memberId,nickname,profileMessage,profileImgUrl,followedAt,null);
+        }
         public Entry(Long memberId,String nickname,String profileMessage,Instant followedAt) {
-            this(memberId,nickname,profileMessage,null,followedAt);
+            this(memberId,nickname,profileMessage,null,followedAt,null);
         }
     }
 }

@@ -1427,6 +1427,96 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.content[0].reportCount").value(0));
     }
 
+    @Test
+    void communityPostSupportsRealPositionSnapshotSideValidationAndDetachOnEdit() throws Exception {
+        var author = signup();
+        String bearer = "Bearer " + author.access().accessToken();
+
+        // Invalid side in sharedPosition is rejected with 400
+        mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", bearer)
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "category": "POSITION",
+                                  "symbolTag": "DOGE",
+                                  "title": "잘못된 사이드 테스트",
+                                  "content": "본문",
+                                  "sharedPosition": {
+                                    "id": "MOCK_1",
+                                    "marketLabel": "모의투자 선물",
+                                    "symbol": "DOGE",
+                                    "pair": "DOGEUSDT",
+                                    "side": "INVALID",
+                                    "leverage": 1,
+                                    "entryPrice": "0.1850",
+                                    "markPrice": "0.1920",
+                                    "liquidationPrice": "-",
+                                    "roePct": "+3.78%",
+                                    "pnlUsdt": "+37.80 USDT",
+                                    "positive": true,
+                                    "showPnlAmount": true,
+                                    "verified": true
+                                  }
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
+
+        // Valid 1x LONG position with "-" liquidationPrice and DOGE symbolTag succeeds
+        String createdBody = mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", bearer)
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "category": "POSITION",
+                                  "symbolTag": "DOGE",
+                                  "title": "도지 1배 롱 포지션 공유",
+                                  "content": "청산가 없는 1배 롱 포지션입니다.",
+                                  "sharedPosition": {
+                                    "id": "MOCK_1",
+                                    "marketLabel": "모의투자 선물",
+                                    "symbol": "doge",
+                                    "pair": "DOGEUSDT",
+                                    "side": "long",
+                                    "leverage": 1,
+                                    "entryPrice": "0.1850",
+                                    "markPrice": "0.1920",
+                                    "liquidationPrice": "-",
+                                    "roePct": "+3.78%",
+                                    "pnlUsdt": "+37.80 USDT",
+                                    "positive": true,
+                                    "showPnlAmount": true,
+                                    "verified": true
+                                  }
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.symbolTag").value("DOGE"))
+                .andExpect(jsonPath("$.sharedPosition.symbol").value("DOGE"))
+                .andExpect(jsonPath("$.sharedPosition.side").value("LONG"))
+                .andExpect(jsonPath("$.sharedPosition.liquidationPrice").value("-"))
+                .andReturn().getResponse().getContentAsString();
+        long postId = json.readTree(createdBody).path("id").asLong();
+
+        // Editing post with symbolTag="" and clearSharedPosition=true detaches both cleanly
+        mvc.perform(patch("/api/v1/community/posts/" + postId)
+                        .header("Authorization", bearer)
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "category": "FREE",
+                                  "symbolTag": "",
+                                  "title": "일반 자유글로 전환",
+                                  "content": "포지션 스냅샷 해제",
+                                  "clearSharedPosition": true
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.category").value("FREE"))
+                .andExpect(jsonPath("$.symbolTag").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.sharedPosition").value(org.hamcrest.Matchers.nullValue()));
+    }
+
     private AuthService.Issued signup() {
         return auth.signup(identity(), new SignupRequest(nickname(), true, true, "test", "ym-terms-v1", "ym-privacy-v1"));
     }
