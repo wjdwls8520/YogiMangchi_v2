@@ -24,7 +24,21 @@ export const COMMUNITY_CATEGORIES: readonly { key: "" | CommunityCategory; label
   { key: "FREE", label: "자유 (FREE)" },
 ];
 
-export const SYMBOL_FILTER_TAGS = ["", "BTC", "ETH", "SOL", "XRP"] as const;
+export const SYMBOL_FILTER_TAGS = [
+  "",
+  "BTC",
+  "ETH",
+  "XRP",
+  "BNB",
+  "SOL",
+  "ADA",
+  "LINK",
+  "AVAX",
+  "SUI",
+  "DOGE",
+  "PEPE",
+  "SHIB",
+] as const;
 
 export type NewsItem = {
   id: number;
@@ -544,24 +558,45 @@ export function parseCommunityPostFile(value: unknown): CommunityPostFile {
   };
 }
 
+function snapshotTextOrDash(value: unknown, max: number, fallback = "-"): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length > 0 && trimmed.length <= max) return trimmed;
+    if (trimmed.length > max) return trimmed.slice(0, max);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value).slice(0, max);
+  }
+  return fallback;
+}
+
 export function parseSharedPositionSnapshot(value: unknown): SharedPositionSnapshot {
   const row = obj(value);
   const side = row.side;
   if (side !== "LONG" && side !== "SHORT") return fail();
-  if (typeof row.positive !== "boolean") return fail();
+  const roePct = snapshotTextOrDash(row.roePct, 40, "0.00%");
+  const pnlUsdt = snapshotTextOrDash(row.pnlUsdt, 60, "0.00 USDT");
+  const positive =
+    typeof row.positive === "boolean"
+      ? row.positive
+      : !roePct.startsWith("-") && !pnlUsdt.startsWith("-");
+  const leverage =
+    typeof row.leverage === "number" && Number.isFinite(row.leverage) && row.leverage >= 1
+      ? Math.trunc(row.leverage)
+      : 1;
   return {
     id: str(row.id, 100),
-    marketLabel: str(row.marketLabel, 60),
+    marketLabel: snapshotTextOrDash(row.marketLabel, 60, "모의투자 선물"),
     symbol: str(row.symbol, 20),
-    pair: str(row.pair, 30),
+    pair: snapshotTextOrDash(row.pair, 30, str(row.symbol, 20) + "USDT"),
     side,
-    leverage: posInt(row.leverage),
-    entryPrice: str(row.entryPrice, 60),
-    markPrice: str(row.markPrice, 60),
-    liquidationPrice: str(row.liquidationPrice, 60),
-    roePct: str(row.roePct, 40),
-    pnlUsdt: str(row.pnlUsdt, 60),
-    positive: row.positive,
+    leverage,
+    entryPrice: snapshotTextOrDash(row.entryPrice, 60, "-"),
+    markPrice: snapshotTextOrDash(row.markPrice, 60, "-"),
+    liquidationPrice: snapshotTextOrDash(row.liquidationPrice, 60, "-"),
+    roePct,
+    pnlUsdt,
+    positive,
     showPnlAmount: typeof row.showPnlAmount === "boolean" ? row.showPnlAmount : true,
     verified: typeof row.verified === "boolean" ? row.verified : true,
   };

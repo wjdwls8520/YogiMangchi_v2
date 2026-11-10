@@ -103,7 +103,7 @@ export function AdminHeader({
         <div className="flex shrink-0 items-center gap-2.5">
           <div className="hidden sm:inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-gray-200 bg-[#F9FAFB] px-3.5 text-xs font-bold text-gray-800">
             <V1IconShield className="h-3.5 w-3.5 shrink-0 text-[#0058FF]" />
-            <span>{adminNickname}</span>
+            <span className="max-w-[140px] truncate">{adminNickname}</span>
             <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-[#0058FF]">
               관리자
             </span>
@@ -118,33 +118,93 @@ export function AdminHeader({
           </Link>
         </div>
       </div>
+
+      {/* 모바일 전용 관리자 탭 바 */}
+      <nav
+        aria-label="모바일 관리자 메뉴"
+        className="flex md:hidden items-center gap-1.5 overflow-x-auto border-t border-gray-100 px-4 py-2"
+      >
+        {ADMIN_NAV_TABS.map(tab => {
+          const isActive =
+            tab.key === activeSection ||
+            (tab.key === "contest" && pathname?.startsWith("/admin/contest")) ||
+            (tab.key === "users" && pathname?.startsWith("/admin/users")) ||
+            (tab.key === "community" && pathname?.startsWith("/admin/community")) ||
+            (tab.key === "reports" && pathname?.startsWith("/admin/reports"));
+          return (
+            <Link
+              key={tab.key}
+              href={tab.href}
+              className={cn(
+                "inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg px-3 text-xs font-bold transition-colors",
+                isActive
+                  ? "bg-[#0058FF] text-white"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900",
+              )}
+            >
+              {tab.label}
+            </Link>
+          );
+        })}
+      </nav>
     </header>
   );
 }
 
 export function AdminGuard({ children }: { children: ReactNode }) {
   const memberCtx = useOptionalMember();
-  const isReady = memberCtx?.snapshot.phase === "ready";
+  const phase = memberCtx?.snapshot.phase ?? "logged-out";
+  const isReady = phase === "ready";
   const isAdminSession = memberCtx?.snapshot.role === "ADMIN";
 
-  return (
-    <div data-admin-guard="active" className="min-h-screen bg-[#F9FAFB] text-gray-900">
-      {!isReady || !isAdminSession ? (
-        <div className="border-b border-blue-100 bg-blue-50/70 px-4 py-2 text-xs text-gray-700">
-          <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-2">
-            <p className="font-bold text-gray-800">
-              관리자 전용 운영 콘솔입니다. 실제 운영 환경에서는 관리자 권한 계정만 접근 및 실행할 수 있습니다.
+  if (phase === "loading") {
+    return (
+      <div data-admin-guard="loading" className="mx-auto flex min-h-[55vh] max-w-md items-center justify-center px-4 py-16">
+        <div className="w-full rounded-2xl border border-gray-200 bg-white p-8 text-center space-y-2">
+          <p className="text-sm font-black text-gray-900">관리자 권한 확인 중...</p>
+          <p className="text-xs font-medium text-gray-500">세션 및 운영 콘솔 접근 권한을 검증하고 있습니다.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isReady || !isAdminSession) {
+    return (
+      <div data-admin-guard="blocked" className="mx-auto flex min-h-[55vh] max-w-lg items-center justify-center px-4 py-16">
+        <div className="w-full rounded-2xl border border-gray-200 bg-white p-8 text-center space-y-5">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-[#0058FF]">
+            <V1IconShield className="h-6 w-6" />
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-lg font-black text-gray-900">관리자 전용 운영 콘솔입니다</h1>
+            <p className="text-xs leading-relaxed font-medium text-gray-500">
+              관리자(ADMIN) 권한이 부여된 계정으로 로그인해야 대회·회원·커뮤니티·신고 운영 기능에 접근할 수 있습니다.
             </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+            {!isReady ? (
+              <Link
+                href="/login"
+                className="inline-flex h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-5 text-xs font-black text-white transition-colors hover:bg-blue-700"
+              >
+                관리자 계정 로그인
+              </Link>
+            ) : null}
             <Link
-              href="/contest"
-              className="inline-flex items-center gap-1 font-black text-[#0058FF] hover:underline"
+              href="/"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl border border-gray-200 bg-white px-5 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
             >
-              <span>사용자 대회 허브 보기</span>
-              <V1IconArrowRight className="h-3 w-3" />
+              <span>서비스 홈으로 이동</span>
+              <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
             </Link>
           </div>
         </div>
-      ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div data-admin-guard="active">
       {children}
     </div>
   );
@@ -158,11 +218,13 @@ export function AdminShell({
   children: ReactNode;
 }) {
   return (
-    <AdminGuard>
+    <div className="min-h-screen bg-[#F9FAFB] text-gray-900">
       <AdminHeader activeSection={activeSection} />
-      <main className="mx-auto w-full max-w-[1280px] px-4 py-8 sm:px-6 md:py-10">
-        {children}
-      </main>
-    </AdminGuard>
+      <AdminGuard>
+        <main className="mx-auto w-full max-w-[1280px] px-4 py-8 sm:px-6 md:py-10">
+          {children}
+        </main>
+      </AdminGuard>
+    </div>
   );
 }

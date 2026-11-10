@@ -13,7 +13,7 @@ const reasons: Record<string, string> = {
   ORDER_NOT_PENDING: "이미 처리된 주문입니다.", MARKETABLE_LIMIT_NOT_ALLOWED: "현재 Mark를 교차하는 지정가는 허용되지 않습니다.",
   LEVERAGE_MISMATCH: "방향별 레버리지 설정이 변경되었습니다.", INVALID_ORDER: "주문 조건이 허용 범위를 벗어났습니다.",
   ACCOUNT_RISK_PENDING: "수신된 가격 위험 작업을 처리 중입니다.", ACCOUNT_RECOVERY_HELD: "가격 위험 기록의 운영 검토가 필요합니다.",
-  MEMBER_RESTART: "모의투자 다시시작으로 취소되었습니다.", MEMBER_WITHDRAWAL: "회원 탈퇴 정리로 취소되었습니다.",
+  MEMBER_RESTART: "모의투자 다시시작으로 취소되었습니다.", MEMBER_WITHDRAWAL: "회원 탈퇴 정리로 취소되었습니다.", CONTEST_SETTLEMENT: "대회 정산 종료로 자동 정리되었습니다.",
 };
 export function knownOrderReason(reason: string | null | undefined) {
   return reason && Object.hasOwn(reasons,reason) ? reasons[reason] : null;

@@ -138,9 +138,9 @@ function mapPublicSeasonToTerminalMeta(
     remainingLabel: isSettled ? "시즌 종료 · 정산 확정 완료" : season.statusLabel || "시즌 진행 중",
     walletStatus: isSettled ? "SETTLED" : "ACTIVE",
     seedMoney: formatContestUsdt(season.seedMoney),
-    contestEquity: fallback.contestEquity,
-    availableMargin: fallback.availableMargin,
-    seasonRoi: fallback.seasonRoi,
+    contestEquity: "—",
+    availableMargin: "—",
+    seasonRoi: "—",
     liveRank: `${season.participantCount}명 참가 중`,
     dotColor: fallback.dotColor,
   };
@@ -213,7 +213,7 @@ export function ContestTradingSubheader({
     }
 
     return () => controller.abort();
-  }, [seasonId, memberCtx?.session, memberCtx?.snapshot.phase, liveWallet?.contestEquity]);
+  }, [seasonId, memberCtx?.session, memberCtx?.snapshot.phase]);
 
   const rawMeta = liveMeta && liveMeta.seasonId === baseMeta.seasonId ? liveMeta : baseMeta;
   const meta: ContestSeasonTerminalMeta = liveWallet
@@ -271,30 +271,41 @@ export function ContestTradingSubheader({
 
       {/* 중앙/우측: 시즌 전용 대회 지갑 실시간 요약 + CONTEST MODE 배지 */}
       <div className="flex flex-wrap items-center gap-4 ml-auto">
-        <dl className="hidden md:flex items-center gap-4 text-[11px] tabular-nums">
-          <div className="flex items-center gap-1.5">
-            <dt className="font-bold text-gray-400">시즌 시드</dt>
-            <dd className="font-black text-gray-200">{meta.seedMoney}</dd>
+        <dl className="hidden md:flex items-center gap-4 text-[11px] tabular-nums whitespace-nowrap">
+          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            <dt className="font-bold text-gray-400 whitespace-nowrap">시즌 시드</dt>
+            <dd className="font-black text-gray-200 whitespace-nowrap">{meta.seedMoney}</dd>
           </div>
-          <div className="h-3 w-[1px] bg-white/10" />
-          <div className="flex items-center gap-1.5">
-            <dt className="font-bold text-gray-400">대회 평가자산</dt>
-            <dd className="font-black text-white">{meta.contestEquity}</dd>
+          <div className="h-3 w-[1px] shrink-0 bg-white/10" />
+          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            <dt className="font-bold text-gray-400 whitespace-nowrap">대회 평가자산</dt>
+            <dd className="font-black text-white whitespace-nowrap">{meta.contestEquity}</dd>
           </div>
-          <div className="h-3 w-[1px] bg-white/10" />
-          <div className="flex items-center gap-1.5">
-            <dt className="font-bold text-gray-400">대회 가용증거금</dt>
-            <dd className="font-black text-gray-200">{meta.availableMargin}</dd>
+          <div className="h-3 w-[1px] shrink-0 bg-white/10" />
+          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            <dt className="font-bold text-gray-400 whitespace-nowrap">대회 가용증거금</dt>
+            <dd className="font-black text-gray-200 whitespace-nowrap">{meta.availableMargin}</dd>
           </div>
-          <div className="h-3 w-[1px] bg-white/10" />
-          <div className="flex items-center gap-1.5">
-            <dt className="font-bold text-gray-400">시즌 수익률</dt>
-            <dd className="font-black text-emerald-400">{meta.seasonRoi}</dd>
+          <div className="h-3 w-[1px] shrink-0 bg-white/10" />
+          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            <dt className="font-bold text-gray-400 whitespace-nowrap">시즌 수익률</dt>
+            <dd
+              className={cn(
+                "font-black whitespace-nowrap",
+                meta.seasonRoi.startsWith("-")
+                  ? "text-blue-400"
+                  : meta.seasonRoi.startsWith("+")
+                    ? "text-emerald-400"
+                    : "text-gray-300",
+              )}
+            >
+              {meta.seasonRoi}
+            </dd>
           </div>
-          <div className="h-3 w-[1px] bg-white/10" />
-          <div className="flex items-center gap-1.5">
-            <dt className="font-bold text-gray-400">실시간 순위</dt>
-            <dd className="font-black text-amber-300">{meta.liveRank}</dd>
+          <div className="h-3 w-[1px] shrink-0 bg-white/10" />
+          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            <dt className="font-bold text-gray-400 whitespace-nowrap">실시간 순위</dt>
+            <dd className="font-black text-amber-300 whitespace-nowrap">{meta.liveRank}</dd>
           </div>
         </dl>
 

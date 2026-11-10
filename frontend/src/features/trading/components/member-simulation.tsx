@@ -63,7 +63,7 @@ function MemberSimulationContent() {
   const [intent, setIntent] = useState<{ accountId: number; key: string } | null>(null), [acknowledged, setAcknowledged] = useState(false), [limitedAt, setLimitedAt] = useState<string | null>(null);
   const active = useRef(false), dialog = useRef<HTMLDialogElement>(null);
   useJournalResolution(intent?{accountId:intent.accountId,key:intent.key,command:{kind:"memberRestart"}}:null,()=>{setIntent(null);setError(null);setAcknowledged(false);dialog.current?.close();});
-  const enabled = snapshot.mode === "member" && snapshot.phase === "ready" && !snapshot.retrying;
+  const enabled = snapshot.mode === "member" && !snapshot.contestSeasonId && snapshot.phase === "ready" && !snapshot.retrying;
   const canRestart = admission.trade && enabled && !current.isError && !current.isFetching && current.data?.round.roundId === snapshot.roundId && !!current.data?.restartAvailable;
   const rounds = useInfiniteQuery({ queryKey: [...tradingKeys.account(snapshot), "member-round-list"], enabled, initialPageParam: undefined as number | undefined,
     queryFn: async ({ signal, pageParam }) => roundPage(await session.read(`account/rounds?limit=20${pageParam ? `&cursorId=${pageParam}` : ""}`, snapshot, signal), parseRound, round => round.roundId, pageParam), getNextPageParam: page => page.nextCursorId ?? undefined });
@@ -88,6 +88,7 @@ function MemberSimulationContent() {
   }
   const summary = !detail.isError && enabled ? detail.data : undefined;
   const nextAt = current.data?.nextAvailableAt ?? limitedAt;
+  if (snapshot.contestSeasonId) return <section className="member-simulation" aria-label="대회 포트폴리오 성과"><p className="member-note">시즌 #{snapshot.contestSeasonId} 전용 격리 대회 지갑입니다. 대회 계정은 회차 다시시작 없이 대회 종료 시각에 일괄 정산됩니다.</p>{snapshot.phase === "ready" ? <SymbolPerformance /> : <p className="member-message" role="status">승인된 대회 참가자 계정을 확인한 뒤 종목별 성과를 표시합니다.</p>}<p className="member-note"><Link href="/contest">대회 허브 · 리더보드 확인하기</Link></p></section>;
   return <SimulationSection>
     <MemberAccountPreparation snapshot={snapshot} disabled={pending || !!intent} onPrepare={() => { void session.createMember(); }} onRestore={() => { void session.restore(); }} />
     {enabled && <><p className="member-note">서버 기준 현재 회차 · {current.data?.round.roundNumber ?? "확인 중"}회차. 과거 회차는 읽기 전용이며 거래 화면은 현재 회차만 사용합니다.</p>

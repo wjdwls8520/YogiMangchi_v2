@@ -540,8 +540,21 @@ export async function moderateAdminReportTarget(
 
 export function formatAdminDateTime(iso: string | null | undefined): string {
   if (!iso) return "-";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
+  const str = String(iso).trim();
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(str)) {
+    const ms = Date.parse(str);
+    if (Number.isFinite(ms)) {
+      const kst = new Date(ms + 9 * 60 * 60 * 1000);
+      const yyyy = kst.getUTCFullYear();
+      const mm = String(kst.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(kst.getUTCDate()).padStart(2, "0");
+      const hh = String(kst.getUTCHours()).padStart(2, "0");
+      const min = String(kst.getUTCMinutes()).padStart(2, "0");
+      return `${yyyy}.${mm}.${dd} ${hh}:${min}`;
+    }
+  }
+  const d = new Date(str);
+  if (Number.isNaN(d.getTime())) return str;
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");

@@ -110,7 +110,7 @@ export function parseFollowSummary(value: unknown, memberId: number) {
 }
 export function parseFollowPage(value: unknown) {
   const data = row(value);
-  if (!Array.isArray(data.content) || data.content.length > 10) return invalid();
+  if (!Array.isArray(data.content) || data.content.length > 50) return invalid();
   const content = data.content.map(value => {
     const entry = row(value);
     const profileImgUrl =
@@ -122,6 +122,7 @@ export function parseFollowPage(value: unknown) {
       nickname: text(entry.nickname, 16),
       profileMessage: text(entry.profileMessage, 300, true),
       ...(entry.profileImgUrl !== undefined ? { profileImgUrl } : {}),
+      ...(typeof entry.followedByMe === "boolean" ? { followedByMe: entry.followedByMe } : {}),
       followedAt: instant(entry.followedAt),
     };
   });

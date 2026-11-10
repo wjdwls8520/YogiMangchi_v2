@@ -1,15 +1,18 @@
 @import "tailwindcss";
 
-.account-query-state { padding: 1.25rem; color: var(--color-terminal-secondary); font-size: .8125rem; line-height: 1.6; }
-.account-refresh { min-height: 44px; padding: .5rem .75rem; color: var(--color-brand-600); font-size: .8125rem; font-weight: 600; cursor: pointer; }
-.account-refresh:disabled { opacity: .5; cursor: wait; }
-.account-refresh:focus-visible { outline: 2px solid var(--color-brand-600); outline-offset: 2px; }
-.account-snapshot-note { padding: .5rem 0; color: var(--color-terminal-muted); font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
-.account-summary dd, .order-wallet dd { overflow-wrap: anywhere; }
-.market-price, .market-list-price, .market-statistics dd, .order-estimates dd { overflow-wrap: anywhere; }
-.order-actions button:disabled { opacity: .5; cursor: default; }
-.order-choice:has(input:focus-visible) { background-color: #34353c; }
-.trading-table [role="alert"] { max-width: 20rem; white-space: normal; }
+@layer components {
+  .account-query-state { padding: 1.25rem; color: var(--color-terminal-secondary); font-size: .8125rem; line-height: 1.6; }
+  .account-refresh { min-height: 44px; padding: .5rem .75rem; color: var(--color-brand-600); font-size: .8125rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
+  .account-refresh:disabled { opacity: .5; cursor: wait; }
+  .account-refresh:focus-visible { outline: 2px solid var(--color-brand-600); outline-offset: 2px; }
+  .account-snapshot-note { padding: .5rem 0; color: var(--color-terminal-muted); font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
+  .account-summary dd, .order-wallet dd { overflow-wrap: anywhere; }
+  .market-price { white-space: nowrap; }
+  .market-list-price, .market-statistics dd, .order-estimates dd { overflow-wrap: anywhere; }
+  .order-actions button:disabled { opacity: .5; cursor: default; }
+  .order-choice:has(input:focus-visible) { background-color: #34353c; }
+  .trading-table [role="alert"] { max-width: 20rem; white-space: normal; }
+}
 
 @theme {
   --font-sans: "Pretendard", "Noto Sans KR", Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
@@ -60,9 +63,33 @@
     @apply outline-2 outline-offset-2 outline-brand-600;
   }
   input:focus, select:focus, textarea:focus { outline: none; box-shadow: none; }
+  a[href],
+  area[href],
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"]:not([aria-disabled="true"]),
+  [role="switch"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([aria-disabled="true"]),
+  [role="option"]:not([aria-disabled="true"]),
+  select:not(:disabled),
+  summary,
+  input[type="button"]:not(:disabled),
+  input[type="submit"]:not(:disabled),
+  input[type="reset"]:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="range"]:not(:disabled),
+  input[type="file"]:not(:disabled),
+  input[type="file"]:not(:disabled)::file-selector-button,
+  label:has(input[type="checkbox"]:not(:disabled)),
+  label:has(input[type="radio"]:not(:disabled)),
+  label:has(input[type="file"]:not(:disabled)) {
+    cursor: pointer;
+  }
   :disabled,
-  fieldset:disabled label {
-    @apply cursor-default;
+  fieldset:disabled label,
+  [aria-disabled="true"] {
+    cursor: default;
   }
   input:disabled,
   select:disabled {
@@ -655,7 +682,7 @@
     color-scheme: dark;
   }
   .history-more { @apply flex flex-col items-center border-t border-terminal-line py-2 text-trade-meta text-terminal-muted; }
-  .account-event-state { @apply flex min-h-7 items-center gap-2 border-b border-terminal-line px-3 text-trade-meta text-terminal-muted; }
+  .account-event-state { @apply flex min-h-7 flex-wrap items-center gap-2 border-b border-terminal-line px-3 text-trade-meta text-terminal-muted; }
   /* One accessible table per dataset; the same cells form mobile position rows. */
   .trading-table-scroll { overflow-x: auto; }
   .trading-table {
@@ -788,8 +815,8 @@
     .market-price > span { @apply sr-only; }
     .market-change { @apply mt-0 text-trade-meta; }
     .market-overview .market-statistics { @apply text-[11px]; }
-    .market-symbol-sheet[open] { @apply items-center; }
-    .market-sheet-content { @apply max-w-xl rounded-sm border border-terminal-line; }
+    .market-symbol-sheet[open] { @apply cursor-pointer items-center; }
+    .market-sheet-content { @apply max-w-xl cursor-default rounded-sm border border-terminal-line; }
     .market-sidebar .market-symbol-button {
       @apply flex-wrap;
     }
@@ -924,14 +951,13 @@
   }
   @media (64rem <= width < 80rem) {
     .market-overview { grid-template-columns: 10rem minmax(0,1fr); }
-    .market-overview .market-summary-body { @apply gap-2; grid-template-columns: 85px 75px minmax(0,1fr); }
+    .market-overview .market-summary-body { @apply gap-2; grid-template-columns: minmax(108px, max-content) minmax(78px, max-content) minmax(0,1fr); }
     .market-overview .market-statistics { @apply gap-2; }
   }
-}
 
 .table-side { white-space: nowrap; font-weight: 600; }
 .table-quantity { position: relative; font-variant-numeric: tabular-nums; }
-.table-quantity summary { cursor: help; list-style: none; white-space: nowrap; }
+.table-quantity summary { cursor: pointer; list-style: none; white-space: nowrap; }
 .table-quantity summary::-webkit-details-marker { display: none; }
 .table-quantity small { color: var(--color-terminal-muted); font-size: 10px; }
 .quantity-exact { display: block; padding-top: 4px; white-space: normal; overflow-wrap: anywhere; font-size: 11px; color: var(--color-terminal-muted); }
@@ -941,7 +967,7 @@
 .trading-account-body > .activity-panel, .trading-account-body > .trading-table-scroll { flex-shrink:0; }
 @media (width >= 64rem) { .order-book > .order-book-note:not([role]) { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; } }
 .activity-extra-dialog { width:min(72rem,calc(100% - 24px)); max-width:72rem; max-height:85dvh; overflow:auto; }
-@media (width >= 64rem) { .trading-table th { background:var(--color-terminal-panel); font-size:11px; font-weight:400; } .account-records-heading { background:var(--color-terminal-panel); min-height:32px; font-size:12px; } .trading-table[data-variant="positions"] [data-key="action"] { right:5rem; } .trading-table[data-variant="positions"] [data-key="stopLoss"] { position:sticky; right:0; min-width:5rem; width:5rem; border-left:1px solid var(--color-terminal-line); background:var(--color-terminal-panel); z-index:1; } .trading-table[data-variant="positions"] th[data-key="stopLoss"] { z-index:20; } .trading-table .position-close-actions button, .trading-table .position-stop-loss > button { min-height:28px; padding:0 10px; font-size:11px; } }
+@media (width >= 64rem) { .trading-table th { background:var(--color-terminal-panel); font-size:11px; font-weight:400; } .account-records-heading { background:var(--color-terminal-panel); min-height:32px; font-size:12px; } .trading-table[data-variant="positions"] [data-key="action"] { right:6.75rem; } .trading-table[data-variant="positions"] [data-key="stopLoss"] { position:sticky; right:0; min-width:6.75rem; width:6.75rem; border-left:1px solid var(--color-terminal-line); background:var(--color-terminal-panel); z-index:1; } .trading-table[data-variant="positions"] th[data-key="stopLoss"] { z-index:20; } .trading-table .position-close-actions button, .trading-table .position-stop-loss > button { min-height:28px; padding:0 10px; font-size:11px; white-space:nowrap; flex-shrink:0; } }
 @media (width >= 64rem) { .order-book-level { height:24px; min-height:24px; } .order-book-level > span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } }
 
 /* ============================================================================
@@ -1544,6 +1570,8 @@ body:has(.member-shell) :focus-visible {
   font-size: 13px;
   font-weight: 700;
   color: #FFFFFF;
+  white-space: nowrap;
+  flex-shrink: 0;
   text-decoration: none;
 }
 
@@ -2049,6 +2077,8 @@ body:has(.member-shell) :focus-visible {
   font-size: 11px;
   font-weight: 700;
   color: #FFFFFF;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .ym-badge-outline {
@@ -2062,6 +2092,8 @@ body:has(.member-shell) :focus-visible {
   font-size: 11px;
   font-weight: 600;
   color: #6E6E73;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .ym-breaking-controls {
@@ -2191,6 +2223,8 @@ body:has(.member-shell) :focus-visible {
   font-size: 11px;
   font-weight: 700;
   color: #6E6E73;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -2328,6 +2362,8 @@ body:has(.member-shell) :focus-visible {
   font-size: 13px;
   font-weight: 700;
   color: #6E6E73;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -2352,6 +2388,8 @@ body:has(.member-shell) :focus-visible {
   font-size: 12px;
   font-weight: 700;
   color: #6E6E73;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -2583,6 +2621,8 @@ body:has(.member-shell) :focus-visible {
   font-size: 12px;
   font-weight: 700;
   color: #7242FF;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -2654,6 +2694,8 @@ body:has(.member-shell) :focus-visible {
   padding: 4px 8px;
   font-size: 11px;
   color: #D92D46;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -2703,6 +2745,7 @@ body:has(.member-shell) :focus-visible {
   font-size: 11px;
   font-weight: 700;
   color: #7242FF;
+  white-space: nowrap;
 }
 
 .ym-feed-card-body h2 {
@@ -2895,6 +2938,7 @@ body:has(.member-shell) :focus-visible {
   background-color: rgba(0, 0, 0, 0.70);
   opacity: 0;
   transition: opacity 0.2s ease;
+  cursor: pointer;
 }
 
 .ym-dim-backdrop.is-open {
@@ -2904,6 +2948,7 @@ body:has(.member-shell) :focus-visible {
 .ym-dim-panel {
   display: flex;
   flex-direction: column;
+  cursor: default;
   width: 100%;
   max-height: calc(100dvh - 48px);
   border: 1px solid #DEE1E6;
@@ -3052,6 +3097,7 @@ body:has(.member-shell) :focus-visible {
 /* GNB Center Navigation Lock & Right Action Area Width Stabilization */
 .ym-gnb-right {
   min-height: 38px;
+}
 }
 
 /* Hydration-safe pre-paint GNB auth action slots (0ms flicker, 0 hydration mismatch) */

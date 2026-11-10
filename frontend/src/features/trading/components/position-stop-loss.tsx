@@ -58,7 +58,7 @@ export function PositionStopLoss({position,symbol,initialPrice=""}:{position:Pos
     }
   }
   return <div className="position-stop-loss">
-    <button ref={trigger} type="button" aria-haspopup="dialog" aria-label={`${symbol} ${position.side} 손절 설정`} disabled={snapshot.phase!=="ready"} onClick={()=>{setOpen(true);dialog.current?.showModal();}}>{current?.status==="ACTIVE"?formatMarketPrice(current.stopPrice):"설정"}</button>
+    <button ref={trigger} type="button" className="whitespace-nowrap shrink-0" aria-haspopup="dialog" aria-label={`${symbol} ${position.side} 손절 설정`} disabled={snapshot.phase!=="ready"} onClick={()=>{setOpen(true);dialog.current?.showModal();}}>{current?.status==="ACTIVE"?formatMarketPrice(current.stopPrice):"설정"}</button>
     <dialog ref={dialog} className="position-close-dialog" aria-modal="true" aria-labelledby={`stop-loss-${position.id}`} onCancel={event=>{if(pending)event.preventDefault();}} onClose={()=>{setOpen(false);trigger.current?.focus({preventScroll:true});}}>
       <h2 id={`stop-loss-${position.id}`}>{symbol} <span data-side={position.side}>{position.side}</span> Stop Loss</h2>
       <p>서버 Mark 기준으로 잔여 포지션 전량을 시장가 청산합니다. 추가 진입·부분 청산에 따라 대상 수량이 조정됩니다. 지정 가격의 체결을 보장하지 않으며, 가격 급변 시 손절 전에 강제청산될 수 있습니다.</p>
