@@ -28,16 +28,28 @@ export function writeHeaderAuthHint(
   hint: HeaderAuthHint,
   storage: Pick<Storage, "setItem"> | null = typeof window === "undefined" ? null : window.localStorage,
 ): void {
+  const normalizedRole = hint.loggedIn ? (hint.role === "ADMIN" ? "ADMIN" : "MEMBER") : null;
   try {
     storage?.setItem(
       HEADER_AUTH_HINT_KEY,
       JSON.stringify({
         loggedIn: Boolean(hint.loggedIn),
-        role: hint.loggedIn ? (hint.role === "ADMIN" ? "ADMIN" : "MEMBER") : null,
+        role: normalizedRole,
       }),
     );
   } catch {
     // Ignore storage quota or privacy mode errors
+  }
+  try {
+    if (typeof document !== "undefined" && document.documentElement) {
+      document.documentElement.dataset.ymAuthHint = hint.loggedIn
+        ? normalizedRole === "ADMIN"
+          ? "admin"
+          : "member"
+        : "anon";
+    }
+  } catch {
+    // Ignore non-DOM test environments
   }
 }
 

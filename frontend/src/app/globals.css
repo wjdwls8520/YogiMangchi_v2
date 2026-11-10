@@ -3054,6 +3054,34 @@ body:has(.member-shell) :focus-visible {
   min-height: 38px;
 }
 
+/* Hydration-safe pre-paint GNB auth action slots (0ms flicker, 0 hydration mismatch) */
+.ym-gnb-auth-loading .ym-auth-slot-admin,
+.ym-gnb-auth-loading .ym-auth-slot-member {
+  display: none;
+}
+
+.ym-gnb-auth-loading .ym-auth-slot-anon {
+  display: inline-flex;
+}
+
+html[data-ym-auth-hint="member"] .ym-gnb-auth-loading .ym-auth-slot-anon,
+html[data-ym-auth-hint="member"] .ym-gnb-auth-loading .ym-auth-slot-admin {
+  display: none;
+}
+
+html[data-ym-auth-hint="member"] .ym-gnb-auth-loading .ym-auth-slot-member {
+  display: inline-flex;
+}
+
+html[data-ym-auth-hint="admin"] .ym-gnb-auth-loading .ym-auth-slot-anon {
+  display: none;
+}
+
+html[data-ym-auth-hint="admin"] .ym-gnb-auth-loading .ym-auth-slot-admin,
+html[data-ym-auth-hint="admin"] .ym-gnb-auth-loading .ym-auth-slot-member {
+  display: inline-flex;
+}
+
 @media (min-width: 769px) {
   .ym-gnb-inner {
     position: relative;
