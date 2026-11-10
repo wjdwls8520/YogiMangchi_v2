@@ -1063,6 +1063,16 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     );
     assert.match(meLoggedInHtml, /내 모의투자 자산/);
     assert.match(meLoggedInHtml, /data-tab-variant="bookmark"/);
+    assert.equal(meLoggedInHtml.includes("border-t-[3px]"), false);
+    assert.equal(meLoggedInHtml.includes("transition-all"), false);
+    assert.match(
+      meLoggedInHtml,
+      /aria-selected="true"[^>]*class="[^"]*h-10[^"]*border-\[#0058FF\] bg-\[#0058FF\] font-black text-white/,
+    );
+    assert.match(
+      meLoggedInHtml,
+      /aria-selected="false"[^>]*class="[^"]*h-10[^"]*bg-\[#EEF1F6\] font-bold text-gray-500/,
+    );
     assert.match(meLoggedInHtml, /시즌별 대회 자산/);
     assert.match(meLoggedInHtml, /포트폴리오/);
     assert.match(meLoggedInHtml, /커뮤니티활동/);

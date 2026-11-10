@@ -477,11 +477,11 @@ export function V1Tabs({
               aria-selected={isActive}
               onClick={() => onChange(tab.value)}
               className={cn(
-                "relative inline-flex shrink-0 items-center justify-center rounded-t-xl px-3 sm:px-5 text-xs sm:text-sm whitespace-nowrap transition-all select-none cursor-pointer focus:outline-none",
+                "relative inline-flex h-10 shrink-0 items-center justify-center rounded-t-xl border border-b-0 px-3 sm:px-5 text-xs sm:text-sm whitespace-nowrap select-none cursor-pointer focus:outline-none",
                 fullWidth && "flex-1",
                 isActive
-                  ? "z-10 -mb-px h-11 border border-gray-200 border-b-white border-t-[3px] border-t-[#0058FF] bg-white font-black text-gray-900 shadow-[0_-2px_6px_rgba(15,23,42,0.04)]"
-                  : "z-0 h-10 border border-gray-200/80 border-b-transparent bg-[#EEF1F6] font-bold text-gray-500 hover:bg-gray-100 hover:text-gray-800",
+                  ? "border-[#0058FF] bg-[#0058FF] font-black text-white"
+                  : "border-gray-200/80 bg-[#EEF1F6] font-bold text-gray-500 hover:bg-gray-200/70 hover:text-gray-800",
                 tabClassName,
               )}
             >
