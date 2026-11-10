@@ -1,13 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberShell } from "./member-views";
 import { useMember } from "./member-provider";
 import { DimModal } from "./dim-modal";
 import { TradingDataProvider } from "../../trading/components/trading-data-provider";
 import { MemberSimulation } from "../../trading/components/member-simulation";
+import { tradingJson } from "../../trading/api/client";
+import { contentJson } from "../api/client";
+import { parseFollowPage } from "../api/contracts";
+import {
+  communityCategoryLabel,
+  parseCommunityPostPage,
+  parseCommunityReport,
+  parseMemberCommunityCommentPage,
+  parseMemberCommunityReportPage,
+  parsePublicMemberPortfolio,
+  readCommunityOrPublic,
+  type CommunityCategory,
+  type CommunityPost,
+  type MemberCommunityCommentItem,
+  type MemberCommunityReportItem,
+} from "../api/community-news";
 import {
   V1AssetSummaryCard,
   V1Button,
@@ -32,6 +48,7 @@ type FollowMemberItem = {
   memberId: number;
   nickname: string;
   profileMsg: string;
+  profileImgUrl?: string | null;
   following: boolean;
   followsMe: boolean;
 };
@@ -54,6 +71,21 @@ const INITIAL_FOLLOWINGS: FollowMemberItem[] = [
   { memberId: 22, nickname: "솔라나고래", profileMsg: "격리 10배 원칙 매매", following: true, followsMe: true },
   { memberId: 31, nickname: "매크로워처", profileMsg: "FOMC·CPI 거시 지표 분석", following: true, followsMe: false },
 ];
+
+const POSITION_COLORS = ["#0058FF", "#9CB34E", "#1D7CA7", "#F59E0B", "#8B5CF6"] as const;
+
+const SYMBOL_NAME_KR: Record<string, string> = {
+  BTCUSDT: "비트코인 무기한",
+  ETHUSDT: "이더리움 무기한",
+  SOLUSDT: "솔라나 무기한",
+  XRPUSDT: "리플 무기한",
+  BNBUSDT: "바이낸스코인 무기한",
+  DOGEUSDT: "도지코인 무기한",
+};
+
+function symbolNameKr(symbol: string): string {
+  return SYMBOL_NAME_KR[symbol.toUpperCase()] ?? `${symbol} 무기한`;
+}
 
 const MOCK_POSITIONS = [
   {
@@ -239,13 +271,37 @@ const FINISHED_CONTEST_SEASONS = [
   },
 ];
 
+function formatSignedUsdt(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("-")) return `${trimmed} USDT`;
+  if (trimmed.startsWith("+")) return `${trimmed} USDT`;
+  if (trimmed === "0" || trimmed === "0.00") return "0.00 USDT";
+  return `+${trimmed} USDT`;
+}
+
+function formatSignedPct(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("-") || trimmed.startsWith("+")) {
+    return trimmed.endsWith("%") ? trimmed : `${trimmed}%`;
+  }
+  if (trimmed === "0" || trimmed === "0.00") return "0.00%";
+  return `+${trimmed.endsWith("%") ? trimmed : `${trimmed}%`}`;
+}
+
+function isNonNegativeDecimal(raw: string): boolean {
+  return !raw.trim().startsWith("-");
+}
+
 export function MemberMyProfilePage({
   initialMainTab,
 }: {
   initialMainTab?: MyPageMainTab;
 } = {}) {
-  const { snapshot: member, session } = useMember();
+  const { origin, snapshot: member, session } = useMember();
+  const queryClient = useQueryClient();
   const isOwnAndLoggedIn = member.phase === "ready";
+  const targetMemberId = member.memberId ?? 7;
+  const tradingBase = process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ?? "http://localhost:8081";
 
   const [selectedTab, setSelectedTab] = useState<MyPageMainTab | null>(initialMainTab ?? null);
   const [detailTab, setDetailTab] = useState<LedgerDetailTab>("holdings");
@@ -257,10 +313,12 @@ export function MemberMyProfilePage({
   const [followModalType, setFollowModalType] = useState<"followers" | "followings" | null>(null);
   const [followers, setFollowers] = useState<FollowMemberItem[]>(INITIAL_FOLLOWERS);
   const [followings, setFollowings] = useState<FollowMemberItem[]>(INITIAL_FOLLOWINGS);
-  const [reports, setReports] = useState([
+  const [fallbackReports, setFallbackReports] = useState([
     {
       id: 501,
-      targetType: "게시글",
+      targetType: "POST" as const,
+      targetId: 501,
+      postId: 501,
       title: "외부 리딩방 불법 홍보 게시글",
       reason: "스팸 홍보/도배글입니다.",
       reportedAt: "2026-11-07",
@@ -275,10 +333,197 @@ export function MemberMyProfilePage({
   const [filterStartDate, setFilterStartDate] = useState("");
   const [filterEndDate, setFilterEndDate] = useState("");
 
+  const communitySentinelRef = useRef<HTMLDivElement>(null);
+
   const profileQuery = useQuery({
     queryKey: ["member", "profile", member.memberId, member.generation],
     enabled: isOwnAndLoggedIn,
     queryFn: () => session.request("/members/me") as Promise<ProfileResponse>,
+  });
+
+  // [T-1] 공개 포트폴리오 API 조회 (모두 열람 가능)
+  const publicPortfolioQuery = useQuery({
+    queryKey: ["member", "public-portfolio", targetMemberId, tradingBase, member.generation],
+    enabled: targetMemberId > 0,
+    queryFn: async ({ signal }) =>
+      parsePublicMemberPortfolio(
+        await tradingJson(tradingBase, `portfolios/members/${targetMemberId}`, { signal }),
+      ),
+  });
+
+  // 본인 로그인 시 5대 원장 실시간 API 조회
+  const ownerOrdersQuery = useQuery({
+    queryKey: [
+      "member",
+      "trading-orders",
+      member.memberId,
+      member.generation,
+      filterSymbol,
+      filterSide,
+      filterStatus,
+      filterStartDate,
+      filterEndDate,
+    ],
+    enabled: isOwnAndLoggedIn && detailTab === "orders",
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (filterSymbol.trim()) params.set("symbol", filterSymbol.trim().toUpperCase());
+      if (filterSide === "BUY") params.set("side", "LONG");
+      else if (filterSide === "SELL") params.set("side", "SHORT");
+      if (filterStatus === "COMPLETED") params.set("status", "FILLED");
+      else if (filterStatus === "CANCELED") params.set("status", "CANCELLED");
+      else if (filterStatus) params.set("status", filterStatus);
+      if (filterStartDate) params.set("createdFrom", `${filterStartDate}T00:00:00Z`);
+      if (filterEndDate) params.set("createdBefore", `${filterEndDate}T23:59:59Z`);
+      return session.authorized(cred =>
+        tradingJson(tradingBase, `account/orders?${params.toString()}`, {
+          token: cred.accessToken,
+          signal,
+        }),
+      ) as Promise<Array<Record<string, unknown>>>;
+    },
+  });
+
+  const ownerFillsQuery = useQuery({
+    queryKey: ["member", "trading-fills", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn && detailTab === "trades",
+    queryFn: async ({ signal }) =>
+      session.authorized(cred =>
+        tradingJson(tradingBase, "account/fills?limit=50", { token: cred.accessToken, signal }),
+      ) as Promise<Array<Record<string, unknown>>>,
+  });
+
+  const ownerClosedPositionsQuery = useQuery({
+    queryKey: ["member", "trading-closed-positions", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn && detailTab === "pnl",
+    queryFn: async ({ signal }) =>
+      session.authorized(cred =>
+        tradingJson(tradingBase, "account/positions/history?limit=50", {
+          token: cred.accessToken,
+          signal,
+        }),
+      ) as Promise<Record<string, unknown>>,
+  });
+
+  const ownerPendingOrdersQuery = useQuery({
+    queryKey: ["member", "trading-pending-orders", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn,
+    queryFn: async ({ signal }) =>
+      session.authorized(cred =>
+        tradingJson(tradingBase, "account/orders/pending", { token: cred.accessToken, signal }),
+      ) as Promise<Array<Record<string, unknown>>>,
+  });
+
+  // 팔로워/팔로잉 모달 실데이터 조회
+  const followModalQuery = useQuery({
+    queryKey: ["member", "follow-modal", targetMemberId, followModalType, member.generation],
+    enabled: followModalType !== null && targetMemberId > 0,
+    queryFn: async ({ signal }) => {
+      const path = `/members/${targetMemberId}/${followModalType}?size=20`;
+      const raw = isOwnAndLoggedIn
+        ? await session.request(path, { signal })
+        : await contentJson(origin, path, { signal });
+      return parseFollowPage(raw);
+    },
+  });
+
+  // [C-6] 커뮤니티활동 커서 기반 무한스크롤
+  const communityPostsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-posts", targetMemberId, member.generation],
+    enabled: targetMemberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const basePath = isOwnAndLoggedIn
+        ? `/members/me/community/posts?${search.toString()}`
+        : `/members/${targetMemberId}/community/posts?${search.toString()}`;
+      return parseCommunityPostPage(
+        await readCommunityOrPublic(origin, session, member, basePath, signal),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const communityCommentsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-comments", targetMemberId, member.generation],
+    enabled: targetMemberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const basePath = isOwnAndLoggedIn
+        ? `/members/me/community/comments?${search.toString()}`
+        : `/members/${targetMemberId}/community/comments?${search.toString()}`;
+      return parseMemberCommunityCommentPage(
+        await readCommunityOrPublic(origin, session, member, basePath, signal),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const communityLikedPostsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-liked-posts", targetMemberId, member.generation],
+    enabled: targetMemberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const basePath = isOwnAndLoggedIn
+        ? `/members/me/community/liked-posts?${search.toString()}`
+        : `/members/${targetMemberId}/community/liked-posts?${search.toString()}`;
+      return parseCommunityPostPage(
+        await readCommunityOrPublic(origin, session, member, basePath, signal),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const communityLikedCommentsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-liked-comments", targetMemberId, member.generation],
+    enabled: targetMemberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const basePath = isOwnAndLoggedIn
+        ? `/members/me/community/liked-comments?${search.toString()}`
+        : `/members/${targetMemberId}/community/liked-comments?${search.toString()}`;
+      return parseMemberCommunityCommentPage(
+        await readCommunityOrPublic(origin, session, member, basePath, signal),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const communityReportsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-reports", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      return parseMemberCommunityReportPage(
+        await session.request(`/members/me/community/reports?${search.toString()}`, { signal }),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const cancelReportMutation = useMutation({
+    mutationFn: async (item: { targetType: "POST" | "COMMENT"; targetId: number; id: number }) => {
+      const endpoint =
+        item.targetType === "POST"
+          ? `/community/posts/${item.targetId}/reports`
+          : `/community/comments/${item.targetId}/reports`;
+      return parseCommunityReport(await session.request(endpoint, { method: "DELETE" }));
+    },
+    onSuccess: (_data, item) => {
+      setFallbackReports(curr => curr.filter(r => r.id !== item.id));
+      void queryClient.invalidateQueries({
+        queryKey: ["member", "community-reports", member.memberId],
+      });
+    },
   });
 
   const nickname = profileQuery.data?.nickname ?? member.nickname ?? "트레이더";
@@ -308,14 +553,224 @@ export function MemberMyProfilePage({
       ? selectedTab
       : defaultTab;
 
-  const filteredOrders = MOCK_ORDERS.filter(item => {
+  // 커뮤니티활동 무한스크롤 IntersectionObserver 연동
+  const activeInfinite =
+    communityTab === "posts"
+      ? communityPostsInfinite
+      : communityTab === "replies"
+        ? communityCommentsInfinite
+        : communityTab === "likedPosts"
+          ? communityLikedPostsInfinite
+          : communityTab === "likedReplies"
+            ? communityLikedCommentsInfinite
+            : communityReportsInfinite;
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      activeMainTab !== "community" ||
+      !activeInfinite.hasNextPage ||
+      activeInfinite.isFetchingNextPage
+    ) {
+      return;
+    }
+    const node = communitySentinelRef.current;
+    if (!node || typeof window.IntersectionObserver !== "function") return;
+    const observer = new window.IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          void activeInfinite.fetchNextPage();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  });
+
+  // 공개 포트폴리오 실데이터 바인딩 (SSR 시점 또는 미개설 시 기본 표시값 폴백)
+  const livePortfolio =
+    publicPortfolioQuery.data && publicPortfolioQuery.data.accountExists
+      ? publicPortfolioQuery.data
+      : null;
+
+  const displayPositions = livePortfolio
+    ? livePortfolio.positions.map((pos, idx) => ({
+        id: pos.id,
+        symbol: pos.symbol,
+        nameKr: symbolNameKr(pos.symbol),
+        side: pos.side,
+        leverage: pos.leverage,
+        quantity: `${pos.quantity} ${pos.symbol.replace(/USDT$/i, "")}`,
+        entryPrice: pos.entryPrice,
+        markPrice: pos.markPrice,
+        liqPrice: pos.liquidationPrice,
+        margin: `${pos.margin} USDT`,
+        pnl: formatSignedUsdt(pos.unrealizedPnl),
+        roe: formatSignedPct(pos.roePct),
+        isPositive: isNonNegativeDecimal(pos.unrealizedPnl),
+        marginRatio: Math.round(Number(pos.marginRatioPct) || 0),
+        color: POSITION_COLORS[idx % POSITION_COLORS.length],
+      }))
+    : MOCK_POSITIONS;
+
+  const usedMarginRatioDisplay = livePortfolio
+    ? `${livePortfolio.allocation.usedMarginRatioPct}%`
+    : "77.0%";
+  const availableCashRatioDisplay = livePortfolio
+    ? `${livePortfolio.allocation.availableCashRatioPct}%`
+    : "23%";
+  const longRatioDisplay = livePortfolio ? livePortfolio.allocation.longRatioPct : "87.7";
+  const shortRatioDisplay = livePortfolio ? livePortfolio.allocation.shortRatioPct : "12.3";
+  const longMarginDisplay = livePortfolio
+    ? `${livePortfolio.allocation.longMarginUsdt} USDT`
+    : "6,129.20 USDT";
+  const shortMarginDisplay = livePortfolio
+    ? `${livePortfolio.allocation.shortMarginUsdt} USDT`
+    : "860.00 USDT";
+  const longCountDisplay = livePortfolio ? livePortfolio.allocation.longPositionCount : 2;
+  const shortCountDisplay = livePortfolio ? livePortfolio.allocation.shortPositionCount : 1;
+  const usedMarginTotalDisplay = livePortfolio
+    ? `${livePortfolio.wallet.usedMargin} USDT`
+    : "6,989.20 USDT";
+  const availableBalanceDisplay = livePortfolio
+    ? `${livePortfolio.wallet.availableBalance} USDT`
+    : "4,107.75 USDT";
+  const winRateDisplay = livePortfolio
+    ? `${livePortfolio.closedTradeSummary.winRatePct}% (${livePortfolio.closedTradeSummary.winCount}승 ${livePortfolio.closedTradeSummary.lossCount}패)`
+    : "68.4% (13승 6패)";
+
+  const assetSummary = livePortfolio
+    ? {
+        title: "모의투자 선물 지갑",
+        totalAsset: `${livePortfolio.wallet.totalEquity} USDT`,
+        cashBalance: `${livePortfolio.wallet.availableBalance} USDT`,
+        totalBuyAmount: `${livePortfolio.wallet.usedMargin} USDT`,
+        totalCoinValue: `${livePortfolio.wallet.balance} USDT`,
+        totalProfit: formatSignedUsdt(livePortfolio.wallet.totalPnl),
+        totalRoi: formatSignedPct(livePortfolio.wallet.totalRoiPct),
+        isPositive: isNonNegativeDecimal(livePortfolio.wallet.totalPnl),
+        unit: "USDT",
+      }
+    : {
+        title: "모의투자 선물 지갑",
+        totalAsset: "11,096.95 USDT",
+        cashBalance: "4,107.75 USDT",
+        totalBuyAmount: "6,989.20 USDT",
+        totalCoinValue: "8,086.15 USDT",
+        totalProfit: "+1,096.95 USDT",
+        totalRoi: "+10.97%",
+        isPositive: true,
+        unit: "USDT",
+      };
+
+  // 원장 주문 내역 바인딩
+  const liveOrders = ownerOrdersQuery.data
+    ? ownerOrdersQuery.data.map((row, idx) => {
+        const sym = String(row.symbol ?? "BTCUSDT");
+        const sideRaw = String(row.side ?? "LONG");
+        const isBuy = sideRaw === "LONG" || sideRaw === "BUY";
+        const typeRaw = String(row.type ?? "MARKET");
+        const statusRaw = String(row.status ?? "FILLED");
+        const normalizedStatus =
+          statusRaw === "FILLED"
+            ? "COMPLETED"
+            : statusRaw === "CANCELLED"
+              ? "CANCELED"
+              : statusRaw;
+        return {
+          id: typeof row.orderId === "number" ? row.orderId : typeof row.id === "number" ? row.id : idx + 1,
+          orderedAt: String(row.createdAt ?? row.orderedAt ?? ""),
+          symbol: sym,
+          nameKr: symbolNameKr(sym).replace(" 무기한", ""),
+          side: isBuy ? "BUY" : "SELL",
+          sideLabel: isBuy ? "매수/롱" : "매도/숏",
+          orderType: typeRaw,
+          orderStatus: normalizedStatus,
+          orderPrice: typeRaw === "MARKET" ? "시장가" : `${String(row.limitPrice ?? row.price ?? "0")} USDT`,
+          orderQuantity: `${String(row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
+          filledQuantity: `${String(row.filledQuantity ?? row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
+          avgFilledPrice: `${String(row.executionPrice ?? row.averageFillPrice ?? "-")} USDT`,
+        };
+      })
+    : null;
+
+  const filteredOrders = (liveOrders ?? MOCK_ORDERS).filter(item => {
     if (filterSymbol && !item.symbol.includes(filterSymbol.toUpperCase())) return false;
     if (filterSide && item.side !== filterSide) return false;
     if (filterStatus && item.orderStatus !== filterStatus) return false;
     return true;
   });
 
-  const openOrders = MOCK_ORDERS.filter(item => item.orderStatus === "PENDING");
+  const openOrders = ownerPendingOrdersQuery.data
+    ? ownerPendingOrdersQuery.data.map((row, idx) => {
+        const sym = String(row.symbol ?? "BTCUSDT");
+        const sideRaw = String(row.side ?? "LONG");
+        const isBuy = sideRaw === "LONG" || sideRaw === "BUY";
+        return {
+          id: typeof row.orderId === "number" ? row.orderId : typeof row.id === "number" ? row.id : idx + 1,
+          orderedAt: String(row.createdAt ?? ""),
+          symbol: sym,
+          nameKr: symbolNameKr(sym).replace(" 무기한", ""),
+          side: isBuy ? "BUY" : "SELL",
+          sideLabel: isBuy ? "매수/롱" : "매도/숏",
+          orderType: String(row.type ?? "LIMIT"),
+          orderStatus: "PENDING",
+          orderPrice: `${String(row.limitPrice ?? row.price ?? "0")} USDT`,
+          orderQuantity: `${String(row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
+          filledQuantity: `0 ${sym.replace(/USDT$/i, "")}`,
+          avgFilledPrice: "-",
+        };
+      })
+    : MOCK_ORDERS.filter(item => item.orderStatus === "PENDING");
+
+  const closedPnlRows = (() => {
+    const rawItems =
+      ownerClosedPositionsQuery.data && Array.isArray(ownerClosedPositionsQuery.data.items)
+        ? (ownerClosedPositionsQuery.data.items as Array<Record<string, unknown>>)
+        : null;
+    if (!rawItems) return MOCK_CLOSED_PNL;
+    return rawItems.map((row, idx) => {
+      const sym = String(row.symbol ?? "BTCUSDT");
+      const netPnl = String(row.netPnl ?? row.realizedPnl ?? "0");
+      return {
+        id: typeof row.positionId === "number" ? row.positionId : idx + 1,
+        closedAt: String(row.closedAt ?? ""),
+        symbol: sym,
+        nameKr: symbolNameKr(sym),
+        side: String(row.side ?? "LONG"),
+        leverage: typeof row.leverage === "number" ? row.leverage : 1,
+        entryPrice: String(row.entryPrice ?? "0"),
+        exitPrice: String(row.exitPrice ?? row.closePrice ?? "0"),
+        quantity: `${String(row.closedQuantity ?? row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
+        realizedPnl: formatSignedUsdt(netPnl),
+        roe: formatSignedPct(String(row.roePct ?? "0")),
+        isPositive: isNonNegativeDecimal(netPnl),
+      };
+    });
+  })();
+
+  const tradeRows = ownerFillsQuery.data
+    ? ownerFillsQuery.data.map((row, idx) => {
+        const sym = String(row.symbol ?? "BTCUSDT");
+        const sideRaw = String(row.side ?? "LONG");
+        const isBuy = sideRaw === "LONG" || sideRaw === "BUY";
+        const pnlRaw = String(row.realizedPnl ?? "0");
+        return {
+          id: typeof row.fillId === "number" ? row.fillId : idx + 1,
+          executedAt: String(row.executedAt ?? ""),
+          symbol: sym,
+          nameKr: symbolNameKr(sym).replace(" 무기한", ""),
+          side: isBuy ? "BUY" : "SELL",
+          sideLabel: isBuy ? "매수/롱" : "매도/숏",
+          price: `${String(row.executionPrice ?? row.price ?? "0")} USDT`,
+          quantity: `${String(row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
+          totalAmount: `${String(row.notional ?? "0")} USDT`,
+          fee: `${String(row.fee ?? "0")} USDT`,
+          realizedProfit: formatSignedUsdt(pnlRaw),
+        };
+      })
+    : MOCK_TRADES;
 
   function toggleFollowInModal(targetId: number) {
     setFollowers(curr =>
@@ -324,7 +779,51 @@ export function MemberMyProfilePage({
     setFollowings(curr =>
       curr.map(item => (item.memberId === targetId ? { ...item, following: !item.following } : item)),
     );
+    if (isOwnAndLoggedIn) {
+      const target =
+        (followModalType === "followers" ? followers : followings).find(
+          item => item.memberId === targetId,
+        ) ?? null;
+      const nextMethod = target?.following ? "DELETE" : "PUT";
+      void session
+        .request(`/members/${targetId}/follows`, { method: nextMethod })
+        .then(() => {
+          void queryClient.invalidateQueries({ queryKey: ["member", "follow-modal"] });
+          void queryClient.invalidateQueries({ queryKey: ["member", "profile"] });
+        })
+        .catch(() => {});
+    }
   }
+
+  const modalFollowList: FollowMemberItem[] = followModalQuery.data
+    ? followModalQuery.data.content.map(entry => ({
+        memberId: entry.memberId,
+        nickname: entry.nickname,
+        profileMsg: entry.profileMessage || "등록된 소개가 없습니다.",
+        profileImgUrl: entry.profileImgUrl,
+        following: followModalType === "followings",
+        followsMe: followModalType === "followers",
+      }))
+    : followModalType === "followers"
+      ? followers
+      : followings;
+
+  const liveMyPosts: CommunityPost[] | null = communityPostsInfinite.data
+    ? communityPostsInfinite.data.pages.flatMap(p => p.items)
+    : null;
+  const liveMyComments: MemberCommunityCommentItem[] | null = communityCommentsInfinite.data
+    ? communityCommentsInfinite.data.pages.flatMap(p => p.items)
+    : null;
+  const liveLikedPosts: CommunityPost[] | null = communityLikedPostsInfinite.data
+    ? communityLikedPostsInfinite.data.pages.flatMap(p => p.items)
+    : null;
+  const liveLikedComments: MemberCommunityCommentItem[] | null =
+    communityLikedCommentsInfinite.data
+      ? communityLikedCommentsInfinite.data.pages.flatMap(p => p.items)
+      : null;
+  const liveReports: MemberCommunityReportItem[] | null = communityReportsInfinite.data
+    ? communityReportsInfinite.data.pages.flatMap(p => p.items)
+    : null;
 
   return (
     <MemberShell
@@ -339,10 +838,11 @@ export function MemberMyProfilePage({
           <div className="space-y-6 lg:col-span-4">
             <V1ProfileSidebar
               profile={{
-                memberId: member.memberId ?? 7,
+                memberId: targetMemberId,
                 nickname,
                 profileMsg,
-                profileImgUrl: profileQuery.data?.profileImgUrl ?? profileQuery.data?.profileImageUrl,
+                profileImgUrl:
+                  profileQuery.data?.profileImgUrl ?? profileQuery.data?.profileImageUrl,
                 role: "USER",
                 followerCount,
                 followingCount,
@@ -371,20 +871,14 @@ export function MemberMyProfilePage({
             />
 
             <V1AssetSummaryCard
-              summary={{
-                title: "모의투자 선물 지갑",
-                totalAsset: "11,096.95 USDT",
-                cashBalance: "4,107.75 USDT",
-                totalBuyAmount: "6,989.20 USDT",
-                totalCoinValue: "8,086.15 USDT",
-                totalProfit: "+1,096.95 USDT",
-                totalRoi: "+10.97%",
-                isPositive: true,
-                unit: "USDT",
-              }}
+              summary={assetSummary}
               footerSlot={
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-400">1회차 시드머니: 10,000 USDT</span>
+                  <span className="text-gray-400">
+                    {livePortfolio && livePortfolio.roundNumber > 0
+                      ? `${livePortfolio.roundNumber}회차 시드머니: ${livePortfolio.initialSeed} USDT`
+                      : "1회차 시드머니: 10,000 USDT"}
+                  </span>
                   <Link href="/trading" className="font-bold text-blue-400 hover:underline">
                     선물 거래소 이동 →
                   </Link>
@@ -395,7 +889,10 @@ export function MemberMyProfilePage({
             {isOwnAndLoggedIn && (
               <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white px-5 py-3.5 text-xs">
                 <span className="font-medium text-gray-500">계정 관리 및 약관 동의 철회</span>
-                <Link href="/me/settings#withdrawal" className="font-bold text-gray-400 hover:text-red-500">
+                <Link
+                  href="/me/settings#withdrawal"
+                  className="font-bold text-gray-400 hover:text-red-500"
+                >
                   회원 탈퇴 안내 →
                 </Link>
               </div>
@@ -444,18 +941,54 @@ export function MemberMyProfilePage({
                       <div className="flex items-center gap-6">
                         <div className="relative flex h-36 w-36 shrink-0 items-center justify-center">
                           <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90">
-                            <circle cx="18" cy="18" r="14" fill="none" stroke="#E5E7EB" strokeWidth="4.5" />
-                            <circle cx="18" cy="18" r="14" fill="none" stroke="#0058FF" strokeWidth="4.5" strokeDasharray="45 55" strokeDashoffset="0" />
-                            <circle cx="18" cy="18" r="14" fill="none" stroke="#9CB34E" strokeWidth="4.5" strokeDasharray="22 78" strokeDashoffset="-45" />
-                            <circle cx="18" cy="18" r="14" fill="none" stroke="#1D7CA7" strokeWidth="4.5" strokeDasharray="10 90" strokeDashoffset="-67" />
+                            <circle
+                              cx="18"
+                              cy="18"
+                              r="14"
+                              fill="none"
+                              stroke="#E5E7EB"
+                              strokeWidth="4.5"
+                            />
+                            <circle
+                              cx="18"
+                              cy="18"
+                              r="14"
+                              fill="none"
+                              stroke="#0058FF"
+                              strokeWidth="4.5"
+                              strokeDasharray="45 55"
+                              strokeDashoffset="0"
+                            />
+                            <circle
+                              cx="18"
+                              cy="18"
+                              r="14"
+                              fill="none"
+                              stroke="#9CB34E"
+                              strokeWidth="4.5"
+                              strokeDasharray="22 78"
+                              strokeDashoffset="-45"
+                            />
+                            <circle
+                              cx="18"
+                              cy="18"
+                              r="14"
+                              fill="none"
+                              stroke="#1D7CA7"
+                              strokeWidth="4.5"
+                              strokeDasharray="10 90"
+                              strokeDashoffset="-67"
+                            />
                           </svg>
                           <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
                             <span className="text-[10px] font-bold text-gray-400">증거금 비중</span>
-                            <strong className="text-base font-black text-gray-900">77.0%</strong>
+                            <strong className="text-base font-black text-gray-900">
+                              {usedMarginRatioDisplay}
+                            </strong>
                           </div>
                         </div>
                         <ul className="flex-1 space-y-2 text-xs">
-                          {MOCK_POSITIONS.map(pos => (
+                          {displayPositions.map(pos => (
                             <li key={pos.symbol} className="flex items-center justify-between">
                               <span className="flex items-center gap-2 font-bold text-gray-700">
                                 <span
@@ -472,7 +1005,9 @@ export function MemberMyProfilePage({
                               <span className="inline-block h-2.5 w-2.5 rounded-full bg-gray-300" />
                               가용 USDT
                             </span>
-                            <span className="font-black text-gray-600">23%</span>
+                            <span className="font-black text-gray-600">
+                              {availableCashRatioDisplay}
+                            </span>
                           </li>
                         </ul>
                       </div>
@@ -488,22 +1023,32 @@ export function MemberMyProfilePage({
                       </div>
                       <div className="my-4 space-y-2">
                         <div className="flex justify-between text-xs font-black">
-                          <span className="text-red-500">LONG 87.7% (6,129.20 USDT)</span>
-                          <span className="text-blue-600">SHORT 12.3% (860.00 USDT)</span>
+                          <span className="text-red-500">
+                            LONG {longRatioDisplay}% ({longMarginDisplay})
+                          </span>
+                          <span className="text-blue-600">
+                            SHORT {shortRatioDisplay}% ({shortMarginDisplay})
+                          </span>
                         </div>
                         <div className="flex h-3.5 w-full overflow-hidden rounded-full bg-gray-200">
-                          <div className="h-full bg-red-500" style={{ width: "87.7%" }} />
-                          <div className="h-full bg-blue-600" style={{ width: "12.3%" }} />
+                          <div
+                            className="h-full bg-red-500"
+                            style={{ width: `${longRatioDisplay}%` }}
+                          />
+                          <div
+                            className="h-full bg-blue-600"
+                            style={{ width: `${shortRatioDisplay}%` }}
+                          />
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 text-xs">
                         <div>
                           <span className="text-gray-400">사용 증거금 합계</span>
-                          <p className="font-black text-gray-900">6,989.20 USDT</p>
+                          <p className="font-black text-gray-900">{usedMarginTotalDisplay}</p>
                         </div>
                         <div className="text-right">
                           <span className="text-gray-400">가용 증거금</span>
-                          <p className="font-black text-[#0058FF]">4,107.75 USDT</p>
+                          <p className="font-black text-[#0058FF]">{availableBalanceDisplay}</p>
                         </div>
                       </div>
                     </div>
@@ -549,7 +1094,7 @@ export function MemberMyProfilePage({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
-                            {MOCK_POSITIONS.map(pos => (
+                            {displayPositions.map(pos => (
                               <tr key={pos.id} className="hover:bg-gray-50">
                                 <td className="px-4 py-3.5 font-black text-gray-900">
                                   <div>{pos.nameKr}</div>
@@ -611,15 +1156,25 @@ export function MemberMyProfilePage({
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                         <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4">
                           <span className="text-xs font-bold text-gray-400">누적 실현손익</span>
-                          <p className="mt-1 text-xl font-black text-red-500">+657.00 USDT</p>
+                          <p className="mt-1 text-xl font-black text-red-500">
+                            {livePortfolio
+                              ? formatSignedUsdt(livePortfolio.wallet.realizedPnl)
+                              : "+657.00 USDT"}
+                          </p>
                         </div>
                         <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4">
                           <span className="text-xs font-bold text-gray-400">미실현 평가손익</span>
-                          <p className="mt-1 text-xl font-black text-red-500">+1,096.95 USDT</p>
+                          <p className="mt-1 text-xl font-black text-red-500">
+                            {livePortfolio
+                              ? formatSignedUsdt(livePortfolio.wallet.unrealizedPnl)
+                              : "+1,096.95 USDT"}
+                          </p>
                         </div>
                         <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4">
                           <span className="text-xs font-bold text-gray-400">청산/종료 승률</span>
-                          <p className="mt-1 text-xl font-black text-[#0058FF]">68.4% (13승 6패)</p>
+                          <p className="mt-1 text-xl font-black text-[#0058FF]">
+                            {winRateDisplay}
+                          </p>
                         </div>
                       </div>
 
@@ -637,7 +1192,7 @@ export function MemberMyProfilePage({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
-                            {MOCK_CLOSED_PNL.map(row => (
+                            {closedPnlRows.map(row => (
                               <tr key={row.id} className="hover:bg-gray-50">
                                 <td className="px-4 py-3.5 text-gray-500">{row.closedAt}</td>
                                 <td className="px-4 py-3.5 font-bold text-gray-900">
@@ -769,7 +1324,13 @@ export function MemberMyProfilePage({
                                 <td className="px-4 py-3.5 text-right">{order.orderQuantity}</td>
                                 <td className="px-4 py-3.5 text-right font-bold">{order.filledQuantity}</td>
                                 <td className="px-4 py-3.5 text-right font-bold text-gray-700">
-                                  {order.orderStatus === "COMPLETED" ? "체결완료" : "대기중"}
+                                  {order.orderStatus === "COMPLETED"
+                                    ? "체결완료"
+                                    : order.orderStatus === "CANCELED"
+                                      ? "취소"
+                                      : order.orderStatus === "PARTIALLY_FILLED"
+                                        ? "부분체결"
+                                        : "대기중"}
                                 </td>
                               </tr>
                             ))}
@@ -795,7 +1356,7 @@ export function MemberMyProfilePage({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
-                          {MOCK_TRADES.map(trade => (
+                          {tradeRows.map(trade => (
                             <tr key={trade.id} className="hover:bg-gray-50">
                               <td className="px-4 py-3.5 text-gray-500">{trade.executedAt}</td>
                               <td className="px-4 py-3.5 font-bold text-gray-900">
@@ -999,19 +1560,55 @@ export function MemberMyProfilePage({
                         <div className="flex items-center gap-6">
                           <div className="relative flex h-36 w-36 shrink-0 items-center justify-center">
                             <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90">
-                              <circle cx="18" cy="18" r="14" fill="none" stroke="#E5E7EB" strokeWidth="4.5" />
-                              <circle cx="18" cy="18" r="14" fill="none" stroke="#0058FF" strokeWidth="4.5" strokeDasharray="45 55" strokeDashoffset="0" />
-                              <circle cx="18" cy="18" r="14" fill="none" stroke="#9CB34E" strokeWidth="4.5" strokeDasharray="22 78" strokeDashoffset="-45" />
-                              <circle cx="18" cy="18" r="14" fill="none" stroke="#1D7CA7" strokeWidth="4.5" strokeDasharray="10 90" strokeDashoffset="-67" />
+                              <circle
+                                cx="18"
+                                cy="18"
+                                r="14"
+                                fill="none"
+                                stroke="#E5E7EB"
+                                strokeWidth="4.5"
+                              />
+                              <circle
+                                cx="18"
+                                cy="18"
+                                r="14"
+                                fill="none"
+                                stroke="#0058FF"
+                                strokeWidth="4.5"
+                                strokeDasharray="45 55"
+                                strokeDashoffset="0"
+                              />
+                              <circle
+                                cx="18"
+                                cy="18"
+                                r="14"
+                                fill="none"
+                                stroke="#9CB34E"
+                                strokeWidth="4.5"
+                                strokeDasharray="22 78"
+                                strokeDashoffset="-45"
+                              />
+                              <circle
+                                cx="18"
+                                cy="18"
+                                r="14"
+                                fill="none"
+                                stroke="#1D7CA7"
+                                strokeWidth="4.5"
+                                strokeDasharray="10 90"
+                                strokeDashoffset="-67"
+                              />
                             </svg>
                             <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
                               <span className="text-[10px] font-bold text-gray-400">사용 비중</span>
-                              <strong className="text-base font-black text-gray-900">77.0%</strong>
+                              <strong className="text-base font-black text-gray-900">
+                                {usedMarginRatioDisplay}
+                              </strong>
                             </div>
                           </div>
 
                           <ul className="flex-1 space-y-2 text-xs">
-                            {MOCK_POSITIONS.map(pos => (
+                            {displayPositions.map(pos => (
                               <li key={pos.symbol} className="flex items-center justify-between">
                                 <span className="flex items-center gap-2 font-bold text-gray-700">
                                   <span
@@ -1028,7 +1625,9 @@ export function MemberMyProfilePage({
                                 <span className="inline-block h-2.5 w-2.5 rounded-full bg-gray-300" />
                                 가용 USDT
                               </span>
-                              <span className="font-black text-gray-600">23%</span>
+                              <span className="font-black text-gray-600">
+                                {availableCashRatioDisplay}
+                              </span>
                             </li>
                           </ul>
                         </div>
@@ -1047,12 +1646,22 @@ export function MemberMyProfilePage({
 
                         <div className="my-4 space-y-2">
                           <div className="flex justify-between text-xs font-black">
-                            <span className="text-red-500">LONG 87.7% (2종목)</span>
-                            <span className="text-blue-600">SHORT 12.3% (1종목)</span>
+                            <span className="text-red-500">
+                              LONG {longRatioDisplay}% ({longCountDisplay}종목)
+                            </span>
+                            <span className="text-blue-600">
+                              SHORT {shortRatioDisplay}% ({shortCountDisplay}종목)
+                            </span>
                           </div>
                           <div className="flex h-3.5 w-full overflow-hidden rounded-full bg-gray-200">
-                            <div className="h-full bg-red-500" style={{ width: "87.7%" }} />
-                            <div className="h-full bg-blue-600" style={{ width: "12.3%" }} />
+                            <div
+                              className="h-full bg-red-500"
+                              style={{ width: `${longRatioDisplay}%` }}
+                            />
+                            <div
+                              className="h-full bg-blue-600"
+                              style={{ width: `${shortRatioDisplay}%` }}
+                            />
                           </div>
                         </div>
 
@@ -1063,7 +1672,7 @@ export function MemberMyProfilePage({
                           </div>
                           <div className="text-right">
                             <span className="text-gray-400">누적 승률</span>
-                            <p className="font-black text-[#0058FF]">68.4% (13승 6패)</p>
+                            <p className="font-black text-[#0058FF]">{winRateDisplay}</p>
                           </div>
                         </div>
                       </div>
@@ -1072,7 +1681,7 @@ export function MemberMyProfilePage({
                     {/* 보유 선물 포지션 요약 리스트 */}
                     <div>
                       <h3 className="mb-3 text-base font-black text-gray-900">
-                        보유 선물 포지션 요약 ({MOCK_POSITIONS.length})
+                        보유 선물 포지션 요약 ({displayPositions.length})
                       </h3>
                       <div className="overflow-x-auto rounded-2xl border border-gray-200">
                         <table className="w-full min-w-[640px] text-left text-xs">
@@ -1088,7 +1697,7 @@ export function MemberMyProfilePage({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
-                            {MOCK_POSITIONS.map(pos => (
+                            {displayPositions.map(pos => (
                               <tr key={pos.symbol} className="hover:bg-gray-50">
                                 <td className="px-4 py-3.5 font-black text-gray-900">
                                   {pos.nameKr} ({pos.symbol} · {pos.leverage}x)
@@ -1107,7 +1716,9 @@ export function MemberMyProfilePage({
                                 <td className="px-4 py-3.5 text-right font-bold text-gray-800">
                                   {pos.quantity}
                                 </td>
-                                <td className="px-4 py-3.5 text-right text-gray-600">${pos.entryPrice}</td>
+                                <td className="px-4 py-3.5 text-right text-gray-600">
+                                  ${pos.entryPrice}
+                                </td>
                                 <td className="px-4 py-3.5 text-right font-bold text-gray-900">
                                   ${pos.markPrice}
                                 </td>
@@ -1134,8 +1745,13 @@ export function MemberMyProfilePage({
                     <h3 className="text-base font-black text-gray-900">시즌별 대회 참가 성적 요약</h3>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       {FINISHED_CONTEST_SEASONS.map(season => (
-                        <div key={season.seasonId} className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-5">
-                          <span className="text-xs font-bold text-[#0058FF]">{season.seasonTitle}</span>
+                        <div
+                          key={season.seasonId}
+                          className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-5"
+                        >
+                          <span className="text-xs font-bold text-[#0058FF]">
+                            {season.seasonTitle}
+                          </span>
                           <p className="mt-2 text-2xl font-black text-red-500">{season.finalRoi}</p>
                           <p className="mt-1 text-xs font-bold text-gray-600">
                             최종 순위 {season.finalRank} · 승률 {season.winRate}
@@ -1148,7 +1764,7 @@ export function MemberMyProfilePage({
               </V1FolderTabs>
             )}
 
-            {/* [탭 4] 커뮤니티활동 (본인: 5개 서브탭 / 비로그인·타유저: 2개 서브탭) */}
+            {/* [탭 4] 커뮤니티활동 (공개 4개 서브탭: 게시글, 댓글, 좋아요, 좋아요 댓글 + 본인 전용 5번째: 신고내역) */}
             {activeMainTab === "community" && (
               <V1FolderTabs
                 tabs={
@@ -1163,6 +1779,8 @@ export function MemberMyProfilePage({
                     : [
                         { id: "posts", label: "게시글" },
                         { id: "replies", label: "댓글" },
+                        { id: "likedPosts", label: "좋아요" },
+                        { id: "likedReplies", label: "좋아요 댓글" },
                       ]
                 }
                 activeId={communityTab}
@@ -1174,64 +1792,201 @@ export function MemberMyProfilePage({
               >
                 {communityTab === "posts" && (
                   <div className="space-y-3">
-                    <article className="rounded-xl border border-gray-200 p-4">
-                      <div className="flex items-center justify-between text-xs text-gray-400">
-                        <span className="font-bold text-[#0058FF]">포지션 공유 · #BTC</span>
-                        <span>2026-11-08</span>
-                      </div>
-                      <Link href="/community" className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]">
-                        BTC 10배 롱 포지션 진입 및 손절가 공유
-                      </Link>
-                      <p className="mt-1 text-xs text-gray-600">
-                        지지 구간 확인 후 진입했으며 손절가는 -25% ROE 지점으로 설정했습니다.
-                      </p>
-                    </article>
+                    {liveMyPosts ? (
+                      liveMyPosts.length === 0 ? (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          작성한 커뮤니티 게시글이 없습니다.
+                        </div>
+                      ) : (
+                        liveMyPosts.map(post => (
+                          <article key={post.id} className="rounded-xl border border-gray-200 p-4">
+                            <div className="flex items-center justify-between text-xs text-gray-400">
+                              <span className="font-bold text-[#0058FF]">
+                                {communityCategoryLabel(post.category as CommunityCategory)}
+                                {post.symbolTag ? ` · #${post.symbolTag}` : ""}
+                              </span>
+                              <span>{post.createdAt}</span>
+                            </div>
+                            <Link
+                              href={`/community/all/${post.id}`}
+                              className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
+                            >
+                              {post.title}
+                            </Link>
+                            <p className="mt-1 line-clamp-2 text-xs text-gray-600">
+                              {post.content}
+                            </p>
+                          </article>
+                        ))
+                      )
+                    ) : (
+                      <article className="rounded-xl border border-gray-200 p-4">
+                        <div className="flex items-center justify-between text-xs text-gray-400">
+                          <span className="font-bold text-[#0058FF]">포지션 공유 · #BTC</span>
+                          <span>2026-11-08</span>
+                        </div>
+                        <Link
+                          href="/community"
+                          className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
+                        >
+                          BTC 10배 롱 포지션 진입 및 손절가 공유
+                        </Link>
+                        <p className="mt-1 text-xs text-gray-600">
+                          지지 구간 확인 후 진입했으며 손절가는 -25% ROE 지점으로 설정했습니다.
+                        </p>
+                      </article>
+                    )}
                   </div>
                 )}
 
                 {communityTab === "replies" && (
                   <div className="space-y-3">
-                    <div className="rounded-xl border border-gray-200 p-4 text-xs">
-                      <p className="font-bold text-gray-900">
-                        “감사합니다! 리스크 관리가 최우선입니다.”
-                      </p>
-                      <p className="mt-1 text-gray-400">원문: BTC 10배 롱 포지션 진입 및 손절가 공유</p>
-                    </div>
+                    {liveMyComments ? (
+                      liveMyComments.length === 0 ? (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          작성한 댓글 내역이 없습니다.
+                        </div>
+                      ) : (
+                        liveMyComments.map(comment => (
+                          <div
+                            key={comment.id}
+                            className="rounded-xl border border-gray-200 p-4 text-xs"
+                          >
+                            <Link
+                              href={`/community/all/${comment.postId}`}
+                              className="font-bold text-gray-900 hover:text-[#0058FF]"
+                            >
+                              “{comment.content}”
+                            </Link>
+                            <p className="mt-1 text-gray-400">원문: {comment.postTitle}</p>
+                          </div>
+                        ))
+                      )
+                    ) : (
+                      <div className="rounded-xl border border-gray-200 p-4 text-xs">
+                        <p className="font-bold text-gray-900">
+                          “감사합니다! 리스크 관리가 최우선입니다.”
+                        </p>
+                        <p className="mt-1 text-gray-400">
+                          원문: BTC 10배 롱 포지션 진입 및 손절가 공유
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {isOwnAndLoggedIn && communityTab === "likedPosts" && (
+                {communityTab === "likedPosts" && (
                   <div className="space-y-3">
-                    <div className="rounded-xl border border-gray-200 p-4 text-xs">
-                      <span className="font-bold text-red-500">♥ 좋아요 표시한 게시글</span>
-                      <p className="mt-1 text-sm font-black text-gray-900">
-                        ETH/BTC 상대강도 반등 시그널 및 단기 스위칭 전략 공유
-                      </p>
-                    </div>
+                    {liveLikedPosts ? (
+                      liveLikedPosts.length === 0 ? (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          좋아요한 게시글 내역이 없습니다.
+                        </div>
+                      ) : (
+                        liveLikedPosts.map(post => (
+                          <div
+                            key={post.id}
+                            className="rounded-xl border border-gray-200 p-4 text-xs"
+                          >
+                            <span className="font-bold text-red-500">♥ 좋아요 표시한 게시글</span>
+                            <Link
+                              href={`/community/all/${post.id}`}
+                              className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
+                            >
+                              {post.title}
+                            </Link>
+                          </div>
+                        ))
+                      )
+                    ) : (
+                      <div className="rounded-xl border border-gray-200 p-4 text-xs">
+                        <span className="font-bold text-red-500">♥ 좋아요 표시한 게시글</span>
+                        <p className="mt-1 text-sm font-black text-gray-900">
+                          ETH/BTC 상대강도 반등 시그널 및 단기 스위칭 전략 공유
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {isOwnAndLoggedIn && communityTab === "likedReplies" && (
-                  <div className="py-10 text-center text-xs font-bold text-gray-400">
-                    좋아요한 댓글 내역이 없습니다.
+                {communityTab === "likedReplies" && (
+                  <div className="space-y-3">
+                    {liveLikedComments && liveLikedComments.length > 0 ? (
+                      liveLikedComments.map(comment => (
+                        <div
+                          key={comment.id}
+                          className="rounded-xl border border-gray-200 p-4 text-xs"
+                        >
+                          <span className="font-bold text-red-500">♥ 좋아요 표시한 댓글</span>
+                          <Link
+                            href={`/community/all/${comment.postId}`}
+                            className="mt-1 block font-bold text-gray-900 hover:text-[#0058FF]"
+                          >
+                            “{comment.content}”
+                          </Link>
+                          <p className="mt-0.5 text-gray-400">원문: {comment.postTitle}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="py-10 text-center text-xs font-bold text-gray-400">
+                        좋아요한 댓글 내역이 없습니다.
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {isOwnAndLoggedIn && communityTab === "reports" && (
                   <div className="space-y-3">
-                    {reports.length === 0 ? (
+                    {liveReports ? (
+                      liveReports.length === 0 ? (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          접수된 신고 내역이 없습니다.
+                        </div>
+                      ) : (
+                        liveReports.map(item => (
+                          <div
+                            key={item.id}
+                            className="flex items-center justify-between rounded-xl border border-gray-200 p-4 text-xs"
+                          >
+                            <div>
+                              <span className="rounded bg-red-50 px-2 py-0.5 font-bold text-red-600">
+                                {item.targetType === "POST" ? "게시글" : "댓글"} 신고 · 접수완료
+                              </span>
+                              <p className="mt-1.5 font-bold text-gray-900">{item.title}</p>
+                              <p className="mt-0.5 text-gray-500">
+                                사유: {item.reasonDescription}
+                              </p>
+                            </div>
+                            <V1Button
+                              variant="white"
+                              size="xs"
+                              disabled={cancelReportMutation.isPending}
+                              onClick={() =>
+                                cancelReportMutation.mutate({
+                                  targetType: item.targetType,
+                                  targetId: item.targetId,
+                                  id: item.id,
+                                })
+                              }
+                            >
+                              신고 취소
+                            </V1Button>
+                          </div>
+                        ))
+                      )
+                    ) : fallbackReports.length === 0 ? (
                       <div className="py-10 text-center text-xs font-bold text-gray-400">
                         접수된 신고 내역이 없습니다.
                       </div>
                     ) : (
-                      reports.map(item => (
+                      fallbackReports.map(item => (
                         <div
                           key={item.id}
                           className="flex items-center justify-between rounded-xl border border-gray-200 p-4 text-xs"
                         >
                           <div>
                             <span className="rounded bg-red-50 px-2 py-0.5 font-bold text-red-600">
-                              {item.targetType} 신고 · {item.status}
+                              게시글 신고 · {item.status}
                             </span>
                             <p className="mt-1.5 font-bold text-gray-900">{item.title}</p>
                             <p className="mt-0.5 text-gray-500">사유: {item.reason}</p>
@@ -1240,7 +1995,11 @@ export function MemberMyProfilePage({
                             variant="white"
                             size="xs"
                             onClick={() =>
-                              setReports(curr => curr.filter(report => report.id !== item.id))
+                              cancelReportMutation.mutate({
+                                targetType: item.targetType,
+                                targetId: item.targetId,
+                                id: item.id,
+                              })
                             }
                           >
                             신고 취소
@@ -1250,6 +2009,24 @@ export function MemberMyProfilePage({
                     )}
                   </div>
                 )}
+
+                {/* 커서 기반 무한스크롤 센티넬 & 더 보기 버튼 */}
+                <div
+                  ref={communitySentinelRef}
+                  data-infinite-scroll="mypage-community-sentinel"
+                  className="mt-4 flex flex-col items-center justify-center gap-2"
+                >
+                  {activeInfinite.hasNextPage && (
+                    <V1Button
+                      variant="white"
+                      size="xs"
+                      disabled={activeInfinite.isFetchingNextPage}
+                      onClick={() => void activeInfinite.fetchNextPage()}
+                    >
+                      {activeInfinite.isFetchingNextPage ? "불러오는 중…" : "더 보기"}
+                    </V1Button>
+                  )}
+                </div>
               </V1FolderTabs>
             )}
           </div>
@@ -1264,10 +2041,15 @@ export function MemberMyProfilePage({
         subtitle="회원 프로필을 클릭해 포트폴리오를 조회하거나 팔로우 상태를 변경할 수 있습니다."
       >
         <ul className="divide-y divide-gray-100">
-          {(followModalType === "followers" ? followers : followings).map(person => (
+          {modalFollowList.map(person => (
             <li key={person.memberId} className="flex items-center justify-between py-3">
               <div className="flex items-center gap-3">
-                <V1UserAvatar memberId={person.memberId} nickname={person.nickname} size="md" />
+                <V1UserAvatar
+                  src={person.profileImgUrl}
+                  memberId={person.memberId}
+                  nickname={person.nickname}
+                  size="md"
+                />
                 <div>
                   <div className="flex items-center gap-2">
                     <Link

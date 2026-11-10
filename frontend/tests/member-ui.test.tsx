@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +19,7 @@ import { clearWithdrawalIntent, saveWithdrawalIntent } from "../src/features/mem
 import { parsePolicyState, type PolicyBundle } from "../src/features/member/api/policies";
 import { ContentApiError, contentJson, contentMessage } from "../src/features/member/api/client";
 import {
+  communityCommentsPath,
   communityPostsPath,
   newsPath,
   parseCommentLike,
@@ -25,9 +28,12 @@ import {
   parseCommunityPostPage,
   parseCommunityReport,
   parseLatestPostsCheck,
+  parseMemberCommunityCommentPage,
+  parseMemberCommunityReportPage,
   parseNewsHighlights,
   parseNewsPage,
   parseNewsReaction,
+  parsePublicMemberPortfolio,
   parseReportReasons,
   readCommunityOrPublic,
 } from "../src/features/member/api/community-news";
@@ -778,9 +784,137 @@ test("Community API binding supports FormData multipart, S3 files, sharedPositio
     assert.match(html, /타겟 멘션 대댓글이 정상적으로 유지됩니다\./);
     assert.match(html, /♥ 7/);
     assert.match(html, /신고 취소/);
+    assert.match(html, /data-comment-auth-notice="true"/);
+    assert.match(html, /댓글 작성은 로그인 이후 가능합니다\./);
+    assert.equal(html.includes("댓글 등록"), false);
+    assert.equal(html.includes("답글 등록"), false);
+    assert.match(html, /bg-gray-200 text-gray-400 cursor-default/);
+    assert.equal(html.includes("cursor-not-allowed"), false);
   } finally {
     client.clear();
   }
+
+  assert.equal(communityCommentsPath(21, 401, 20), "/community/posts/21/comments?cursorId=401&size=20");
+  const pagedComments = parseCommunityComments({
+    items: commentsWithDeletedAndMention.items,
+    hasNext: true,
+    nextCursorId: 401,
+  });
+  assert.equal(pagedComments.hasNext, true);
+  assert.equal(pagedComments.nextCursorId, 401);
+
+  const memberCommentPage = parseMemberCommunityCommentPage({
+    items: [
+      {
+        id: 501,
+        postId: 21,
+        postTitle: "BTC 10배 롱 포지션 진입 및 손절가 공유",
+        postCategory: "POSITION",
+        postSymbolTag: "BTC",
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        parentCommentId: 301,
+        targetCommentId: 301,
+        targetMemberId: 99,
+        targetNickname: "탈퇴한회원",
+        content: "감사합니다! 리스크 관리가 최우선입니다.",
+        likeCount: 3,
+        reportCount: 0,
+        likedByMe: true,
+        reportedByMe: false,
+        mine: true,
+        createdAt: "2026-11-01T10:06:00Z",
+        updatedAt: "2026-11-01T10:06:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+  assert.equal(memberCommentPage.items.length, 1);
+  assert.equal(memberCommentPage.items[0].postTitle, "BTC 10배 롱 포지션 진입 및 손절가 공유");
+
+  const memberReportPage = parseMemberCommunityReportPage({
+    items: [
+      {
+        id: 1001,
+        targetType: "POST",
+        targetId: 77,
+        postId: 77,
+        title: "외부 리딩방 홍보 글",
+        reasonType: "SPAM",
+        reasonDescription: "스팸 홍보/도배글입니다.",
+        status: "RECEIVED",
+        createdAt: "2026-11-08T12:00:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+  assert.equal(memberReportPage.items.length, 1);
+  assert.equal(memberReportPage.items[0].targetType, "POST");
+  assert.equal(memberReportPage.items[0].reasonDescription, "스팸 홍보/도배글입니다.");
+
+  const publicPortfolio = parsePublicMemberPortfolio({
+    memberId: 7,
+    accountExists: true,
+    roundId: 1,
+    roundNumber: 1,
+    initialSeed: "10000",
+    wallet: {
+      balance: "10500",
+      availableBalance: "8500",
+      usedMargin: "2000",
+      reservedMargin: "0",
+      totalEquity: "10750",
+      unrealizedPnl: "250",
+      realizedPnl: "500",
+      totalPnl: "750",
+      totalRoiPct: "7.50",
+      priceFresh: true,
+    },
+    allocation: {
+      usedMarginRatioPct: "18.60",
+      availableCashRatioPct: "81.40",
+      longMarginUsdt: "2000",
+      shortMarginUsdt: "0",
+      longRatioPct: "100.00",
+      shortRatioPct: "0.00",
+      longPositionCount: 1,
+      shortPositionCount: 0,
+    },
+    positions: [
+      {
+        id: 11,
+        symbol: "BTCUSDT",
+        tradingSymbolId: 1,
+        side: "LONG",
+        leverage: 10,
+        quantity: "0.25",
+        entryPrice: "80000",
+        markPrice: "81000",
+        liquidationPrice: "72500",
+        margin: "2000",
+        unrealizedPnl: "250",
+        roePct: "12.50",
+        marginRatioPct: "18.60",
+      },
+    ],
+    symbolPerformances: [],
+    closedTradeSummary: {
+      closedPositionCount: 5,
+      winCount: 4,
+      lossCount: 1,
+      winRatePct: "80.00",
+    },
+  });
+  assert.equal(publicPortfolio.accountExists, true);
+  assert.equal(publicPortfolio.wallet.totalEquity, "10750");
+  assert.equal(publicPortfolio.closedTradeSummary.winRatePct, "80.00");
+
+  const globalsCss = fs.readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
+  assert.equal(globalsCss.includes("not-allowed"), false);
+  assert.match(globalsCss, /\.trading-workspace textarea:focus-visible/);
 });
 
 test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1Header render unified V1/xrhub/CoinNess layouts, 4-tab My Page, and auth button rules", async () => {

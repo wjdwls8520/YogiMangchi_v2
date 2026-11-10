@@ -136,7 +136,7 @@ export function V1Button({
       type={type}
       disabled={isLoading || disabled}
       className={cn(
-        "inline-flex shrink-0 whitespace-nowrap items-center justify-center rounded-xl font-bold transition-colors cursor-pointer focus:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex shrink-0 whitespace-nowrap items-center justify-center rounded-xl font-bold transition-colors cursor-pointer focus:outline-none disabled:cursor-default disabled:opacity-50",
         variantClass,
         sizeClass,
         fullWidth && "w-full",
@@ -156,7 +156,7 @@ export function V1Input({
   return (
     <input
       className={cn(
-        "w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 transition-colors focus:border-[#0058FF] focus:outline-none focus:ring-1 focus:ring-[#0058FF] disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500",
+        "w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 transition-colors focus:border-[#0058FF] focus:outline-none focus:ring-1 focus:ring-[#0058FF] disabled:cursor-default disabled:bg-gray-100 disabled:text-gray-500",
         className,
       )}
       {...props}
