@@ -321,6 +321,7 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(html, /href="https:\/\/www\.coindesk\.com\/markets\/btc-etf-inflows"/);
     assert.match(html, /data-infinite-scroll="news-sentinel"/);
     assert.equal(html.includes("새 실시간 속보"), false);
+    assert.equal(html.includes("data-news-new-badge="), false);
     assert.match(html, /<select[^>]*aria-label="뉴스 카테고리 필터"/);
     assert.match(html, /<select[^>]*aria-label="뉴스 종목 태그 필터"/);
     assert.match(html, /<select[^>]*aria-label="뉴스 브리핑 보기 방식"/);
@@ -356,6 +357,8 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     );
     assert.match(toastNewsHtml, /fixed left-1\/2 top-20/);
     assert.match(toastNewsHtml, /새 실시간 속보 2건 보기/);
+    assert.match(toastNewsHtml, /data-news-new-badge="10"[^>]*>NEW<\/span>/);
+    assert.match(toastNewsHtml, /data-news-new-badge="9"[^>]*>NEW<\/span>/);
 
     const partitionedBadgeHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
@@ -371,6 +374,8 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(partitionedBadgeHtml, /data-breaking-badge="coin"[^>]*>1<\/span>/);
     assert.match(partitionedBadgeHtml, /data-breaking-badge="economy"[^>]*>3<\/span>/);
     assert.match(partitionedBadgeHtml, /새 실시간 속보 1건 보기/);
+    assert.match(partitionedBadgeHtml, /data-news-new-badge="10"[^>]*>NEW<\/span>/);
+    assert.equal((partitionedBadgeHtml.match(/data-news-new-badge="/g) ?? []).length, 1);
     assert.equal(partitionedBadgeHtml.includes("미 연준 금리 동결 시사 및 달러 인덱스 보합"), false);
 
     const newsroomHtml = renderToStaticMarkup(
@@ -387,6 +392,7 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.match(newsroomHtml, /오래된 순/);
     assert.equal(newsroomHtml.includes("선물 모의투자 이동"), false);
     assert.equal(newsroomHtml.includes("선물 거래 바로가기"), false);
+    assert.equal(newsroomHtml.includes("data-news-new-badge="), false);
     assert.equal((newsroomHtml.match(/data-s3-slot="news-thumbnail"/g) ?? []).length, 1);
     assert.equal((newsroomHtml.match(/data-newsroom-hashtags="true"/g) ?? []).length, 2);
     assert.equal(
@@ -394,6 +400,15 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
         newsroomHtml.indexOf("출처 Yogimangchi Market Desk"),
       true,
     );
+
+    const newsroomToastHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialSection="NEWSROOM" initialPendingNewNewsCount={1} />
+      </MemberProvider>,
+    );
+    assert.match(newsroomToastHtml, /새 실시간 속보 1건 보기/);
+    assert.match(newsroomToastHtml, /data-news-new-badge="10"[^>]*>NEW<\/span>/);
+    assert.equal((newsroomToastHtml.match(/data-news-new-badge="/g) ?? []).length, 1);
   } finally {
     client.clear();
   }
