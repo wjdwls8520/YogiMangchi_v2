@@ -99,10 +99,15 @@ public class ContestService {
         List<SeasonView> running = new ArrayList<>();
         List<SeasonView> finished = new ArrayList<>();
         for (SeasonView s : all) {
-            switch (s.displayStatus()) {
-                case "LIVE" -> running.add(s);
-                case "FINISHED" -> finished.add(s);
-                default -> recruiting.add(s);
+            if ("FINISHED".equals(s.displayStatus())) {
+                finished.add(s);
+                continue;
+            }
+            if ("LIVE".equals(s.displayStatus())) {
+                running.add(s);
+            }
+            if (isCurrentlyRecruiting(s, now)) {
+                recruiting.add(s);
             }
         }
         return new PublicSeasonsOverviewResponse(
@@ -119,15 +124,13 @@ public class ContestService {
         }
         Instant now = Instant.now();
         SeasonView season = requireSeasonView(seasonId, now);
+        if (!season.isPublic() || season.isCanceled()) {
+            throw new BusinessException(ErrorCode.CONTEST_SEASON_NOT_FOUND);
+        }
         List<LeaderboardEntry> allRanked = buildRankedLeaderboard(seasonId);
 
         int startIndex = 0;
         if (cursorId != null) {
-            for (int i = 0; i < allRanked.size(); i++) {
-                if (allRanked.get(i).participantId() != null && allRanked.get(i).participantId() <= cursorId && startIndex == 0) {
-                    // support cursorId as offset or participantId
-                }
-            }
             startIndex = Math.min(cursorId.intValue(), allRanked.size());
         }
         int endIndex = Math.min(startIndex + size, allRanked.size());
@@ -144,15 +147,18 @@ public class ContestService {
             throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
         }
         Instant now = Instant.now();
-        List<MemberContestParticipationView> participations = loadMemberParticipations(memberId, true, now);
-        MemberContestParticipationView active = participations.stream()
+        List<MemberContestParticipationView> allParticipations = loadMemberParticipations(memberId, true, now);
+        List<MemberContestParticipationView> ongoing = allParticipations.stream()
+                .filter(p -> !"FINISHED".equals(p.displayStatus()) && !"CANCELED".equals(p.displayStatus()))
+                .toList();
+        MemberContestParticipationView active = ongoing.stream()
                 .filter(p -> "LIVE".equals(p.displayStatus()))
                 .findFirst()
-                .orElse(participations.isEmpty() ? null : participations.get(0));
-        List<MemberContestParticipationView> past = participations.stream()
+                .orElse(ongoing.isEmpty() ? null : ongoing.get(0));
+        List<MemberContestParticipationView> past = allParticipations.stream()
                 .filter(p -> "FINISHED".equals(p.displayStatus()))
                 .toList();
-        return new MemberContestSeasonsResponse(memberId, active, participations, past);
+        return new MemberContestSeasonsResponse(memberId, active, ongoing, past);
     }
 
     @Transactional(readOnly = true, timeout = 5)
@@ -168,7 +174,8 @@ public class ContestService {
                 (rs, rowNum) -> mapSeasonView(rs, now));
 
         var appRows = jdbc.queryForList("""
-                SELECT a.*, s.title AS season_title, s.recruitment_start_at, s.recruitment_end_at,
+                SELECT a.*, s.title AS season_title, s.description AS season_description, s.seed_money,
+                       s.recruitment_start_at, s.recruitment_end_at,
                        s.contest_start_at, s.contest_end_at, s.is_public, s.is_canceled, s.settled_at
                 FROM trading.contest_application a
                 JOIN trading.contest_season s ON s.id = a.contest_season_id
@@ -194,7 +201,7 @@ public class ContestService {
 
         List<RecruitingSeasonForMemberView> recruiting = new ArrayList<>();
         for (SeasonView s : openSeasons) {
-            if ("RECRUITING".equals(s.displayStatus()) || "UPCOMING".equals(s.displayStatus())) {
+            if (isCurrentlyRecruiting(s, now)) {
                 var app = appBySeason.get(s.id());
                 boolean applied = app != null && ("PENDING".equals(app.get("status")) || "APPROVED".equals(app.get("status")));
                 String appStatus = app != null ? (String) app.get("status") : null;
@@ -256,7 +263,8 @@ public class ContestService {
                 """, Long.class, seasonId, memberId, nickname, tsNow);
 
         var row = jdbc.queryForMap("""
-                SELECT a.*, s.title AS season_title, s.recruitment_start_at, s.recruitment_end_at,
+                SELECT a.*, s.title AS season_title, s.description AS season_description, s.seed_money,
+                       s.recruitment_start_at, s.recruitment_end_at,
                        s.contest_start_at, s.contest_end_at, s.is_public, s.is_canceled, s.settled_at
                 FROM trading.contest_application a
                 JOIN trading.contest_season s ON s.id = a.contest_season_id
@@ -327,7 +335,7 @@ public class ContestService {
                 (rs, rowNum) -> mapSeasonView(rs, now));
 
         long totalCount = allSeasons.size();
-        long recruitingCount = allSeasons.stream().filter(s -> "RECRUITING".equals(s.displayStatus()) || "UPCOMING".equals(s.displayStatus())).count();
+        long recruitingCount = allSeasons.stream().filter(s -> isCurrentlyRecruiting(s, now)).count();
         long liveCount = allSeasons.stream().filter(s -> "LIVE".equals(s.displayStatus())).count();
         long finishedCount = allSeasons.stream().filter(s -> "FINISHED".equals(s.displayStatus())).count();
 
@@ -379,7 +387,8 @@ public class ContestService {
                 seasonId);
 
         var appRows = jdbc.queryForList("""
-                SELECT a.*, s.title AS season_title, s.recruitment_start_at, s.recruitment_end_at,
+                SELECT a.*, s.title AS season_title, s.description AS season_description, s.seed_money,
+                       s.recruitment_start_at, s.recruitment_end_at,
                        s.contest_start_at, s.contest_end_at, s.is_public, s.is_canceled, s.settled_at
                 FROM trading.contest_application a
                 JOIN trading.contest_season s ON s.id = a.contest_season_id
@@ -451,9 +460,16 @@ public class ContestService {
         }
         validateSeasonUpsert(req);
         Instant now = Instant.now();
-        requireSeasonView(seasonId, now);
+        SeasonView existing = requireSeasonView(seasonId, now);
+        if (existing.settledAt() != null) {
+            throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
+        }
 
         BigDecimal seed = parseSeedMoney(req.seedMoney());
+        if (existing.participantCount() > 0
+                && seed.compareTo(new BigDecimal(existing.seedMoney())) != 0) {
+            throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
+        }
         boolean isPublic = req.isPublic() == null || req.isPublic();
         String description = req.description() == null ? "" : req.description().strip();
 
@@ -524,13 +540,22 @@ public class ContestService {
         String nickname = (String) app.get("nickname");
         Instant appliedAt = ((Timestamp) app.get("applied_at")).toInstant();
 
-        var seasonRows = jdbc.queryForList("SELECT seed_money FROM trading.contest_season WHERE id = ?", seasonId);
+        var seasonRows = jdbc.queryForList(
+                "SELECT seed_money, is_canceled, settled_at, contest_end_at FROM trading.contest_season WHERE id = ?",
+                seasonId);
         if (seasonRows.isEmpty()) {
             throw new BusinessException(ErrorCode.CONTEST_SEASON_NOT_FOUND);
         }
-        BigDecimal seedMoney = (BigDecimal) seasonRows.get(0).get("seed_money");
-
+        var seasonRow = seasonRows.get(0);
         Instant now = Instant.now();
+        Instant contestEndAt = ((Timestamp) seasonRow.get("contest_end_at")).toInstant();
+        if (Boolean.TRUE.equals(seasonRow.get("is_canceled"))
+                || seasonRow.get("settled_at") != null
+                || now.isAfter(contestEndAt)) {
+            throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
+        }
+        BigDecimal seedMoney = (BigDecimal) seasonRow.get("seed_money");
+
         OffsetDateTime tsNow = at(now);
 
         Long accountId = accounts.findContestAccountId(applicantMemberId, seasonId).orElseGet(() -> {
@@ -627,7 +652,8 @@ public class ContestService {
                 """, safeReason, at(now), adminMemberId, applicationId);
 
         var updated = jdbc.queryForMap("""
-                SELECT a.*, s.title AS season_title, s.recruitment_start_at, s.recruitment_end_at,
+                SELECT a.*, s.title AS season_title, s.description AS season_description, s.seed_money,
+                       s.recruitment_start_at, s.recruitment_end_at,
                        s.contest_start_at, s.contest_end_at, s.is_public, s.is_canceled, s.settled_at
                 FROM trading.contest_application a
                 JOIN trading.contest_season s ON s.id = a.contest_season_id
@@ -1011,12 +1037,18 @@ public class ContestService {
         boolean isCanceled = Boolean.TRUE.equals(row.get("is_canceled"));
         Instant settledAt = row.get("settled_at") != null ? ((Timestamp) row.get("settled_at")).toInstant() : null;
         StatusPair seasonStatus = computeStatus(isCanceled, settledAt, recStart, recEnd, conStart, conEnd, now);
+        BigDecimal seedMoney = row.get("seed_money") instanceof BigDecimal bd ? bd : DEFAULT_SEED;
+        String seasonDescription = row.get("season_description") instanceof String desc ? desc : "";
 
         return new ContestApplicationView(
                 ((Number) row.get("id")).longValue(),
                 ((Number) row.get("contest_season_id")).longValue(),
                 (String) row.get("season_title"),
+                seasonDescription,
+                plain(seedMoney),
                 seasonStatus.code(),
+                recStart,
+                recEnd,
                 conStart,
                 conEnd,
                 ((Number) row.get("member_id")).longValue(),
@@ -1026,6 +1058,13 @@ public class ContestService {
                 ((Timestamp) row.get("applied_at")).toInstant(),
                 row.get("processed_at") != null ? ((Timestamp) row.get("processed_at")).toInstant() : null,
                 row.get("processed_by_member_id") != null ? ((Number) row.get("processed_by_member_id")).longValue() : null);
+    }
+
+    private static boolean isCurrentlyRecruiting(SeasonView s, Instant now) {
+        return !s.isCanceled()
+                && s.settledAt() == null
+                && !now.isBefore(s.recruitmentStartAt())
+                && !now.isAfter(s.recruitmentEndAt());
     }
 
     private record StatusPair(String code, String label) { }
@@ -1050,7 +1089,10 @@ public class ContestService {
         if (!now.isBefore(recStart) && !now.isAfter(recEnd)) {
             return new StatusPair("RECRUITING", "참가 신청중");
         }
-        return new StatusPair("UPCOMING", "대회 대기중");
+        if (now.isBefore(recStart)) {
+            return new StatusPair("UPCOMING", "모집 예정");
+        }
+        return new StatusPair("UPCOMING", "개최 대기중");
     }
 
     private static void validateSeasonUpsert(AdminSeasonUpsertRequest req) {

@@ -255,6 +255,7 @@ public class ContestTradingController {
     public List<OrderResponse> getOrderHistory(
             @AuthenticationPrincipal TradingPrincipal principal,
             @PathVariable Long seasonId,
+            @RequestParam(required = false) Long beforeId,
             @RequestParam(required = false) Long beforeOrderId,
             @RequestParam(defaultValue = "20") int limit,
             @RequestParam(required = false) Long tradingSymbolId,
@@ -266,8 +267,9 @@ public class ContestTradingController {
             @RequestParam(required = false) Instant createdFrom,
             @RequestParam(required = false) Instant createdBefore) {
         Long accountId = contestService.requireContestAccountForRead(principal.memberId(), seasonId);
+        Long effectiveBeforeId = beforeId != null ? beforeId : beforeOrderId;
         return orderService.history(
-                accountId, beforeOrderId, limit, tradingSymbolId, symbol,
+                accountId, effectiveBeforeId, limit, tradingSymbolId, symbol,
                 side, action, status, type, createdFrom, createdBefore);
     }
 
@@ -276,6 +278,7 @@ public class ContestTradingController {
     public List<FillHistoryResponse> getFills(
             @AuthenticationPrincipal TradingPrincipal principal,
             @PathVariable Long seasonId,
+            @RequestParam(required = false) Long beforeId,
             @RequestParam(required = false) Long beforeFillId,
             @RequestParam(defaultValue = "20") int limit,
             @RequestParam(required = false) Long tradingSymbolId,
@@ -286,8 +289,9 @@ public class ContestTradingController {
             @RequestParam(required = false) Instant executedFrom,
             @RequestParam(required = false) Instant executedBefore) {
         Long accountId = contestService.requireContestAccountForRead(principal.memberId(), seasonId);
+        Long effectiveBeforeId = beforeId != null ? beforeId : beforeFillId;
         return historyService.fills(
-                accountId, beforeFillId, limit, tradingSymbolId, symbol,
+                accountId, effectiveBeforeId, limit, tradingSymbolId, symbol,
                 side, action, type, executedFrom, executedBefore);
     }
 
