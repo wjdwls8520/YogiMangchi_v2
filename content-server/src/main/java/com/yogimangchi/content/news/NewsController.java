@@ -1,13 +1,18 @@
 package com.yogimangchi.content.news;
 
 import io.swagger.v3.oas.annotations.Operation;
+import jakarta.servlet.http.HttpServletRequest;
+import java.util.Objects;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -64,11 +69,40 @@ public class NewsController {
     }
 
     @GetMapping("/{newsId:[0-9]+}")
-    @Operation(summary = "Read a single news article", description = "Public. Increments viewCount and returns 404 RESOURCE_NOT_FOUND when missing.")
-    public ResponseEntity<NewsService.NewsItemResponse> get(@PathVariable Long newsId) {
+    @Operation(
+            summary = "Read a single news article",
+            description = "Public. Idempotently increments viewCount (once per member account when authenticated, or once per KST day per anonymous viewer key/IP+UA when unauthenticated) unless countView=false."
+    )
+    public ResponseEntity<NewsService.NewsItemResponse> get(
+            @PathVariable Long newsId,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(defaultValue = "true") boolean countView,
+            @RequestParam(required = false) String viewerKey,
+            @RequestHeader(value = "X-Anon-Viewer-Id", required = false) String anonViewerHeader,
+            HttpServletRequest request) {
+        Long memberId = viewerMemberId(jwt);
+        String anonViewerKey = resolveAnonViewerKey(anonViewerHeader, viewerKey, request);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(news.get(newsId));
+                .body(news.get(newsId, memberId, anonViewerKey, countView));
+    }
+
+    @PostMapping("/{newsId:[0-9]+}/views")
+    @Operation(
+            summary = "Record an idempotent view on a news article",
+            description = "Public. Idempotently increments viewCount (once per member account or once per KST day for anonymous viewer) and returns the updated article."
+    )
+    public ResponseEntity<NewsService.NewsItemResponse> recordView(
+            @PathVariable Long newsId,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) String viewerKey,
+            @RequestHeader(value = "X-Anon-Viewer-Id", required = false) String anonViewerHeader,
+            HttpServletRequest request) {
+        Long memberId = viewerMemberId(jwt);
+        String anonViewerKey = resolveAnonViewerKey(anonViewerHeader, viewerKey, request);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(news.get(newsId, memberId, anonViewerKey, true));
     }
 
     @PostMapping("/{newsId:[0-9]+}/reactions")
@@ -86,5 +120,49 @@ public class NewsController {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(news.react(newsId, effective));
+    }
+
+    private static Long viewerMemberId(Jwt jwt) {
+        if (jwt == null || jwt.getSubject() == null) {
+            return null;
+        }
+        try {
+            return Long.valueOf(jwt.getSubject());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static String resolveAnonViewerKey(
+            String anonViewerHeader,
+            String viewerKey,
+            HttpServletRequest request) {
+        String candidate = null;
+        if (anonViewerHeader != null && !anonViewerHeader.isBlank()) {
+            candidate = anonViewerHeader.strip();
+        } else if (viewerKey != null && !viewerKey.isBlank()) {
+            candidate = viewerKey.strip();
+        }
+        if (candidate != null && !candidate.isEmpty()) {
+            return candidate.length() > 128 ? candidate.substring(0, 128) : candidate;
+        }
+        if (request == null) {
+            return "anonymous-default";
+        }
+        String ip = clientIp(request);
+        String ua = Objects.toString(request.getHeader("User-Agent"), "unknown");
+        return ip + "|" + ua;
+    }
+
+    private static String clientIp(HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) {
+            int comma = xff.indexOf(',');
+            String first = (comma >= 0 ? xff.substring(0, comma) : xff).strip();
+            if (!first.isEmpty()) {
+                return first;
+            }
+        }
+        return Objects.toString(request.getRemoteAddr(), "0.0.0.0");
     }
 }

@@ -1016,12 +1016,90 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.bullPct").value(50))
                 .andExpect(jsonPath("$.bearPct").value(50));
 
-        // 6. Single article lookup increments viewCount
-        mvc.perform(get("/api/v1/news/" + btcItem.id()))
+        // 6. Idempotent viewCount:
+        // (a) countView=false does not increment viewCount
+        mvc.perform(get("/api/v1/news/" + btcItem.id()).param("countView", "false"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.viewCount").value(1))
-                .andExpect(jsonPath("$.bullCount").value(1))
-                .andExpect(jsonPath("$.bearCount").value(1));
+                .andExpect(jsonPath("$.viewCount").value(0));
+
+        // (b) Anonymous viewer with same X-Anon-Viewer-Id (or viewerKey) increments only once per KST day
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(get("/api/v1/news/" + btcItem.id())
+                            .header("X-Anon-Viewer-Id", "anon-device-1"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.viewCount").value(1))
+                    .andExpect(jsonPath("$.bullCount").value(1))
+                    .andExpect(jsonPath("$.bearCount").value(1));
+        }
+        mvc.perform(post("/api/v1/news/" + btcItem.id() + "/views")
+                        .header("X-Anon-Viewer-Id", "anon-device-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.viewCount").value(1));
+
+        // Different anonymous viewer key increments to 2
+        mvc.perform(post("/api/v1/news/" + btcItem.id() + "/views")
+                        .param("viewerKey", "anon-device-2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.viewCount").value(2));
+
+        // (c) Logged-in member increments at most once per member account
+        var reader1 = signup();
+        var reader2 = signup();
+        String reader1Bearer = "Bearer " + reader1.access().accessToken();
+        String reader2Bearer = "Bearer " + reader2.access().accessToken();
+
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(get("/api/v1/news/" + btcItem.id())
+                            .header("Authorization", reader1Bearer))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.viewCount").value(3));
+        }
+        mvc.perform(post("/api/v1/news/" + btcItem.id() + "/views")
+                        .header("Authorization", reader2Bearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.viewCount").value(4));
+
+        // Increment ethItem twice (by reader1 and reader2) so btcItem (viewCount=4) > ethItem (viewCount=2) > others (<=1)
+        mvc.perform(post("/api/v1/news/" + ethItem.id() + "/views")
+                        .header("Authorization", reader1Bearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.viewCount").value(1));
+        mvc.perform(post("/api/v1/news/" + ethItem.id() + "/views")
+                        .header("Authorization", reader2Bearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.viewCount").value(2));
+
+        // (d) POPULAR sort orders strictly by viewCount DESC, then publishedAt DESC, id DESC (latest first on tie)
+        var popularNewsPage1 = json.readTree(mvc.perform(get("/api/v1/news")
+                        .param("sort", "POPULAR")
+                        .param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[0].id").value(btcItem.id()))
+                .andExpect(jsonPath("$.items[0].viewCount").value(4))
+                .andExpect(jsonPath("$.items[1].id").value(ethItem.id()))
+                .andExpect(jsonPath("$.items[1].viewCount").value(2))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andReturn().getResponse().getContentAsString());
+
+        long popularNewsCursor = popularNewsPage1.path("nextCursorId").asLong();
+        var popularNewsPage2 = json.readTree(mvc.perform(get("/api/v1/news")
+                        .param("sort", "POPULAR")
+                        .param("size", "4")
+                        .param("cursorId", Long.toString(popularNewsCursor)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(4))
+                .andReturn().getResponse().getContentAsString());
+        var page2Items = popularNewsPage2.path("items");
+        for (int i = 0; i < page2Items.size() - 1; i++) {
+            int currViews = page2Items.get(i).path("viewCount").asInt();
+            int nextViews = page2Items.get(i + 1).path("viewCount").asInt();
+            assertThat(currViews).isGreaterThanOrEqualTo(nextViews);
+            if (currViews == nextViews) {
+                assertThat(Instant.parse(page2Items.get(i).path("publishedAt").asText()))
+                        .isAfterOrEqualTo(Instant.parse(page2Items.get(i + 1).path("publishedAt").asText()));
+            }
+        }
 
         // 7. Highlights endpoint returns mustReadBreaking, popularByViews, popularByReactions, keywordIssues, recommendedNewsroom, sentimentSummary, liveStatus
         mvc.perform(get("/api/v1/news/highlights"))

@@ -20,7 +20,7 @@ public class SecurityConfig {
             @Value("${content.auth.nickname-lookups-per-minute:300}") int nicknameLookups) throws Exception {
         http.authorizeHttpRequests(a -> {
             a.requestMatchers(HttpMethod.GET,"/.well-known/jwks.json","/api/v1/auth/csrf","/api/v1/auth/flow","/api/v1/policies/current","/api/v1/policies/{type:TERMS|PRIVACY}/{version}").permitAll();
-            a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout","/api/v1/news/{newsId:[0-9]+}/reactions").permitAll();
+            a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout","/api/v1/news/{newsId:[0-9]+}/reactions","/api/v1/news/{newsId:[0-9]+}/views").permitAll();
             a.requestMatchers(HttpMethod.GET,"/api/v1/members/me","/api/v1/members/me/consents","/api/v1/members/me/withdrawal","/api/v1/members/me/community/posts","/api/v1/members/me/community/comments","/api/v1/members/me/community/liked-posts","/api/v1/members/me/community/liked-comments","/api/v1/members/me/community/reports").authenticated();
             a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/consents","/api/v1/members/me/profile").authenticated();
             a.requestMatchers(HttpMethod.PATCH,"/api/v1/members/me/profile").authenticated();
@@ -64,7 +64,7 @@ public class SecurityConfig {
         List<String> origins=Arrays.stream(value.split(",")).map(String::trim).filter(v -> !v.isEmpty()).toList();
         if(origins.isEmpty() || origins.stream().anyMatch(v -> v.contains("*"))) throw new IllegalArgumentException("Explicit Content origins required");
         var config=new CorsConfiguration(); config.setAllowedOrigins(origins); config.setAllowCredentials(true);
-        config.setAllowedMethods(List.of("GET","POST","PUT","DELETE","PATCH","OPTIONS")); config.setAllowedHeaders(List.of("Authorization","Content-Type","X-CSRF-TOKEN"));
+        config.setAllowedMethods(List.of("GET","POST","PUT","DELETE","PATCH","OPTIONS")); config.setAllowedHeaders(List.of("Authorization","Content-Type","X-CSRF-TOKEN","X-Anon-Viewer-Id"));
         config.setExposedHeaders(List.of("Retry-After"));
         config.setMaxAge(600L);
         var source=new UrlBasedCorsConfigurationSource(); source.registerCorsConfiguration("/api/**",config); return source;
