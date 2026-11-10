@@ -68,7 +68,16 @@ class MemberFollowIntegrationTests extends TestEnvironment {
         assertThat(first.toString()).doesNotContain("email","role","provider","profileImgUrl");
         mvc.perform(get(url).param("keyword","%")).andExpect(jsonPath("$.content.length()").value(0));
         mvc.perform(get(url).param("keyword",b.access().nickname().toUpperCase(Locale.ROOT))).andExpect(jsonPath("$.content.length()").value(1));
-        mvc.perform(get("/api/v1/members/"+b.access().memberId()+"/followers")).andExpect(jsonPath("$.content[0].memberId").value(a.access().memberId()));
+        mvc.perform(get("/api/v1/members/"+b.access().memberId()+"/followers"))
+                .andExpect(jsonPath("$.content[0].memberId").value(a.access().memberId()))
+                .andExpect(jsonPath("$.content[0].followedByMe").doesNotExist());
+        mvc.perform(get("/api/v1/members/"+b.access().memberId()+"/followers").header("Authorization","Bearer "+b.access().accessToken()))
+                .andExpect(jsonPath("$.content[0].memberId").value(a.access().memberId()))
+                .andExpect(jsonPath("$.content[0].followedByMe").value(false));
+        follows.change(b.access().memberId(),a.access().memberId(),true);
+        mvc.perform(get("/api/v1/members/"+b.access().memberId()+"/followers").header("Authorization","Bearer "+b.access().accessToken()))
+                .andExpect(jsonPath("$.content[0].memberId").value(a.access().memberId()))
+                .andExpect(jsonPath("$.content[0].followedByMe").value(true));
     }
     @Test void countsAndRelationshipAreDerivedFromActiveRelationsAndVerifiedViewer() throws Exception {
         follows.change(a.access().memberId(),b.access().memberId(),true);
