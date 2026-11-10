@@ -1,3 +1,5 @@
+import { marketOverviewJson } from "../../trading/api/client";
+
 export interface MarketOverviewData {
   btcDominancePercent: number;
   btcDominanceChange24h: number;
@@ -254,6 +256,30 @@ async function fetchJsonWithTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function resolveTradingMarketBaseUrl(): string {
+  return (
+    process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ??
+    process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
+    "http://localhost:8081"
+  );
+}
+
+export async function fetchRedisMarketOverview(
+  tradingBase: string = resolveTradingMarketBaseUrl(),
+  signal?: AbortSignal,
+  transport: typeof fetch = fetch,
+): Promise<MarketOverviewData> {
+  const payload = await marketOverviewJson(tradingBase, signal, transport);
+  if (
+    payload &&
+    typeof payload === "object" &&
+    (payload as { status?: unknown }).status === "UNAVAILABLE"
+  ) {
+    throw new Error("Redis market overview snapshot is not ready yet");
+  }
+  return parseMarketOverviewPayload(payload);
 }
 
 export async function fetchLiveMarketOverview(
