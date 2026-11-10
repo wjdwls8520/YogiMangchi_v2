@@ -99,27 +99,6 @@ const KEYWORD_ISSUES = [
   },
 ] as const;
 
-const NEWSROOM_FEATURED_CARDS = [
-  {
-    id: 801,
-    title: "젠레이어, AI 에이전트 간 분쟁 해결 위한 온체인 중재 인프라 개발",
-    badge: "GenLayer",
-    sub: "AI · ONCHAIN",
-  },
-  {
-    id: 802,
-    title: "미라, 차세대 영지식 검증 플랫폼 '스털링' 공식 공개",
-    badge: "MIRA",
-    sub: "INFRA · ZK",
-  },
-  {
-    id: 803,
-    title: "엘뱅크랩스, Pre-IPO 시장 보고서 발표...토큰화 투자 상품 동향 분석",
-    badge: "Pre-IPO",
-    sub: "REPORT · RWA",
-  },
-] as const;
-
 function parseUrlTabState(search: string): {
   section?: "BREAKING" | "NEWSROOM";
   breakingSub?: "COIN" | "ECONOMY";
@@ -700,20 +679,6 @@ export function NewsFeed({
 
   const activeIssue = keywordIssueList[issueIndex % keywordIssueList.length] ?? KEYWORD_ISSUES[0];
 
-  const newsroomFeaturedCards =
-    highlights && highlights.recommendedNewsroom.length > 0
-      ? highlights.recommendedNewsroom.slice(0, 3).map(item => ({
-          id: item.id,
-          title: item.title,
-          badge: item.symbolTag ?? newsCategoryLabel(item.category),
-          sub: item.sourceName,
-          item,
-        }))
-      : NEWSROOM_FEATURED_CARDS.map(card => ({
-          ...card,
-          item: undefined as NewsItem | undefined,
-        }));
-
   const sentimentBullPct = highlights?.sentimentSummary.bullPct ?? 68;
   const sentimentBearPct = highlights?.sentimentSummary.bearPct ?? 32;
 
@@ -1190,36 +1155,9 @@ export function NewsFeed({
             /* ==================== [탭 2] 뉴스룸 (CoinNess /article 스타일) ==================== */
             <>
               <div>
-                <h2 className="mb-4 text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+                <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
                   뉴스룸
                 </h2>
-
-                {/* 상단 추천 헤드라인 3열 카드 */}
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  {newsroomFeaturedCards.map(card => (
-                    <div
-                      key={card.id}
-                      onClick={() => {
-                        if (card.item) {
-                          void inspectArticle(card.id, card.item);
-                        } else if (visibleItems[0]) {
-                          setSelectedDetail(visibleItems[0]);
-                        }
-                      }}
-                      className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white p-3.5 transition-colors hover:border-gray-300"
-                    >
-                      <p className="line-clamp-2 text-xs font-bold leading-relaxed text-gray-900">
-                        {card.title}
-                      </p>
-                      <div className="flex h-14 w-20 shrink-0 flex-col items-center justify-center rounded-xl bg-slate-900 px-2 text-center text-white">
-                        <span className="text-[11px] font-black">{card.badge}</span>
-                        <span className="mt-0.5 text-[9px] font-semibold text-gray-300">
-                          {card.sub}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
 
               {/* 중앙 세그먼트 탭 바: 전체 | 암호화폐 | 해외증시 | 환율/금리 */}
