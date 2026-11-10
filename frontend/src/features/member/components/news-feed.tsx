@@ -56,13 +56,29 @@ function kst(value: string) {
 }
 
 function kstTimeOnly(value: string) {
-  return new Date(value).toLocaleTimeString("sv-SE", {
-    timeZone: "Asia/Seoul",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return "00:00";
+  const kstDate = new Date(parsed + 9 * 60 * 60 * 1000);
+  const hh = String(kstDate.getUTCHours()).padStart(2, "0");
+  const mm = String(kstDate.getUTCMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
 }
+
+const KST_WEEKDAYS = ["일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"] as const;
+
+function kstFullDateLabel(value?: string | null): string {
+  if (!value) return "실시간 뉴스 타임라인";
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value.slice(0, 10) || "실시간 뉴스 타임라인";
+  const kstDate = new Date(parsed + 9 * 60 * 60 * 1000);
+  const yyyy = kstDate.getUTCFullYear();
+  const month = kstDate.getUTCMonth() + 1;
+  const day = kstDate.getUTCDate();
+  const weekday = KST_WEEKDAYS[kstDate.getUTCDay()] ?? "";
+  return `${yyyy}년 ${month}월 ${day}일 ${weekday}`;
+}
+
+const USER_NEWS_REACTIONS_STORAGE_KEY = "yogimangchi:news-user-reactions:v1";
 
 const BREAKING_MUST_READ = [
   {
@@ -771,6 +787,31 @@ export function NewsFeed({
   const [selectedDetail, setSelectedDetail] = useState<NewsItem | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [reactions, setReactions] = useState<Record<number, "bull" | "bear">>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.localStorage?.getItem !== "function") return;
+    try {
+      const raw = window.localStorage.getItem(USER_NEWS_REACTIONS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object") return;
+      const restored: Record<number, "bull" | "bear"> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        const idNum = Number(k);
+        if (Number.isFinite(idNum) && (v === "bull" || v === "bear")) {
+          restored[idNum] = v;
+        }
+      }
+      if (Object.keys(restored).length > 0 && typeof window.setTimeout === "function") {
+        const timer = window.setTimeout(() => {
+          setReactions(prev => ({ ...restored, ...prev }));
+        }, 0);
+        return () => window.clearTimeout(timer);
+      }
+    } catch {
+      // Ignore storage error
+    }
+  }, []);
   const [liveReactions, setLiveReactions] = useState<
     Record<number, { bullCount: number; bearCount: number }>
   >({});
@@ -1440,7 +1481,17 @@ export function NewsFeed({
   }
 
   function toggleReaction(id: number, kind: "bull" | "bear") {
-    setReactions(current => ({ ...current, [id]: kind }));
+    setReactions(current => {
+      const next = { ...current, [id]: kind };
+      if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
+        try {
+          window.localStorage.setItem(USER_NEWS_REACTIONS_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // Ignore storage quota error
+        }
+      }
+      return next;
+    });
     void (async () => {
       try {
         const res = parseNewsReaction(
@@ -1655,19 +1706,34 @@ export function NewsFeed({
             className="rounded-2xl border border-gray-200 bg-white p-4"
             aria-label="시장 뉴스 센티먼트 요약"
           >
-            <h3 className="text-xs font-black text-gray-900">실시간 뉴스 투자 심리</h3>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-black text-gray-900">실시간 뉴스 투자 심리</h3>
+              {(sentimentBullPct < 20 || sentimentBearPct < 20) && (
+                <span className="text-[11px] font-extrabold text-gray-600 whitespace-nowrap">
+                  강세 {sentimentBullPct}% · 약세 {sentimentBearPct}%
+                </span>
+              )}
+            </div>
             <div className="mt-2.5 flex h-6 overflow-hidden rounded-lg text-[11px] font-extrabold text-white">
               <div
-                className="flex items-center justify-center bg-[#2EBD85] px-1.5 whitespace-nowrap"
+                className="flex items-center justify-center bg-[#2EBD85] px-1.5 whitespace-nowrap overflow-hidden"
                 style={{ width: `${sentimentBullPct}%` }}
               >
-                강세 {sentimentBullPct}%
+                {sentimentBullPct >= 20
+                  ? `강세 ${sentimentBullPct}%`
+                  : sentimentBullPct >= 10
+                    ? `${sentimentBullPct}%`
+                    : ""}
               </div>
               <div
-                className="flex items-center justify-center bg-[#F6465D] px-1.5 whitespace-nowrap"
+                className="flex items-center justify-center bg-[#F6465D] px-1.5 whitespace-nowrap overflow-hidden"
                 style={{ width: `${sentimentBearPct}%` }}
               >
-                약세 {sentimentBearPct}%
+                {sentimentBearPct >= 20
+                  ? `약세 ${sentimentBearPct}%`
+                  : sentimentBearPct >= 10
+                    ? `${sentimentBearPct}%`
+                    : ""}
               </div>
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
@@ -1851,6 +1917,8 @@ export function NewsFeed({
                           onClick={() => {
                             if (item.item) {
                               void inspectArticle(item.id, item.item);
+                            } else if (visibleItems[0]) {
+                              void inspectArticle(visibleItems[0].id, visibleItems[0]);
                             }
                           }}
                           className="flex cursor-pointer items-center justify-between gap-3 text-xs"
@@ -2195,7 +2263,7 @@ export function NewsFeed({
               <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
                 <div className="border-b border-gray-200 bg-[#F7F8FA] px-5 py-3 text-xs font-bold text-gray-700">
                   <V1IconCalendar className="mr-1.5 inline h-3.5 w-3.5" />
-                  <span>오늘, 2026년 11월 10일 화요일</span>
+                  <span>실시간 속보 · {kstFullDateLabel(visibleItems[0]?.publishedAt)}</span>
                 </div>
 
                 <ul className="divide-y divide-gray-100" aria-label=" 실시간 속보 목록">
@@ -2205,14 +2273,8 @@ export function NewsFeed({
                       (placeholderUnreadCount > 0 && itemIdx < placeholderUnreadCount);
                     const userReaction = reactions[item.id];
                     const liveReaction = liveReactions[item.id];
-                    const baseBull =
-                      item.bullCount && item.bullCount > 0
-                        ? item.bullCount
-                        : 34 + (item.id % 19);
-                    const baseBear =
-                      item.bearCount && item.bearCount > 0
-                        ? item.bearCount
-                        : 9 + (item.id % 7);
+                    const baseBull = item.bullCount ?? 0;
+                    const baseBear = item.bearCount ?? 0;
                     const bullCount = liveReaction
                       ? liveReaction.bullCount
                       : baseBull + (userReaction === "bull" ? 1 : 0);
@@ -2391,7 +2453,7 @@ export function NewsFeed({
                               >
                                 {kstTimeOnly(item.publishedAt)}
                               </time>
-                              <span>2026년 11월 10일 화요일</span>
+                              <span>{kstFullDateLabel(item.publishedAt)}</span>
                               <span>·</span>
                               <span className="font-bold text-gray-500">
                                 {newsCategoryLabel(item.category)}
@@ -2506,7 +2568,7 @@ export function NewsFeed({
             {hasNext && (
               <button
                 type="button"
-                className="signup-button"
+                className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
@@ -2528,13 +2590,13 @@ export function NewsFeed({
             : undefined
         }
         footer={
-          <div className="ym-modal-actions">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {selectedDetail?.sourceUrl && (
               <a
                 href={selectedDetail.sourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="signup-button ym-btn-inline"
+                className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
               >
                 <span>원문 기사 보기</span>
                 <V1IconExternal className="ml-1 inline h-3 w-3" />
@@ -2542,7 +2604,7 @@ export function NewsFeed({
             )}
             <button
               type="button"
-              className="signup-button ym-btn-inline"
+              className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 bg-gray-100 px-3.5 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200"
               onClick={() => setSelectedDetail(null)}
             >
               상세 닫기

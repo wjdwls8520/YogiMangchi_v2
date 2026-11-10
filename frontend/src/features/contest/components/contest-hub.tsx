@@ -663,7 +663,7 @@ export function ContestOngoingSection({
         <div className="flex items-center gap-2">
           <span className="h-4 w-1 rounded-full bg-[#0058FF]" />
           <h2 className="text-base font-black text-gray-900">내 진행 중인 대회</h2>
-          <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-[#0058FF]">
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-[#0058FF]">
             {contests.length}시즌
           </span>
         </div>
@@ -710,7 +710,7 @@ export function ContestOngoingSection({
                 <div className="flex items-center justify-between gap-2">
                   <span
                     className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold",
+                      "inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold",
                       contest.isLive
                         ? "border border-blue-200 bg-blue-50 text-[#0058FF]"
                         : "border border-amber-200 bg-amber-50 text-amber-700",
@@ -931,10 +931,13 @@ export function ContestHub() {
         id: app.seasonId,
         title: app.seasonTitle,
         description:
+          app.seasonDescription ||
           "관리자 심사 대기 중인 시즌입니다. 승인 즉시 시즌 전용 독립 대회 지갑이 자동 생성됩니다.",
-        seedMoney: "10,000 USDT",
-        recruitmentStartAt: formatContestDateTime(app.appliedAt),
-        recruitmentEndAt: formatContestDateTime(app.contestStartAt),
+        seedMoney: app.seedMoney
+          ? `${formatContestSeedPlain(app.seedMoney)} USDT`
+          : "10,000 USDT",
+        recruitmentStartAt: formatContestDateTime(app.recruitmentStartAt ?? app.appliedAt),
+        recruitmentEndAt: formatContestDateTime(app.recruitmentEndAt ?? app.contestStartAt),
         contestStartAt: formatContestDateTime(app.contestStartAt),
         contestEndAt: formatContestDateTime(app.contestEndAt),
         participantCount: 0,
@@ -968,10 +971,12 @@ export function ContestHub() {
     const rejectedItems: ContestSeasonItem[] = overview.rejectedApplications.map(app => ({
       id: app.seasonId,
       title: app.seasonTitle,
-      description: "신청 심사 결과 반려 처리된 시즌입니다.",
-      seedMoney: "10,000 USDT",
-      recruitmentStartAt: formatContestDateTime(app.appliedAt),
-      recruitmentEndAt: formatContestDateTime(app.contestStartAt),
+      description: app.seasonDescription || "신청 심사 결과 반려 처리된 시즌입니다.",
+      seedMoney: app.seedMoney
+        ? `${formatContestSeedPlain(app.seedMoney)} USDT`
+        : "10,000 USDT",
+      recruitmentStartAt: formatContestDateTime(app.recruitmentStartAt ?? app.appliedAt),
+      recruitmentEndAt: formatContestDateTime(app.recruitmentEndAt ?? app.contestStartAt),
       contestStartAt: formatContestDateTime(app.contestStartAt),
       contestEndAt: formatContestDateTime(app.contestEndAt),
       participantCount: 0,
@@ -997,10 +1002,35 @@ export function ContestHub() {
         }
         const candidateSeasons = [...res.running, ...res.finished];
         if (candidateSeasons.length > 0) {
+          const mappedCandidates: ContestLeaderboardSeason[] = candidateSeasons.map(s => {
+            const isFinished = s.displayStatus === "FINISHED" || Boolean(s.settledAt);
+            return {
+              seasonId: s.id,
+              seasonTitle: s.title,
+              statusLabel: isFinished ? "최종 확정 순위" : "실시간 랭킹",
+              period: `${formatContestDateOnly(s.contestStartAt)} ~ ${formatContestDateOnly(s.contestEndAt)}`,
+              settledAt: s.settledAt
+                ? `${formatContestDateTime(s.settledAt)} 정산 확정`
+                : undefined,
+              participantCount: s.participantCount,
+              entries: [],
+            };
+          });
+          setLeaderboardSeasons(prev =>
+            mappedCandidates.map(cand => {
+              const existing = prev.find(p => p.seasonId === cand.seasonId);
+              return existing && existing.entries.length > 0
+                ? { ...cand, entries: existing.entries }
+                : cand;
+            }),
+          );
           const firstId = candidateSeasons[0]!.id;
           setSelectedLeaderboardSeasonId(prev =>
             candidateSeasons.some(s => s.id === prev) ? prev : firstId,
           );
+        } else {
+          setLeaderboardSeasons([]);
+          setSelectedLeaderboardSeasonId(0);
         }
       })
       .catch(() => {
@@ -1025,6 +1055,7 @@ export function ContestHub() {
   }, [isLoggedIn, memberCtx?.session, memberCtx?.snapshot.generation]);
 
   useEffect(() => {
+    if (!selectedLeaderboardSeasonId || selectedLeaderboardSeasonId <= 0) return;
     const controller = new AbortController();
     void fetchPublicContestLeaderboard(selectedLeaderboardSeasonId, {
       size: 20,
@@ -1049,11 +1080,17 @@ export function ContestHub() {
 
   const currentLeaderboard =
     leaderboardSeasons.find(season => season.seasonId === selectedLeaderboardSeasonId) ??
-    leaderboardSeasons[0]!;
-  const topThreeEntries = currentLeaderboard.entries.slice(0, 3);
-  const visibleEntries = currentLeaderboard.entries.slice(0, visibleRankCount);
+    leaderboardSeasons[0] ??
+    null;
+  const topThreeEntries = currentLeaderboard ? currentLeaderboard.entries.slice(0, 3) : [];
+  const visibleEntries = currentLeaderboard
+    ? currentLeaderboard.entries.slice(0, visibleRankCount)
+    : [];
+  const otherPublicRunningContests = publicRunningContests.filter(
+    pub => !myOngoingContests.some(my => my.id === pub.id),
+  );
 
-  function handleApplySeason(contest: ContestSeasonItem) {
+  async function handleApplySeason(contest: ContestSeasonItem) {
     if (!isLoggedIn) {
       setFeedbackNotice(
         "대회에 참가 신청하려면 먼저 소셜 계정으로 로그인해 주세요.",
@@ -1061,34 +1098,40 @@ export function ContestHub() {
       return;
     }
 
-    setAvailableContests(prev => prev.filter(item => item.id !== contest.id));
-    setPendingContests(prev => [
-      {
-        ...contest,
-        cardType: "wait",
-        accentLabel: "심사중",
-        actionLabel: "승인 대기중",
-      },
-      ...prev,
-    ]);
-    setActiveCatalogTab("pending");
-    setFeedbackNotice(
-      `"${contest.title}" 참가 신청이 접수되었습니다. 관리자 승인 즉시 시즌 전용 ${contest.seedMoney} 대회 지갑이 자동 발급됩니다.`,
-    );
+    if (!memberCtx?.session) {
+      setFeedbackNotice("로그인 세션을 확인한 뒤 다시 시도해 주세요.");
+      return;
+    }
 
-    if (memberCtx?.session) {
+    try {
       const applicantNickname = memberCtx.snapshot.nickname ?? "";
-      void memberCtx.session
-        .authorized(cred => applyForContestSeason(contest.id, applicantNickname, cred.accessToken))
-        .then(() =>
-          memberCtx.session.authorized(cred => fetchMyContestOverview(cred.accessToken)),
-        )
-        .then(overview => {
-          if (overview) applyMyOverviewResponse(overview);
-        })
-        .catch(() => {
-          // Optimistic state already updated
-        });
+      await memberCtx.session.authorized(cred =>
+        applyForContestSeason(contest.id, applicantNickname, cred.accessToken),
+      );
+      setAvailableContests(prev => prev.filter(item => item.id !== contest.id));
+      setPendingContests(prev => [
+        {
+          ...contest,
+          cardType: "wait",
+          accentLabel: "심사중",
+          actionLabel: "승인 대기중",
+        },
+        ...prev,
+      ]);
+      setActiveCatalogTab("pending");
+      setFeedbackNotice(
+        `"${contest.title}" 참가 신청이 접수되었습니다. 관리자 승인 즉시 시즌 전용 ${contest.seedMoney} 대회 지갑이 자동 발급됩니다.`,
+      );
+      const overview = await memberCtx.session.authorized(cred =>
+        fetchMyContestOverview(cred.accessToken),
+      );
+      if (overview) applyMyOverviewResponse(overview);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "참가 신청 처리에 실패했습니다. 모집 기간 및 계정 상태를 확인해 주세요.";
+      setFeedbackNotice(message);
     }
   }
 
@@ -1103,7 +1146,7 @@ export function ContestHub() {
         {/* 상단 대회 헤더 */}
         <header className="flex flex-col gap-4 border-b border-gray-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-[#0058FF]">
+            <div className="inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-[#0058FF]">
               <V1IconTrophy className="h-3.5 w-3.5" />
               <span>정규 시즌 선물 모의투자 랭킹전</span>
             </div>
@@ -1142,7 +1185,7 @@ export function ContestHub() {
             <button
               type="button"
               onClick={() => setFeedbackNotice(null)}
-              className="shrink-0 rounded-lg px-2 py-1 text-xs font-bold text-gray-500 hover:bg-blue-100"
+              className="shrink-0 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-bold text-gray-500 hover:bg-blue-100"
             >
               닫기
             </button>
@@ -1229,6 +1272,24 @@ export function ContestHub() {
               contests={myOngoingContests}
               onBlockedEnter={message => setFeedbackNotice(message)}
             />
+
+            {otherPublicRunningContests.length > 0 ? (
+              <section data-public-contest-stage="running-other" className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <span className="h-4 w-1 rounded-full bg-indigo-500" />
+                  <h2 className="text-base font-black text-gray-900">현재 진행 중인 전체 대회</h2>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                  {otherPublicRunningContests.map((contest, idx) => (
+                    <ContestListCard
+                      key={contest.id}
+                      contest={contest}
+                      defaultExpanded={idx === 0}
+                    />
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
             {/* 2. 중단 3탭 (참가 신청 가능 | 참가 심사 중 | 종료 및 반려) */}
             <section data-contest-section="catalog" className="space-y-5">
@@ -1324,39 +1385,43 @@ export function ContestHub() {
                 <h2 className="text-lg sm:text-xl font-black text-gray-900">
                   시즌별 대회 리더보드 & 정산 순위
                 </h2>
-                <span
-                  className={cn(
-                    "inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold",
-                    currentLeaderboard.statusLabel === "실시간 랭킹"
-                      ? "bg-blue-50 text-[#0058FF]"
-                      : "bg-emerald-50 text-emerald-700",
-                  )}
-                >
-                  {currentLeaderboard.statusLabel}
-                </span>
+                {currentLeaderboard ? (
+                  <span
+                    className={cn(
+                      "inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold",
+                      currentLeaderboard.statusLabel === "실시간 랭킹"
+                        ? "bg-blue-50 text-[#0058FF]"
+                        : "bg-emerald-50 text-emerald-700",
+                    )}
+                  >
+                    {currentLeaderboard.statusLabel}
+                  </span>
+                ) : null}
               </div>
               <p className="text-xs font-medium text-gray-500">
                 시즌 진행 기간에는 실시간 평가 수익률을 집계하며, 대회 종료 후에는 마크가격 스냅샷 정산을 거친 최종 올림픽 순위가 영구 박제됩니다.
               </p>
             </div>
 
-            <div className="w-full sm:w-80 shrink-0">
-              <select
-                aria-label="리더보드 시즌 선택"
-                value={selectedLeaderboardSeasonId}
-                onChange={event => {
-                  setSelectedLeaderboardSeasonId(Number(event.currentTarget.value));
-                  setVisibleRankCount(5);
-                }}
-                className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-              >
-                {leaderboardSeasons.map(season => (
-                  <option key={season.seasonId} value={season.seasonId}>
-                    {season.seasonTitle} · {season.statusLabel}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {leaderboardSeasons.length > 0 ? (
+              <div className="w-full sm:w-80 shrink-0">
+                <select
+                  aria-label="리더보드 시즌 선택"
+                  value={selectedLeaderboardSeasonId}
+                  onChange={event => {
+                    setSelectedLeaderboardSeasonId(Number(event.currentTarget.value));
+                    setVisibleRankCount(5);
+                  }}
+                  className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                >
+                  {leaderboardSeasons.map(season => (
+                    <option key={season.seasonId} value={season.seasonId}>
+                      {season.seasonTitle} · {season.statusLabel}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
           </div>
 
           {/* TOP 1 ~ 3 메달 카드 3열 그리드 */}
@@ -1390,7 +1455,7 @@ export function ContestHub() {
                   <div className="flex items-center justify-between gap-2">
                     <span
                       className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-black",
+                        "inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-black",
                         medalStyle.badge,
                       )}
                     >
@@ -1422,8 +1487,17 @@ export function ContestHub() {
                       </div>
                     </Link>
 
-                    <div className="text-right">
-                      <p className="text-lg font-black text-red-500 tabular-nums">
+                    <div className="text-right shrink-0 whitespace-nowrap">
+                      <p
+                        className={cn(
+                          "text-lg font-black tabular-nums",
+                          entry.roi.startsWith("-")
+                            ? "text-[#0058FF]"
+                            : entry.roi === "0.00%"
+                              ? "text-gray-700"
+                              : "text-red-500",
+                        )}
+                      >
                         {entry.roi}
                       </p>
                       <p className="text-xs font-bold text-gray-600 tabular-nums">
@@ -1451,7 +1525,17 @@ export function ContestHub() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
-                {visibleEntries.map(entry => (
+                {visibleEntries.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                    >
+                      집계된 시즌 리더보드 참가 내역이 없습니다.
+                    </td>
+                  </tr>
+                ) : (
+                  visibleEntries.map(entry => (
                   <tr key={entry.memberId} className="hover:bg-gray-50">
                     <td className="px-4 py-3.5 font-black text-gray-900 tabular-nums whitespace-nowrap">
                       {entry.rank}위
@@ -1478,7 +1562,11 @@ export function ContestHub() {
                     <td
                       className={cn(
                         "px-4 py-3.5 text-right font-bold tabular-nums whitespace-nowrap",
-                        entry.isPositive ? "text-red-500" : "text-[#0058FF]",
+                        entry.realizedPnl.startsWith("-")
+                          ? "text-[#0058FF]"
+                          : entry.realizedPnl === "0.00 USDT"
+                            ? "text-gray-700"
+                            : "text-red-500",
                       )}
                     >
                       {entry.realizedPnl}
@@ -1486,7 +1574,11 @@ export function ContestHub() {
                     <td
                       className={cn(
                         "px-4 py-3.5 text-right font-black tabular-nums whitespace-nowrap",
-                        entry.isPositive ? "text-red-500" : "text-[#0058FF]",
+                        entry.roi.startsWith("-")
+                          ? "text-[#0058FF]"
+                          : entry.roi === "0.00%"
+                            ? "text-gray-700"
+                            : "text-red-500",
                       )}
                     >
                       {entry.roi}
@@ -1495,12 +1587,13 @@ export function ContestHub() {
                       {entry.tradeCount}회 · {entry.winRate}
                     </td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
             </table>
           </div>
 
-          {visibleRankCount < currentLeaderboard.entries.length ? (
+          {currentLeaderboard && visibleRankCount < currentLeaderboard.entries.length ? (
             <div className="flex justify-center pt-2">
               <V1Button
                 variant="white"

@@ -326,7 +326,7 @@ export function AdminCommunity() {
             <button
               type="button"
               onClick={() => setActionToast(null)}
-              className="rounded px-2 py-0.5 text-[11px] font-black text-blue-700 hover:bg-blue-100"
+              className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px] font-black text-blue-700 hover:bg-blue-100"
             >
               닫기
             </button>
@@ -334,8 +334,12 @@ export function AdminCommunity() {
         ) : null}
 
         {/* 검색 및 필터 바 */}
-        <section
+        <form
           aria-label="커뮤니티 검색 필터"
+          onSubmit={e => {
+            e.preventDefault();
+            handleApplySearch();
+          }}
           className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm space-y-4"
         >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -443,14 +447,13 @@ export function AdminCommunity() {
               초기화
             </button>
             <button
-              type="button"
-              onClick={handleApplySearch}
+              type="submit"
               className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl bg-[#0058FF] px-4 text-xs font-black text-white hover:bg-[#0047D1]"
             >
               조회하기
             </button>
           </div>
-        </section>
+        </form>
 
         {/* 게시글 테이블 / 댓글 테이블 */}
         {subTab === "posts" ? (

@@ -37,7 +37,7 @@ function UploadLimitAlertModal({
       onClose={onClose}
       title="첨부파일 업로드 제한 안내"
       subtitle="업로드할 수 없는 파일이 포함되어 제외되었습니다."
-      maxWidth="max-w-md"
+      maxWidth="448px"
     >
       <div className="space-y-4">
         <div
@@ -233,10 +233,12 @@ export function CommunityImageUploadSlot({
   files,
   onChange,
   onInspectImage,
+  maxFiles = 4,
 }: {
   files: SelectedS3File[];
   onChange: (next: SelectedS3File[]) => void;
   onInspectImage?: (file: SelectedS3File) => void;
+  maxFiles?: number;
 }) {
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -253,10 +255,15 @@ export function CommunityImageUploadSlot({
     setError(null);
     if (picked.length === 0) return;
 
+    const allowedMax = Math.max(0, Math.min(4, maxFiles));
     const next: SelectedS3File[] = [...files];
     for (const file of picked) {
-      if (next.length >= 4) {
-        reportError("이미지는 게시글당 최대 4장까지 첨부할 수 있습니다.");
+      if (next.length >= allowedMax) {
+        reportError(
+          allowedMax < 4
+            ? `기존 이미지를 포함해 게시글당 최대 4장까지 첨부할 수 있습니다. (추가 가능 ${allowedMax}장)`
+            : "이미지는 게시글당 최대 4장까지 첨부할 수 있습니다.",
+        );
         break;
       }
       if (file.type.startsWith("video/")) {
@@ -311,14 +318,21 @@ export function CommunityImageUploadSlot({
   return (
     <div className="ym-s3-community-slot" data-s3-slot="community-post-images">
       <div className="ym-s3-community-bar">
-        <label htmlFor={inputId} className="ym-file-trigger-inline">
-          + 차트·포지션 이미지 첨부 ({files.length}/4)
+        <label
+          htmlFor={Math.max(0, Math.min(4, maxFiles)) > 0 ? inputId : undefined}
+          aria-disabled={files.length >= Math.max(0, Math.min(4, maxFiles))}
+          className={`ym-file-trigger-inline whitespace-nowrap shrink-0 ${
+            files.length >= Math.max(0, Math.min(4, maxFiles)) ? "opacity-50" : "cursor-pointer"
+          }`}
+        >
+          + 차트·포지션 이미지 첨부 ({files.length}/{Math.max(0, Math.min(4, maxFiles))})
         </label>
         <input
           ref={fileInputRef}
           id={inputId}
           type="file"
           multiple
+          disabled={files.length >= Math.max(0, Math.min(4, maxFiles))}
           accept="image/jpeg,image/png,image/webp,image/gif"
           className="sr-only"
           onChange={handleSelect}

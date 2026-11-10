@@ -78,8 +78,8 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
     </form>;
   return <div className="position-close-entry" data-layout={layout}>
     {layout==="row" && <div className="position-close-actions">
-      <button ref={partialTrigger} type="button" disabled={locked} aria-label={`${symbol} ${position.side} 부분 청산`} aria-haspopup="dialog" aria-controls={`${prefix}-partial`} onClick={openPartial}>부분 청산</button>
-      <button ref={fullTrigger} type="button" disabled={locked||!fullAvailable} aria-label={`${symbol} ${position.side} 전체 청산`} aria-haspopup="dialog" aria-controls={`${prefix}-full`} title={!fullAvailable ? "예약된 청산 주문을 먼저 취소해 주세요." : undefined} onClick={()=>{edit();dialog.current?.showModal();}}>전체 청산</button>
+      <button ref={partialTrigger} type="button" className="whitespace-nowrap shrink-0" disabled={locked} aria-label={`${symbol} ${position.side} 부분 청산`} aria-haspopup="dialog" aria-controls={`${prefix}-partial`} onClick={openPartial}>부분 청산</button>
+      <button ref={fullTrigger} type="button" className="whitespace-nowrap shrink-0" disabled={locked||!fullAvailable} aria-label={`${symbol} ${position.side} 전체 청산`} aria-haspopup="dialog" aria-controls={`${prefix}-full`} title={!fullAvailable ? "예약된 청산 주문을 먼저 취소해 주세요." : undefined} onClick={()=>{edit();dialog.current?.showModal();}}>전체 청산</button>
     </div>}
     {layout==="row"&&!fullAvailable && <p className="order-input-hint">청산 예약 중 · 전체 청산은 예약 취소 후 가능합니다.</p>}
     {layout==="row" ? <dialog ref={partialDialog} id={`${prefix}-partial`} className="position-close-dialog position-partial-dialog" aria-modal="true" aria-labelledby={`${prefix}-partial-title`}

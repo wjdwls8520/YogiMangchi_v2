@@ -10,7 +10,9 @@ export function SiteFooter() {
     return null;
   }
 
-  const isTrading = pathname.startsWith("/trading");
+  const isTrading =
+    pathname.startsWith("/trading") ||
+    (pathname.startsWith("/contest/") && pathname.endsWith("/trading"));
   const linkClass = isTrading
     ? "transition-colors hover:text-white"
     : "transition-colors hover:text-gray-900";
@@ -24,7 +26,7 @@ export function SiteFooter() {
       }
     >
       <nav aria-label="Footer">
-        <ul className="flex items-center justify-center gap-6">
+        <ul className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 whitespace-nowrap px-4">
           <li>
             <Link href="/terms" className={linkClass}>
               이용약관

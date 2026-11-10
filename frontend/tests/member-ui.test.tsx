@@ -34,8 +34,10 @@ import {
   parseNewsPage,
   parseNewsReaction,
   parseNewsSentimentSummary,
+  SYMBOL_FILTER_TAGS,
   parsePublicMemberPortfolio,
   parseReportReasons,
+  parseSharedPositionSnapshot,
   readCommunityOrPublic,
 } from "../src/features/member/api/community-news";
 import {
@@ -50,7 +52,7 @@ import {
   markMemberViewedNews,
   sortNewsItems,
 } from "../src/features/member/components/news-feed";
-import { CommunityBoard } from "../src/features/member/components/community-board";
+import { CommunityBoard, SHAREABLE_POSITIONS } from "../src/features/member/components/community-board";
 import { MainPortal, mapRedisTickersToPopularCoins } from "../src/features/member/components/main-portal";
 import {
   MemberSignupPage,
@@ -97,10 +99,13 @@ import {
   fetchPublicContestLeaderboard,
   fetchPublicContestSeasons,
   fetchPublicMemberContestSeasons,
+  formatContestDateTime,
   formatContestSignedRoi,
   formatContestSignedUsdt,
   formatContestUsdt,
   formatContestWinRate,
+  toDatetimeLocalInput,
+  toIsoInstantFromInput,
   patchAdminContestSeasonStatus,
   rejectAdminContestApplicant,
   settleAdminContestSeason,
@@ -539,6 +544,7 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
         commentCount: 2,
         likedByMe: true,
         mine: true,
+        sharedPosition: SHAREABLE_POSITIONS[0],
         createdAt: "2026-11-01T10:00:00Z",
         updatedAt: "2026-11-01T10:00:00Z",
       },
@@ -1726,7 +1732,7 @@ test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커�
                 likedByMe: false,
                 reportedByMe: false,
                 mine: false,
-                sharedPosition: null,
+                sharedPosition: SHAREABLE_POSITIONS[0],
                 files: [],
                 createdAt: "2026-11-10 10:00",
                 updatedAt: "2026-11-10 10:00",
@@ -2080,9 +2086,38 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(subheaderHtml, /대회 가용증거금/);
     assert.match(subheaderHtml, /CONTEST MODE/);
 
-    // 5. 관리자 대회 목록 (/admin/contest) 및 시즌 생성/수정 모달 (ContestCreateEditModal)
-    const adminListHtml = renderToStaticMarkup(
+    // 5. 관리자 대회 목록 (/admin/contest) 권한 가드 및 시즌 생성/수정 모달 (ContestCreateEditModal)
+    const blockedMemberAdminHtml = renderToStaticMarkup(
       <MemberProvider session={loggedInSession} client={client}>
+        <AdminContestList />
+      </MemberProvider>,
+    );
+    assert.match(blockedMemberAdminHtml, /data-admin-guard="blocked"/);
+    assert.equal(blockedMemberAdminHtml.includes("data-admin-edit-season"), false);
+
+    const adminJwtToken = `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: "1", roles: ["ROLE_ADMIN"] })).toString("base64url")}.sig`;
+    const adminContestSession = createMemberSession(
+      "http://localhost:8080",
+      async url =>
+        String(url).endsWith("csrf")
+          ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+          : Response.json({
+              memberId: 1,
+              nickname: "구름관리자",
+              accessToken: adminJwtToken,
+              tokenType: "Bearer",
+              expiresIn: 900,
+              expiresAt: new Date(epoch + 900000).toISOString(),
+            }),
+      () => epoch,
+      fn => fn(),
+      () => true,
+      () => null,
+    );
+    await adminContestSession.restore();
+
+    const adminListHtml = renderToStaticMarkup(
+      <MemberProvider session={adminContestSession} client={client}>
         <AdminContestList />
       </MemberProvider>,
     );
@@ -2128,7 +2163,7 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
 
     // 6. 관리자 대회 시즌 상세 및 청크 500 정산/신청자 운영 (/admin/contest/[seasonId])
     const adminDetailHtml = renderToStaticMarkup(
-      <MemberProvider session={loggedInSession} client={client}>
+      <MemberProvider session={adminContestSession} client={client}>
         <AdminContestDetail seasonId={202602} />
       </MemberProvider>,
     );
@@ -2769,11 +2804,78 @@ test("실시간 뉴스 투자 심리는 SSE 센티먼트 요약과 Redis 마켓 
   }
 });
 
+test("전역 포인터 커서, KST 대회 시각 변환, 12종목 포지션 스냅샷 파서 및 포지션 미첨부 글 비위조 검증", () => {
+  const globalsCss = fs.readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
+  assert.match(globalsCss, /button:not\(:disabled\)[\s\S]*?cursor:\s*pointer;/);
+  assert.equal(globalsCss.includes("not-allowed"), false);
 
+  // KST(UTC+9) 시각 변환 및 datetime-local 왕복 검증
+  assert.equal(formatContestDateTime("2026-11-10T15:00:00Z"), "2026.11.11 00:00");
+  assert.equal(toDatetimeLocalInput("2026-11-10T15:00:00Z"), "2026-11-11T00:00");
+  assert.equal(toIsoInstantFromInput("2026-11-11T00:00"), "2026-11-10T15:00:00.000Z");
 
+  // 12종목 필터 태그 지원 및 null/빈 청산가·마크가 안전 파싱
+  assert.equal(SYMBOL_FILTER_TAGS.length, 13);
+  assert.equal(SYMBOL_FILTER_TAGS.includes("DOGE"), true);
+  assert.equal(SYMBOL_FILTER_TAGS.includes("PEPE"), true);
+  assert.equal(SYMBOL_FILTER_TAGS.includes("SHIB"), true);
 
+  const parsedSnap = parseSharedPositionSnapshot({
+    id: "MOCK_POS_42",
+    marketLabel: "모의투자 선물",
+    symbol: "DOGE",
+    pair: "DOGEUSDT",
+    side: "SHORT",
+    leverage: 5,
+    entryPrice: "0.3820",
+    markPrice: "",
+    liquidationPrice: null,
+    roePct: "-3.12%",
+    pnlUsdt: "-15.60 USDT",
+    positive: false,
+  });
+  assert.equal(parsedSnap.markPrice, "-");
+  assert.equal(parsedSnap.liquidationPrice, "-");
+  assert.equal(parsedSnap.positive, false);
 
-
-
-
-
+  // sharedPosition이 null인 POSITION 카테고리 글은 가짜 포지션 카드를 위조 렌더링하지 않는다
+  const client = new QueryClient();
+  try {
+    const textOnlyPositionPostHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialPage={{
+            items: [
+              {
+                id: 999,
+                memberId: 7,
+                authorNickname: "트레이더7",
+                authorProfileImgUrl: null,
+                authorWithdrawn: false,
+                category: "POSITION",
+                symbolTag: "BTC",
+                title: "포지션 스냅샷 없이 올린 텍스트 관점 글",
+                content: "진입 전 관점 공유입니다.",
+                likeCount: 0,
+                commentCount: 0,
+                likedByMe: false,
+                reportedByMe: false,
+                mine: false,
+                sharedPosition: null,
+                files: [],
+                createdAt: "2026-11-10T15:00:00Z",
+                updatedAt: "2026-11-10T15:00:00Z",
+              },
+            ],
+            hasNext: false,
+            nextCursorId: null,
+          }}
+        />
+      </MemberProvider>,
+    );
+    assert.equal(textOnlyPositionPostHtml.includes("data-shared-position="), false);
+    assert.match(textOnlyPositionPostHtml, /2026\.11\.11 00:00/);
+  } finally {
+    client.clear();
+  }
+});

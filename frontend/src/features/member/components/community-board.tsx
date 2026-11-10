@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberShell } from "./member-views";
 import { useMember } from "./member-provider";
@@ -20,6 +20,7 @@ import {
   parseCommunityPostPage,
   parseCommunityReport,
   parseLatestPostsCheck,
+  parsePublicMemberPortfolio,
   parseReportReasons,
   readCommunityOrPublic,
   type CommunityCategory,
@@ -30,6 +31,16 @@ import {
   type CommunitySort,
   type SharedPositionSnapshot,
 } from "../api/community-news";
+import { tradingJson } from "../../trading/api/client";
+import { formatDecimal, parseSummary } from "../../trading/api/account";
+import { parseSymbols } from "../../trading/market/catalog";
+import {
+  fetchMyContestSeasons,
+  fetchPublicContestLeaderboard,
+  fetchPublicContestSeasons,
+  formatContestSignedRoi,
+  resolveTradingContestBaseUrl,
+} from "../../contest/api/contest-client";
 import { DimModal } from "./dim-modal";
 import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
 import {
@@ -73,7 +84,69 @@ const SELECTABLE_CATEGORIES: readonly CommunityCategory[] = [
   "FREE",
 ];
 
-const SELECTABLE_SYMBOLS = SYMBOL_FILTER_TAGS.filter((s): s is "BTC" | "ETH" | "SOL" | "XRP" => Boolean(s));
+const SELECTABLE_SYMBOLS = SYMBOL_FILTER_TAGS.filter(
+  (s): s is Exclude<(typeof SYMBOL_FILTER_TAGS)[number], ""> => Boolean(s),
+);
+
+function formatCommunityTimestamp(value: string): string {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value;
+  const kst = new Date(parsed + 9 * 60 * 60 * 1000);
+  const y = kst.getUTCFullYear();
+  const m = String(kst.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(kst.getUTCDate()).padStart(2, "0");
+  const hh = String(kst.getUTCHours()).padStart(2, "0");
+  const mm = String(kst.getUTCMinutes()).padStart(2, "0");
+  return `${y}.${m}.${d} ${hh}:${mm}`;
+}
+
+function parseScaledBigInt8(value: string | null | undefined): bigint | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return null;
+  const neg = trimmed.startsWith("-");
+  const [whole, frac = ""] = trimmed.replace(/^-/, "").split(".");
+  const scaled = BigInt(whole) * BigInt(100000000) + BigInt(frac.padEnd(8, "0").slice(0, 8));
+  return neg ? -scaled : scaled;
+}
+
+function computeRoiPctFromStrings(pnlRaw: string | null | undefined, marginRaw: string): string {
+  const pnl = parseScaledBigInt8(pnlRaw);
+  const margin = parseScaledBigInt8(marginRaw);
+  const zero = BigInt(0);
+  if (pnl === null || margin === null || margin <= zero) return "0.00%";
+  const neg = pnl < zero;
+  const absPnl = neg ? -pnl : pnl;
+  const bps = (absPnl * BigInt(10000) + margin / BigInt(2)) / margin;
+  const whole = (bps / BigInt(100)).toString();
+  const frac = (bps % BigInt(100)).toString().padStart(2, "0");
+  if (bps === zero) return "0.00%";
+  return `${neg ? "-" : "+"}${whole}.${frac}%`;
+}
+
+function formatSnapshotSignedUsdt(raw: string | null | undefined): string {
+  if (!raw) return "0.00 USDT";
+  const trimmed = raw.trim();
+  const formatted = formatDecimal(trimmed.replace(/^\+/, ""));
+  if (formatted === "—") return trimmed.endsWith("USDT") ? trimmed : `${trimmed} USDT`;
+  if (formatted === "0.00" || formatted === "-0.00") return "0.00 USDT";
+  return formatted.startsWith("-") ? `${formatted} USDT` : `+${formatted} USDT`;
+}
+
+function formatSnapshotSignedPct(raw: string | null | undefined): string {
+  if (!raw) return "0.00%";
+  const cleaned = raw.trim().replace(/%$/, "");
+  const formatted = formatDecimal(cleaned.replace(/^\+/, ""));
+  if (formatted === "—") return raw.endsWith("%") ? raw : `${raw}%`;
+  if (formatted === "0.00" || formatted === "-0.00") return "0.00%";
+  return formatted.startsWith("-") ? `${formatted}%` : `+${formatted}%`;
+}
+
+function formatSnapshotPrice(raw: string | null | undefined): string {
+  if (!raw || raw.trim() === "" || raw.trim() === "-" || raw.trim() === "0") return "-";
+  const formatted = formatDecimal(raw.trim());
+  return formatted === "—" ? raw.trim() : formatted;
+}
 
 export const SHAREABLE_POSITIONS: readonly SharedPositionSnapshot[] = [
   {
@@ -157,7 +230,18 @@ export function SharedPositionCard({
   snapshot: SharedPositionSnapshot;
   showPnlAmount?: boolean;
 }) {
-  const displayPnlAmount = snapshot.showPnlAmount !== undefined ? snapshot.showPnlAmount && showPnlAmount : showPnlAmount;
+  const displayPnlAmount =
+    snapshot.showPnlAmount !== undefined ? snapshot.showPnlAmount && showPnlAmount : showPnlAmount;
+  const isNegative = snapshot.roePct.trim().startsWith("-") || snapshot.pnlUsdt.trim().startsWith("-");
+  const hasNonZero = /[1-9]/.test(snapshot.roePct) || /[1-9]/.test(snapshot.pnlUsdt);
+  const pnlColorClass = isNegative
+    ? "text-[#1763B6]"
+    : hasNonZero && snapshot.positive
+      ? "text-[#E12343]"
+      : "text-gray-600";
+  const entryDisplay = snapshot.entryPrice === "-" ? "-" : `${snapshot.entryPrice} USDT`;
+  const markDisplay = snapshot.markPrice === "-" ? "-" : `${snapshot.markPrice} USDT`;
+  const liqDisplay = snapshot.liquidationPrice === "-" ? "-" : `${snapshot.liquidationPrice} USDT`;
   return (
     <div
       className="mt-3 rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4"
@@ -165,12 +249,12 @@ export function SharedPositionCard({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-[#0058FF]">
+          <span className="shrink-0 whitespace-nowrap rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-[#0058FF]">
             {snapshot.marketLabel}
           </span>
-          <strong className="text-sm font-black text-gray-900">{snapshot.pair} 무기한</strong>
+          <strong className="whitespace-nowrap text-sm font-black text-gray-900">{snapshot.pair} 무기한</strong>
           <span
-            className={`rounded-md px-2 py-0.5 text-[11px] font-black ${
+            className={`shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-black ${
               snapshot.side === "LONG"
                 ? "bg-[#2EBD85]/10 text-[#2EBD85]"
                 : "bg-[#F6465D]/10 text-[#F6465D]"
@@ -178,29 +262,17 @@ export function SharedPositionCard({
           >
             {snapshot.side} {snapshot.leverage}x
           </span>
-          <span className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-bold text-gray-500">
+          <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-bold text-gray-500">
             <span>원장 스냅샷 검증됨</span>
             <V1IconCheck className="h-3 w-3" />
           </span>
         </div>
 
-        <div className="flex items-baseline gap-1.5">
+        <div className="flex items-baseline gap-1.5 whitespace-nowrap">
           <span className="text-[11px] font-bold text-gray-400">수익률(ROE)</span>
-          <strong
-            className={`text-base font-black ${
-              snapshot.positive ? "text-[#E12343]" : "text-[#1763B6]"
-            }`}
-          >
-            {snapshot.roePct}
-          </strong>
+          <strong className={`text-base font-black ${pnlColorClass}`}>{snapshot.roePct}</strong>
           {displayPnlAmount && (
-            <span
-              className={`text-xs font-bold ${
-                snapshot.positive ? "text-[#E12343]" : "text-[#1763B6]"
-              }`}
-            >
-              ({snapshot.pnlUsdt})
-            </span>
+            <span className={`text-xs font-bold ${pnlColorClass}`}>({snapshot.pnlUsdt})</span>
           )}
         </div>
       </div>
@@ -208,15 +280,15 @@ export function SharedPositionCard({
       <div className="mt-3 grid grid-cols-1 gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-xs sm:grid-cols-3">
         <div>
           <span className="block text-[11px] font-bold text-gray-400">진입가</span>
-          <strong className="font-bold text-gray-900">{snapshot.entryPrice} USDT</strong>
+          <strong className="font-bold text-gray-900">{entryDisplay}</strong>
         </div>
         <div>
           <span className="block text-[11px] font-bold text-gray-400">공유 시점 현재가</span>
-          <strong className="font-bold text-gray-900">{snapshot.markPrice} USDT</strong>
+          <strong className="font-bold text-gray-900">{markDisplay}</strong>
         </div>
         <div>
           <span className="block text-[11px] font-bold text-gray-400">청산예정가</span>
-          <strong className="font-bold text-amber-600">{snapshot.liquidationPrice} USDT</strong>
+          <strong className="font-bold text-amber-600">{liqDisplay}</strong>
         </div>
       </div>
 
@@ -283,6 +355,7 @@ export function CommunityBoard({
   const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
   const [editDeleteFileIds, setEditDeleteFileIds] = useState<number[]>([]);
   const [editNewImages, setEditNewImages] = useState<SelectedS3File[]>([]);
+  const [editDetachSharedPosition, setEditDetachSharedPosition] = useState(false);
 
   const [editingComment, setEditingComment] = useState<CommunityComment | null>(null);
   const [replyParentId, setReplyParentId] = useState<number | null>(null);
@@ -305,16 +378,8 @@ export function CommunityBoard({
   const likingCommentIdsRef = useRef<Set<number>>(new Set());
   const isLoggedIn = snapshot.phase === "ready";
 
-  // V1 모달 상태 (글쓰기 모달 / 신고 모달)
-  const initialSharePos = (() => {
-    if (typeof window === "undefined") return null;
-    const shareSym = new URLSearchParams(window.location.search)
-      .get("sharePosition")
-      ?.toUpperCase();
-    if (!shareSym) return null;
-    return SHAREABLE_POSITIONS.find(pos => pos.symbol === shareSym) ?? SHAREABLE_POSITIONS[0];
-  })();
-  const [writeModalOpen, setWriteModalOpen] = useState(() => Boolean(initialSharePos));
+  const tradingBase = resolveTradingContestBaseUrl();
+  const [writeModalOpen, setWriteModalOpen] = useState(false);
   const [reportTarget, setReportTarget] = useState<{
     type: "POST" | "REPLY";
     id: number;
@@ -326,19 +391,185 @@ export function CommunityBoard({
     V1_REPORT_REASONS[0].description,
   );
   const [modalImages, setModalImages] = useState<SelectedS3File[]>([]);
-  const [contestSeason, setContestSeason] = useState("SEASON_1");
+  const [contestSeason, setContestSeason] = useState("");
+  const shareUrlHandledRef = useRef(false);
 
   // 모달 글쓰기 포지션 공유 상태
-  const [modalCategory, setModalCategory] = useState<CommunityCategory>(() =>
-    initialSharePos ? "POSITION" : "FREE",
-  );
-  const [modalSymbolTag, setModalSymbolTag] = useState<string>(() =>
-    initialSharePos ? initialSharePos.symbol : "BTC",
-  );
-  const [modalPositionId, setModalPositionId] = useState<string>(() =>
-    initialSharePos ? initialSharePos.id : "",
-  );
+  const [modalCategory, setModalCategory] = useState<CommunityCategory>("FREE");
+  const [modalSymbolTag, setModalSymbolTag] = useState<string>("");
+  const [modalPositionId, setModalPositionId] = useState<string>("");
   const [modalShowPnlAmount, setModalShowPnlAmount] = useState<boolean>(true);
+
+  function closeAndResetWriteModal() {
+    setWriteModalOpen(false);
+    setModalPositionId("");
+    setModalCategory("FREE");
+    setModalSymbolTag("");
+    setModalShowPnlAmount(true);
+    setModalImages([]);
+  }
+
+  // 로그인 회원의 실제 오픈 포지션 조회 (모의투자 선물 + 진행 중 시즌 대회)
+  const shareablePositionsQuery = useQuery({
+    queryKey: ["community-shareable-positions", tradingBase, snapshot.memberId, snapshot.generation],
+    enabled: isLoggedIn && Boolean(snapshot.memberId),
+    staleTime: 5_000,
+    queryFn: async ({ signal }) => {
+      const results: SharedPositionSnapshot[] = [];
+      try {
+        const portfolio = parsePublicMemberPortfolio(
+          await tradingJson(tradingBase, `portfolios/members/${snapshot.memberId}`, { signal }),
+        );
+        if (portfolio.accountExists) {
+          for (const pos of portfolio.positions) {
+            const sym = pos.symbol.toUpperCase().replace(/USDT$/i, "");
+            const pair = pos.symbol.toUpperCase().endsWith("USDT")
+              ? pos.symbol.toUpperCase()
+              : `${sym}USDT`;
+            const roePct = formatSnapshotSignedPct(pos.roePct);
+            const pnlUsdt = formatSnapshotSignedUsdt(pos.unrealizedPnl);
+            results.push({
+              id: `MOCK_POS_${pos.id}`,
+              marketLabel: "모의투자 선물",
+              symbol: sym,
+              pair,
+              side: pos.side,
+              leverage: pos.leverage,
+              entryPrice: formatSnapshotPrice(pos.entryPrice),
+              markPrice: formatSnapshotPrice(pos.markPrice),
+              liquidationPrice: formatSnapshotPrice(pos.liquidationPrice),
+              roePct,
+              pnlUsdt,
+              positive: !roePct.startsWith("-") && !pnlUsdt.startsWith("-"),
+              showPnlAmount: true,
+              verified: true,
+            });
+          }
+        }
+      } catch {
+        // Ignore mock portfolio lookup failure so contest positions still load
+      }
+
+      try {
+        const myContest = await session.authorized(cred =>
+          fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
+        );
+        const liveSeasons = myContest.participatingSeasons.filter(
+          item => item.displayStatus === "LIVE",
+        );
+        if (liveSeasons.length > 0) {
+          const symbols = parseSymbols(await tradingJson(tradingBase, "symbols", { signal }));
+          for (const season of liveSeasons) {
+            try {
+              const rawSummary = (await session.authorized(cred =>
+                tradingJson(
+                  tradingBase,
+                  `contest/seasons/${season.seasonId}/account/summary`,
+                  { token: cred.accessToken, signal },
+                ),
+              )) as Record<string, unknown>;
+              const accId =
+                typeof rawSummary.accountId === "number" ? rawSummary.accountId : null;
+              if (accId === null) continue;
+              const summary = parseSummary(rawSummary, accId);
+              for (const pos of summary.positions) {
+                const matchedSym = symbols.find(s => s.id === pos.tradingSymbolId);
+                const rawSym = matchedSym?.symbol?.toUpperCase().replace(/USDT$/i, "");
+                const sym = rawSym || `SYM${pos.tradingSymbolId}`;
+                const pair = `${sym}USDT`;
+                const roePct = computeRoiPctFromStrings(pos.unrealizedPnl, pos.margin);
+                const pnlUsdt = formatSnapshotSignedUsdt(pos.unrealizedPnl);
+                results.push({
+                  id: `CONTEST_${season.seasonId}_POS_${pos.id}`,
+                  marketLabel: season.title.slice(0, 48),
+                  symbol: sym,
+                  pair,
+                  side: pos.side === "SHORT" ? "SHORT" : "LONG",
+                  leverage: pos.leverage,
+                  entryPrice: formatSnapshotPrice(pos.entryPrice),
+                  markPrice: formatSnapshotPrice(pos.markPrice),
+                  liquidationPrice: formatSnapshotPrice(pos.liquidationPrice),
+                  roePct,
+                  pnlUsdt,
+                  positive: !roePct.startsWith("-") && !pnlUsdt.startsWith("-"),
+                  showPnlAmount: true,
+                  verified: true,
+                });
+              }
+            } catch {
+              // Skip individual season error
+            }
+          }
+        }
+      } catch {
+        // Ignore contest lookup failure
+      }
+      return results;
+    },
+  });
+
+  const liveShareablePositions = useMemo(() => shareablePositionsQuery.data ?? [], [shareablePositionsQuery.data]);
+
+  // URL ?sharePosition=BTC 파라미터 진입 처리 (Hydration 안전 useEffect)
+  useEffect(() => {
+    if (typeof window === "undefined" || shareUrlHandledRef.current || !isLoggedIn) return;
+    if (!shareablePositionsQuery.isSuccess) return;
+    const params = new URLSearchParams(window.location.search);
+    const shareSym = params.get("sharePosition")?.trim().toUpperCase();
+    if (!shareSym) return;
+    shareUrlHandledRef.current = true;
+    const matched =
+      liveShareablePositions.find(
+        pos => pos.symbol === shareSym || pos.pair === shareSym || pos.id === shareSym,
+      ) ?? liveShareablePositions[0];
+    params.delete("sharePosition");
+    const nextSearch = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`,
+    );
+    const timer = window.setTimeout(() => {
+      setModalCategory("POSITION");
+      if (matched) {
+        setModalPositionId(matched.id);
+        setModalSymbolTag(matched.symbol);
+      } else if (SELECTABLE_SYMBOLS.includes(shareSym as (typeof SELECTABLE_SYMBOLS)[number])) {
+        setModalSymbolTag(shareSym);
+      }
+      setWriteModalOpen(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isLoggedIn, liveShareablePositions, shareablePositionsQuery.isSuccess]);
+
+  // 우측 사이드바 실시간 대회투자 TOP5 조회
+  const sidebarContestSeasonsQuery = useQuery({
+    queryKey: ["community-sidebar-contest-seasons", tradingBase],
+    staleTime: 60_000,
+    queryFn: async ({ signal }) => fetchPublicContestSeasons({ baseUrl: tradingBase, signal }),
+  });
+
+  const sidebarSeasons = sidebarContestSeasonsQuery.data
+    ? [...sidebarContestSeasonsQuery.data.running, ...sidebarContestSeasonsQuery.data.finished]
+    : [];
+
+  const activeSidebarSeasonId = (() => {
+    const num = Number(contestSeason);
+    if (Number.isFinite(num) && sidebarSeasons.some(s => s.id === num)) return num;
+    return sidebarSeasons[0]?.id ?? null;
+  })();
+
+  const sidebarLeaderboardQuery = useQuery({
+    queryKey: ["community-sidebar-contest-top5", tradingBase, activeSidebarSeasonId],
+    enabled: activeSidebarSeasonId !== null,
+    staleTime: 30_000,
+    queryFn: async ({ signal }) =>
+      fetchPublicContestLeaderboard(activeSidebarSeasonId!, {
+        baseUrl: tradingBase,
+        size: 5,
+        signal,
+      }),
+  });
 
   const [sharedPositionsByPostId, setSharedPositionsByPostId] = useState<
     Record<number, { snapshot: SharedPositionSnapshot; showPnlAmount: boolean }>
@@ -495,10 +726,11 @@ export function CommunityBoard({
     mutationFn: async (payload: {
       postId: number;
       category: CommunityCategory;
-      symbolTag: string | null;
+      symbolTag: string;
       title: string;
       content: string;
       sharedPosition?: SharedPositionSnapshot | null;
+      clearSharedPosition?: boolean;
       deleteFileIds?: number[];
       files?: SelectedS3File[];
     }) => {
@@ -508,10 +740,12 @@ export function CommunityBoard({
       if (rawFiles.length > 0) {
         const formData = new FormData();
         formData.append("category", payload.category);
-        if (payload.symbolTag) formData.append("symbolTag", payload.symbolTag);
+        formData.append("symbolTag", payload.symbolTag);
         formData.append("title", payload.title);
         formData.append("content", payload.content);
-        if (payload.sharedPosition) {
+        if (payload.clearSharedPosition) {
+          formData.append("clearSharedPosition", "true");
+        } else if (payload.sharedPosition) {
           formData.append("sharedPosition", JSON.stringify(payload.sharedPosition));
         }
         for (const fileId of payload.deleteFileIds ?? []) {
@@ -535,9 +769,11 @@ export function CommunityBoard({
             symbolTag: payload.symbolTag,
             title: payload.title,
             content: payload.content,
-            ...(payload.sharedPosition !== undefined
-              ? { sharedPosition: payload.sharedPosition }
-              : {}),
+            ...(payload.clearSharedPosition
+              ? { clearSharedPosition: true }
+              : payload.sharedPosition !== undefined
+                ? { sharedPosition: payload.sharedPosition }
+                : {}),
             ...(payload.deleteFileIds && payload.deleteFileIds.length > 0
               ? { deleteFileIds: payload.deleteFileIds }
               : {}),
@@ -545,10 +781,18 @@ export function CommunityBoard({
         }),
       );
     },
-    onSuccess: () => {
+    onSuccess: (_updated, variables) => {
+      if (variables.clearSharedPosition) {
+        setSharedPositionsByPostId(prev => {
+          const next = { ...prev };
+          delete next[variables.postId];
+          return next;
+        });
+      }
       setEditingPost(null);
       setEditDeleteFileIds([]);
       setEditNewImages([]);
+      setEditDetachSharedPosition(false);
       setFeedback("게시글이 수정되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
@@ -559,10 +803,15 @@ export function CommunityBoard({
   const deletePostMutation = useMutation({
     mutationFn: async (postId: number) =>
       session.request(`/community/posts/${postId}`, { method: "DELETE" }),
-    onSuccess: () => {
+    onSuccess: (_data, postId) => {
+      setPrependedPosts(prev => prev.filter(p => p.id !== postId));
+      setExtraPosts(prev => prev.filter(p => p.id !== postId));
       setFeedback("게시글이 삭제되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
+      if (isDetailView && typeof window !== "undefined") {
+        window.location.href = new URL(`/community/${v1Tab}`, window.location.origin).href;
+      }
     },
     onError: error => setFeedback(contentMessage(error)),
   });
@@ -797,7 +1046,7 @@ export function CommunityBoard({
     const sharedPositionId = String(data.get("sharedPositionId") ?? "");
     const showPnlAmount = data.get("showPnlAmount") !== null;
     const matchedPosition =
-      SHAREABLE_POSITIONS.find(pos => pos.id === sharedPositionId) ?? null;
+      liveShareablePositions.find(pos => pos.id === sharedPositionId) ?? null;
     const postCategory = (
       matchedPosition
         ? "POSITION"
@@ -838,7 +1087,7 @@ export function CommunityBoard({
               },
             }));
           }
-          setModalImages([]);
+          closeAndResetWriteModal();
           form.reset();
         },
       },
@@ -850,17 +1099,18 @@ export function CommunityBoard({
     if (!editingPost || !requireReadyMember()) return;
     const data = new FormData(event.currentTarget);
     const postCategory = String(data.get("category") ?? editingPost.category) as CommunityCategory;
-    const rawSymbol = String(data.get("symbolTag") ?? "");
+    const rawSymbol = String(data.get("symbolTag") ?? "").trim();
     const title = String(data.get("title") ?? "").trim();
     const content = String(data.get("content") ?? "").trim();
     if (!title || !content) return;
     updatePostMutation.mutate({
       postId: editingPost.id,
       category: postCategory,
-      symbolTag: rawSymbol ? rawSymbol : null,
+      symbolTag: rawSymbol,
       title,
       content,
-      sharedPosition: editingPost.sharedPosition,
+      sharedPosition: editDetachSharedPosition ? null : editingPost.sharedPosition,
+      clearSharedPosition: editDetachSharedPosition,
       deleteFileIds: editDeleteFileIds,
       files: editNewImages,
     });
@@ -1164,7 +1414,7 @@ export function CommunityBoard({
   }
 
   const modalSelectedPosition =
-    SHAREABLE_POSITIONS.find(pos => pos.id === modalPositionId) ?? null;
+    liveShareablePositions.find(pos => pos.id === modalPositionId) ?? null;
 
   const matchedInItems = isDetailView
     ? items.find(item => item.id === highlightPostId) ?? null
@@ -1223,10 +1473,14 @@ export function CommunityBoard({
               disabled={!isLoggedIn}
               onClick={() => {
                 if (!requireReadyMember()) return;
-                const defaultPos = SHAREABLE_POSITIONS[0];
-                setModalPositionId(defaultPos.id);
+                const defaultPos = liveShareablePositions[0] ?? null;
                 setModalCategory("POSITION");
-                setModalSymbolTag(defaultPos.symbol);
+                if (defaultPos) {
+                  setModalPositionId(defaultPos.id);
+                  setModalSymbolTag(defaultPos.symbol);
+                } else {
+                  setModalPositionId("");
+                }
                 setWriteModalOpen(true);
               }}
               className={
@@ -1459,7 +1713,7 @@ export function CommunityBoard({
                               </Link>
                             )}
                           </div>
-                          <p className="mt-0.5 text-xs text-gray-400">{post.createdAt}</p>
+                          <p className="mt-0.5 text-xs text-gray-400">{formatCommunityTimestamp(post.createdAt)}</p>
                         </div>
                       </div>
 
@@ -1474,6 +1728,7 @@ export function CommunityBoard({
                                 setEditingPost(isEditing ? null : post);
                                 setEditDeleteFileIds([]);
                                 setEditNewImages([]);
+                                setEditDetachSharedPosition(false);
                               }}
                             >
                               {isEditing ? "수정 취소" : "게시글 수정"}
@@ -1616,13 +1871,42 @@ export function CommunityBoard({
                             </ul>
                           </div>
                         )}
+                        {post.sharedPosition && (
+                          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={editDetachSharedPosition}
+                              onChange={e => setEditDetachSharedPosition(e.currentTarget.checked)}
+                            />
+                            <span>첨부된 포지션 스냅샷 제거</span>
+                          </label>
+                        )}
                         <CommunityImageUploadSlot
                           files={editNewImages}
                           onChange={setEditNewImages}
+                          maxFiles={Math.max(
+                            0,
+                            4 - ((post.files?.length ?? 0) - editDeleteFileIds.length),
+                          )}
                         />
-                        <V1Button type="submit" variant="blue" size="sm" disabled={updatePostMutation.isPending}>
-                          수정 저장
-                        </V1Button>
+                        <div className="flex items-center gap-2">
+                          <V1Button type="submit" variant="blue" size="sm" disabled={updatePostMutation.isPending}>
+                            수정 저장
+                          </V1Button>
+                          <V1Button
+                            type="button"
+                            variant="gray"
+                            size="sm"
+                            onClick={() => {
+                              setEditingPost(null);
+                              setEditDeleteFileIds([]);
+                              setEditNewImages([]);
+                              setEditDetachSharedPosition(false);
+                            }}
+                          >
+                            취소
+                          </V1Button>
+                        </div>
                       </form>
                     ) : (
                       <div className="mt-3">
@@ -1660,14 +1944,6 @@ export function CommunityBoard({
                               <SharedPositionCard
                                 snapshot={customShared.snapshot}
                                 showPnlAmount={customShared.showPnlAmount}
-                              />
-                            );
-                          }
-                          if (post.category === "POSITION") {
-                            return (
-                              <SharedPositionCard
-                                snapshot={resolveDefaultPositionForPost(post.symbolTag)}
-                                showPnlAmount={true}
                               />
                             );
                           }
@@ -1784,7 +2060,7 @@ export function CommunityBoard({
                                       nickname={comment.authorNickname}
                                       withdrawn={comment.authorWithdrawn}
                                     />
-                                    <span className="font-normal text-gray-400">{comment.createdAt}</span>
+                                    <span className="font-normal text-gray-400">{formatCommunityTimestamp(comment.createdAt)}</span>
                                   </div>
                                   {!isDeletedParent && (
                                     <div className="flex items-center gap-1.5">
@@ -2260,57 +2536,107 @@ export function CommunityBoard({
             )}
           </div>
 
-          {/* 우측 사이드바: V1 대회투자 TOP5 (Top5.tsx 100% 카피) */}
+          {/* 우측 사이드바: 실시간 대회투자 TOP5 */}
           <aside className="mt-10 w-full shrink-0 space-y-6 lg:mt-0 lg:w-72">
             <div className="card rounded-2xl border border-gray-200 bg-white p-6">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-bold text-gray-900">대회투자 TOP5</h2>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="shrink-0 whitespace-nowrap text-lg font-bold text-gray-900">대회투자 TOP5</h2>
                 <select
                   aria-label="대회 시즌 선택"
-                  value={contestSeason}
+                  value={activeSidebarSeasonId !== null ? String(activeSidebarSeasonId) : ""}
                   onChange={e => setContestSeason(e.target.value)}
-                  className="h-8 rounded-lg border border-gray-200 bg-gray-50 px-2 text-xs font-bold text-gray-700"
+                  className="h-8 max-w-[132px] truncate rounded-lg border border-gray-200 bg-gray-50 px-2 text-xs font-bold text-gray-700"
                 >
-                  <option value="SEASON_1">정기 시즌 1</option>
-                  <option value="PRE_SEASON">프리 시즌</option>
+                  {sidebarContestSeasonsQuery.isSuccess ? (
+                    sidebarSeasons.length > 0 ? (
+                      sidebarSeasons.map(s => (
+                        <option key={s.id} value={String(s.id)}>
+                          {s.title}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">등록된 시즌 없음</option>
+                    )
+                  ) : (
+                    <>
+                      <option value="">정기 시즌</option>
+                    </>
+                  )}
                 </select>
               </div>
               <p className="mb-4 text-xs font-medium text-gray-400">
                 시즌 누적 모의투자 수익률 상위 트레이더 랭킹입니다.
               </p>
 
-              <ul className="space-y-3">
-                {V1_CONTEST_TOP5.map(trader => (
-                  <li
-                    key={trader.rank}
-                    className="flex items-center justify-between rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-2.5"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-black ${
-                          trader.rank === 1
-                            ? "bg-[#0058FF] text-white"
-                            : "bg-gray-200 text-gray-700"
-                        }`}
-                      >
-                        {trader.rank}
-                      </span>
-                      <V1UserAvatar
-                        memberId={trader.memberId}
-                        nickname={trader.nickname}
-                        size="sm"
-                      />
-                      <Link
-                        href={`/members/${trader.memberId}`}
-                        className="text-xs font-bold text-gray-900 hover:text-[#0058FF]"
-                      >
-                        {trader.nickname}
-                      </Link>
+              {(() => {
+                const displayTop5: Array<{
+                  rank: number;
+                  memberId: number;
+                  nickname: string;
+                  roi: string;
+                }> = sidebarContestSeasonsQuery.isSuccess
+                  ? (sidebarLeaderboardQuery.data?.items ?? []).slice(0, 5).map(entry => ({
+                      rank: entry.rank,
+                      memberId: entry.memberId,
+                      nickname: entry.nickname,
+                      roi: formatContestSignedRoi(entry.roiPct),
+                    }))
+                  : V1_CONTEST_TOP5.map(item => ({ ...item }));
+
+                if (sidebarContestSeasonsQuery.isSuccess && displayTop5.length === 0) {
+                  return (
+                    <div className="rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-6 text-center text-xs font-bold text-gray-400">
+                      집계된 대회 랭킹 데이터가 없습니다.
                     </div>
-                    <span className="text-xs font-black text-red-500">{trader.roi}</span>
-                  </li>
-                ))}
-              </ul>
+                  );
+                }
+
+                return (
+                  <ul className="space-y-3">
+                    {displayTop5.map(trader => {
+                      const isNeg = trader.roi.trim().startsWith("-");
+                      const isZero = !/[1-9]/.test(trader.roi);
+                      const roiColor = isNeg
+                        ? "text-blue-600"
+                        : isZero
+                          ? "text-gray-500"
+                          : "text-red-500";
+                      return (
+                        <li
+                          key={`${trader.rank}-${trader.memberId}`}
+                          className="flex items-center justify-between gap-2 rounded-xl border border-gray-100 bg-[#F9FAFB] px-3 py-2.5"
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <span
+                              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black ${
+                                trader.rank === 1
+                                  ? "bg-[#0058FF] text-white"
+                                  : "bg-gray-200 text-gray-700"
+                              }`}
+                            >
+                              {trader.rank}
+                            </span>
+                            <V1UserAvatar
+                              memberId={trader.memberId}
+                              nickname={trader.nickname}
+                              size="sm"
+                            />
+                            <Link
+                              href={`/members/${trader.memberId}`}
+                              className="truncate text-xs font-bold text-gray-900 hover:text-[#0058FF]"
+                            >
+                              {trader.nickname}
+                            </Link>
+                          </div>
+                          <span className={`shrink-0 whitespace-nowrap text-xs font-black ${roiColor}`}>
+                            {trader.roi}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
 
               <Link
                 href="/contest"
@@ -2346,7 +2672,7 @@ export function CommunityBoard({
       {/* V1 WriteModal (글쓰기 모달) */}
       <DimModal
         open={writeModalOpen}
-        onClose={() => setWriteModalOpen(false)}
+        onClose={closeAndResetWriteModal}
         title="글쓰기"
         subtitle="타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다."
       >
@@ -2394,7 +2720,7 @@ export function CommunityBoard({
               onChange={event => {
                 const nextId = event.currentTarget.value;
                 setModalPositionId(nextId);
-                const matched = SHAREABLE_POSITIONS.find(pos => pos.id === nextId);
+                const matched = liveShareablePositions.find(pos => pos.id === nextId);
                 if (matched) {
                   setModalCategory("POSITION");
                   setModalSymbolTag(matched.symbol);
@@ -2402,14 +2728,36 @@ export function CommunityBoard({
               }}
               className="h-10 rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
             >
-              <option value="">포지션 첨부 안 함</option>
-              {SHAREABLE_POSITIONS.map(pos => (
+              <option value="">
+                {shareablePositionsQuery.isLoading
+                  ? "보유 포지션 조회 중…"
+                  : liveShareablePositions.length === 0
+                    ? "보유 오픈 포지션 없음"
+                    : "포지션 첨부 안 함"}
+              </option>
+              {liveShareablePositions.map(pos => (
                 <option key={pos.id} value={pos.id}>
-                  {pos.symbol}USDT {pos.leverage}x {pos.side} ({pos.roePct})
+                  [{pos.marketLabel}] {pos.pair} {pos.leverage}x {pos.side} ({pos.roePct})
                 </option>
               ))}
             </select>
           </div>
+          {modalCategory === "POSITION" &&
+            !shareablePositionsQuery.isLoading &&
+            liveShareablePositions.length === 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3.5 py-2.5 text-xs font-semibold text-gray-700">
+                <span>
+                  현재 보유 중인 오픈 포지션이 없습니다. 텍스트·차트만 작성하거나 모의투자에서 포지션을 오픈해 보세요.
+                </span>
+                <Link
+                  href="/trading"
+                  onClick={closeAndResetWriteModal}
+                  className="shrink-0 whitespace-nowrap font-bold text-[#0058FF] hover:underline"
+                >
+                  모의투자 하러가기 →
+                </Link>
+              </div>
+            )}
           {modalSelectedPosition && (
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -2452,7 +2800,7 @@ export function CommunityBoard({
             onChange={setModalImages}
           />
           <div className="flex justify-end gap-2 pt-2">
-            <V1Button variant="gray" size="sm" onClick={() => setWriteModalOpen(false)}>
+            <V1Button variant="gray" size="sm" onClick={closeAndResetWriteModal}>
               취소
             </V1Button>
             <V1Button type="submit" variant="blue" size="sm" disabled={createPostMutation.isPending}>

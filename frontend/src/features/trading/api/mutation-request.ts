@@ -89,7 +89,7 @@ const businessMessages: Record<string, string> = {
   IDEMPOTENCY_CONFLICT: "이전 요청과 내용이 일치하지 않습니다. 주문 내역을 확인해 주세요.",
   POSITION_NOT_OPEN: "이미 종료된 포지션입니다.", CLOSE_QUANTITY_EXCEEDED: "예약된 청산 수량이 있습니다. 미체결 청산 주문을 취소하거나 청산 가능 수량을 줄여 주세요.",
   ORDER_NOT_PENDING: "이미 처리된 주문입니다. 최신 주문 내역을 확인해 주세요.", INVALID_ORDER: "주문 수량·가격·레버리지 또는 주문 금액 한도를 확인해 주세요.",
-  ACCOUNT_NOT_ACTIVE: "현재 계정은 거래할 수 없습니다.", SYMBOL_NOT_AVAILABLE: "현재 거래할 수 없는 종목입니다.",
+  ACCOUNT_NOT_ACTIVE: "현재 계정은 거래할 수 없습니다.", SYMBOL_NOT_AVAILABLE: "현재 거래할 수 없는 종목입니다.", CONTEST_NOT_RUNNING: "대회 진행 시간에만 주문·수정이 가능합니다.", CONTEST_PARTICIPATION_REQUIRED: "승인된 대회 참가자만 거래할 수 있습니다.", CONTEST_SEASON_NOT_FOUND: "진행 중인 대회 시즌 정보를 찾을 수 없습니다.",
 };
 export function mutationMessage(error: unknown) {
   if (!(error instanceof TradingApiError)) return unconfirmedMutationMessage;

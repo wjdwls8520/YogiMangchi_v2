@@ -335,6 +335,7 @@ export function MainPortal({
   const [simSide, setSimSide] = useState<"LONG" | "SHORT">("LONG");
   const [simLeverage, setSimLeverage] = useState<number>(10);
   const [simMargin, setSimMargin] = useState<number>(1000);
+  const [simMarginInput, setSimMarginInput] = useState<string>("1000");
   const [simMovePercent, setSimMovePercent] = useState<number>(3.5);
 
   const marketOverviewQuery = useQuery<MarketOverviewData>({
@@ -409,9 +410,33 @@ export function MainPortal({
     };
   }, [simLeverage, simMargin, simMovePercent, simSide]);
 
+  function formatPortalKstDate(value: string): string {
+    const parsed = Date.parse(value);
+    if (Number.isNaN(parsed)) return value.slice(0, 10);
+    const kst = new Date(parsed + 9 * 60 * 60 * 1000);
+    const y = kst.getUTCFullYear();
+    const m = String(kst.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(kst.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  function formatPortalKstTime(value: string): string {
+    const parsed = Date.parse(value);
+    if (Number.isNaN(parsed)) return value.slice(11, 16) || "09:00";
+    const kst = new Date(parsed + 9 * 60 * 60 * 1000);
+    const h = String(kst.getUTCHours()).padStart(2, "0");
+    const min = String(kst.getUTCMinutes()).padStart(2, "0");
+    return `${h}:${min}`;
+  }
+
   function handleYdChange(value: string) {
     setCalcAnchor("YD");
-    const raw = value.replace(/[^0-9.]/g, "");
+    const stripped = value.replace(/[^0-9.]/g, "");
+    const dotIdx = stripped.indexOf(".");
+    const raw =
+      dotIdx >= 0
+        ? `${stripped.slice(0, dotIdx + 1)}${stripped.slice(dotIdx + 1).replace(/\./g, "")}`
+        : stripped;
     setYdInput(raw);
     const num = Number(raw);
     if (!raw || Number.isNaN(num)) {
@@ -633,13 +658,13 @@ export function MainPortal({
                 <div className="space-y-3">
                   {/* YD 입력창 */}
                   <div className="relative flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all focus-within:border-[#0058FF] focus-within:bg-white">
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex shrink-0 items-center gap-2.5">
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0058FF] text-xs font-black text-white">
                         YD
                       </div>
-                      <span className="text-sm font-bold text-gray-700">요기 달러</span>
+                      <span className="shrink-0 whitespace-nowrap text-sm font-bold text-gray-700">요기 달러</span>
                     </div>
-                    <div className="flex flex-1 items-center justify-end gap-1.5 pl-4">
+                    <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 pl-4">
                       <input
                         type="text"
                         inputMode="decimal"
@@ -662,13 +687,13 @@ export function MainPortal({
 
                   {/* KRW 입력창 */}
                   <div className="relative flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all focus-within:border-[#0058FF] focus-within:bg-white">
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex shrink-0 items-center gap-2.5">
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-700">
                         ₩
                       </div>
-                      <span className="text-sm font-bold text-gray-700">대한민국 원</span>
+                      <span className="shrink-0 whitespace-nowrap text-sm font-bold text-gray-700">대한민국 원</span>
                     </div>
-                    <div className="flex flex-1 items-center justify-end gap-1.5 pl-4">
+                    <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 pl-4">
                       <input
                         type="text"
                         inputMode="numeric"
@@ -894,7 +919,7 @@ export function MainPortal({
                         <p className="text-xs font-bold text-gray-900">
                           {post.authorWithdrawn ? "탈퇴한회원" : post.authorNickname}
                         </p>
-                        <p className="text-[11px] text-gray-400">{post.createdAt.slice(0, 10)}</p>
+                        <p className="text-[11px] text-gray-400">{formatPortalKstDate(post.createdAt)}</p>
                       </div>
                     </div>
                     {post.symbolTag ? (
@@ -963,7 +988,7 @@ export function MainPortal({
                 >
                   <div className="flex items-center justify-between text-xs text-gray-400">
                     <span className="font-bold text-[#0058FF]">
-                      {article.publishedAt.slice(11, 16) || "09:00"} · {article.category}
+                      {formatPortalKstTime(article.publishedAt)} · {article.category}
                     </span>
                     {article.symbolTag ? (
                       <span className="rounded bg-blue-50 px-2 py-0.5 font-bold text-[#0058FF]">
@@ -1062,8 +1087,20 @@ export function MainPortal({
                     min={10}
                     max={10000}
                     step={100}
-                    value={simMargin}
-                    onChange={e => setSimMargin(Math.max(10, Number(e.target.value) || 0))}
+                    value={simMarginInput}
+                    onChange={e => {
+                      const rawVal = e.target.value;
+                      setSimMarginInput(rawVal);
+                      const parsed = Number(rawVal);
+                      if (Number.isFinite(parsed) && parsed > 0) {
+                        setSimMargin(Math.min(10000, Math.max(10, parsed)));
+                      }
+                    }}
+                    onBlur={() => {
+                      const clamped = Math.min(10000, Math.max(10, Number(simMarginInput) || 10));
+                      setSimMargin(clamped);
+                      setSimMarginInput(String(clamped));
+                    }}
                     className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm font-bold text-gray-900"
                   />
                 </label>
@@ -1149,7 +1186,28 @@ export function MainPortal({
         open={thumbnailModalOpen}
         onClose={() => setThumbnailModalOpen(false)}
         title="속보 차트/캡처 이미지 제보"
-        subtitle="차트나 시장 캡처 이미지를 첨부해 제보할 수 있습니다."
+        subtitle="차트나 시장 캡처 이미지를 첨부한 뒤 커뮤니티 시황·관점 게시판에 공유할 수 있습니다."
+        footer={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <V1Button
+              variant="gray"
+              size="sm"
+              onClick={() => {
+                setReportFiles([]);
+                setThumbnailModalOpen(false);
+              }}
+            >
+              닫기
+            </V1Button>
+            <Link
+              href="/community"
+              onClick={() => setThumbnailModalOpen(false)}
+              className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+            >
+              커뮤니티에 제보하러 가기 →
+            </Link>
+          </div>
+        }
       >
         <CommunityImageUploadSlot
           files={reportFiles}

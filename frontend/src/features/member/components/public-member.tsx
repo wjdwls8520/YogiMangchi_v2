@@ -21,6 +21,7 @@ import {
   fetchPublicMemberContestSeasons,
   formatContestSignedRoi,
   formatContestUsdt,
+  resolveTradingContestBaseUrl,
 } from "../../contest/api/contest-client";
 import { useMember } from "./member-provider";
 import { MemberShell } from "./member-views";
@@ -50,10 +51,27 @@ function formatSignedPct(raw: string): string {
   return `+${trimmed.endsWith("%") ? trimmed : `${trimmed}%`}`;
 }
 
+function publicPnlColor(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("-")) return "text-blue-600";
+  if (!/[1-9]/.test(trimmed)) return "text-gray-500";
+  return "text-red-500";
+}
+
+function formatPublicKstDate(value: string): string {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value;
+  const kst = new Date(parsed + 9 * 60 * 60 * 1000);
+  const y = kst.getUTCFullYear();
+  const m = String(kst.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(kst.getUTCDate()).padStart(2, "0");
+  return `${y}.${m}.${d}`;
+}
+
 export function PublicMember({ memberId }: { memberId: number }) {
   const { origin, session, snapshot } = useMember();
   const client = useQueryClient();
-  const tradingBase = process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ?? "http://localhost:8081";
+  const tradingBase = resolveTradingContestBaseUrl();
 
   const [kind, setKind] = useState<"followers" | "followings">("followers");
   const [keyword, setKeyword] = useState("");
@@ -98,7 +116,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
       const params = new URLSearchParams({ size: "10", keyword });
       if (pageParam) params.set("cursorId", String(pageParam));
       const page = parseFollowPage(
-        await contentJson(origin, `/members/${memberId}/${kind}?${params}`, { signal }),
+        await (snapshot.phase === "ready"
+          ? session.request(`/members/${memberId}/${kind}?${params}`, { signal })
+          : contentJson(origin, `/members/${memberId}/${kind}?${params}`, { signal })),
       );
       if (page.hasNext && pageParam && page.nextCursorId! >= pageParam) {
         throw new ContentApiError(422);
@@ -310,6 +330,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
   const currentProfile = profile.isError ? undefined : profile.data;
   const displayNickname = currentProfile?.nickname ?? `트레이더 #${memberId}`;
 
+  const portfolioResolved = publicPortfolioQuery.isSuccess;
   const livePortfolio =
     publicPortfolioQuery.data && publicPortfolioQuery.data.accountExists
       ? publicPortfolioQuery.data
@@ -324,20 +345,36 @@ export function PublicMember({ memberId }: { memberId: number }) {
         totalCoinValue: `${livePortfolio.wallet.balance} USDT`,
         totalProfit: formatSignedUsdt(livePortfolio.wallet.totalPnl),
         totalRoi: formatSignedPct(livePortfolio.wallet.totalRoiPct),
-        isPositive: !livePortfolio.wallet.totalPnl.trim().startsWith("-"),
+        isPositive:
+          !livePortfolio.wallet.totalPnl.trim().startsWith("-") &&
+          /[1-9]/.test(livePortfolio.wallet.totalPnl),
+        isNegative: livePortfolio.wallet.totalPnl.trim().startsWith("-"),
         unit: "USDT",
       }
-    : {
-        title: `${displayNickname}님의 모의투자`,
-        totalAsset: "10,840.00 USDT",
-        cashBalance: "5,240.00 USDT",
-        totalBuyAmount: "5,600.00 USDT",
-        totalCoinValue: "6,440.00 USDT",
-        totalProfit: "+840.00 USDT",
-        totalRoi: "+8.40%",
-        isPositive: true,
-        unit: "USDT",
-      };
+    : portfolioResolved
+      ? {
+          title: `${displayNickname}님의 모의투자`,
+          totalAsset: "0.00 USDT",
+          cashBalance: "0.00 USDT",
+          totalBuyAmount: "0.00 USDT",
+          totalCoinValue: "0.00 USDT",
+          totalProfit: "0.00 USDT",
+          totalRoi: "0.00%",
+          isPositive: false,
+          isNegative: false,
+          unit: "USDT",
+        }
+      : {
+          title: `${displayNickname}님의 모의투자`,
+          totalAsset: "10,840.00 USDT",
+          cashBalance: "5,240.00 USDT",
+          totalBuyAmount: "5,600.00 USDT",
+          totalCoinValue: "6,440.00 USDT",
+          totalProfit: "+840.00 USDT",
+          totalRoi: "+8.40%",
+          isPositive: true,
+          unit: "USDT",
+        };
 
   const livePosts = memberPostsInfinite.data
     ? memberPostsInfinite.data.pages.flatMap(p => p.items)
@@ -376,7 +413,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           {/* 좌측: V1 ProfileSidebar + AssetSummaryCard + 팔로워/팔로잉 패널 */}
-          <div className="space-y-6 lg:col-span-4">
+          <div className="min-w-0 space-y-6 lg:col-span-4">
             <V1ProfileSidebar
               profile={{
                 memberId,
@@ -392,7 +429,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
               relationArea={
                 currentProfile ? (
                   <p className="member-note text-center text-xs text-gray-400">
-                    가입 {new Date(currentProfile.createdAt).toLocaleDateString("ko-KR")}
+                    가입 {formatPublicKstDate(currentProfile.createdAt)}
                   </p>
                 ) : null
               }
@@ -552,7 +589,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
           </div>
 
           {/* 우측: 통합 4대 탭 (본인 로그인 시 4탭 전체, 타인/비로그인 시 포트폴리오 + 커뮤니티활동 2탭만 노출) */}
-          <div className="space-y-6 lg:col-span-8">
+          <div className="min-w-0 space-y-6 lg:col-span-8">
             {(() => {
               const visibleMainTabs = isOwner
                 ? [
@@ -619,10 +656,42 @@ export function PublicMember({ memberId }: { memberId: number }) {
                       activeId={contestTab}
                       onChange={id => setContestTab(id as "live" | "ended")}
                     >
-                      <div className="py-6 text-xs font-bold text-gray-600">
-                        {contestTab === "live"
-                          ? "내 시즌별 대회 실시간 자산 내역을 확인합니다."
-                          : "종료된 시즌의 대회 자산 및 정산 이력을 확인합니다."}
+                      <div className="space-y-3 py-4 text-xs">
+                        {(() => {
+                          const listItems =
+                            contestTab === "live"
+                              ? (publicContestSeasonsQuery.data?.participatingSeasons ?? [])
+                              : (publicContestSeasonsQuery.data?.pastSeasons ?? []);
+                          if (listItems.length === 0) {
+                            return (
+                              <p className="py-6 text-center font-bold text-gray-400">
+                                {contestTab === "live"
+                                  ? "현재 진행 중인 참가 대회 시즌이 없습니다."
+                                  : "종료된 참가 대회 시즌 이력이 없습니다."}
+                              </p>
+                            );
+                          }
+                          return listItems.map(item => {
+                            const roiStr = formatContestSignedRoi(item.roiPct);
+                            return (
+                              <div
+                                key={item.seasonId}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 bg-[#F9FAFB] p-4"
+                              >
+                                <div>
+                                  <span className="font-black text-gray-900">{item.title}</span>
+                                  <p className="mt-0.5 text-gray-500">
+                                    순위 {item.rank ?? "-"}위 / {item.totalParticipants}명 · 평가자산{" "}
+                                    {formatContestUsdt(item.totalEquity)}
+                                  </p>
+                                </div>
+                                <span className={`text-base font-black ${publicPnlColor(roiStr)}`}>
+                                  {roiStr}
+                                </span>
+                              </div>
+                            );
+                          });
+                        })()}
                       </div>
                     </V1FolderTabs>
                   )}
@@ -644,7 +713,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                               <p className="mt-2 text-xs text-gray-500">
                                 {livePortfolio
                                   ? `사용 증거금 비중 ${livePortfolio.allocation.usedMarginRatioPct}% · 가용 USDT ${livePortfolio.allocation.availableCashRatioPct}%`
-                                  : "BTCUSDT (65%) · ETHUSDT (35%) 중심으로 격리마진 운용 중입니다."}
+                                  : portfolioResolved
+                                    ? "현재 보유 중인 모의투자 포지션이 없습니다."
+                                    : "모의투자 증거금 운용 비중을 불러오고 있습니다."}
                               </p>
                             </div>
                             <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
@@ -685,7 +756,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                       <td className="px-4 py-3 text-right">{pos.quantity}</td>
                                       <td className="px-4 py-3 text-right">${pos.entryPrice}</td>
                                       <td className="px-4 py-3 text-right">${pos.markPrice}</td>
-                                      <td className="px-4 py-3 text-right font-black text-red-500">
+                                      <td className={`px-4 py-3 text-right font-black ${publicPnlColor(pos.unrealizedPnl)}`}>
                                         {formatSignedUsdt(pos.unrealizedPnl)} (
                                         {formatSignedPct(pos.roePct)})
                                       </td>
@@ -707,7 +778,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                               <span className="text-xs font-bold text-[#0058FF]">
                                 {item.title}
                               </span>
-                              <p className="mt-2 text-2xl font-black text-red-500">
+                              <p className={`mt-2 text-2xl font-black ${publicPnlColor(item.roiPct)}`}>
                                 {formatContestSignedRoi(item.roiPct)}
                               </p>
                               <p className="mt-1 text-xs font-bold text-gray-600">
@@ -760,7 +831,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                     {communityCategoryLabel(post.category as CommunityCategory)}
                                     {post.symbolTag ? ` · #${post.symbolTag}` : ""}
                                   </span>
-                                  <span>{post.createdAt}</span>
+                                  <span>{formatPublicKstDate(post.createdAt)}</span>
                                 </div>
                                 <Link
                                   href={`/community/all/${post.id}`}

@@ -726,7 +726,7 @@ export function V1SegmentTabs({
 }) {
   const sizeClass =
     size === "sm"
-      ? "py-1.5 text-xxs px-3"
+      ? "py-1.5 text-[11px] px-3"
       : size === "lg"
         ? "py-2.5 text-sm px-5"
         : size === "xl"
@@ -744,7 +744,7 @@ export function V1SegmentTabs({
             : "rounded";
 
   return (
-    <div className={cn("flex gap-1", className)}>
+    <div className={cn("flex max-w-full gap-1 overflow-x-auto", className)}>
       {tabs.map(tab => {
         const isActive = activeTab === tab.value;
         return (
@@ -792,11 +792,15 @@ export function V1AssetSummaryCard({
   className?: string;
   footerSlot?: ReactNode;
 }) {
-  const valueColorClass = summary.isPositive
-    ? "text-red-400"
-    : summary.isNegative
+  const isZeroProfit =
+    summary.totalProfit.trim().startsWith("0.00") || summary.totalProfit.trim() === "0 USDT";
+  const valueColorClass = isZeroProfit
+    ? "text-gray-200"
+    : summary.isNegative || summary.totalProfit.trim().startsWith("-")
       ? "text-blue-400"
-      : "text-white";
+      : summary.isPositive
+        ? "text-red-400"
+        : "text-white";
 
   return (
     <section
@@ -806,10 +810,10 @@ export function V1AssetSummaryCard({
       )}
     >
       <div className="relative z-10 mb-6 flex items-center justify-between gap-2">
-        <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs sm:text-sm font-bold text-gray-200">
+        <span className="min-w-0 truncate rounded-full bg-white/10 px-3 py-1.5 text-xs sm:text-sm font-bold text-gray-200">
           {summary.title}
         </span>
-        <span className="text-xs font-bold text-gray-400">
+        <span className="shrink-0 whitespace-nowrap text-xs font-bold text-gray-400">
           단위: {summary.unit ?? "USDT"}
         </span>
       </div>
@@ -898,11 +902,11 @@ export function V1ProfileSidebar({
           />
         </div>
 
-        <span className={cn("inline-flex rounded-full mb-2 px-3 py-1 text-xs font-bold", roleBadgeClass)}>
+        <span className={cn("inline-flex shrink-0 whitespace-nowrap rounded-full mb-2 px-3 py-1 text-xs font-bold", roleBadgeClass)}>
           {roleLabel}
         </span>
 
-        <h2 className="text-2xl font-black text-gray-900">{profile.nickname}</h2>
+        <h2 className="max-w-full truncate text-2xl font-black text-gray-900">{profile.nickname}</h2>
 
         <p className="text-sm text-gray-400 mt-1 font-medium text-center">
           {profile.profileMsg || "소개글이 없습니다."}
@@ -1194,7 +1198,7 @@ export function V1Header({
       {isMenuOpen ? (
         <div className="fixed inset-0 z-50 md:hidden" data-dim-modal="open">
           <div
-            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs transition-opacity"
+            className="fixed inset-0 z-40 cursor-pointer bg-black/50 backdrop-blur-xs transition-opacity"
             onClick={() => setIsMenuOpen(false)}
           />
           <aside className="fixed right-0 top-0 z-50 h-screen w-[min(18rem,85vw)] overflow-y-auto bg-white p-6 text-gray-900 border-l border-gray-200">

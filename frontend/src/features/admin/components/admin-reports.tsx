@@ -48,7 +48,13 @@ export function AdminReportsView() {
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (memberCtx?.snapshot.phase !== "ready" || !memberCtx.session) return;
+    if (
+      memberCtx?.snapshot.phase !== "ready" ||
+      memberCtx.snapshot.role !== "ADMIN" ||
+      !memberCtx.session
+    ) {
+      return;
+    }
     const controller = new AbortController();
     void memberCtx.session
       .authorized(cred =>
@@ -66,6 +72,10 @@ export function AdminReportsView() {
         ),
       )
       .then(res => {
+        if (res.totalPages > 0 && page >= res.totalPages) {
+          setPage(res.totalPages - 1);
+          return;
+        }
         setItems(res.content);
         setPage(res.page);
         setTotalElements(res.totalElements);
@@ -303,7 +313,7 @@ export function AdminReportsView() {
         {/* 신고 목록 테이블 */}
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xs">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1160px] text-left text-sm">
+            <table className="w-full min-w-[1360px] text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-200 bg-[#F9FAFB] text-[11px] font-black uppercase tracking-wider text-gray-500">
                   <th className="whitespace-nowrap px-4 py-3.5 text-center">구분</th>
@@ -355,7 +365,7 @@ export function AdminReportsView() {
                         </td>
                         <td className="w-[260px] max-w-[260px] px-4 py-3.5">
                           <Link
-                            href={`/community/${r.postId}`}
+                            href={`/community/all/${r.postId}`}
                             className="line-clamp-1 font-black text-gray-900 hover:text-[#0058FF] hover:underline"
                           >
                             {r.postTitle}
@@ -397,9 +407,9 @@ export function AdminReportsView() {
                           <div className="inline-flex items-center justify-center gap-1.5">
                             <button
                               type="button"
-                              disabled={busyKey !== null}
+                              disabled={busyKey !== null || isDeleted}
                               onClick={() => void handleModerateTarget(r, "DELETE_TARGET")}
-                              className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100"
+                              className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-40"
                             >
                               {busyKey === `DELETE_TARGET:${r.reportKey}`
                                 ? "처리중..."

@@ -1,7 +1,13 @@
 import { TradingApiError, tradingOrigin } from "../../trading/api/client";
 
 export const DEFAULT_TRADING_API_BASE_URL =
-  process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ?? "http://localhost:8081";
+  process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
+  process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ??
+  "http://localhost:8081";
+
+export function resolveTradingContestBaseUrl(): string {
+  return tradingOrigin(DEFAULT_TRADING_API_BASE_URL);
+}
 
 export interface ContestSeasonView {
   id: number;
@@ -110,6 +116,10 @@ export interface ContestApplicationView {
   applicationId: number;
   seasonId: number;
   seasonTitle: string;
+  seasonDescription?: string;
+  seedMoney?: string;
+  recruitmentStartAt?: string;
+  recruitmentEndAt?: string;
   seasonDisplayStatus: string;
   contestStartAt: string;
   contestEndAt: string;
@@ -585,12 +595,47 @@ export function isNonNegativeContestDecimal(raw: string): boolean {
   return !String(raw ?? "0").trim().startsWith("-");
 }
 
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function extractKstParts(str: string): {
+  yyyy: string;
+  mm: string;
+  dd: string;
+  hh: string;
+  min: string;
+} | null {
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(str)) {
+    const ms = Date.parse(str);
+    if (Number.isFinite(ms)) {
+      const kst = new Date(ms + KST_OFFSET_MS);
+      return {
+        yyyy: String(kst.getUTCFullYear()),
+        mm: String(kst.getUTCMonth() + 1).padStart(2, "0"),
+        dd: String(kst.getUTCDate()).padStart(2, "0"),
+        hh: String(kst.getUTCHours()).padStart(2, "0"),
+        min: String(kst.getUTCMinutes()).padStart(2, "0"),
+      };
+    }
+  }
+  const match = /^(\d{4})[-.](\d{2})[-.](\d{2})(?:[T\s](\d{2}):(\d{2}))?/.exec(str);
+  if (match) {
+    return {
+      yyyy: match[1]!,
+      mm: match[2]!,
+      dd: match[3]!,
+      hh: match[4] ?? "00",
+      min: match[5] ?? "00",
+    };
+  }
+  return null;
+}
+
 export function formatContestDateTime(isoOrText: string | null | undefined): string {
   if (!isoOrText) return "";
   const str = String(isoOrText).trim();
-  const match = /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/.exec(str);
-  if (match) {
-    return `${match[1]}.${match[2]}.${match[3]} ${match[4]}:${match[5]}`;
+  const parts = extractKstParts(str);
+  if (parts) {
+    return `${parts.yyyy}.${parts.mm}.${parts.dd} ${parts.hh}:${parts.min}`;
   }
   return str.replace("T", " ").replace(/-/g, ".");
 }
@@ -598,9 +643,9 @@ export function formatContestDateTime(isoOrText: string | null | undefined): str
 export function formatContestDateOnly(isoOrText: string | null | undefined): string {
   if (!isoOrText) return "";
   const str = String(isoOrText).trim();
-  const match = /^(\d{4})[-.](\d{2})[-.](\d{2})/.exec(str);
-  if (match) {
-    return `${match[1]}.${match[2]}.${match[3]}`;
+  const parts = extractKstParts(str);
+  if (parts) {
+    return `${parts.yyyy}.${parts.mm}.${parts.dd}`;
   }
   return str;
 }
@@ -608,9 +653,9 @@ export function formatContestDateOnly(isoOrText: string | null | undefined): str
 export function toDatetimeLocalInput(isoOrText: string | null | undefined): string {
   if (!isoOrText) return "2026-12-01T00:00";
   const str = String(isoOrText).trim();
-  const match = /^(\d{4})[-.](\d{2})[-.](\d{2})[T\s](\d{2}):(\d{2})/.exec(str);
-  if (match) {
-    return `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}`;
+  const parts = extractKstParts(str);
+  if (parts) {
+    return `${parts.yyyy}-${parts.mm}-${parts.dd}T${parts.hh}:${parts.min}`;
   }
   return str;
 }
@@ -618,13 +663,18 @@ export function toDatetimeLocalInput(isoOrText: string | null | undefined): stri
 export function toIsoInstantFromInput(localInput: string): string {
   const trimmed = String(localInput ?? "").trim();
   if (!trimmed) return new Date().toISOString();
-  if (/Z$|[+-]\d{2}:\d{2}$/.test(trimmed)) return trimmed;
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(trimmed)) {
+    const ms = Date.parse(trimmed);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : trimmed;
+  }
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(trimmed)) {
-    return `${trimmed}:00Z`;
+    const ms = Date.parse(`${trimmed}:00+09:00`);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : `${trimmed}:00+09:00`;
   }
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(trimmed)) {
-    return `${trimmed}Z`;
+    const ms = Date.parse(`${trimmed}+09:00`);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : `${trimmed}+09:00`;
   }
   const parsed = Date.parse(trimmed);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : `${trimmed}:00Z`;
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : `${trimmed}:00+09:00`;
 }
