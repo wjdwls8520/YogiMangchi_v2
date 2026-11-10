@@ -8,7 +8,64 @@ export interface MarketOverviewData {
   futuresBullPct: number;
   futuresBearPct: number;
   btcChange24h: number;
+  usdKrwRate: number;
+  usdKrwChangeAmount: number;
+  usdKrwChangePct: number;
+  usdKrwHistory: number[];
   updatedAt: string;
+}
+
+const DEFAULT_USD_KRW_OFFSETS = [
+  -16.3, -14.0, -15.4, -12.1, -9.5, -10.7, -8.3, -5.6, -7.0, -4.4, -2.1, -3.5, -0.9, 0,
+] as const;
+
+export function buildDeterministicUsdKrwHistory(anchorRate: number): number[] {
+  const safeRate = Number.isFinite(anchorRate) && anchorRate > 0 ? anchorRate : 1384.5;
+  return DEFAULT_USD_KRW_OFFSETS.map((offset, idx) =>
+    idx === DEFAULT_USD_KRW_OFFSETS.length - 1
+      ? Number(safeRate.toFixed(2))
+      : Number((safeRate + offset).toFixed(1)),
+  );
+}
+
+export interface ExchangeRateChartGeometry {
+  polylinePoints: string;
+  minRate: number;
+  maxRate: number;
+  twoWeeksAgoRate: number;
+  oneWeekAgoRate: number;
+  todayRate: number;
+}
+
+export function buildExchangeRateChartGeometry(
+  history: readonly number[],
+): ExchangeRateChartGeometry {
+  const valid = history.filter(v => Number.isFinite(v) && v > 0);
+  const safeHistory = valid.length >= 2 ? valid : FALLBACK_MARKET_OVERVIEW.usdKrwHistory;
+  const minRate = Math.min(...safeHistory);
+  const maxRate = Math.max(...safeHistory);
+  const span = maxRate - minRate;
+  const pad = span < 1 ? 5 : span * 0.1;
+  const low = minRate - pad;
+  const high = maxRate + pad;
+  const range = Math.max(high - low, 1);
+
+  const polylinePoints = safeHistory
+    .map((rate, idx) => {
+      const x = (idx / (safeHistory.length - 1)) * 400 + 10;
+      const y = 115 - ((rate - low) / range) * 95;
+      return `${Number(x.toFixed(1))},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return {
+    polylinePoints,
+    minRate,
+    maxRate,
+    twoWeeksAgoRate: safeHistory[0],
+    oneWeekAgoRate: safeHistory[Math.floor(safeHistory.length / 2)],
+    todayRate: safeHistory[safeHistory.length - 1],
+  };
 }
 
 export const FALLBACK_MARKET_OVERVIEW: MarketOverviewData = {
@@ -21,6 +78,13 @@ export const FALLBACK_MARKET_OVERVIEW: MarketOverviewData = {
   futuresBullPct: 54,
   futuresBearPct: 46,
   btcChange24h: 1.85,
+  usdKrwRate: 1384.5,
+  usdKrwChangeAmount: 5.8,
+  usdKrwChangePct: 0.42,
+  usdKrwHistory: [
+    1368.2, 1370.5, 1369.1, 1372.4, 1375.0, 1373.8, 1376.2, 1378.9, 1377.5, 1380.1,
+    1382.4, 1381.0, 1383.6, 1384.5,
+  ],
   updatedAt: "2026-11-10T00:00:00Z",
 };
 
@@ -118,6 +182,19 @@ export function parseMarketOverviewPayload(value: unknown): MarketOverviewData {
     ),
   );
 
+  const parsedUsdKrwRate = Number(
+    Math.max(500, finiteOr(data.usdKrwRate, FALLBACK_MARKET_OVERVIEW.usdKrwRate)).toFixed(2),
+  );
+  const rawHistory = Array.isArray(data.usdKrwHistory)
+    ? data.usdKrwHistory
+        .map(item => Number(item))
+        .filter(num => Number.isFinite(num) && num > 0)
+    : [];
+  const usdKrwHistory =
+    rawHistory.length >= 4
+      ? [...rawHistory.slice(0, 13), parsedUsdKrwRate]
+      : buildDeterministicUsdKrwHistory(parsedUsdKrwRate);
+
   return {
     btcDominancePercent: Number(
       finiteOr(data.btcDominancePercent, FALLBACK_MARKET_OVERVIEW.btcDominancePercent).toFixed(1),
@@ -143,6 +220,14 @@ export function parseMarketOverviewPayload(value: unknown): MarketOverviewData {
     btcChange24h: Number(
       finiteOr(data.btcChange24h, FALLBACK_MARKET_OVERVIEW.btcChange24h).toFixed(2),
     ),
+    usdKrwRate: parsedUsdKrwRate,
+    usdKrwChangeAmount: Number(
+      finiteOr(data.usdKrwChangeAmount, FALLBACK_MARKET_OVERVIEW.usdKrwChangeAmount).toFixed(2),
+    ),
+    usdKrwChangePct: Number(
+      finiteOr(data.usdKrwChangePct, FALLBACK_MARKET_OVERVIEW.usdKrwChangePct).toFixed(2),
+    ),
+    usdKrwHistory,
     updatedAt:
       typeof data.updatedAt === "string" && data.updatedAt.trim().length > 0
         ? data.updatedAt
@@ -280,6 +365,7 @@ export async function fetchLiveMarketOverview(
   }
 
   let usdKrwRate = Number.NaN;
+  let frankfurterLatestDate: string | null = null;
   if (fxResult.status === "fulfilled" && fxResult.value && typeof fxResult.value === "object") {
     const rates = (fxResult.value as { rates?: Record<string, unknown> }).rates;
     usdKrwRate = Number(rates?.KRW);
@@ -289,11 +375,62 @@ export async function fetchLiveMarketOverview(
       const frankfurter = (await fetchJsonWithTimeout(
         "https://api.frankfurter.app/latest?from=USD&to=KRW",
         fetchImpl,
-      )) as { rates?: Record<string, unknown> };
+      )) as { date?: unknown; rates?: Record<string, unknown> };
       usdKrwRate = Number(frankfurter?.rates?.KRW);
+      if (typeof frankfurter?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(frankfurter.date)) {
+        frankfurterLatestDate = frankfurter.date;
+      }
     } catch {
       // Keep fallback
     }
+  }
+
+  const resolvedUsdKrwRate =
+    Number.isFinite(usdKrwRate) && usdKrwRate > 0
+      ? Number(usdKrwRate.toFixed(2))
+      : FALLBACK_MARKET_OVERVIEW.usdKrwRate;
+
+  // Fetch 14-day USD/KRW history from Frankfurter public API
+  let usdKrwHistory = buildDeterministicUsdKrwHistory(resolvedUsdKrwRate);
+  let usdKrwChangeAmount = FALLBACK_MARKET_OVERVIEW.usdKrwChangeAmount;
+  let usdKrwChangePct = FALLBACK_MARKET_OVERVIEW.usdKrwChangePct;
+
+  try {
+    const endDateStr = frankfurterLatestDate ?? new Date().toISOString().slice(0, 10);
+    const endDateMs = Date.parse(`${endDateStr}T00:00:00Z`);
+    const startDateStr = new Date(
+      (Number.isFinite(endDateMs) ? endDateMs : Date.now()) - 22 * 86_400_000,
+    )
+      .toISOString()
+      .slice(0, 10);
+    const seriesPayload = (await fetchJsonWithTimeout(
+      `https://api.frankfurter.app/${startDateStr}..${endDateStr}?from=USD&to=KRW`,
+      fetchImpl,
+    )) as { rates?: Record<string, { KRW?: unknown }> };
+    if (seriesPayload?.rates && typeof seriesPayload.rates === "object") {
+      const sortedDates = Object.keys(seriesPayload.rates).sort();
+      const seriesValues = sortedDates
+        .map(d => Number(seriesPayload.rates?.[d]?.KRW))
+        .filter(val => Number.isFinite(val) && val > 0)
+        .map(val => Number(val.toFixed(1)));
+      if (seriesValues.length >= 4) {
+        const prior13 = seriesValues.slice(-13);
+        while (prior13.length < 13) {
+          prior13.unshift(prior13[0]);
+        }
+        usdKrwHistory = [...prior13, resolvedUsdKrwRate];
+        const prevRef =
+          Math.abs(resolvedUsdKrwRate - prior13[prior13.length - 1]) >= 0.01
+            ? prior13[prior13.length - 1]
+            : prior13[0];
+        if (prevRef > 0) {
+          usdKrwChangeAmount = Number((resolvedUsdKrwRate - prevRef).toFixed(2));
+          usdKrwChangePct = Number((((resolvedUsdKrwRate - prevRef) / prevRef) * 100).toFixed(2));
+        }
+      }
+    }
+  } catch {
+    // Keep deterministic 14-day history anchored to resolvedUsdKrwRate
   }
 
   const kimchiPremiumPercent =
@@ -415,6 +552,10 @@ export async function fetchLiveMarketOverview(
     futuresBullPct,
     futuresBearPct: 100 - futuresBullPct,
     btcChange24h,
+    usdKrwRate: resolvedUsdKrwRate,
+    usdKrwChangeAmount,
+    usdKrwChangePct,
+    usdKrwHistory,
     updatedAt: new Date().toISOString(),
   };
 }
