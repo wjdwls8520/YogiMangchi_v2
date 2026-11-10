@@ -76,6 +76,7 @@ class ContestSettlementAndTradingTest {
     @Autowired private MemberAccounts memberAccounts;
     @Autowired private LatestPriceStore prices;
     @Autowired private ContestSettlementService settlementService;
+    @Autowired private ContestSettlementChunkExecutor chunkExecutor;
     @Autowired private ContestSettlementScheduler settlementScheduler;
     @Autowired private LedgerReconciler reconciler;
     @Autowired private com.yogimangchi.trading.tradingaccount.security.TradingCredentials tradingCredentials;
@@ -390,6 +391,129 @@ class ContestSettlementAndTradingTest {
                 .isZero();
         assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'", Long.class, contestAccountId))
                 .isZero();
+    }
+
+    @Test
+    void distributedSettlementLockRecoversStaleRunsAndProcessesMultiChunk500BatchesWithZeroDiscrepancy() throws Exception {
+        long adminId = MEMBERS.incrementAndGet();
+        long member1Id = MEMBERS.incrementAndGet();
+        long member2Id = MEMBERS.incrementAndGet();
+        String adminBearer = "Bearer " + adminToken(adminId);
+        String member1Bearer = "Bearer " + memberToken(member1Id);
+        String member2Bearer = "Bearer " + memberToken(member2Id);
+
+        Instant now = Instant.now();
+        long seasonId = createSeasonViaAdmin(adminBearer, "멀티청크 500x3 및 분산 락 검증 시즌", "100000",
+                now.minusSeconds(3600), now.plusSeconds(3600), now.minusSeconds(600), now.plusSeconds(7200));
+
+        applyForSeason(member1Bearer, seasonId, "대용량테스터1");
+        applyForSeason(member2Bearer, seasonId, "대용량테스터2");
+        mvc.perform(post("/api/v1/trading/admin/contest/seasons/" + seasonId + "/applicants/bulk-approve")
+                        .header("Authorization", adminBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+
+        Long account1Id = jdbc.queryForObject(
+                "select account_id from trading.contest_participant where contest_season_id=? and member_id=?",
+                Long.class, seasonId, member1Id);
+        Long account2Id = jdbc.queryForObject(
+                "select account_id from trading.contest_participant where contest_season_id=? and member_id=?",
+                Long.class, seasonId, member2Id);
+        LegacyLeverageFixtures.bothDirections(jdbc, account1Id, btc);
+        LegacyLeverageFixtures.bothDirections(jdbc, account1Id, eth);
+        LegacyLeverageFixtures.bothDirections(jdbc, account2Id, btc);
+        LegacyLeverageFixtures.bothDirections(jdbc, account2Id, eth);
+
+        // Open real positions on both accounts and 1 template LIMIT OPEN order on account1
+        placeOrder(member1Bearer, seasonId, "MARKET", btc, "LONG", "1", 10, null);
+        placeOrder(member1Bearer, seasonId, "MARKET", eth, "LONG", "5", 10, null);
+        placeOrder(member2Bearer, seasonId, "MARKET", btc, "SHORT", "1", 10, null);
+        placeOrder(member2Bearer, seasonId, "MARKET", eth, "SHORT", "5", 10, null);
+
+        String templateLimitBody = placeOrder(member1Bearer, seasonId, "LIMIT", btc, "LONG", "0.5", 10, "900");
+        long templateOrderId = json.readTree(templateLimitBody).path("orderId").asLong();
+        BigDecimal unitReservedMargin = jdbc.queryForObject(
+                "select reserved_margin from trading.trading_order where id = ?",
+                BigDecimal.class, templateOrderId);
+
+        // Expand to 1,050 PENDING LIMIT OPEN orders (3 chunks at default CHUNK_SIZE=500: 500 + 500 + 50)
+        int extraOrders = 1049;
+        jdbc.update("""
+                INSERT INTO trading.trading_order (
+                    account_id, trading_symbol_id, side, type, action, status,
+                    quantity, leverage, requested_leverage, limit_price, reserved_margin,
+                    idempotency_key, request_fingerprint, created_at, submitted_margin_mode, fee_rate
+                )
+                SELECT
+                    o.account_id, o.trading_symbol_id, o.side, o.type, o.action, 'PENDING',
+                    o.quantity, o.leverage, o.requested_leverage, o.limit_price, o.reserved_margin,
+                    'bulk-settlement-key-' || gs.n, o.request_fingerprint, o.created_at, o.submitted_margin_mode, o.fee_rate
+                FROM trading.trading_order o
+                CROSS JOIN generate_series(1, ?) AS gs(n)
+                WHERE o.id = ?
+                """, extraOrders, templateOrderId);
+
+        BigDecimal totalExtraReserved = unitReservedMargin.multiply(BigDecimal.valueOf(extraOrders));
+        jdbc.update("""
+                UPDATE trading.wallet
+                SET reserved_margin = reserved_margin + ?
+                WHERE account_id = ?
+                """, totalExtraReserved, account1Id);
+
+        // Pre-settlement reconciliation must be 100% MATCHED with 1,050 pending reservations
+        assertThat(reconciler.check(account1Id).status()).isEqualTo("MATCHED");
+        assertThat(reconciler.check(account2Id).status()).isEqualTo("MATCHED");
+
+        // 1. Multi-instance distributed lock check: active RUNNING row (<5m old) blocks concurrent settlement with TRADING_BUSY
+        Long simulatedActiveRunId = jdbc.queryForObject("""
+                INSERT INTO trading.contest_settlement_run (
+                    contest_season_id, attempt_no, triggered_by, status, last_completed_phase, started_at
+                ) VALUES (?, 1, 'OTHER_INSTANCE', 'RUNNING', 'STARTED', now() - interval '1 minute')
+                RETURNING id
+                """, Long.class, seasonId);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        settlementService.settleSeason(seasonId, "ADMIN:" + adminId, true))
+                .isInstanceOf(com.yogimangchi.trading.error.BusinessException.class)
+                .extracting("code")
+                .isEqualTo(com.yogimangchi.trading.error.ErrorCode.TRADING_BUSY);
+
+        // 2. Stale RUNNING row (>5m old) is automatically marked FAILED and recovered by next settlement run!
+        jdbc.update("""
+                UPDATE trading.contest_settlement_run
+                SET started_at = now() - interval '10 minutes'
+                WHERE id = ?
+                """, simulatedActiveRunId);
+
+        mark(btc, "1050");
+        mark(eth, "210");
+
+        long startNanos = System.nanoTime();
+        var settlementResult = settlementService.settleSeason(seasonId, "ADMIN:" + adminId, true);
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+
+        assertThat(settlementResult.status()).isEqualTo("COMPLETED");
+        assertThat(settlementResult.canceledOrderCount()).isEqualTo(1050);
+        assertThat(settlementResult.liquidatedPositionCount()).isEqualTo(4);
+        assertThat(settlementResult.finalizedParticipantCount()).isEqualTo(2);
+        assertThat(elapsedMs).isLessThan(15_000L);
+
+        // Stale run #1 was marked FAILED
+        String staleRunStatus = jdbc.queryForObject(
+                "select status from trading.contest_settlement_run where id = ?",
+                String.class, simulatedActiveRunId);
+        assertThat(staleRunStatus).isEqualTo("FAILED");
+
+        // Post-settlement ledger reconciliation must be 100% MATCHED (0 discrepancy across all 1,050 released reservations + 4 liquidated positions)
+        assertThat(reconciler.check(account1Id).status()).isEqualTo("MATCHED");
+        assertThat(reconciler.check(account2Id).status()).isEqualTo("MATCHED");
+
+        // 3. Duplicate scheduled settlement (earlyTerminate=false) on already-settled season is rejected idempotently with TRADING_BUSY
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        chunkExecutor.beginSettlementRun(seasonId, "SYSTEM_SCHEDULER", false, Instant.now()))
+                .isInstanceOf(com.yogimangchi.trading.error.BusinessException.class)
+                .extracting("code")
+                .isEqualTo(com.yogimangchi.trading.error.ErrorCode.TRADING_BUSY);
     }
 
     private long createSeasonViaAdmin(
