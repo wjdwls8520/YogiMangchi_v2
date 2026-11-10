@@ -198,8 +198,8 @@ public class NewsService {
                 params.add(cursorId);
                 params.add(cursorId);
             } else if ("POPULAR".equals(normalizedSort)) {
-                sql.append(" and ((bull_count + bear_count + view_count) < coalesce((select c.bull_count + c.bear_count + c.view_count from content.news_article c where c.id = ?), 2147483647) "
-                        + "or ((bull_count + bear_count + view_count) = coalesce((select c.bull_count + c.bear_count + c.view_count from content.news_article c where c.id = ?), 2147483647) "
+                sql.append(" and (view_count < coalesce((select c.view_count from content.news_article c where c.id = ?), 2147483647) "
+                        + "or (view_count = coalesce((select c.view_count from content.news_article c where c.id = ?), 2147483647) "
                         + "and (published_at < coalesce((select c.published_at from content.news_article c where c.id = ?), TIMESTAMPTZ 'infinity') "
                         + "or (published_at = coalesce((select c.published_at from content.news_article c where c.id = ?), TIMESTAMPTZ 'infinity') and id < ?))))");
                 params.add(cursorId);
@@ -238,7 +238,7 @@ public class NewsService {
             params.add(search);
         }
         if ("POPULAR".equals(normalizedSort)) {
-            sql.append(" order by (bull_count + bear_count + view_count) desc, published_at desc, id desc limit ?");
+            sql.append(" order by view_count desc, published_at desc, id desc limit ?");
         } else if ("OLDEST".equals(normalizedSort)) {
             sql.append(" order by published_at asc, id asc limit ?");
         } else {
@@ -255,17 +255,65 @@ public class NewsService {
 
     @Transactional(timeout = 3)
     public NewsItemResponse get(Long newsId) {
+        return get(newsId, null, "direct-call", true);
+    }
+
+    @Transactional(timeout = 3)
+    public NewsItemResponse get(Long newsId, Long memberId, String anonViewerKey, boolean countView) {
         if (newsId == null || newsId <= 0) {
             throw notFound();
         }
+        if (countView) {
+            if (memberId != null && memberId > 0) {
+                int inserted = jdbc.update(
+                        "insert into content.news_article_member_view (news_id, member_id, viewed_at) "
+                                + "select id, ?, now() from content.news_article where id = ? "
+                                + "on conflict (news_id, member_id) do nothing",
+                        memberId,
+                        newsId);
+                if (inserted > 0) {
+                    jdbc.update("update content.news_article set view_count = view_count + 1 where id = ?", newsId);
+                }
+            } else {
+                java.time.LocalDate kstToday = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
+                String effectiveAnonKey = (anonViewerKey == null || anonViewerKey.isBlank())
+                        ? "anonymous-default"
+                        : anonViewerKey.strip();
+                String viewerHash = sha256Hex(effectiveAnonKey);
+                int inserted = jdbc.update(
+                        "insert into content.news_article_anon_daily_view (news_id, viewed_date, viewer_hash, viewed_at) "
+                                + "select id, ?, ?, now() from content.news_article where id = ? "
+                                + "on conflict (news_id, viewed_date, viewer_hash) do nothing",
+                        java.sql.Date.valueOf(kstToday),
+                        viewerHash,
+                        newsId);
+                if (inserted > 0) {
+                    jdbc.update("update content.news_article set view_count = view_count + 1 where id = ?", newsId);
+                }
+            }
+        }
         var rows = jdbc.query(
-                "update content.news_article set view_count = view_count + 1 where id = ? returning " + SELECT_COLUMNS,
+                "select " + SELECT_COLUMNS + " from content.news_article where id = ?",
                 NewsService::mapRow,
                 newsId);
         if (rows.isEmpty()) {
             throw notFound();
         }
         return rows.get(0);
+    }
+
+    private static String sha256Hex(String input) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     @Transactional(timeout = 3)

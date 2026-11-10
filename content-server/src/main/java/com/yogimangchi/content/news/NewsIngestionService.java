@@ -170,6 +170,10 @@ public class NewsIngestionService {
                             + "where id > 20 and external_hash is not null and external_hash not like 'seed-%' "
                             + "order by id desc offset 1000 limit 200"
                             + ")");
+            java.time.LocalDate anonViewCutoff = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).minusDays(2);
+            jdbc.update(
+                    "delete from content.news_article_anon_daily_view where viewed_date < ?",
+                    java.sql.Date.valueOf(anonViewCutoff));
         } catch (Exception e) {
             log.debug("News retention cleanup deferred: {}", e.getClass().getSimpleName());
         }
