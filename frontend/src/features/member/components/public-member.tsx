@@ -334,10 +334,11 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
               return (
                 <>
-                  <div className="rounded-2xl border border-gray-200 bg-white px-6 pt-2">
+                  <div data-mypage-bookmark-nav="true">
                     <V1Tabs
                       tabs={visibleMainTabs}
                       activeTab={effectiveTab}
+                      variant="bookmark"
                       onChange={val =>
                         setMainTab(val as "mock-assets" | "contest-assets" | "portfolio" | "community")
                       }
