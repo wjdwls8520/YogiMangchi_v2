@@ -48,7 +48,9 @@ public final class ContestDtos {
             String roiPct,
             long openPositionCount,
             boolean settled,
-            Instant settledAt) { }
+            Instant settledAt,
+            long tradeCount,
+            String winRate) { }
 
     public record LeaderboardPageResponse(
             SeasonView season,
@@ -84,7 +86,9 @@ public final class ContestDtos {
             Integer rank,
             long totalParticipants,
             long openPositionCount,
-            long pendingOrderCount) { }
+            long pendingOrderCount,
+            long tradeCount,
+            String winRate) { }
 
     public record MemberContestSeasonsResponse(
             Long memberId,
@@ -174,7 +178,9 @@ public final class ContestDtos {
             long pendingOrderCount,
             Instant appliedAt,
             Instant approvedAt,
-            Instant settledAt) { }
+            Instant settledAt,
+            long tradeCount,
+            String winRate) { }
 
     public record SettlementRunView(
             Long id,

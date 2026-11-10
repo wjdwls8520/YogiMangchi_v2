@@ -11,9 +11,16 @@ public class TradingCredentials {
     private final ObjectProvider<MemberCredentials> members;
     public TradingCredentials(GuestCredentialService guests,ObjectProvider<MemberCredentials> members) { this.guests=guests; this.members=members; }
     public Optional<TradingPrincipal> authenticate(String token) {
+        return authenticate(token, null);
+    }
+
+    public Optional<TradingPrincipal> authenticate(String token, Long contestSeasonId) {
         if(token==null || token.length()>8192) return Optional.empty();
-        if(GuestCredentials.isValidFormat(token)) return guests.authenticate(token);
+        if(GuestCredentials.isValidFormat(token)) {
+            if (contestSeasonId != null) return Optional.empty();
+            return guests.authenticate(token);
+        }
         MemberCredentials member=members.getIfAvailable();
-        return member!=null && token.contains(".") ? member.authenticate(token) : Optional.empty();
+        return member!=null && token.contains(".") ? member.authenticate(token, contestSeasonId) : Optional.empty();
     }
 }

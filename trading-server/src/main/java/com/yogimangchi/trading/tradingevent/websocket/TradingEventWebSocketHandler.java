@@ -69,12 +69,13 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
             String type=frame.path("type").asText();
             if(client.principal==null && type.equals("AUTHENTICATE")) {
                 if(!client.authenticating.compareAndSet(false,true)) throw new IllegalArgumentException();
-                Set<String> allowed=Set.of("type","credential","afterEventId");
+                Set<String> allowed=Set.of("type","credential","afterEventId","contestSeasonId");
                 frame.fieldNames().forEachRemaining(key -> { if(!allowed.contains(key)) throw new IllegalArgumentException(); });
                 if(!frame.path("credential").isTextual()) throw new IllegalArgumentException();
                 String token=frame.path("credential").asText();
                 long cursor=cursor(frame.get("afterEventId"));
-                readers.execute(() -> authenticate(client,token,cursor));
+                Long contestSeasonId=contestSeasonId(frame.get("contestSeasonId"));
+                readers.execute(() -> authenticate(client,token,cursor,contestSeasonId));
             } else if(client.principal!=null && type.equals("PING") && frame.size()==1) {
                 if(!client.principal.expiresAt().isAfter(Instant.now())) { disconnect(client,new CloseStatus(1008,"Credential expired")); return; }
                 send(client,"PONG",Map.of());
@@ -83,9 +84,9 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
         catch(Exception e) { disconnect(client,new CloseStatus(1008,"Invalid trading stream message")); }
     }
 
-    private void authenticate(Client client,String token,long cursor) {
+    private void authenticate(Client client,String token,long cursor,Long contestSeasonId) {
         try {
-            var principal=credentials.authenticate(token).filter(p -> p.accountId()!=null && p.expiresAt().isAfter(Instant.now())).orElse(null);
+            var principal=credentials.authenticate(token,contestSeasonId).filter(p -> p.accountId()!=null && p.expiresAt().isAfter(Instant.now())).orElse(null);
             if(principal==null) { disconnect(client,new CloseStatus(1008,"Invalid or expired credential")); return; }
             synchronized(registrations) {
                 if(client.closed.get()) return;
@@ -152,6 +153,12 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
         if(node==null) return 0;
         if(!node.isTextual() || !node.asText().matches("0|[1-9][0-9]{0,18}")) throw new IllegalArgumentException();
         return Long.parseLong(node.asText());
+    }
+    private static Long contestSeasonId(JsonNode node) {
+        if(node==null || node.isNull()) return null;
+        if(node.isIntegralNumber() && node.canConvertToLong() && node.longValue()>0) return node.longValue();
+        if(node.isTextual() && node.asText().matches("[1-9][0-9]{0,17}")) return Long.parseLong(node.asText());
+        throw new IllegalArgumentException();
     }
     private void send(Client client,String type,Object data) {
         if(client.closed.get()) return;

@@ -636,15 +636,47 @@ public class ContestService {
         return mapApplicationRow(updated, now);
     }
 
+    private static String formatWinRate(long winningCount, long closedCount) {
+        if (closedCount <= 0) {
+            return "0.0%";
+        }
+        return BigDecimal.valueOf(winningCount)
+                .multiply(HUNDRED)
+                .divide(BigDecimal.valueOf(closedCount), 1, RoundingMode.HALF_UP)
+                .toPlainString() + "%";
+    }
+
     private List<LeaderboardEntry> buildRankedLeaderboard(Long seasonId) {
         var rows = jdbc.queryForList("""
                 SELECT cp.*, w.balance, w.used_margin, w.reserved_margin, w.realized_pnl,
-                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status = 'OPEN') AS open_position_count
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status = 'OPEN') AS open_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id) AS total_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED')) AS closed_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND p.realized_pnl > 0) AS winning_position_count
                 FROM trading.contest_participant cp
                 JOIN trading.wallet w ON w.account_id = cp.account_id
                 WHERE cp.contest_season_id = ?
                 ORDER BY cp.id ASC
                 """, seasonId);
+
+        List<Long> unsettledAccountIds = new ArrayList<>();
+        for (var row : rows) {
+            Timestamp settledTs = (Timestamp) row.get("settled_at");
+            if (settledTs == null || row.get("final_balance") == null || row.get("final_roi_pct") == null) {
+                unsettledAccountIds.add(((Number) row.get("account_id")).longValue());
+            }
+        }
+
+        Map<Long, Wallet> walletByAccountId = new HashMap<>();
+        Map<Long, List<Position>> openByAccountId = new HashMap<>();
+        if (!unsettledAccountIds.isEmpty()) {
+            for (Wallet w : wallets.findByAccountIdIn(unsettledAccountIds)) {
+                walletByAccountId.put(w.getAccountId(), w);
+            }
+            for (Position p : positions.findByAccountIdInAndStatusOrderByIdAsc(unsettledAccountIds, Position.Status.OPEN)) {
+                openByAccountId.computeIfAbsent(p.getAccountId(), k -> new ArrayList<>()).add(p);
+            }
+        }
 
         record RawEntry(
                 long participantId,
@@ -660,7 +692,9 @@ public class ContestService {
                 long openPositionCount,
                 boolean settled,
                 Instant settledAt,
-                Integer fixedRank) { }
+                Integer fixedRank,
+                long tradeCount,
+                String winRate) { }
 
         List<RawEntry> raws = new ArrayList<>(rows.size());
         for (var row : rows) {
@@ -672,6 +706,10 @@ public class ContestService {
             BigDecimal balance = (BigDecimal) row.get("balance");
             BigDecimal realizedPnl = (BigDecimal) row.get("realized_pnl");
             long openPosCount = ((Number) row.get("open_position_count")).longValue();
+            long tradeCount = ((Number) row.get("total_position_count")).longValue();
+            long closedPosCount = ((Number) row.get("closed_position_count")).longValue();
+            long winningPosCount = ((Number) row.get("winning_position_count")).longValue();
+            String winRate = formatWinRate(winningPosCount, closedPosCount);
             Timestamp settledTs = (Timestamp) row.get("settled_at");
             Integer finalRank = row.get("final_rank") != null ? ((Number) row.get("final_rank")).intValue() : null;
 
@@ -683,10 +721,10 @@ public class ContestService {
                 raws.add(new RawEntry(
                         participantId, memberId, nickname, accountId, seedMoney,
                         finalBal, finalBal, finalRealized, BigDecimal.ZERO, finalRoi,
-                        openPosCount, true, settledTs.toInstant(), finalRank));
+                        openPosCount, true, settledTs.toInstant(), finalRank, tradeCount, winRate));
             } else {
-                Wallet wallet = wallets.findById(accountId).orElse(null);
-                List<Position> open = positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN);
+                Wallet wallet = walletByAccountId.get(accountId);
+                List<Position> open = openByAccountId.getOrDefault(accountId, List.of());
                 BigDecimal unrealized = BigDecimal.ZERO;
                 BigDecimal equity = balance;
                 if (wallet != null && !open.isEmpty()) {
@@ -702,7 +740,7 @@ public class ContestService {
                 raws.add(new RawEntry(
                         participantId, memberId, nickname, accountId, seedMoney,
                         equity, balance, realizedPnl, unrealized, roiPct,
-                        openPosCount, false, null, null));
+                        openPosCount, false, null, null, tradeCount, winRate));
             }
         }
 
@@ -737,7 +775,9 @@ public class ContestService {
                     plain(cur.roiPct()),
                     cur.openPositionCount(),
                     cur.settled(),
-                    cur.settledAt()));
+                    cur.settledAt(),
+                    cur.tradeCount(),
+                    cur.winRate()));
         }
         return result;
     }
@@ -750,12 +790,31 @@ public class ContestService {
                        w.balance, w.used_margin, w.reserved_margin, w.realized_pnl,
                        (SELECT COUNT(*) FROM trading.contest_participant cp2 WHERE cp2.contest_season_id = s.id) AS total_participants,
                        (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status = 'OPEN') AS open_position_count,
-                       (SELECT COUNT(*) FROM trading.trading_order o WHERE o.account_id = cp.account_id AND o.status = 'PENDING') AS pending_order_count
+                       (SELECT COUNT(*) FROM trading.trading_order o WHERE o.account_id = cp.account_id AND o.status = 'PENDING') AS pending_order_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id) AS total_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED')) AS closed_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND p.realized_pnl > 0) AS winning_position_count
                 FROM trading.contest_participant cp
                 JOIN trading.contest_season s ON s.id = cp.contest_season_id
                 JOIN trading.wallet w ON w.account_id = cp.account_id
                 WHERE cp.member_id = ?
                 """ + filter + " ORDER BY s.contest_start_at DESC, s.id DESC", memberId);
+
+        List<Long> accountIds = new ArrayList<>(rows.size());
+        for (var row : rows) {
+            accountIds.add(((Number) row.get("account_id")).longValue());
+        }
+        Map<Long, Wallet> walletByAccountId = new HashMap<>();
+        Map<Long, List<Position>> openByAccountId = new HashMap<>();
+        if (!accountIds.isEmpty()) {
+            for (Wallet w : wallets.findByAccountIdIn(accountIds)) {
+                walletByAccountId.put(w.getAccountId(), w);
+            }
+            for (Position p : positions.findByAccountIdInAndStatusOrderByIdAsc(accountIds, Position.Status.OPEN)) {
+                openByAccountId.computeIfAbsent(p.getAccountId(), k -> new ArrayList<>()).add(p);
+            }
+        }
+        Map<Long, List<LeaderboardEntry>> leaderboardBySeason = new HashMap<>();
 
         List<MemberContestParticipationView> result = new ArrayList<>(rows.size());
         for (var row : rows) {
@@ -771,6 +830,10 @@ public class ContestService {
             long totalParticipants = ((Number) row.get("total_participants")).longValue();
             long openPositionCount = ((Number) row.get("open_position_count")).longValue();
             long pendingOrderCount = ((Number) row.get("pending_order_count")).longValue();
+            long tradeCount = ((Number) row.get("total_position_count")).longValue();
+            long closedPosCount = ((Number) row.get("closed_position_count")).longValue();
+            long winningPosCount = ((Number) row.get("winning_position_count")).longValue();
+            String winRate = formatWinRate(winningPosCount, closedPosCount);
 
             Instant recStart = ((Timestamp) row.get("recruitment_start_at")).toInstant();
             Instant recEnd = ((Timestamp) row.get("recruitment_end_at")).toInstant();
@@ -781,8 +844,8 @@ public class ContestService {
             Instant seasonSettledAt = seasonSettledTs != null ? seasonSettledTs.toInstant() : null;
             StatusPair statusPair = computeStatus(isCanceled, seasonSettledAt, recStart, recEnd, conStart, conEnd, now);
 
-            Wallet wallet = wallets.findById(accountId).orElse(null);
-            List<Position> open = positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN);
+            Wallet wallet = walletByAccountId.get(accountId);
+            List<Position> open = openByAccountId.getOrDefault(accountId, List.of());
             BigDecimal unrealized = BigDecimal.ZERO;
             BigDecimal equity = balance;
             BigDecimal available = balance.subtract(usedMargin).subtract(reservedMargin).max(BigDecimal.ZERO);
@@ -805,7 +868,7 @@ public class ContestService {
                             : BigDecimal.ZERO);
             Integer rank = row.get("final_rank") != null
                     ? ((Number) row.get("final_rank")).intValue()
-                    : buildRankedLeaderboard(seasonId).stream()
+                    : leaderboardBySeason.computeIfAbsent(seasonId, this::buildRankedLeaderboard).stream()
                             .filter(e -> e.participantId().equals(participantId))
                             .map(LeaderboardEntry::rank)
                             .findFirst()
@@ -839,7 +902,9 @@ public class ContestService {
                     rank,
                     totalParticipants,
                     openPositionCount,
-                    pendingOrderCount));
+                    pendingOrderCount,
+                    tradeCount,
+                    winRate));
         }
         return List.copyOf(result);
     }
@@ -888,7 +953,9 @@ public class ContestService {
                     ((Number) row.get("pending_order_count")).longValue(),
                     ((Timestamp) row.get("applied_at")).toInstant(),
                     ((Timestamp) row.get("approved_at")).toInstant(),
-                    row.get("settled_at") != null ? ((Timestamp) row.get("settled_at")).toInstant() : null));
+                    row.get("settled_at") != null ? ((Timestamp) row.get("settled_at")).toInstant() : null,
+                    ranked != null ? ranked.tradeCount() : 0L,
+                    ranked != null ? ranked.winRate() : "0.0%"));
         }
         return List.copyOf(result);
     }

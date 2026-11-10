@@ -78,6 +78,7 @@ class ContestSettlementAndTradingTest {
     @Autowired private ContestSettlementService settlementService;
     @Autowired private ContestSettlementScheduler settlementScheduler;
     @Autowired private LedgerReconciler reconciler;
+    @Autowired private com.yogimangchi.trading.tradingaccount.security.TradingCredentials tradingCredentials;
     @MockitoBean private TradingEngineGate gate;
 
     private long btc;
@@ -151,10 +152,32 @@ class ContestSettlementAndTradingTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountSummary.wallet.balance").value("20000.000000000000000000"));
 
+        mvc.perform(get("/api/v1/trading/contest/seasons/" + season1Id + "/account/summary")
+                        .header("Authorization", memberBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.wallet.balance").value("20000.000000000000000000"));
+
         mvc.perform(get("/api/v1/trading/contest/seasons/" + season2Id + "/summary")
                         .header("Authorization", memberBearer))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountSummary.wallet.balance").value("50000.000000000000000000"));
+
+        mvc.perform(get("/api/v1/trading/contest/seasons/" + season2Id + "/account/summary")
+                        .header("Authorization", memberBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.wallet.balance").value("50000.000000000000000000"));
+
+        // Verify TradingCredentials resolves MOCK account when contestSeasonId is null, and CONTEST account when contestSeasonId is provided
+        String rawToken = memberToken(memberId);
+        Long season1AccountId = jdbc.queryForObject(
+                "select account_id from trading.contest_participant where contest_season_id=? and member_id=?",
+                Long.class, season1Id, memberId);
+        Long season2AccountId = jdbc.queryForObject(
+                "select account_id from trading.contest_participant where contest_season_id=? and member_id=?",
+                Long.class, season2Id, memberId);
+        assertThat(tradingCredentials.authenticate(rawToken).orElseThrow().accountId()).isEqualTo(mockAccountId);
+        assertThat(tradingCredentials.authenticate(rawToken, season1Id).orElseThrow().accountId()).isEqualTo(season1AccountId);
+        assertThat(tradingCredentials.authenticate(rawToken, season2Id).orElseThrow().accountId()).isEqualTo(season2AccountId);
     }
 
     @Test
@@ -193,9 +216,41 @@ class ContestSettlementAndTradingTest {
         }
 
         // 1. Winner opens 1 BTC LONG @ 1000 and 2 pending LIMIT OPEN orders (@ 900, @ 850)
-        placeOrder(winnerBearer, seasonId, "MARKET", btc, "LONG", "1", 10, null);
+        String winnerOpenBody = placeOrder(winnerBearer, seasonId, "MARKET", btc, "LONG", "1", 10, null);
+        long winnerOpenOrderId = json.readTree(winnerOpenBody).path("orderId").asLong();
         placeOrder(winnerBearer, seasonId, "LIMIT", btc, "LONG", "0.5", 10, "900");
         placeOrder(winnerBearer, seasonId, "LIMIT", eth, "LONG", "1", 10, "150");
+
+        // Verify contest terminal endpoints (/orders/{orderId}, /events, /recovery, /performance/symbols, /command-results/query)
+        mvc.perform(get("/api/v1/trading/contest/seasons/" + seasonId + "/orders/" + winnerOpenOrderId)
+                        .header("Authorization", winnerBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderId").value(winnerOpenOrderId))
+                .andExpect(jsonPath("$.status").value("FILLED"));
+
+        mvc.perform(get("/api/v1/trading/contest/seasons/" + seasonId + "/events")
+                        .header("Authorization", winnerBearer)
+                        .param("afterId", "0")
+                        .param("limit", "50"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(3));
+
+        mvc.perform(get("/api/v1/trading/contest/seasons/" + seasonId + "/recovery")
+                        .header("Authorization", winnerBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CLEAR"));
+
+        mvc.perform(get("/api/v1/trading/contest/seasons/" + seasonId + "/performance/symbols")
+                        .header("Authorization", winnerBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totals.fillCount").value(1));
+
+        mvc.perform(post("/api/v1/trading/contest/seasons/" + seasonId + "/command-results/query")
+                        .header("Authorization", winnerBearer)
+                        .contentType("application/json")
+                        .content("{\"operation\":\"OPEN\",\"idempotencyKey\":\"nonexistent_key_12345\",\"request\":{\"type\":\"MARKET\",\"tradingSymbolId\":" + btc + ",\"side\":\"LONG\",\"quantity\":\"1\",\"leverage\":10,\"limitPrice\":null}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("NOT_OBSERVED"));
 
         // 2. TiedA and TiedB stay at 10000 USDT cash (0% ROI, 0 realized PnL -> tied for rank 2!) and place pending LIMIT orders
         placeOrder(tiedABearer, seasonId, "LIMIT", btc, "LONG", "0.5", 10, "900");
@@ -271,10 +326,18 @@ class ContestSettlementAndTradingTest {
         JsonNode items = json.readTree(lbBody).path("items");
         assertThat(items.get(0).path("memberId").asLong()).isEqualTo(winnerId);
         assertThat(items.get(0).path("rank").asInt()).isEqualTo(1);
+        assertThat(items.get(0).path("tradeCount").asLong()).isEqualTo(1L);
+        assertThat(items.get(0).path("winRate").asText()).isEqualTo("100.0%");
         assertThat(items.get(1).path("rank").asInt()).isEqualTo(2);
+        assertThat(items.get(1).path("tradeCount").asLong()).isZero();
+        assertThat(items.get(1).path("winRate").asText()).isEqualTo("0.0%");
         assertThat(items.get(2).path("rank").asInt()).isEqualTo(2);
+        assertThat(items.get(2).path("tradeCount").asLong()).isZero();
+        assertThat(items.get(2).path("winRate").asText()).isEqualTo("0.0%");
         assertThat(items.get(3).path("memberId").asLong()).isEqualTo(loserId);
         assertThat(items.get(3).path("rank").asInt()).isEqualTo(4);
+        assertThat(items.get(3).path("tradeCount").asLong()).isEqualTo(2L);
+        assertThat(items.get(3).path("winRate").asText()).isEqualTo("0.0%");
 
         // Verify new orders after settlement are rejected with CONTEST_NOT_RUNNING
         mvc.perform(post("/api/v1/trading/contest/seasons/" + seasonId + "/orders")

@@ -16,11 +16,18 @@ public class MemberCredentials {
     public MemberCredentials(@Qualifier("memberJwtDecoder") JwtDecoder decoder,TradingAccountRepository accounts) { this.decoder=decoder; this.accounts=accounts; }
     @Transactional(readOnly=true,timeout=3)
     public Optional<TradingPrincipal> authenticate(String token) {
+        return authenticate(token, null);
+    }
+
+    @Transactional(readOnly=true,timeout=3)
+    public Optional<TradingPrincipal> authenticate(String token, Long contestSeasonId) {
         Jwt jwt;
         try { jwt=decoder.decode(token); } catch(JwtException failure) { return Optional.empty(); }
         Long member=Long.valueOf(jwt.getSubject());
         if(accounts.existsByMemberIdAndStatus(member,com.yogimangchi.trading.tradingaccount.entity.TradingAccount.Status.WITHDRAWN)) return Optional.empty();
-        Long account=accounts.findAccountIdByMemberId(member).orElse(null);
+        Long account = (contestSeasonId != null && contestSeasonId > 0)
+                ? accounts.findContestAccountId(member, contestSeasonId).orElse(null)
+                : accounts.findAccountIdByMemberId(member).orElse(null);
         var roles = jwt.getClaimAsStringList("roles");
         return Optional.of(new TradingPrincipal(account,jwt.getExpiresAt(),member,roles));
     }
