@@ -111,12 +111,16 @@ import {
 } from "../src/features/trading/api/guest-session";
 import { AdminUsers } from "../src/features/admin/components/admin-users";
 import { AdminCommunity } from "../src/features/admin/components/admin-community";
+import { AdminReportsView } from "../src/features/admin/components/admin-reports";
 import {
   deleteAdminCommunityPost,
   deleteAdminCommunityReply,
+  dismissAdminReport,
   fetchAdminCommunityPosts,
   fetchAdminCommunityReplies,
   fetchAdminMembers,
+  fetchAdminReports,
+  moderateAdminReportTarget,
   withdrawAdminMember,
 } from "../src/features/admin/api/admin-api";
 
@@ -2433,6 +2437,20 @@ test("GNB admin button role gate, contest trading path routing, and AdminUsers/A
     assert.match(adminCommunityHtml, /<th[^>]*whitespace-nowrap[^>]*>글 번호<\/th>/);
     assert.match(adminCommunityHtml, /<th[^>]*whitespace-nowrap[^>]*>삭제 여부<\/th>/);
     assert.equal(adminCommunityHtml.includes("cursor-not-allowed"), false);
+    assert.equal(adminCommunityHtml.includes("확장슬롯"), false);
+
+    const adminReportsHtml = renderToStaticMarkup(
+      <MemberProvider session={adminSession} client={client}>
+        <AdminReportsView />
+      </MemberProvider>,
+    );
+    assert.match(adminReportsHtml, /data-admin-reports="true"/);
+    assert.match(adminReportsHtml, /커뮤니티 신고 관리 센터/);
+    assert.match(adminReportsHtml, /href="\/admin\/reports"/);
+    assert.match(adminReportsHtml, /<th[^>]*whitespace-nowrap[^>]*>대상 누적신고<\/th>/);
+    assert.match(adminReportsHtml, /<th[^>]*whitespace-nowrap[^>]*>신고 사유<\/th>/);
+    assert.equal(adminReportsHtml.includes("cursor-not-allowed"), false);
+    assert.equal(adminReportsHtml.includes("확장슬롯"), false);
 
     // admin-api.ts contract verification
     const adminCalls: Array<{ url: string; method: string; auth: string }> = [];
@@ -2443,7 +2461,7 @@ test("GNB admin button role gate, contest trading path routing, and AdminUsers/A
         method: init?.method ?? "GET",
         auth: headers.Authorization ?? "",
       });
-      if ((init?.method ?? "GET") === "DELETE") {
+      if ((init?.method ?? "GET") === "DELETE" || (init?.method ?? "GET") === "POST") {
         return new Response(null, { status: 204 });
       }
       return new Response(
@@ -2454,6 +2472,11 @@ test("GNB admin button role gate, contest trading path routing, and AdminUsers/A
           content: [],
           nextCursorId: null,
           hasNext: false,
+          totalElements: 0,
+          totalPages: 0,
+          postReportCount: 0,
+          commentReportCount: 0,
+          activeTargetReportCount: 0,
         }),
         { status: 200 },
       );
@@ -2465,6 +2488,9 @@ test("GNB admin button role gate, contest trading path routing, and AdminUsers/A
     await deleteAdminCommunityPost("admin-jwt", 301, adminOpts);
     await fetchAdminCommunityReplies("admin-jwt", "WITHDRAWN", { replyContent: "댓글", size: 10 }, adminOpts);
     await deleteAdminCommunityReply("admin-jwt", 401, adminOpts);
+    await fetchAdminReports("admin-jwt", { targetType: "POST", reasonType: "SPAM", page: 0, size: 20 }, adminOpts);
+    await dismissAdminReport("admin-jwt", "COMMENT", 401, 15, adminOpts);
+    await moderateAdminReportTarget("admin-jwt", "POST", 301, "DELETE_TARGET", adminOpts);
 
     assert.equal(
       adminCalls[0]?.url,
@@ -2485,6 +2511,20 @@ test("GNB admin button role gate, contest trading path routing, and AdminUsers/A
     );
     assert.equal(adminCalls[5]?.url, "http://localhost:8080/api/v1/admin/community/replies/401");
     assert.equal(adminCalls[5]?.method, "DELETE");
+    assert.equal(
+      adminCalls[6]?.url,
+      "http://localhost:8080/api/v1/admin/community/reports?targetType=POST&targetStatus=ALL&reasonType=SPAM&page=0&size=20",
+    );
+    assert.equal(
+      adminCalls[7]?.url,
+      "http://localhost:8080/api/v1/admin/community/reports/COMMENT/401/reporters/15",
+    );
+    assert.equal(adminCalls[7]?.method, "DELETE");
+    assert.equal(
+      adminCalls[8]?.url,
+      "http://localhost:8080/api/v1/admin/community/reports/POST/301/moderate?action=DELETE_TARGET",
+    );
+    assert.equal(adminCalls[8]?.method, "POST");
   } finally {
     client.clear();
   }

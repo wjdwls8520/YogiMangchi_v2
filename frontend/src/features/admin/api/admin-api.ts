@@ -75,6 +75,35 @@ export interface AdminRepliesPageResponse {
   hasNext: boolean;
 }
 
+export interface AdminReportDto {
+  reportKey: string;
+  targetType: "POST" | "COMMENT";
+  targetId: number;
+  postId: number;
+  postTitle: string;
+  targetContent: string;
+  targetAuthorId: number;
+  targetAuthorNickname: string | null;
+  targetDeleteYn: string;
+  targetReportCount: number;
+  reporterId: number;
+  reporterNickname: string | null;
+  reasonType: string;
+  createdAt: string | null;
+}
+
+export interface AdminReportsPageResponse {
+  content: AdminReportDto[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  hasNext: boolean;
+  postReportCount: number;
+  commentReportCount: number;
+  activeTargetReportCount: number;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -225,6 +254,30 @@ function parseAdminReply(raw: unknown): AdminReplyDto {
     postTitle: asNullableString(r.postTitle),
     authorId: asNumber(r.authorId),
     authorNickname: asNullableString(r.authorNickname),
+  };
+}
+
+function parseAdminReport(raw: unknown): AdminReportDto {
+  const r = asRecord(raw);
+  const rawType = asString(r.targetType, "POST").toUpperCase();
+  const targetType: "POST" | "COMMENT" = rawType === "COMMENT" ? "COMMENT" : "POST";
+  const targetId = asNumber(r.targetId);
+  const reporterId = asNumber(r.reporterId);
+  return {
+    reportKey: asString(r.reportKey, `${targetType}:${targetId}:${reporterId}`),
+    targetType,
+    targetId,
+    postId: asNumber(r.postId),
+    postTitle: asString(r.postTitle),
+    targetContent: asString(r.targetContent),
+    targetAuthorId: asNumber(r.targetAuthorId),
+    targetAuthorNickname: asNullableString(r.targetAuthorNickname),
+    targetDeleteYn: asString(r.targetDeleteYn, "N"),
+    targetReportCount: asNumber(r.targetReportCount),
+    reporterId,
+    reporterNickname: asNullableString(r.reporterNickname),
+    reasonType: asString(r.reasonType, "SPAM"),
+    createdAt: asNullableString(r.createdAt),
   };
 }
 
@@ -404,6 +457,85 @@ export async function deleteAdminCommunityReply(
     token,
     ...options,
   });
+}
+
+export async function fetchAdminReports(
+  token: string,
+  params: {
+    targetType?: "ALL" | "POST" | "COMMENT";
+    targetStatus?: "ALL" | "ACTIVE" | "DELETED";
+    reasonType?: "ALL" | "SPAM" | "ABUSE" | "FRAUD" | "INAPPROPRIATE" | "OTHER";
+    keyword?: string;
+    page?: number;
+    size?: number;
+  } = {},
+  options?: AdminRequestOptions,
+): Promise<AdminReportsPageResponse> {
+  const search = new URLSearchParams();
+  search.set("targetType", params.targetType ?? "ALL");
+  search.set("targetStatus", params.targetStatus ?? "ALL");
+  search.set("reasonType", params.reasonType ?? "ALL");
+  if (params.keyword && params.keyword.trim()) {
+    search.set("keyword", params.keyword.trim());
+  }
+  search.set("page", String(params.page ?? 0));
+  search.set("size", String(params.size ?? 20));
+
+  const raw = await requestAdminJson(
+    `/api/v1/admin/community/reports?${search.toString()}`,
+    {
+      method: "GET",
+      token,
+      ...options,
+    },
+  );
+  const r = asRecord(raw);
+  return {
+    content: asArray(r.content, parseAdminReport),
+    page: asNumber(r.page),
+    size: asNumber(r.size, 20),
+    totalElements: asNumber(r.totalElements),
+    totalPages: asNumber(r.totalPages),
+    hasNext: asBoolean(r.hasNext),
+    postReportCount: asNumber(r.postReportCount),
+    commentReportCount: asNumber(r.commentReportCount),
+    activeTargetReportCount: asNumber(r.activeTargetReportCount),
+  };
+}
+
+export async function dismissAdminReport(
+  token: string,
+  targetType: "POST" | "COMMENT",
+  targetId: number,
+  reporterId: number,
+  options?: AdminRequestOptions,
+): Promise<void> {
+  await requestAdminJson(
+    `/api/v1/admin/community/reports/${targetType}/${targetId}/reporters/${reporterId}`,
+    {
+      method: "DELETE",
+      token,
+      ...options,
+    },
+  );
+}
+
+export async function moderateAdminReportTarget(
+  token: string,
+  targetType: "POST" | "COMMENT",
+  targetId: number,
+  action: "DELETE_TARGET" | "CLEAR_REPORTS" = "DELETE_TARGET",
+  options?: AdminRequestOptions,
+): Promise<void> {
+  const search = new URLSearchParams({ action });
+  await requestAdminJson(
+    `/api/v1/admin/community/reports/${targetType}/${targetId}/moderate?${search.toString()}`,
+    {
+      method: "POST",
+      token,
+      ...options,
+    },
+  );
 }
 
 export function formatAdminDateTime(iso: string | null | undefined): string {
