@@ -1,23 +1,53 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { ContentApiError, contentJson, contentMessage } from "../api/client";
 import { parseFollowChange, parseFollowPage, parseFollowSummary, parseProfile } from "../api/contracts";
+import {
+  communityCategoryLabel,
+  parseCommunityPostPage,
+  parseCommunityReport,
+  parseMemberCommunityCommentPage,
+  parseMemberCommunityReportPage,
+  parsePublicMemberPortfolio,
+  readCommunityOrPublic,
+  type CommunityCategory,
+} from "../api/community-news";
+import { tradingJson } from "../../trading/api/client";
 import { useMember } from "./member-provider";
 import { MemberShell } from "./member-views";
 import {
   V1AssetSummaryCard,
+  V1Button,
   V1FolderTabs,
   V1ProfileSidebar,
   V1Tabs,
   V1UserAvatar,
 } from "./v1-ui";
 
+function formatSignedUsdt(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("-") || trimmed.startsWith("+")) return `${trimmed} USDT`;
+  if (trimmed === "0" || trimmed === "0.00") return "0.00 USDT";
+  return `+${trimmed} USDT`;
+}
+
+function formatSignedPct(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("-") || trimmed.startsWith("+")) {
+    return trimmed.endsWith("%") ? trimmed : `${trimmed}%`;
+  }
+  if (trimmed === "0" || trimmed === "0.00") return "0.00%";
+  return `+${trimmed.endsWith("%") ? trimmed : `${trimmed}%`}`;
+}
+
 export function PublicMember({ memberId }: { memberId: number }) {
   const { origin, session, snapshot } = useMember();
   const client = useQueryClient();
+  const tradingBase = process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ?? "http://localhost:8081";
+
   const [kind, setKind] = useState<"followers" | "followings">("followers");
   const [keyword, setKeyword] = useState("");
   const [pending, setPending] = useState(false);
@@ -26,8 +56,11 @@ export function PublicMember({ memberId }: { memberId: number }) {
   const [ledgerTab, setLedgerTab] = useState<"positions" | "pnl" | "orders" | "trades" | "open-orders">("positions");
   const [contestTab, setContestTab] = useState<"live" | "ended">("live");
   const [portfolioTab, setPortfolioTab] = useState<"mock" | "contest">("mock");
-  const [communityTab, setCommunityTab] = useState<"posts" | "replies" | "liked-posts" | "liked-replies" | "reports">("posts");
+  const [communityTab, setCommunityTab] = useState<
+    "posts" | "replies" | "liked-posts" | "liked-replies" | "reports"
+  >("posts");
   const active = useRef(false);
+  const communitySentinelRef = useRef<HTMLDivElement>(null);
 
   const identity = [snapshot.memberId, snapshot.generation] as const;
 
@@ -68,6 +101,163 @@ export function PublicMember({ memberId }: { memberId: number }) {
     getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
   });
 
+  // [T-1] 공개 포트폴리오 조회 (누구나 조회 가능)
+  const publicPortfolioQuery = useQuery({
+    queryKey: ["member", "public-portfolio", memberId, tradingBase, snapshot.generation],
+    enabled: memberId > 0,
+    queryFn: async ({ signal }) =>
+      parsePublicMemberPortfolio(
+        await tradingJson(tradingBase, `portfolios/members/${memberId}`, { signal }),
+      ),
+  });
+
+  const isOwner =
+    snapshot.phase === "ready" && Boolean(summary.data?.mine || snapshot.memberId === memberId);
+
+  // [C-6] 커뮤니티활동 커서 기반 무한스크롤 (게시글, 댓글, 좋아요, 좋아요 댓글 전체 공개 / 신고내역 본인 전용)
+  const memberPostsInfinite = useInfiniteQuery({
+    queryKey: ["member", "public-community-posts", memberId, snapshot.generation],
+    enabled: memberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      return parseCommunityPostPage(
+        await readCommunityOrPublic(
+          origin,
+          session,
+          snapshot,
+          `/members/${memberId}/community/posts?${search.toString()}`,
+          signal,
+        ),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const memberCommentsInfinite = useInfiniteQuery({
+    queryKey: ["member", "public-community-comments", memberId, snapshot.generation],
+    enabled: memberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      return parseMemberCommunityCommentPage(
+        await readCommunityOrPublic(
+          origin,
+          session,
+          snapshot,
+          `/members/${memberId}/community/comments?${search.toString()}`,
+          signal,
+        ),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const memberLikedPostsInfinite = useInfiniteQuery({
+    queryKey: ["member", "public-community-liked-posts", memberId, snapshot.generation],
+    enabled: memberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      return parseCommunityPostPage(
+        await readCommunityOrPublic(
+          origin,
+          session,
+          snapshot,
+          `/members/${memberId}/community/liked-posts?${search.toString()}`,
+          signal,
+        ),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const memberLikedCommentsInfinite = useInfiniteQuery({
+    queryKey: ["member", "public-community-liked-comments", memberId, snapshot.generation],
+    enabled: memberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      return parseMemberCommunityCommentPage(
+        await readCommunityOrPublic(
+          origin,
+          session,
+          snapshot,
+          `/members/${memberId}/community/liked-comments?${search.toString()}`,
+          signal,
+        ),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const ownerReportsInfinite = useInfiniteQuery({
+    queryKey: ["member", "public-community-reports", memberId, snapshot.generation],
+    enabled: isOwner,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      return parseMemberCommunityReportPage(
+        await session.request(`/members/me/community/reports?${search.toString()}`, { signal }),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const cancelReportMutation = useMutation({
+    mutationFn: async (item: { targetType: "POST" | "COMMENT"; targetId: number }) => {
+      const endpoint =
+        item.targetType === "POST"
+          ? `/community/posts/${item.targetId}/reports`
+          : `/community/comments/${item.targetId}/reports`;
+      return parseCommunityReport(await session.request(endpoint, { method: "DELETE" }));
+    },
+    onSuccess: () => {
+      void client.invalidateQueries({
+        queryKey: ["member", "public-community-reports", memberId],
+      });
+    },
+  });
+
+  const activeCommunityInfinite =
+    communityTab === "posts"
+      ? memberPostsInfinite
+      : communityTab === "replies"
+        ? memberCommentsInfinite
+        : communityTab === "liked-posts"
+          ? memberLikedPostsInfinite
+          : communityTab === "liked-replies"
+            ? memberLikedCommentsInfinite
+            : ownerReportsInfinite;
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      mainTab !== "community" ||
+      !activeCommunityInfinite.hasNextPage ||
+      activeCommunityInfinite.isFetchingNextPage
+    ) {
+      return;
+    }
+    const node = communitySentinelRef.current;
+    if (!node || typeof window.IntersectionObserver !== "function") return;
+    const observer = new window.IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          void activeCommunityInfinite.fetchNextPage();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  });
+
   async function changeFollow() {
     if (active.current || snapshot.phase !== "ready" || !summary.data || summary.data.mine) return;
     active.current = true;
@@ -101,6 +291,51 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const currentProfile = profile.isError ? undefined : profile.data;
   const displayNickname = currentProfile?.nickname ?? `트레이더 #${memberId}`;
+
+  const livePortfolio =
+    publicPortfolioQuery.data && publicPortfolioQuery.data.accountExists
+      ? publicPortfolioQuery.data
+      : null;
+
+  const assetSummary = livePortfolio
+    ? {
+        title: `${displayNickname}님의 모의투자`,
+        totalAsset: `${livePortfolio.wallet.totalEquity} USDT`,
+        cashBalance: `${livePortfolio.wallet.availableBalance} USDT`,
+        totalBuyAmount: `${livePortfolio.wallet.usedMargin} USDT`,
+        totalCoinValue: `${livePortfolio.wallet.balance} USDT`,
+        totalProfit: formatSignedUsdt(livePortfolio.wallet.totalPnl),
+        totalRoi: formatSignedPct(livePortfolio.wallet.totalRoiPct),
+        isPositive: !livePortfolio.wallet.totalPnl.trim().startsWith("-"),
+        unit: "USDT",
+      }
+    : {
+        title: `${displayNickname}님의 모의투자`,
+        totalAsset: "10,840.00 USDT",
+        cashBalance: "5,240.00 USDT",
+        totalBuyAmount: "5,600.00 USDT",
+        totalCoinValue: "6,440.00 USDT",
+        totalProfit: "+840.00 USDT",
+        totalRoi: "+8.40%",
+        isPositive: true,
+        unit: "USDT",
+      };
+
+  const livePosts = memberPostsInfinite.data
+    ? memberPostsInfinite.data.pages.flatMap(p => p.items)
+    : null;
+  const liveComments = memberCommentsInfinite.data
+    ? memberCommentsInfinite.data.pages.flatMap(p => p.items)
+    : null;
+  const liveLikedPosts = memberLikedPostsInfinite.data
+    ? memberLikedPostsInfinite.data.pages.flatMap(p => p.items)
+    : null;
+  const liveLikedComments = memberLikedCommentsInfinite.data
+    ? memberLikedCommentsInfinite.data.pages.flatMap(p => p.items)
+    : null;
+  const liveReports = ownerReportsInfinite.data
+    ? ownerReportsInfinite.data.pages.flatMap(p => p.items)
+    : null;
 
   return (
     <MemberShell
@@ -187,19 +422,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
               </p>
             )}
 
-            <V1AssetSummaryCard
-              summary={{
-                title: `${displayNickname}님의 모의투자`,
-                totalAsset: "10,840.00 USDT",
-                cashBalance: "5,240.00 USDT",
-                totalBuyAmount: "5,600.00 USDT",
-                totalCoinValue: "6,440.00 USDT",
-                totalProfit: "+840.00 USDT",
-                totalRoi: "+8.40%",
-                isPositive: true,
-                unit: "USDT",
-              }}
-            />
+            <V1AssetSummaryCard summary={assetSummary} />
 
             {/* 팔로우 목록 섹션 (기존 테스트 호환 마크업 유지) */}
             <div className="card rounded-2xl border border-gray-200 bg-white p-5 space-y-4">
@@ -313,9 +536,6 @@ export function PublicMember({ memberId }: { memberId: number }) {
           {/* 우측: 통합 4대 탭 (본인 로그인 시 4탭 전체, 타인/비로그인 시 포트폴리오 + 커뮤니티활동 2탭만 노출) */}
           <div className="space-y-6 lg:col-span-8">
             {(() => {
-              const isOwner =
-                snapshot.phase === "ready" &&
-                Boolean(summary.data?.mine || snapshot.memberId === memberId);
               const visibleMainTabs = isOwner
                 ? [
                     { label: "내 모의투자 자산", value: "mock-assets" },
@@ -331,6 +551,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                 !isOwner && (mainTab === "mock-assets" || mainTab === "contest-assets")
                   ? "portfolio"
                   : mainTab;
+
+              const longRatioPct = livePortfolio ? livePortfolio.allocation.longRatioPct : "75";
+              const shortRatioPct = livePortfolio ? livePortfolio.allocation.shortRatioPct : "25";
 
               return (
                 <>
@@ -401,21 +624,59 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
                               <h3 className="text-sm font-black text-gray-900">포지션 증거금 비중 (%)</h3>
                               <p className="mt-2 text-xs text-gray-500">
-                                BTCUSDT (65%) · ETHUSDT (35%) 중심으로 격리마진 운용 중입니다.
+                                {livePortfolio
+                                  ? `사용 증거금 비중 ${livePortfolio.allocation.usedMarginRatioPct}% · 가용 USDT ${livePortfolio.allocation.availableCashRatioPct}%`
+                                  : "BTCUSDT (65%) · ETHUSDT (35%) 중심으로 격리마진 운용 중입니다."}
                               </p>
                             </div>
                             <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
                               <h3 className="text-sm font-black text-gray-900">롱 / 숏 비율</h3>
                               <div className="mt-3 flex justify-between text-xs font-bold">
-                                <span className="text-red-500">LONG 75%</span>
-                                <span className="text-blue-600">SHORT 25%</span>
+                                <span className="text-red-500">LONG {longRatioPct}%</span>
+                                <span className="text-blue-600">SHORT {shortRatioPct}%</span>
                               </div>
                               <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-gray-200">
-                                <div className="h-full bg-red-500" style={{ width: "75%" }} />
-                                <div className="h-full bg-blue-600" style={{ width: "25%" }} />
+                                <div className="h-full bg-red-500" style={{ width: `${longRatioPct}%` }} />
+                                <div className="h-full bg-blue-600" style={{ width: `${shortRatioPct}%` }} />
                               </div>
                             </div>
                           </div>
+
+                          {livePortfolio && livePortfolio.positions.length > 0 && (
+                            <div className="overflow-x-auto rounded-2xl border border-gray-200">
+                              <table className="w-full min-w-[600px] text-left text-xs">
+                                <thead className="border-b border-gray-200 bg-gray-50 font-bold text-gray-500">
+                                  <tr>
+                                    <th className="px-4 py-3">종목 / 배율</th>
+                                    <th className="px-4 py-3">포지션</th>
+                                    <th className="px-4 py-3 text-right">수량</th>
+                                    <th className="px-4 py-3 text-right">진입가</th>
+                                    <th className="px-4 py-3 text-right">마크가</th>
+                                    <th className="px-4 py-3 text-right">평가손익 (ROE)</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 bg-white">
+                                  {livePortfolio.positions.map(pos => (
+                                    <tr key={pos.id} className="hover:bg-gray-50">
+                                      <td className="px-4 py-3 font-black text-gray-900">
+                                        {pos.symbol} · {pos.leverage}x
+                                      </td>
+                                      <td className="px-4 py-3 font-bold">
+                                        {pos.side}
+                                      </td>
+                                      <td className="px-4 py-3 text-right">{pos.quantity}</td>
+                                      <td className="px-4 py-3 text-right">${pos.entryPrice}</td>
+                                      <td className="px-4 py-3 text-right">${pos.markPrice}</td>
+                                      <td className="px-4 py-3 text-right font-black text-red-500">
+                                        {formatSignedUsdt(pos.unrealizedPnl)} (
+                                        {formatSignedPct(pos.roePct)})
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div className="py-10 text-center text-xs font-bold text-gray-400">
@@ -439,6 +700,8 @@ export function PublicMember({ memberId }: { memberId: number }) {
                           : [
                               { id: "posts", label: "게시글" },
                               { id: "replies", label: "댓글" },
+                              { id: "liked-posts", label: "좋아요" },
+                              { id: "liked-replies", label: "좋아요 댓글" },
                             ]
                       }
                       activeId={communityTab}
@@ -448,16 +711,169 @@ export function PublicMember({ memberId }: { memberId: number }) {
                         )
                       }
                     >
-                      <div className="py-8 text-center text-xs font-medium text-gray-500">
-                        {communityTab === "posts"
-                          ? "커뮤니티에서 작성한 공개 게시글을 확인합니다."
-                          : communityTab === "replies"
-                            ? "커뮤니티에서 작성한 공개 댓글을 확인합니다."
-                            : communityTab === "liked-posts"
-                              ? "내가 좋아요를 누른 게시글 목록을 확인합니다."
-                              : communityTab === "liked-replies"
-                                ? "내가 좋아요를 누른 댓글 목록을 확인합니다."
-                                : "내가 접수한 신고 내역 및 처리 상태를 확인합니다."}
+                      {communityTab === "posts" && (
+                        <div className="space-y-3">
+                          {livePosts && livePosts.length > 0 ? (
+                            livePosts.map(post => (
+                              <article key={post.id} className="rounded-xl border border-gray-200 p-4">
+                                <div className="flex items-center justify-between text-xs text-gray-400">
+                                  <span className="font-bold text-[#0058FF]">
+                                    {communityCategoryLabel(post.category as CommunityCategory)}
+                                    {post.symbolTag ? ` · #${post.symbolTag}` : ""}
+                                  </span>
+                                  <span>{post.createdAt}</span>
+                                </div>
+                                <Link
+                                  href={`/community/all/${post.id}`}
+                                  className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
+                                >
+                                  {post.title}
+                                </Link>
+                                <p className="mt-1 line-clamp-2 text-xs text-gray-600">
+                                  {post.content}
+                                </p>
+                              </article>
+                            ))
+                          ) : (
+                            <div className="py-8 text-center text-xs font-medium text-gray-500">
+                              커뮤니티에서 작성한 공개 게시글을 확인합니다.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {communityTab === "replies" && (
+                        <div className="space-y-3">
+                          {liveComments && liveComments.length > 0 ? (
+                            liveComments.map(comment => (
+                              <div
+                                key={comment.id}
+                                className="rounded-xl border border-gray-200 p-4 text-xs"
+                              >
+                                <Link
+                                  href={`/community/all/${comment.postId}`}
+                                  className="font-bold text-gray-900 hover:text-[#0058FF]"
+                                >
+                                  “{comment.content}”
+                                </Link>
+                                <p className="mt-1 text-gray-400">원문: {comment.postTitle}</p>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="py-8 text-center text-xs font-medium text-gray-500">
+                              커뮤니티에서 작성한 공개 댓글을 확인합니다.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {communityTab === "liked-posts" && (
+                        <div className="space-y-3">
+                          {liveLikedPosts && liveLikedPosts.length > 0 ? (
+                            liveLikedPosts.map(post => (
+                              <div
+                                key={post.id}
+                                className="rounded-xl border border-gray-200 p-4 text-xs"
+                              >
+                                <span className="font-bold text-red-500">♥ 좋아요 표시한 게시글</span>
+                                <Link
+                                  href={`/community/all/${post.id}`}
+                                  className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
+                                >
+                                  {post.title}
+                                </Link>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="py-8 text-center text-xs font-medium text-gray-500">
+                              좋아요를 누른 게시글 목록을 확인합니다.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {communityTab === "liked-replies" && (
+                        <div className="space-y-3">
+                          {liveLikedComments && liveLikedComments.length > 0 ? (
+                            liveLikedComments.map(comment => (
+                              <div
+                                key={comment.id}
+                                className="rounded-xl border border-gray-200 p-4 text-xs"
+                              >
+                                <span className="font-bold text-red-500">♥ 좋아요 표시한 댓글</span>
+                                <Link
+                                  href={`/community/all/${comment.postId}`}
+                                  className="mt-1 block font-bold text-gray-900 hover:text-[#0058FF]"
+                                >
+                                  “{comment.content}”
+                                </Link>
+                                <p className="mt-0.5 text-gray-400">원문: {comment.postTitle}</p>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="py-8 text-center text-xs font-medium text-gray-500">
+                              좋아요를 누른 댓글 목록을 확인합니다.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {isOwner && communityTab === "reports" && (
+                        <div className="space-y-3">
+                          {liveReports && liveReports.length > 0 ? (
+                            liveReports.map(item => (
+                              <div
+                                key={item.id}
+                                className="flex items-center justify-between rounded-xl border border-gray-200 p-4 text-xs"
+                              >
+                                <div>
+                                  <span className="rounded bg-red-50 px-2 py-0.5 font-bold text-red-600">
+                                    {item.targetType === "POST" ? "게시글" : "댓글"} 신고 · 접수완료
+                                  </span>
+                                  <p className="mt-1.5 font-bold text-gray-900">{item.title}</p>
+                                  <p className="mt-0.5 text-gray-500">
+                                    사유: {item.reasonDescription}
+                                  </p>
+                                </div>
+                                <V1Button
+                                  variant="white"
+                                  size="xs"
+                                  disabled={cancelReportMutation.isPending}
+                                  onClick={() =>
+                                    cancelReportMutation.mutate({
+                                      targetType: item.targetType,
+                                      targetId: item.targetId,
+                                    })
+                                  }
+                                >
+                                  신고 취소
+                                </V1Button>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="py-8 text-center text-xs font-medium text-gray-500">
+                              내가 접수한 신고 내역 및 처리 상태를 확인합니다.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 커서 기반 무한스크롤 센티넬 & 더 보기 버튼 */}
+                      <div
+                        ref={communitySentinelRef}
+                        data-infinite-scroll="public-member-community-sentinel"
+                        className="mt-4 flex flex-col items-center justify-center gap-2"
+                      >
+                        {activeCommunityInfinite.hasNextPage && (
+                          <V1Button
+                            variant="white"
+                            size="xs"
+                            disabled={activeCommunityInfinite.isFetchingNextPage}
+                            onClick={() => void activeCommunityInfinite.fetchNextPage()}
+                          >
+                            {activeCommunityInfinite.isFetchingNextPage ? "불러오는 중…" : "더 보기"}
+                          </V1Button>
+                        )}
                       </div>
                     </V1FolderTabs>
                   )}

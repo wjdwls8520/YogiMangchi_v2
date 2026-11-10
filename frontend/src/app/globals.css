@@ -7,7 +7,7 @@
 .account-snapshot-note { padding: .5rem 0; color: var(--color-terminal-muted); font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
 .account-summary dd, .order-wallet dd { overflow-wrap: anywhere; }
 .market-price, .market-list-price, .market-statistics dd, .order-estimates dd { overflow-wrap: anywhere; }
-.order-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.order-actions button:disabled { opacity: .5; cursor: default; }
 .order-choice:has(input:focus-visible) { background-color: #34353c; }
 .trading-table [role="alert"] { max-width: 20rem; white-space: normal; }
 
@@ -62,7 +62,7 @@
   input:focus, select:focus, textarea:focus { outline: none; box-shadow: none; }
   :disabled,
   fieldset:disabled label {
-    @apply cursor-not-allowed;
+    @apply cursor-default;
   }
   input:disabled,
   select:disabled {
@@ -86,7 +86,7 @@
   .member-primary, .member-secondary { @apply inline-flex min-h-11 items-center justify-center rounded-sm px-4 py-2 text-sm font-semibold; }
   .member-primary { @apply bg-brand-600 text-terminal-ink; }
   .member-secondary { @apply border border-terminal-line bg-terminal-raised text-terminal-text; }
-  .member-primary:disabled, .member-secondary:disabled { @apply cursor-not-allowed opacity-50; }
+  .member-primary:disabled, .member-secondary:disabled { @apply cursor-default opacity-50; }
   .member-actions { @apply my-4 flex flex-wrap items-center gap-3; }
   .member-message { @apply my-4 text-sm leading-relaxed text-terminal-secondary; }
   .member-message[role="alert"] { @apply text-loss; }
@@ -249,7 +249,7 @@
   .position-close-entry { @apply min-w-0 text-trade-body; white-space: normal; }
   .position-close-actions { @apply flex gap-2; }
   .position-close-actions > button { @apply flex-1; }
-  .position-close-actions > button:disabled { @apply cursor-not-allowed opacity-50; }
+  .position-close-actions > button:disabled { @apply cursor-default opacity-50; }
   .position-close-entry form { @apply flex min-w-0 flex-col gap-3; }
   .close-position-label { @apply flex flex-wrap justify-between gap-2 text-trade-meta; }
   .close-availability { @apply grid grid-cols-3 gap-2 text-trade-meta; }
@@ -316,7 +316,7 @@
   .market-sheet-content, .trading-account-body, .trading-table-scroll, .position-close-dialog { scrollbar-width: thin; scrollbar-color: #45474f transparent; }
   .market-sheet-content::-webkit-scrollbar, .trading-account-body::-webkit-scrollbar, .trading-table-scroll::-webkit-scrollbar, .position-close-dialog::-webkit-scrollbar { width: 4px; height: 4px; }
   .market-sheet-content::-webkit-scrollbar-thumb, .trading-account-body::-webkit-scrollbar-thumb, .trading-table-scroll::-webkit-scrollbar-thumb, .position-close-dialog::-webkit-scrollbar-thumb { background: #45474f; border-radius: 2px; }
-  .market-search:focus-visible, .order-leverage-input:focus-visible, textarea:focus-visible { background-color: #2d2f36; }
+  .market-search:focus-visible, .order-leverage-input:focus-visible, .trading-workspace textarea:focus-visible { background-color: #2d2f36; }
   .market-sheet-close {
     @apply min-h-11 min-w-11 px-2 text-trade-body font-medium text-terminal-secondary enabled:cursor-pointer;
   }
@@ -1214,7 +1214,7 @@ body:has(.member-shell) :focus-visible {
   background-color: rgba(114, 66, 255, 0.20);
   color: #FFFFFF;
   opacity: 1;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .signup-button {
