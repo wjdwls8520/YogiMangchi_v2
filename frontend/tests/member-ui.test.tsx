@@ -52,7 +52,18 @@ import {
   markMemberViewedNews,
   sortNewsItems,
 } from "../src/features/member/components/news-feed";
-import { CommunityBoard, SHAREABLE_POSITIONS } from "../src/features/member/components/community-board";
+import { CommunityBoard, SHAREABLE_POSITIONS, SharedPositionCard } from "../src/features/member/components/community-board";
+import {
+  formatExchangeCompactPct,
+  formatExchangeFeeUsdt,
+  formatExchangePct,
+  formatExchangePrice,
+  formatExchangeQuantity,
+  formatExchangeSeedUsdt,
+  formatExchangeSignedPct,
+  formatExchangeSignedUsdt,
+  formatExchangeUsdt,
+} from "../src/features/member/api/exchange-format";
 import { MainPortal, mapRedisTickersToPopularCoins } from "../src/features/member/components/main-portal";
 import {
   MemberSignupPage,
@@ -103,6 +114,8 @@ import {
   fetchPublicContestSeasons,
   fetchPublicMemberContestSeasons,
   formatContestDateTime,
+  formatContestSeedPlain,
+  resolveTradingContestBaseUrl,
   formatContestSignedRoi,
   formatContestSignedUsdt,
   formatContestUsdt,
@@ -3310,4 +3323,180 @@ test("회원-대회-심볼-탈퇴보호 전 생애주기 API 계약 및 금지 �
     }
   };
   verifySrcCleanliness(path.join(process.cwd(), "src"));
+});
+
+
+test("거래소 표준 소수점·단위 포맷터가 18자리 정밀 원장 값을 충돌·오버플로우 없이 렌더링한다", async () => {
+  // 1. 실거래소(Binance/Bybit) 표준 포맷터 순수 검증 (실제 스크린샷 18자리 원장 값 포함)
+  assert.equal(formatExchangeUsdt("9632.453247403207324577"), "9,632.45 USDT");
+  assert.equal(formatExchangeUsdt("6537.261324384422285327"), "6,537.26 USDT");
+  assert.equal(formatExchangeUsdt("3460.66227824862853755"), "3,460.66 USDT");
+  assert.equal(formatExchangeUsdt("9997.923602633050822877"), "9,997.92 USDT");
+  assert.equal(formatExchangeUsdt("0"), "0.00 USDT");
+  assert.equal(formatExchangeUsdt("-0.001"), "0.00 USDT");
+
+  assert.equal(formatExchangeSignedUsdt("-367.546752596792675423"), "-367.55 USDT");
+  assert.equal(formatExchangeSignedUsdt("184.204"), "+184.20 USDT");
+  assert.equal(formatExchangeSignedUsdt("-0.004"), "0.00 USDT");
+
+  assert.equal(formatExchangeSignedPct("-3.6755"), "-3.68%");
+  assert.equal(formatExchangeSignedPct("18.4219"), "+18.42%");
+  assert.equal(formatExchangeSignedPct("-0.001"), "0.00%");
+
+  assert.equal(formatExchangePct("34.614", 2), "34.61%");
+  assert.equal(formatExchangePct("65.386", 2), "65.39%");
+  assert.equal(formatExchangeCompactPct("100.000000"), "100%");
+  assert.equal(formatExchangeCompactPct("0.000000"), "0%");
+  assert.equal(formatExchangeCompactPct("64.285714"), "64.29%");
+
+  assert.equal(formatExchangeSeedUsdt("10000"), "10,000 USDT");
+  assert.equal(formatExchangeSeedUsdt("10000.00000000"), "10,000 USDT");
+  assert.equal(formatExchangeFeeUsdt("2.081234"), "2.08 USDT");
+  assert.equal(formatExchangeFeeUsdt("0.00450000"), "0.0045 USDT");
+
+  assert.equal(formatExchangePrice("94280.50000000"), "94,280.50");
+  assert.equal(formatExchangePrice("0.58200000"), "0.5820");
+  assert.equal(formatExchangePrice("0.00000984"), "0.00000984");
+  assert.equal(formatExchangePrice("0.582419", "0.0001"), "0.5824");
+  assert.equal(formatExchangeQuantity("0.05000000", "BTC"), "0.05 BTC");
+  assert.equal(formatExchangeQuantity("1000000.00000000", "PEPE"), "1,000,000 PEPE");
+
+  assert.equal(formatContestSeedPlain("10000.00000000"), "10,000");
+  assert.equal(formatContestSignedUsdt("-0.001"), "0.00 USDT");
+  assert.equal(formatContestSignedRoi("-0.001"), "0.00%");
+
+  // 2. 마이페이지(/me) 및 커뮤니티 포지션 공유 카드 SSR 렌더링 검증
+  const epoch = Date.parse("2026-11-11T14:30:00Z");
+  const jwtToken = `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: "1", roles: ["ROLE_ADMIN"] })).toString("base64url")}.sig`;
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 1,
+            nickname: "안녕4",
+            accessToken: jwtToken,
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+
+  const client = new QueryClient();
+  const tradingBase = resolveTradingContestBaseUrl();
+  const gen = session.getSnapshot().generation;
+  client.setQueryData(
+    ["member", "public-portfolio", 1, tradingBase, gen],
+    parsePublicMemberPortfolio({
+      memberId: 1,
+      accountExists: true,
+      roundNumber: 1,
+      initialSeed: "10000",
+      valuedAt: "2026-11-11T14:34:49Z",
+      wallet: {
+        quoteAsset: "USDT",
+        balance: "9997.923602633050822877",
+        usedMargin: "3460.66227824862853755",
+        availableBalance: "6537.261324384422285327",
+        realizedPnl: "-2.076397366949177123",
+        unrealizedPnl: "-365.470355229843498300",
+        totalPnl: "-367.546752596792675423",
+        totalEquity: "9632.453247403207324577",
+        totalRoiPct: "-3.6755",
+      },
+      allocation: {
+        usedMarginRatioPct: "34.61",
+        availableCashRatioPct: "65.39",
+        longMarginUsdt: "3460.66227824862853755",
+        shortMarginUsdt: "0",
+        longRatioPct: "100.000000",
+        shortRatioPct: "0.000000",
+        longPositionCount: 1,
+        shortPositionCount: 0,
+      },
+      closedTradeSummary: {
+        closedPositionCount: 0,
+        winCount: 0,
+        lossCount: 0,
+        winRatePct: "0",
+      },
+      positions: [
+        {
+          id: 101,
+          tradingSymbolId: 1,
+          symbol: "BTCUSDT",
+          side: "LONG",
+          leverage: 2,
+          quantity: "0.05000000",
+          entryPrice: "69213.24556497",
+          markPrice: "61903.83846037",
+          liquidationPrice: "34800.12345678",
+          margin: "3460.66227824862853755",
+          unrealizedPnl: "-365.470355229843498300",
+          roePct: "-10.5607",
+          marginRatioPct: "34.61",
+        },
+      ],
+      symbolPerformances: [],
+    }),
+  );
+
+  try {
+    const meHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <MemberMyProfilePage />
+      </MemberProvider>,
+    );
+    assert.equal(meHtml.includes("9,632.45 USDT"), true);
+    assert.equal(meHtml.includes("6,537.26 USDT"), true);
+    assert.equal(meHtml.includes("3,460.66 USDT"), true);
+    assert.equal(meHtml.includes("9,997.92 USDT"), true);
+    assert.equal(meHtml.includes("-367.55 USDT"), true);
+    assert.equal(meHtml.includes("-3.68%"), true);
+    assert.equal(meHtml.includes("1회차 시드머니: 10,000 USDT"), true);
+    assert.equal(meHtml.includes("지갑 잔고 (확정 원장)"), true);
+    assert.equal(meHtml.includes("LONG 100% (3,460.66 USDT)"), true);
+    assert.equal(meHtml.includes("SHORT 0% (0.00 USDT)"), true);
+    assert.equal(meHtml.includes("0.05 BTC"), true);
+
+    // 18자리 미정제 소수점 및 구버전 비정형 표기 노출 0건 검증
+    assert.equal(meHtml.includes("9632.453247"), false);
+    assert.equal(meHtml.includes("6537.261324"), false);
+    assert.equal(meHtml.includes("3460.662278"), false);
+    assert.equal(meHtml.includes("9997.923602"), false);
+    assert.equal(meHtml.includes("-367.546752"), false);
+    assert.equal(meHtml.includes("-3.6755%"), false);
+    assert.equal(meHtml.includes("10000 USDT"), false);
+
+    const microPosCardHtml = renderToStaticMarkup(
+      <SharedPositionCard
+        snapshot={{
+          id: "MOCK_POS_PEPE",
+          marketLabel: "모의투자 선물",
+          symbol: "PEPE",
+          pair: "PEPEUSDT",
+          side: "LONG",
+          leverage: 5,
+          entryPrice: "0.00000984",
+          markPrice: "0.00001042",
+          liquidationPrice: "0.00000810",
+          roePct: "+29.4715%",
+          pnlUsdt: "+58.943122 USDT",
+          positive: true,
+        }}
+      />,
+    );
+    assert.equal(microPosCardHtml.includes("0.00000984 USDT"), true);
+    assert.equal(microPosCardHtml.includes("0.00001042 USDT"), true);
+    assert.equal(microPosCardHtml.includes("+29.47%"), true);
+    assert.equal(microPosCardHtml.includes("+58.94 USDT"), true);
+  } finally {
+    client.clear();
+  }
 });

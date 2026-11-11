@@ -34,6 +34,7 @@ import {
 } from "../api/community-news";
 import { marketSymbolsJson, tradingJson } from "../../trading/api/client";
 import { formatDecimal, parseSummary } from "../../trading/api/account";
+import { formatExchangePrice } from "../api/exchange-format";
 import { parseSymbols } from "../../trading/market/catalog";
 import {
   fetchMyContestSeasons,
@@ -143,10 +144,10 @@ function formatSnapshotSignedPct(raw: string | null | undefined): string {
   return formatted.startsWith("-") ? `${formatted}%` : `+${formatted}%`;
 }
 
-function formatSnapshotPrice(raw: string | null | undefined): string {
+function formatSnapshotPrice(raw: string | null | undefined, tickSize?: string | null): string {
   if (!raw || raw.trim() === "" || raw.trim() === "-" || raw.trim() === "0") return "-";
-  const formatted = formatDecimal(raw.trim());
-  return formatted === "—" ? raw.trim() : formatted;
+  const formatted = formatExchangePrice(raw.trim(), tickSize);
+  return formatted === "-" ? "-" : formatted;
 }
 
 export const SHAREABLE_POSITIONS: readonly SharedPositionSnapshot[] = [
@@ -240,9 +241,14 @@ export function SharedPositionCard({
     : hasNonZero && snapshot.positive
       ? "text-[#E12343]"
       : "text-gray-600";
-  const entryDisplay = snapshot.entryPrice === "-" ? "-" : `${snapshot.entryPrice} USDT`;
-  const markDisplay = snapshot.markPrice === "-" ? "-" : `${snapshot.markPrice} USDT`;
-  const liqDisplay = snapshot.liquidationPrice === "-" ? "-" : `${snapshot.liquidationPrice} USDT`;
+  const normalizedEntry = formatSnapshotPrice(snapshot.entryPrice);
+  const normalizedMark = formatSnapshotPrice(snapshot.markPrice);
+  const normalizedLiq = formatSnapshotPrice(snapshot.liquidationPrice);
+  const entryDisplay = normalizedEntry === "-" ? "-" : `${normalizedEntry} USDT`;
+  const markDisplay = normalizedMark === "-" ? "-" : `${normalizedMark} USDT`;
+  const liqDisplay = normalizedLiq === "-" ? "-" : `${normalizedLiq} USDT`;
+  const roeDisplay = formatSnapshotSignedPct(snapshot.roePct);
+  const pnlDisplay = formatSnapshotSignedUsdt(snapshot.pnlUsdt.replace(/\s*USDT$/i, ""));
   return (
     <div
       className="mt-3 rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4"
@@ -271,9 +277,9 @@ export function SharedPositionCard({
 
         <div className="flex items-baseline gap-1.5 whitespace-nowrap">
           <span className="text-[11px] font-bold text-gray-400">수익률(ROE)</span>
-          <strong className={`text-base font-black ${pnlColorClass}`}>{snapshot.roePct}</strong>
+          <strong className={`text-base font-black ${pnlColorClass}`}>{roeDisplay}</strong>
           {displayPnlAmount && (
-            <span className={`text-xs font-bold ${pnlColorClass}`}>({snapshot.pnlUsdt})</span>
+            <span className={`text-xs font-bold ${pnlColorClass}`}>({pnlDisplay})</span>
           )}
         </div>
       </div>
@@ -495,9 +501,9 @@ export function CommunityBoard({
                   pair,
                   side: pos.side === "SHORT" ? "SHORT" : "LONG",
                   leverage: pos.leverage,
-                  entryPrice: formatSnapshotPrice(pos.entryPrice),
-                  markPrice: formatSnapshotPrice(pos.markPrice),
-                  liquidationPrice: formatSnapshotPrice(pos.liquidationPrice),
+                  entryPrice: formatSnapshotPrice(pos.entryPrice, matchedSym?.priceTickSize),
+                  markPrice: formatSnapshotPrice(pos.markPrice, matchedSym?.priceTickSize),
+                  liquidationPrice: formatSnapshotPrice(pos.liquidationPrice, matchedSym?.priceTickSize),
                   roePct,
                   pnlUsdt,
                   positive: !roePct.startsWith("-") && !pnlUsdt.startsWith("-"),
