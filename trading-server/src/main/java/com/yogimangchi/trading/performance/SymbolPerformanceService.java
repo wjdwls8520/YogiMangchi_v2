@@ -31,7 +31,7 @@ public class SymbolPerformanceService {
         validate(from,before,roundId,symbolId);
         locks.lock(accountId); // Coherent ledger/positions snapshot under the existing financial boundary.
         jdbc.execute("SET LOCAL statement_timeout = '4s'");
-        Instant now=Instant.now().truncatedTo(ChronoUnit.MICROS);
+        Instant now=Instant.now().truncatedTo(ChronoUnit.MICROS).plus(1,ChronoUnit.MICROS);
         Instant start=from==null?Instant.EPOCH:from,end=before==null?now:before;
         if(!start.isBefore(end)) invalid();
         Map<String,Object> round=null;

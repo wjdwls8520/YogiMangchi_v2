@@ -77,7 +77,7 @@ public class PublicPortfolioService {
                 WHERE member_id = ?
                   AND guest_account = false
                   AND account_type = 'MOCK'
-                  AND status = 'ACTIVE'
+                  AND status IN ('ACTIVE', 'BANKRUPT')
                 ORDER BY id DESC
                 LIMIT 1
                 """, memberId);
@@ -87,7 +87,9 @@ public class PublicPortfolioService {
         long accountId = ((Number) accountRows.get(0).get("id")).longValue();
         TradingAccount account = accounts.findById(accountId).orElse(null);
         Wallet wallet = wallets.findById(accountId).orElse(null);
-        if (account == null || wallet == null || account.getStatus() != TradingAccount.Status.ACTIVE) {
+        if (account == null || wallet == null
+                || (account.getStatus() != TradingAccount.Status.ACTIVE
+                        && account.getStatus() != TradingAccount.Status.BANKRUPT)) {
             return PublicMemberPortfolioResponse.empty(memberId);
         }
 

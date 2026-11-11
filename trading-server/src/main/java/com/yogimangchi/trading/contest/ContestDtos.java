@@ -130,6 +130,10 @@ public final class ContestDtos {
 
     public record ApplyContestRequest(String nickname) { }
 
+    public record SyncContestNicknameRequest(String nickname) { }
+
+    public record SyncContestNicknameResponse(String nickname, int updatedCount) { }
+
     public record ContestSeasonSummaryResponse(
             SeasonView season,
             MemberContestParticipationView participation,

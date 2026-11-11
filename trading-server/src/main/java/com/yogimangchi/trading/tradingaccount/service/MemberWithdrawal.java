@@ -27,11 +27,20 @@ public class MemberWithdrawal {
     private final AccountLock locks;
     private final TradingEvents events;
     private final com.yogimangchi.trading.tradinground.MemberRounds rounds;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.contest.RedisContestLeaderboardStore> leaderboardStores;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.tradingevent.websocket.TradingEventWebSocketHandler> wsHandlers;
     public MemberWithdrawal(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,
-            PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events,com.yogimangchi.trading.tradinground.MemberRounds rounds,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {
+            PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events,
+            com.yogimangchi.trading.tradinground.MemberRounds rounds,
+            com.yogimangchi.trading.execution.recovery.RiskAdmission risk,
+            org.springframework.jdbc.core.JdbcTemplate jdbc,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.contest.RedisContestLeaderboardStore> leaderboardStores,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.tradingevent.websocket.TradingEventWebSocketHandler> wsHandlers) {
         this.risk=risk;
         this.entities=entities; this.accounts=accounts; this.wallets=wallets; this.positions=positions;
         this.orders=orders; this.locks=locks; this.events=events;this.rounds=rounds;
+        this.jdbc=jdbc; this.leaderboardStores=leaderboardStores; this.wsHandlers=wsHandlers;
     }
     @Transactional(timeout=10)
     public void withdraw(Long memberId) {
@@ -88,6 +97,51 @@ public class MemberWithdrawal {
                 throw new IllegalStateException("Contest withdrawal found inconsistent reservations");
             contestAccount.withdraw(now);
             risk.retireWithdrawal(contestId);
+        }
+
+        java.time.OffsetDateTime tsNow=Instant.now().truncatedTo(ChronoUnit.MICROS).atOffset(java.time.ZoneOffset.UTC);
+        java.util.Set<Long> affectedSeasonIds=new java.util.LinkedHashSet<>();
+        affectedSeasonIds.addAll(jdbc.queryForList(
+                "SELECT DISTINCT contest_season_id FROM trading.contest_participant WHERE member_id = ?",
+                Long.class,memberId));
+        affectedSeasonIds.addAll(jdbc.queryForList(
+                "SELECT DISTINCT contest_season_id FROM trading.contest_application WHERE member_id = ?",
+                Long.class,memberId));
+
+        jdbc.update("""
+                UPDATE trading.contest_application
+                SET status = CASE WHEN status = 'PENDING' THEN 'CANCELED' ELSE status END,
+                    reject_reason = CASE WHEN status = 'PENDING' THEN '회원 탈퇴로 자동 취소됨' ELSE reject_reason END,
+                    processed_at = CASE WHEN status = 'PENDING' THEN ? ELSE processed_at END,
+                    nickname = '탈퇴한회원'
+                WHERE member_id = ?
+                  AND (status = 'PENDING' OR nickname <> '탈퇴한회원')
+                """,tsNow,memberId);
+
+        jdbc.update("""
+                UPDATE trading.contest_participant
+                SET nickname = '탈퇴한회원'
+                WHERE member_id = ?
+                  AND nickname <> '탈퇴한회원'
+                """,memberId);
+
+        var leaderboardStore=leaderboardStores.getIfAvailable();
+        if(leaderboardStore!=null) {
+            if(affectedSeasonIds.isEmpty()) leaderboardStore.evictPublicSeasons();
+            else affectedSeasonIds.forEach(leaderboardStore::evictSeason);
+        }
+
+        var wsHandler=wsHandlers.getIfAvailable();
+        if(wsHandler!=null) {
+            wsHandler.disconnectMember(memberId);
+            if(org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override public void afterCommit() {
+                                wsHandler.disconnectMember(memberId);
+                            }
+                        });
+            }
         }
     }
 }
