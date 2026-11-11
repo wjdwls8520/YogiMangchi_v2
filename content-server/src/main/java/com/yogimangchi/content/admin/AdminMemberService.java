@@ -210,7 +210,7 @@ public class AdminMemberService {
         return new AdminMemberDto(
                 id,
                 displayNickname,
-                rs.getString("profile_img_url"),
+                s3.sanitizeProfileImageUrl(rs.getString("profile_img_url")),
                 rs.getString("role"),
                 active ? "N" : "Y",
                 active ? "ACTIVE" : "WITHDRAWN",

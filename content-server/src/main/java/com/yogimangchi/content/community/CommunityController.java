@@ -26,10 +26,25 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class CommunityController {
     private final CommunityService community;
     private final CommunityUxSseService uxSse;
+    private final CommunityS3Service s3;
 
-    public CommunityController(CommunityService community, CommunityUxSseService uxSse) {
+    public CommunityController(CommunityService community, CommunityUxSseService uxSse, CommunityS3Service s3) {
         this.community = community;
         this.uxSse = uxSse;
+        this.s3 = s3;
+    }
+
+    @GetMapping("/api/v1/community/local-media/{*mediaKey}")
+    @Operation(summary = "Serve local media in zero-billing local storage mode", description = "Public read-only local image endpoint when external S3 is disabled.")
+    public ResponseEntity<byte[]> readLocalMedia(@PathVariable String mediaKey) {
+        CommunityS3Service.LocalMediaPayload payload = s3.readLocalMedia(mediaKey);
+        if (payload == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(payload.contentType()))
+                .cacheControl(CacheControl.noCache())
+                .body(payload.bytes());
     }
 
     @GetMapping(value = "/api/v1/community/posts", produces = MediaType.APPLICATION_JSON_VALUE)
