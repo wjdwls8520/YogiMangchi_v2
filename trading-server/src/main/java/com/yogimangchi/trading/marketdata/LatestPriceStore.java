@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Collection;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ public class LatestPriceStore {
     private static final Duration CLOCK_LOG_INTERVAL = Duration.ofSeconds(30);
     private final Clock clock;
     private final ApplicationEventPublisher events;
+    private final MarkPriceTimePolicy.Policy policy;
     private final Map<Long, LatestMarkPrice> prices = new HashMap<>();
     private final Set<Long> available = new HashSet<>();
     private final Set<Long> clockRejected = new HashSet<>();
@@ -43,17 +45,26 @@ public class LatestPriceStore {
     }
 
     @Autowired
+    public LatestPriceStore(ApplicationEventPublisher events, MarkPriceTimePolicy.Policy policy) {
+        this(Clock.systemUTC(), events, policy);
+    }
+
     public LatestPriceStore(ApplicationEventPublisher events) {
-        this(Clock.systemUTC(), events);
+        this(Clock.systemUTC(), events, MarkPriceTimePolicy.STRICT);
     }
 
     public LatestPriceStore(Clock clock) {
-        this(clock, event -> { });
+        this(clock, event -> { }, MarkPriceTimePolicy.STRICT);
     }
 
     public LatestPriceStore(Clock clock, ApplicationEventPublisher events) {
-        this.clock = clock;
-        this.events = events;
+        this(clock, events, MarkPriceTimePolicy.STRICT);
+    }
+
+    public LatestPriceStore(Clock clock, ApplicationEventPublisher events, MarkPriceTimePolicy.Policy policy) {
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.events = Objects.requireNonNull(events, "events");
+        this.policy = Objects.requireNonNull(policy, "policy");
     }
 
     public void beginSubscription(Set<Long> tradingSymbolIds) {
@@ -83,7 +94,7 @@ public class LatestPriceStore {
             boolean accepted;
             synchronized(this) {
                 Instant now=clock.instant();
-                if(!accepting||!subscribed.contains(price.tradingSymbolId())||!MarkPriceTimePolicy.receivedRecently(price,now))return false;
+                if(!accepting||!subscribed.contains(price.tradingSymbolId())||!policy.receivedRecently(price,now))return false;
                 var previous=prices.get(price.tradingSymbolId());
                 if(previous!=null&&!price.eventTime().isAfter(previous.eventTime()))return false;
                 if(observeClock(price,now)==MarkPriceTimePolicy.ClockStatus.REJECTED) {
@@ -118,7 +129,7 @@ public class LatestPriceStore {
             return new Snapshot(clockRejected.contains(tradingSymbolId) ? Status.UNAVAILABLE : Status.MISSING, Optional.empty());
         }
         Status status = !available.contains(tradingSymbolId) ? Status.UNAVAILABLE
-                : isFreshAt(price, now) ? Status.FRESH : Status.STALE;
+                : policy.isFreshAt(price, now) ? Status.FRESH : Status.STALE;
         return new Snapshot(status, Optional.of(price));
     }
 
@@ -131,7 +142,7 @@ public class LatestPriceStore {
         Instant now = clock.instant();
         if (!accepting) return new MarketClockSnapshot(MarkPriceTimePolicy.ClockStatus.UNAVAILABLE, null);
         return clockObservations.values().stream()
-                .filter(observation -> MarkPriceTimePolicy.receivedRecently(observation.price(), now))
+                .filter(observation -> policy.receivedRecently(observation.price(), now))
                 .max(Comparator.comparingInt((ClockObservation observation) -> observation.status().ordinal())
                         .thenComparing(observation -> Duration.between(observation.price().receivedAt(), observation.price().eventTime()).abs()))
                 .map(observation -> new MarketClockSnapshot(observation.status(), observation.skewMs()))
@@ -139,7 +150,7 @@ public class LatestPriceStore {
     }
 
     private MarkPriceTimePolicy.ClockStatus observeClock(LatestMarkPrice price, Instant now) {
-        var status = MarkPriceTimePolicy.clockStatus(price);
+        var status = policy.clockStatus(price);
         long skewMs = MarkPriceTimePolicy.skewMillis(price);
         var previous = clockObservations.put(price.tradingSymbolId(), new ClockObservation(status, skewMs, price));
         Instant lastLog = clockLoggedAt.get(price.tradingSymbolId());
@@ -148,8 +159,8 @@ public class LatestPriceStore {
         if (changed || (status != MarkPriceTimePolicy.ClockStatus.NORMAL && summaryDue)) {
             String format = "[Market clock] provider=BINANCE tradingSymbolId={} status={} eventTime={} receivedAt={} serverNow={} skewMs={} warningThresholdMs={} degradedThresholdMs={} rejectThresholdMs={}";
             Object[] fields = {price.tradingSymbolId(), status, price.eventTime(), price.receivedAt(), now, skewMs,
-                    MarkPriceTimePolicy.WARNING_THRESHOLD.toMillis(), MarkPriceTimePolicy.DEGRADED_THRESHOLD.toMillis(),
-                    MarkPriceTimePolicy.REJECT_THRESHOLD.toMillis()};
+                    policy.warningThreshold().toMillis(), policy.degradedThreshold().toMillis(),
+                    policy.rejectThreshold().toMillis()};
             if (status == MarkPriceTimePolicy.ClockStatus.REJECTED || status == MarkPriceTimePolicy.ClockStatus.DEGRADED) log.error(format, fields);
             else if (status == MarkPriceTimePolicy.ClockStatus.WARNING) log.warn(format, fields);
             else log.info(format, fields);
