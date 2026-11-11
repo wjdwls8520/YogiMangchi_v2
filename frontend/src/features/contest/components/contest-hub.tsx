@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { contentJson, ContentApiError } from "../../member/api/client";
+import { parseProfile } from "../../member/api/contracts";
 import { DimModal } from "../../member/components/dim-modal";
 import { useOptionalMember } from "../../member/components/member-provider";
 import { MemberShell } from "../../member/components/member-views";
 import {
   applyForContestSeason,
+  cancelContestSeasonApplication,
   fetchMyContestOverview,
   fetchPublicContestLeaderboard,
   fetchPublicContestSeasons,
@@ -85,6 +88,8 @@ export interface ContestLeaderboardEntry {
   rank: number;
   memberId: number;
   nickname: string;
+  profileImgUrl?: string | null;
+  withdrawn?: boolean;
   seedMoney: string;
   equity: string;
   realizedPnl: string;
@@ -102,7 +107,15 @@ export interface ContestLeaderboardSeason {
   settledAt?: string;
   participantCount: number;
   entries: ContestLeaderboardEntry[];
+  nextCursorId?: number | null;
+  hasNext?: boolean;
 }
+
+type EnrichedMemberMeta = {
+  nickname: string;
+  profileImgUrl: string | null;
+  withdrawn: boolean;
+};
 
 const INITIAL_MY_ONGOING_CONTESTS: OngoingMyContestItem[] = [
   {
@@ -257,7 +270,8 @@ const INITIAL_HISTORY_CONTESTS: ContestSeasonItem[] = [
     cardType: "reject",
     accentLabel: "반려",
     actionLabel: "반려됨",
-    rejectReason: "신청 마감 시각 직전 중복 신청 건으로 확인되어 기본 정규 시즌으로 안내되었습니다.",
+    rejectReason:
+      "신청 마감 시각 직전 중복 신청 건으로 확인되어 기본 정규 시즌으로 안내되었습니다.",
   },
 ];
 
@@ -465,10 +479,12 @@ const LEADERBOARD_SEASONS: ContestLeaderboardSeason[] = [
 export function ContestListCard({
   contest,
   onApply,
+  onCancel,
   defaultExpanded = false,
 }: {
   contest: ContestSeasonItem;
   onApply?: (contest: ContestSeasonItem) => void;
+  onCancel?: (contest: ContestSeasonItem) => void;
   defaultExpanded?: boolean;
 }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
@@ -542,7 +558,7 @@ export function ContestListCard({
               }}
               className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 cursor-pointer"
             >
-              <span>신청</span>
+              <span>{contest.actionLabel || "신청"}</span>
               <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
             </button>
           ) : contest.cardType === "live" ? (
@@ -554,15 +570,32 @@ export function ContestListCard({
               <span>대회 참여하기</span>
               <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
             </Link>
+          ) : contest.cardType === "wait" ? (
+            <div className="inline-flex items-center gap-1.5">
+              <span className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-amber-200 bg-amber-50 px-3 text-xs font-bold text-amber-700">
+                {contest.actionLabel}
+              </span>
+              {onCancel ? (
+                <button
+                  type="button"
+                  data-contest-action="cancel-application"
+                  onClick={event => {
+                    event.stopPropagation();
+                    onCancel(contest);
+                  }}
+                  className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-300 bg-white px-2.5 text-xs font-bold text-gray-600 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 cursor-pointer"
+                >
+                  신청 취소
+                </button>
+              ) : null}
+            </div>
           ) : (
             <span
               className={cn(
                 "inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl px-3 text-xs font-bold",
-                contest.cardType === "wait"
-                  ? "border border-amber-200 bg-amber-50 text-amber-700"
-                  : contest.cardType === "reject"
-                    ? "border border-rose-200 bg-rose-50 text-rose-700"
-                    : "border border-gray-200 bg-gray-50 text-gray-600",
+                contest.cardType === "reject"
+                  ? "border border-rose-200 bg-rose-50 text-rose-700"
+                  : "border border-gray-200 bg-gray-50 text-gray-600",
               )}
             >
               {contest.actionLabel}
@@ -616,7 +649,7 @@ export function ContestListCard({
                 </span>
               </div>
               <div className="flex items-center gap-3 font-bold tabular-nums">
-                <span className="text-gray-700">실현손익 {contest.finalPnl}</span>
+                <span className="text-gray-700">최종 손익 {contest.finalPnl}</span>
                 <span className="rounded-full bg-[#0058FF] px-2.5 py-0.5 text-[11px] font-black text-white">
                   최종 수익률 {contest.finalRoi}
                 </span>
@@ -627,9 +660,7 @@ export function ContestListCard({
           {contest.cardType === "reject" && contest.rejectReason ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-3.5 space-y-1">
               <p className="text-[11px] font-black text-rose-700">반려 사유</p>
-              <p className="font-bold text-rose-900 leading-relaxed">
-                {contest.rejectReason}
-              </p>
+              <p className="font-bold text-rose-900 leading-relaxed">{contest.rejectReason}</p>
             </div>
           ) : null}
 
@@ -653,10 +684,11 @@ export function ContestOngoingSection({
   onBlockedEnter: (message: string) => void;
 }) {
   const [startIndex, setStartIndex] = useState(0);
+  const safeStartIndex = Math.min(startIndex, Math.max(0, contests.length - 3));
 
-  const handlePrev = () => setStartIndex(prev => Math.max(0, prev - 1));
+  const handlePrev = () => setStartIndex(Math.max(0, safeStartIndex - 1));
   const handleNext = () =>
-    setStartIndex(prev => Math.min(Math.max(0, contests.length - 3), prev + 1));
+    setStartIndex(Math.min(Math.max(0, contests.length - 3), safeStartIndex + 1));
 
   return (
     <section data-contest-section="ongoing" className="space-y-4">
@@ -674,7 +706,7 @@ export function ContestOngoingSection({
             <button
               type="button"
               onClick={handlePrev}
-              disabled={startIndex === 0}
+              disabled={safeStartIndex === 0}
               aria-label="이전 시즌 보기"
               className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40"
             >
@@ -683,7 +715,7 @@ export function ContestOngoingSection({
             <button
               type="button"
               onClick={handleNext}
-              disabled={startIndex >= contests.length - 3}
+              disabled={safeStartIndex >= contests.length - 3}
               aria-label="다음 시즌 보기"
               className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40"
             >
@@ -701,7 +733,7 @@ export function ContestOngoingSection({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {contests.slice(startIndex, startIndex + 3).map(contest => (
+          {contests.slice(safeStartIndex, safeStartIndex + 3).map(contest => (
             <article
               key={contest.id}
               data-ongoing-contest-card={contest.id}
@@ -762,7 +794,9 @@ export function ContestOngoingSection({
                   <div className="text-right">
                     <dt className="text-[11px] font-bold text-gray-400">현재 순위</dt>
                     <dd className="mt-0.5 text-xs font-black text-gray-900 tabular-nums">
-                      {contest.isLive ? `${contest.myRank}위 / ${contest.participantCount}명` : "집계 전"}
+                      {contest.isLive
+                        ? `${contest.myRank}위 / ${contest.participantCount}명`
+                        : "집계 전"}
                     </dd>
                   </div>
                 </dl>
@@ -845,7 +879,10 @@ function mapSeasonViewToItem(
   };
 }
 
-function mapLeaderboardPageToSeason(page: LeaderboardPageResponse): ContestLeaderboardSeason {
+function mapLeaderboardPageToSeason(
+  page: LeaderboardPageResponse,
+  profileCache: ReadonlyMap<number, EnrichedMemberMeta>,
+): ContestLeaderboardSeason {
   const isFinished = page.season.displayStatus === "FINISHED" || Boolean(page.season.settledAt);
   return {
     seasonId: page.season.id,
@@ -856,24 +893,32 @@ function mapLeaderboardPageToSeason(page: LeaderboardPageResponse): ContestLeade
       ? `${formatContestDateTime(page.season.settledAt)} 정산 확정`
       : undefined,
     participantCount: page.season.participantCount,
-    entries: page.items.map(entry => ({
-      rank: entry.rank,
-      memberId: entry.memberId,
-      nickname: entry.nickname,
-      seedMoney: formatContestUsdt(entry.seedMoney),
-      equity: formatContestUsdt(entry.totalEquity),
-      realizedPnl: formatContestSignedUsdt(entry.realizedPnl),
-      roi: formatContestSignedRoi(entry.roiPct),
-      isPositive: isNonNegativeContestDecimal(entry.roiPct),
-      tradeCount: typeof entry.tradeCount === "number" ? entry.tradeCount : 0,
-      winRate: formatContestWinRate(entry.winRate),
-    })),
+    nextCursorId: page.nextCursorId,
+    hasNext: page.hasNext,
+    entries: page.items.map(entry => {
+      const enriched = profileCache.get(entry.memberId);
+      return {
+        rank: entry.rank,
+        memberId: entry.memberId,
+        nickname: enriched?.nickname ?? entry.nickname,
+        profileImgUrl: enriched?.profileImgUrl ?? null,
+        withdrawn: enriched?.withdrawn ?? false,
+        seedMoney: formatContestUsdt(entry.seedMoney),
+        equity: formatContestUsdt(entry.totalEquity),
+        realizedPnl: formatContestSignedUsdt(entry.realizedPnl),
+        roi: formatContestSignedRoi(entry.roiPct),
+        isPositive: isNonNegativeContestDecimal(entry.roiPct),
+        tradeCount: typeof entry.tradeCount === "number" ? entry.tradeCount : 0,
+        winRate: formatContestWinRate(entry.winRate),
+      };
+    }),
   };
 }
 
 export function ContestHub() {
   const memberCtx = useOptionalMember();
   const isLoggedIn = memberCtx?.snapshot.phase === "ready";
+  const contentOrigin = memberCtx?.origin ?? "http://localhost:8080";
 
   const [guideOpen, setGuideOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState<"available" | "pending" | "history">(
@@ -897,6 +942,52 @@ export function ContestHub() {
     LEADERBOARD_SEASONS[0]!.seasonId,
   );
   const [visibleRankCount, setVisibleRankCount] = useState<number>(5);
+  const [loadingMoreLeaderboard, setLoadingMoreLeaderboard] = useState(false);
+
+  const profileCacheRef = useRef<Map<number, EnrichedMemberMeta>>(new Map());
+
+  function enrichLeaderboardMemberProfiles(memberIds: number[], signal?: AbortSignal) {
+    const missing = memberIds.filter(id => id > 0 && !profileCacheRef.current.has(id));
+    if (missing.length === 0) return;
+
+    void Promise.all(
+      missing.map(async id => {
+        try {
+          const profile = parseProfile(await contentJson(contentOrigin, `/members/${id}`, { signal }));
+          profileCacheRef.current.set(id, {
+            nickname: profile.nickname,
+            profileImgUrl: profile.profileImgUrl ?? null,
+            withdrawn: false,
+          });
+        } catch (err) {
+          if (err instanceof ContentApiError && err.status === 404) {
+            profileCacheRef.current.set(id, {
+              nickname: "탈퇴한회원",
+              profileImgUrl: null,
+              withdrawn: true,
+            });
+          }
+        }
+      }),
+    ).then(() => {
+      if (signal?.aborted) return;
+      setLeaderboardSeasons(prev =>
+        prev.map(season => ({
+          ...season,
+          entries: season.entries.map(entry => {
+            const meta = profileCacheRef.current.get(entry.memberId);
+            if (!meta) return entry;
+            return {
+              ...entry,
+              nickname: meta.nickname,
+              profileImgUrl: meta.profileImgUrl,
+              withdrawn: meta.withdrawn,
+            };
+          }),
+        })),
+      );
+    });
+  }
 
   function applyMyOverviewResponse(overview: MyContestOverviewResponse) {
     const ongoing = overview.participatingSeasons
@@ -923,8 +1014,14 @@ export function ContestHub() {
     setMyOngoingContests(ongoing);
 
     const available = overview.recruitingSeasons
-      .filter(r => !r.applied && r.applicationStatus !== "REJECTED")
-      .map(r => mapSeasonViewToItem(r.season, "apply"));
+      .filter(r => !r.applied)
+      .map(r =>
+        mapSeasonViewToItem(
+          r.season,
+          "apply",
+          r.applicationStatus === "REJECTED" ? { actionLabel: "재신청" } : undefined,
+        ),
+      );
     setAvailableContests(available);
 
     const pending = overview.pendingApplications.map(
@@ -966,7 +1063,7 @@ export function ContestHub() {
         actionLabel: "정산 완료",
         finalRank: p.rank ?? undefined,
         finalRoi: formatContestSignedRoi(p.roiPct),
-        finalPnl: formatContestSignedUsdt(p.realizedPnl),
+        finalPnl: formatContestSignedUsdt(p.totalPnl),
       }));
 
     const rejectedItems: ContestSeasonItem[] = overview.rejectedApplications.map(app => ({
@@ -999,6 +1096,8 @@ export function ContestHub() {
           if (!res || !Array.isArray(res.seasons)) return;
           setPublicRunningContests(res.running.map(s => mapSeasonViewToItem(s, "live")));
           if (!isLoggedIn) {
+            setMyOngoingContests([]);
+            setPendingContests([]);
             setAvailableContests(res.recruiting.map(s => mapSeasonViewToItem(s, "apply")));
             setHistoryContests(res.finished.map(s => mapSeasonViewToItem(s, "past")));
           }
@@ -1022,7 +1121,12 @@ export function ContestHub() {
               mappedCandidates.map(cand => {
                 const existing = prev.find(p => p.seasonId === cand.seasonId);
                 return existing && existing.entries.length > 0
-                  ? { ...cand, entries: existing.entries }
+                  ? {
+                      ...cand,
+                      entries: existing.entries,
+                      nextCursorId: existing.nextCursorId,
+                      hasNext: existing.hasNext,
+                    }
                   : cand;
               }),
             );
@@ -1037,7 +1141,15 @@ export function ContestHub() {
           }
         })
         .catch(() => {
-          // Keep fallback seed data when server is unreachable
+          if (controller.signal.aborted) return;
+          setPublicRunningContests([]);
+          setLeaderboardSeasons([]);
+          if (!isLoggedIn) {
+            setMyOngoingContests([]);
+            setPendingContests([]);
+            setAvailableContests([]);
+            setHistoryContests([]);
+          }
         });
 
       if (isLoggedIn && memberCtx?.session) {
@@ -1050,7 +1162,11 @@ export function ContestHub() {
             applyMyOverviewResponse(overview);
           })
           .catch(() => {
-            // Keep fallback seed data when server is unreachable
+            if (controller.signal.aborted) return;
+            setMyOngoingContests([]);
+            setAvailableContests([]);
+            setPendingContests([]);
+            setHistoryContests([]);
           });
       }
     };
@@ -1078,17 +1194,49 @@ export function ContestHub() {
       })
         .then(page => {
           if (!page || !page.season) return;
-          const mapped = mapLeaderboardPageToSeason(page);
+          const mapped = mapLeaderboardPageToSeason(page, profileCacheRef.current);
           setLeaderboardSeasons(prev => {
-            const exists = prev.some(item => item.seasonId === mapped.seasonId);
-            if (exists) {
-              return prev.map(item => (item.seasonId === mapped.seasonId ? mapped : item));
+            const existing = prev.find(item => item.seasonId === mapped.seasonId);
+            const mergedEntries =
+              existing && existing.entries.length > mapped.entries.length
+                ? [
+                    ...mapped.entries,
+                    ...existing.entries.slice(mapped.entries.length),
+                  ]
+                : mapped.entries;
+            const updatedSeason: ContestLeaderboardSeason = {
+              ...mapped,
+              entries: mergedEntries,
+              nextCursorId:
+                existing && existing.entries.length > mapped.entries.length
+                  ? existing.nextCursorId
+                  : mapped.nextCursorId,
+              hasNext:
+                existing && existing.entries.length > mapped.entries.length
+                  ? existing.hasNext
+                  : mapped.hasNext,
+            };
+            if (existing) {
+              return prev.map(item =>
+                item.seasonId === mapped.seasonId ? updatedSeason : item,
+              );
             }
-            return [mapped, ...prev];
+            return [updatedSeason, ...prev];
           });
+          enrichLeaderboardMemberProfiles(
+            page.items.map(item => item.memberId),
+            controller.signal,
+          );
         })
         .catch(() => {
-          // Keep fallback leaderboard seed data when server is unreachable
+          if (controller.signal.aborted) return;
+          setLeaderboardSeasons(prev =>
+            prev.map(item =>
+              item.seasonId === selectedLeaderboardSeasonId
+                ? { ...item, entries: [], hasNext: false, nextCursorId: null }
+                : item,
+            ),
+          );
         });
     };
 
@@ -1102,7 +1250,8 @@ export function ContestHub() {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [selectedLeaderboardSeasonId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLeaderboardSeasonId, contentOrigin]);
 
   const currentLeaderboard =
     leaderboardSeasons.find(season => season.seasonId === selectedLeaderboardSeasonId) ??
@@ -1112,15 +1261,53 @@ export function ContestHub() {
   const visibleEntries = currentLeaderboard
     ? currentLeaderboard.entries.slice(0, visibleRankCount)
     : [];
+  const canShowMoreLeaderboard = Boolean(
+    currentLeaderboard &&
+      (visibleRankCount < currentLeaderboard.entries.length || currentLeaderboard.hasNext),
+  );
   const otherPublicRunningContests = publicRunningContests.filter(
     pub => !myOngoingContests.some(my => my.id === pub.id),
   );
 
+  async function handleLoadMoreLeaderboard() {
+    if (!currentLeaderboard || loadingMoreLeaderboard) return;
+    if (visibleRankCount < currentLeaderboard.entries.length) {
+      setVisibleRankCount(prev => prev + 10);
+      return;
+    }
+    if (!currentLeaderboard.hasNext || currentLeaderboard.nextCursorId == null) return;
+    setLoadingMoreLeaderboard(true);
+    try {
+      const nextPage = await fetchPublicContestLeaderboard(currentLeaderboard.seasonId, {
+        cursorId: currentLeaderboard.nextCursorId,
+        size: 20,
+      });
+      const mappedNext = mapLeaderboardPageToSeason(nextPage, profileCacheRef.current);
+      setLeaderboardSeasons(prev =>
+        prev.map(season => {
+          if (season.seasonId !== currentLeaderboard.seasonId) return season;
+          const seenMemberIds = new Set(season.entries.map(e => e.memberId));
+          const appended = mappedNext.entries.filter(e => !seenMemberIds.has(e.memberId));
+          return {
+            ...season,
+            entries: [...season.entries, ...appended],
+            nextCursorId: mappedNext.nextCursorId,
+            hasNext: mappedNext.hasNext,
+          };
+        }),
+      );
+      setVisibleRankCount(prev => prev + 10);
+      enrichLeaderboardMemberProfiles(nextPage.items.map(item => item.memberId));
+    } catch {
+      setFeedbackNotice("추가 리더보드 순위를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setLoadingMoreLeaderboard(false);
+    }
+  }
+
   async function handleApplySeason(contest: ContestSeasonItem) {
     if (!isLoggedIn) {
-      setFeedbackNotice(
-        "대회에 참가 신청하려면 먼저 소셜 계정으로 로그인해 주세요.",
-      );
+      setFeedbackNotice("대회에 참가 신청하려면 먼저 소셜 계정으로 로그인해 주세요.");
       return;
     }
 
@@ -1157,6 +1344,33 @@ export function ContestHub() {
         error instanceof Error && error.message
           ? error.message
           : "참가 신청 처리에 실패했습니다. 모집 기간 및 계정 상태를 확인해 주세요.";
+      setFeedbackNotice(message);
+    }
+  }
+
+  async function handleCancelApplication(contest: ContestSeasonItem) {
+    if (!isLoggedIn || !memberCtx?.session) {
+      setFeedbackNotice("로그인 세션을 확인한 뒤 다시 시도해 주세요.");
+      return;
+    }
+
+    try {
+      await memberCtx.session.authorized(cred =>
+        cancelContestSeasonApplication(contest.id, cred.accessToken),
+      );
+      setPendingContests(prev => prev.filter(item => item.id !== contest.id));
+      setFeedbackNotice(
+        `"${contest.title}" 참가 신청이 취소되었습니다. 모집 마감 전까지 언제든 다시 신청할 수 있습니다.`,
+      );
+      const overview = await memberCtx.session.authorized(cred =>
+        fetchMyContestOverview(cred.accessToken),
+      );
+      if (overview) applyMyOverviewResponse(overview);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "참가 신청 취소에 실패했습니다. 이미 심사 완료되었는지 확인해 주세요.";
       setFeedbackNotice(message);
     }
   }
@@ -1247,15 +1461,21 @@ export function ContestHub() {
                 <span className="h-4 w-1 rounded-full bg-[#0058FF]" />
                 <h2 className="text-lg font-black text-gray-900">진행중인 대회</h2>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
-                {publicRunningContests.map((contest, idx) => (
-                  <ContestListCard
-                    key={contest.id}
-                    contest={contest}
-                    defaultExpanded={idx === 0}
-                  />
-                ))}
-              </div>
+              {publicRunningContests.length === 0 ? (
+                <div className="flex h-28 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white">
+                  <p className="text-xs font-bold text-gray-400">현재 진행 중인 대회가 없습니다.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                  {publicRunningContests.map((contest, idx) => (
+                    <ContestListCard
+                      key={contest.id}
+                      contest={contest}
+                      defaultExpanded={idx === 0}
+                    />
+                  ))}
+                </div>
+              )}
             </section>
 
             <section data-public-contest-stage="recruiting" className="space-y-4">
@@ -1263,16 +1483,22 @@ export function ContestHub() {
                 <span className="h-4 w-1 rounded-full bg-emerald-600" />
                 <h2 className="text-lg font-black text-gray-900">참가 모집중 대회</h2>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
-                {availableContests.map((contest, idx) => (
-                  <ContestListCard
-                    key={contest.id}
-                    contest={contest}
-                    onApply={handleApplySeason}
-                    defaultExpanded={idx === 0}
-                  />
-                ))}
-              </div>
+              {availableContests.length === 0 ? (
+                <div className="flex h-28 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white">
+                  <p className="text-xs font-bold text-gray-400">현재 참가 모집 중인 대회가 없습니다.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                  {availableContests.map((contest, idx) => (
+                    <ContestListCard
+                      key={contest.id}
+                      contest={contest}
+                      onApply={handleApplySeason}
+                      defaultExpanded={idx === 0}
+                    />
+                  ))}
+                </div>
+              )}
             </section>
 
             <section data-public-contest-stage="finished" className="space-y-4">
@@ -1280,15 +1506,21 @@ export function ContestHub() {
                 <span className="h-4 w-1 rounded-full bg-gray-400" />
                 <h2 className="text-lg font-black text-gray-900">종료된 대회</h2>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
-                {historyContests.map((contest, idx) => (
-                  <ContestListCard
-                    key={contest.id}
-                    contest={contest}
-                    defaultExpanded={idx === 0}
-                  />
-                ))}
-              </div>
+              {historyContests.length === 0 ? (
+                <div className="flex h-28 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white">
+                  <p className="text-xs font-bold text-gray-400">종료된 대회 이력이 없습니다.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                  {historyContests.map((contest, idx) => (
+                    <ContestListCard
+                      key={contest.id}
+                      contest={contest}
+                      defaultExpanded={idx === 0}
+                    />
+                  ))}
+                </div>
+              )}
             </section>
           </div>
         ) : (
@@ -1369,6 +1601,7 @@ export function ContestHub() {
                       <ContestListCard
                         key={contest.id}
                         contest={contest}
+                        onCancel={handleCancelApplication}
                         defaultExpanded={idx === 0}
                       />
                     ))
@@ -1381,11 +1614,7 @@ export function ContestHub() {
                   )
                 ) : historyContests.length > 0 ? (
                   historyContests.map(contest => (
-                    <ContestListCard
-                      key={contest.id}
-                      contest={contest}
-                      defaultExpanded
-                    />
+                    <ContestListCard key={contest.id} contest={contest} defaultExpanded />
                   ))
                 ) : (
                   <div className="col-span-full flex h-32 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white">
@@ -1494,24 +1723,42 @@ export function ContestHub() {
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
-                    <Link
-                      href={`/members/${entry.memberId}`}
-                      className="flex items-center gap-3 min-w-0 group"
-                    >
-                      <V1UserAvatar
-                        memberId={entry.memberId}
-                        nickname={entry.nickname}
-                        size="md"
-                      />
-                      <div className="min-w-0">
-                        <p className="truncate text-base font-black text-gray-900 group-hover:text-[#0058FF]">
-                          {entry.nickname}
-                        </p>
-                        <p className="text-[11px] font-bold text-gray-400">
-                          프로필 및 대회 이력 보기
-                        </p>
+                    {entry.withdrawn ? (
+                      <div className="flex items-center gap-3 min-w-0">
+                        <V1UserAvatar
+                          src={entry.profileImgUrl}
+                          memberId={entry.memberId}
+                          nickname={entry.nickname}
+                          size="md"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-black text-gray-500">
+                            {entry.nickname}
+                          </p>
+                          <p className="text-[11px] font-bold text-gray-400">탈퇴한 회원</p>
+                        </div>
                       </div>
-                    </Link>
+                    ) : (
+                      <Link
+                        href={`/members/${entry.memberId}`}
+                        className="flex items-center gap-3 min-w-0 group"
+                      >
+                        <V1UserAvatar
+                          src={entry.profileImgUrl}
+                          memberId={entry.memberId}
+                          nickname={entry.nickname}
+                          size="md"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-black text-gray-900 group-hover:text-[#0058FF]">
+                            {entry.nickname}
+                          </p>
+                          <p className="text-[11px] font-bold text-gray-400">
+                            프로필 및 대회 이력 보기
+                          </p>
+                        </div>
+                      </Link>
+                    )}
 
                     <div className="text-right shrink-0 whitespace-nowrap">
                       <p
@@ -1547,7 +1794,9 @@ export function ContestHub() {
                   <th className="px-4 py-3 font-bold text-right whitespace-nowrap">평가자산</th>
                   <th className="px-4 py-3 font-bold text-right whitespace-nowrap">실현손익</th>
                   <th className="px-4 py-3 font-bold text-right whitespace-nowrap">수익률 ROI%</th>
-                  <th className="px-4 py-3 font-bold text-right whitespace-nowrap">거래횟수 · 승률</th>
+                  <th className="px-4 py-3 font-bold text-right whitespace-nowrap">
+                    거래횟수 · 승률
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
@@ -1562,71 +1811,87 @@ export function ContestHub() {
                   </tr>
                 ) : (
                   visibleEntries.map(entry => (
-                  <tr key={entry.memberId} className="hover:bg-gray-50">
-                    <td className="px-4 py-3.5 font-black text-gray-900 tabular-nums whitespace-nowrap">
-                      {entry.rank}위
-                    </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap">
-                      <Link
-                        href={`/members/${entry.memberId}`}
-                        className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF] whitespace-nowrap"
+                    <tr key={entry.memberId} className="hover:bg-gray-50">
+                      <td className="px-4 py-3.5 font-black text-gray-900 tabular-nums whitespace-nowrap">
+                        {entry.rank}위
+                      </td>
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        {entry.withdrawn ? (
+                          <span className="inline-flex items-center gap-2.5 font-bold text-gray-500 whitespace-nowrap">
+                            <V1UserAvatar
+                              src={entry.profileImgUrl}
+                              memberId={entry.memberId}
+                              nickname={entry.nickname}
+                              size="sm"
+                            />
+                            <span>{entry.nickname}</span>
+                          </span>
+                        ) : (
+                          <Link
+                            href={`/members/${entry.memberId}`}
+                            className="inline-flex items-center gap-2.5 font-bold text-gray-900 hover:text-[#0058FF] whitespace-nowrap"
+                          >
+                            <V1UserAvatar
+                              src={entry.profileImgUrl}
+                              memberId={entry.memberId}
+                              nickname={entry.nickname}
+                              size="sm"
+                            />
+                            <span>{entry.nickname}</span>
+                          </Link>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5 text-right font-medium text-gray-500 tabular-nums whitespace-nowrap">
+                        {entry.seedMoney}
+                      </td>
+                      <td className="px-4 py-3.5 text-right font-bold text-gray-900 tabular-nums whitespace-nowrap">
+                        {entry.equity}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-4 py-3.5 text-right font-bold tabular-nums whitespace-nowrap",
+                          entry.realizedPnl.startsWith("-")
+                            ? "text-[#0058FF]"
+                            : entry.realizedPnl === "0.00 USDT"
+                              ? "text-gray-700"
+                              : "text-red-500",
+                        )}
                       >
-                        <V1UserAvatar
-                          memberId={entry.memberId}
-                          nickname={entry.nickname}
-                          size="sm"
-                        />
-                        <span>{entry.nickname}</span>
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3.5 text-right font-medium text-gray-500 tabular-nums whitespace-nowrap">
-                      {entry.seedMoney}
-                    </td>
-                    <td className="px-4 py-3.5 text-right font-bold text-gray-900 tabular-nums whitespace-nowrap">
-                      {entry.equity}
-                    </td>
-                    <td
-                      className={cn(
-                        "px-4 py-3.5 text-right font-bold tabular-nums whitespace-nowrap",
-                        entry.realizedPnl.startsWith("-")
-                          ? "text-[#0058FF]"
-                          : entry.realizedPnl === "0.00 USDT"
-                            ? "text-gray-700"
-                            : "text-red-500",
-                      )}
-                    >
-                      {entry.realizedPnl}
-                    </td>
-                    <td
-                      className={cn(
-                        "px-4 py-3.5 text-right font-black tabular-nums whitespace-nowrap",
-                        entry.roi.startsWith("-")
-                          ? "text-[#0058FF]"
-                          : entry.roi === "0.00%"
-                            ? "text-gray-700"
-                            : "text-red-500",
-                      )}
-                    >
-                      {entry.roi}
-                    </td>
-                    <td className="px-4 py-3.5 text-right font-bold text-gray-600 tabular-nums whitespace-nowrap">
-                      {entry.tradeCount}회 · {entry.winRate}
-                    </td>
-                  </tr>
+                        {entry.realizedPnl}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-4 py-3.5 text-right font-black tabular-nums whitespace-nowrap",
+                          entry.roi.startsWith("-")
+                            ? "text-[#0058FF]"
+                            : entry.roi === "0.00%"
+                              ? "text-gray-700"
+                              : "text-red-500",
+                        )}
+                      >
+                        {entry.roi}
+                      </td>
+                      <td className="px-4 py-3.5 text-right font-bold text-gray-600 tabular-nums whitespace-nowrap">
+                        {entry.tradeCount}회 · {entry.winRate}
+                      </td>
+                    </tr>
                   ))
                 )}
               </tbody>
             </table>
           </div>
 
-          {currentLeaderboard && visibleRankCount < currentLeaderboard.entries.length ? (
+          {canShowMoreLeaderboard && currentLeaderboard ? (
             <div className="flex justify-center pt-2">
               <V1Button
                 variant="white"
                 size="sm"
-                onClick={() => setVisibleRankCount(prev => prev + 5)}
+                disabled={loadingMoreLeaderboard}
+                onClick={() => void handleLoadMoreLeaderboard()}
               >
-                순위 더보기 ({visibleRankCount}/{currentLeaderboard.entries.length})
+                {loadingMoreLeaderboard
+                  ? "순위 불러오는 중…"
+                  : `순위 더보기 (${Math.min(visibleRankCount, currentLeaderboard.entries.length)}/${currentLeaderboard.participantCount || currentLeaderboard.entries.length})`}
               </V1Button>
             </div>
           ) : null}

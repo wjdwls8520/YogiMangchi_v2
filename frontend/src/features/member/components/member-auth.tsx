@@ -13,10 +13,70 @@ import { MemberLoginView, MemberShell, SignupForm } from "./member-views";
 import { V1IconCheck } from "./v1-ui";
 import { validPolicyVersion } from "../api/policies";
 import { clearWithdrawalIntent, readWithdrawalIntent, saveWithdrawalIntent } from "../api/withdrawal-intent";
+import type { SelectedS3File } from "./s3-upload-slot";
 
 export const LOGIN_RETURN_PATH_KEY = "yogimangchi:login-return-to:v1";
+export const SIGNUP_DRAFT_KEY = "yogimangchi:signup-draft:v1";
 
 type ReturnPathStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+export interface SignupDraft {
+  nickname: string;
+  profileMessage: string;
+}
+
+function saveSignupDraft(draft: SignupDraft): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (!draft.nickname.trim() && !draft.profileMessage.trim()) return;
+    window.sessionStorage?.setItem(
+      SIGNUP_DRAFT_KEY,
+      JSON.stringify({
+        nickname: Array.from(draft.nickname).slice(0, 8).join(""),
+        profileMessage: Array.from(draft.profileMessage).slice(0, 255).join(""),
+      }),
+    );
+  } catch {
+    // Ignore storage quota or privacy mode errors
+  }
+}
+
+function readSignupDraft(): SignupDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage?.getItem(SIGNUP_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const nickname = typeof parsed.nickname === "string" ? parsed.nickname : "";
+    const profileMessage = typeof parsed.profileMessage === "string" ? parsed.profileMessage : "";
+    if (!nickname && !profileMessage) return null;
+    return { nickname, profileMessage };
+  } catch {
+    return null;
+  }
+}
+
+function clearSignupDraft(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage?.removeItem(SIGNUP_DRAFT_KEY);
+  } catch {
+    // Ignore storage access errors
+  }
+}
+
+function oauthCallbackErrorMessage(errorParam: string | null): string | null {
+  if (!errorParam) return null;
+  const normalized = errorParam.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "verified_email_required") {
+    return "소셜 계정에 인증된 이메일 정보가 없어 본인확인을 완료할 수 없습니다. 이메일 인증이 완료된 Google 또는 Kakao 계정으로 다시 시도해 주세요.";
+  }
+  if (normalized === "access_denied") {
+    return "소셜 본인확인이 취소되었습니다. 다시 로그인하거나 가입을 진행해 주세요.";
+  }
+  return "소셜 로그인 인증 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+}
 
 function isAuthOnlyPath(path: string): boolean {
   return /^\/(login|signup|auth\/callback|account)(\/|$|\?|#)/i.test(path.trim());
@@ -184,6 +244,7 @@ export function MemberSignupPage() {
   const { origin, snapshot } = useMember();
   const router = useSafeRouter();
   const [notice, setNotice] = useState<string | null>(null);
+  const formWrapRef = useRef<HTMLDivElement>(null);
   const google = oauthUrl(origin, "google");
   const kakao = oauthUrl(origin, "kakao");
 
@@ -197,9 +258,25 @@ export function MemberSignupPage() {
     }
   }, [snapshot.phase, router]);
 
+  function captureFormDraft() {
+    const root = formWrapRef.current;
+    if (!root) return;
+    const nicknameInput = root.querySelector<HTMLInputElement>('input[name="nickname"]');
+    const bioInput = root.querySelector<HTMLTextAreaElement>('textarea[name="profileMessage"]');
+    saveSignupDraft({
+      nickname: nicknameInput?.value ?? "",
+      profileMessage: bioInput?.value ?? "",
+    });
+  }
+
   function handlePreviewSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setNotice("상단 Google 또는 Kakao 본인확인을 먼저 완료하면 입력하신 닉네임과 약관 동의로 즉시 가입이 완료됩니다.");
+    const fields = new FormData(event.currentTarget);
+    saveSignupDraft({
+      nickname: String(fields.get("nickname") ?? ""),
+      profileMessage: String(fields.get("profileMessage") ?? ""),
+    });
+    setNotice("상단 Google 또는 Kakao 본인확인을 먼저 완료하면 입력하신 닉네임과 소개가 유지되어 즉시 가입할 수 있습니다.");
   }
 
   if (snapshot.phase === "ready") {
@@ -231,10 +308,10 @@ export function MemberSignupPage() {
           요기망치는 별도 비밀번호 없이 Google 또는 Kakao 계정 본인확인으로 안전하게 가입을 진행합니다.
         </p>
         <div className="ym-verify-btn-group">
-          <a href={google} className="ym-dark-verify-btn">
+          <a href={google} className="ym-dark-verify-btn" onClick={captureFormDraft}>
             Google 본인확인 시작
           </a>
-          <a href={kakao} className="ym-dark-verify-btn is-kakao-border">
+          <a href={kakao} className="ym-dark-verify-btn is-kakao-border" onClick={captureFormDraft}>
             Kakao 본인확인 시작
           </a>
         </div>
@@ -246,7 +323,9 @@ export function MemberSignupPage() {
         </p>
       )}
 
-      <SignupForm onSubmit={handlePreviewSubmit} pending={false} />
+      <div ref={formWrapRef}>
+        <SignupForm onSubmit={handlePreviewSubmit} pending={false} />
+      </div>
     </MemberShell>
   );
 }
@@ -260,17 +339,21 @@ export function MemberCallback() {
   const [checking, setChecking] = useState(false);
   const [completionReady, setCompletionReady] = useState(false);
   const [withdrawalIntent] = useState(readWithdrawalIntent);
+  const [signupDraft] = useState<SignupDraft | null>(readSignupDraft);
+  const [selectedProfileImage, setSelectedProfileImage] = useState<SelectedS3File | null>(null);
   const flowGeneration = useRef<number | null>(null);
   useEffect(() => {
-    if (snapshot.phase === "ready" && !withdrawalIntent) {
+    if (snapshot.phase === "ready" && !withdrawalIntent && !active.current) {
       router.replace(consumeLoginReturnPath());
     }
   }, [snapshot.phase, router, withdrawalIntent]);
   useEffect(() => {
+    const oauthError = typeof window !== "undefined" ? oauthCallbackErrorMessage(new URLSearchParams(window.location.search).get("error")) : null;
     const controller = new AbortController();
     const generation = session.getSnapshot().generation;
     void (async () => {
       try {
+        if (oauthError) { await Promise.resolve(); if (!controller.signal.aborted) { setError(oauthError); setRequestError(null); } return; }
         const value = parseFlow(await contentJson(origin, "/auth/flow", { signal: controller.signal }));
         if (controller.signal.aborted || generation !== session.getSnapshot().generation) return;
         flowGeneration.current = generation;
@@ -285,6 +368,7 @@ export function MemberCallback() {
         if (value.status === "LOGIN_READY") {
           await session.complete();
           if (!controller.signal.aborted) {
+            clearSignupDraft();
             announce("changed");
             router.replace(consumeLoginReturnPath());
           }
@@ -305,6 +389,20 @@ export function MemberCallback() {
     active.current = true; setPending(true); setError(null); setRequestError(null); setCompletionReady(false);
     try {
       await session.signup({ nickname, profileMessage, termAgree: true, privateAgree: true, termsVersion, privacyVersion });
+      if (selectedProfileImage?.rawFile) {
+        try {
+          const avatarForm = new FormData();
+          avatarForm.append("profileMessage", profileMessage);
+          avatarForm.append("profileImage", selectedProfileImage.rawFile);
+          await session.request("/members/me/profile", {
+            method: "PATCH",
+            body: avatarForm,
+          });
+        } catch {
+          // Best-effort avatar upload: signup succeeded and must still complete cleanly
+        }
+      }
+      clearSignupDraft();
       clearLoginReturnPath();
       announce("changed");
       router.replace("/");
@@ -341,6 +439,7 @@ export function MemberCallback() {
         saveWithdrawalIntent(withdrawalIntent.memberId, true); router.replace("/account?withdraw=confirm");
       } else {
         await session.complete();
+        clearSignupDraft();
         announce("changed");
         router.replace(consumeLoginReturnPath());
       }
@@ -375,7 +474,15 @@ export function MemberCallback() {
         <h2 className="ym-verify-title">소셜 계정 본인인증 완료</h2>
         <p className="member-message">{flow.provider} · {flow.accountHint} 계정을 확인했습니다. 닉네임과 가입 동의를 입력해 주세요. 탈퇴 후 재가입인 경우 새로운 회원으로 시작하며 기존 자산·이력은 이전되지 않습니다.</p>
       </div>
-      <SignupForm onSubmit={event => void signup(event)} pending={pending} />
+      <SignupForm
+        key={signupDraft ? `draft:${signupDraft.nickname}:${signupDraft.profileMessage}` : "fresh"}
+        onSubmit={event => void signup(event)}
+        pending={pending}
+        defaultNickname={signupDraft?.nickname ?? ""}
+        defaultProfileMessage={signupDraft?.profileMessage ?? ""}
+        selectedProfileImage={selectedProfileImage}
+        onSelectProfileImage={setSelectedProfileImage}
+      />
     </>}
     {error && <Link href="/login" onClick={clearWithdrawalIntent}>로그인으로 돌아가기</Link>}
   </MemberShell>;

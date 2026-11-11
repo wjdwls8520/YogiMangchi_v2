@@ -517,7 +517,9 @@ export function AdminContestList() {
         }
       })
       .catch(() => {
-        // Keep fallback admin season list when server is unreachable
+        if (controller.signal.aborted) return;
+        setSeasons([]);
+        setStatusMessage("대회 시즌 목록을 불러오지 못했습니다. 서버 연결 상태를 확인해 주세요.");
       });
 
     return () => controller.abort();
@@ -742,6 +744,13 @@ export function AdminContestList() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
+                {visibleSeasons.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-4 py-10 text-center font-bold text-gray-400">
+                      등록된 대회 시즌이 없습니다.
+                    </td>
+                  </tr>
+                ) : null}
                 {visibleSeasons.map(row => {
                   const displayStatus = resolveDisplayStatus(row);
                   const progressBadgeClass =

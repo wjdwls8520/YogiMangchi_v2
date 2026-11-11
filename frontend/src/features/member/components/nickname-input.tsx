@@ -3,7 +3,13 @@
 import { useRef, useState } from "react";
 import { nicknamePattern } from "../api/contracts";
 
-export function NicknameInput({ initialValue = "" }: { initialValue?: string }) {
+export function NicknameInput({
+  initialValue = "",
+  enforcePattern = false,
+}: {
+  initialValue?: string;
+  enforcePattern?: boolean;
+}) {
   const [value, setValue] = useState(initialValue);
   const composing = useRef(false);
   const limit = (value: string) => Array.from(value).slice(0, 8).join("");
@@ -14,7 +20,7 @@ export function NicknameInput({ initialValue = "" }: { initialValue?: string }) 
       placeholder="닉네임 입력 (1~8자)"
       autoComplete="nickname"
       required
-      pattern={value === initialValue && initialValue ? undefined : nicknamePattern}
+      pattern={!enforcePattern && value === initialValue && initialValue ? undefined : nicknamePattern}
       value={value}
       onCompositionStart={() => {
         composing.current = true;

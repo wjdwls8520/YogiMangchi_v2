@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberShell } from "./member-views";
 import { useMember } from "./member-provider";
 import { DimModal } from "./dim-modal";
 import { TradingDataProvider } from "../../trading/components/trading-data-provider";
 import { MemberSimulation } from "../../trading/components/member-simulation";
-import { tradingJson } from "../../trading/api/client";
+import { marketSymbolsJson, tradingJson } from "../../trading/api/client";
+import { parseSymbols, type TradingSymbol } from "../../trading/market/catalog";
 import {
   fetchMyContestSeasons,
   fetchPublicMemberContestSeasons,
@@ -20,7 +21,7 @@ import {
   resolveTradingContestBaseUrl,
 } from "../../contest/api/contest-client";
 import { contentJson } from "../api/client";
-import { parseFollowPage } from "../api/contracts";
+import { parseFollowPage, parseFollowSummary } from "../api/contracts";
 import {
   communityCategoryLabel,
   parseCommunityPostPage,
@@ -51,8 +52,6 @@ type ProfileResponse = {
   profileMessage?: string | null;
   profileImgUrl?: string | null;
   profileImageUrl?: string | null;
-  followerCount?: number;
-  followingCount?: number;
 };
 
 type FollowMemberItem = {
@@ -71,18 +70,6 @@ type ContestSubTab = "live" | "finished";
 const ZERO_QUANTITY_NOTICE_TEXT =
   "보유수량 또는 포지션 수량이 0인 항목은 과거 거래 이력과 평균매수가/진입가 확인을 위해 표시됩니다. 현재 보유 중인 수량이 없어 평가금액, 평가손익, 수익률은 0으로 표시될 수 있습니다.";
 
-const INITIAL_FOLLOWERS: FollowMemberItem[] = [
-  { memberId: 11, nickname: "알파트레이더", profileMsg: "BTC/ETH 추세 매매 전문", following: true, followsMe: true },
-  { memberId: 15, nickname: "퀀트매니저", profileMsg: "펀딩비 차익 및 단기 변동성 돌파", following: false, followsMe: true },
-  { memberId: 22, nickname: "솔라나고래", profileMsg: "격리 10배 원칙 매매", following: true, followsMe: true },
-];
-
-const INITIAL_FOLLOWINGS: FollowMemberItem[] = [
-  { memberId: 11, nickname: "알파트레이더", profileMsg: "BTC/ETH 추세 매매 전문", following: true, followsMe: true },
-  { memberId: 22, nickname: "솔라나고래", profileMsg: "격리 10배 원칙 매매", following: true, followsMe: true },
-  { memberId: 31, nickname: "매크로워처", profileMsg: "FOMC·CPI 거시 지표 분석", following: true, followsMe: false },
-];
-
 const POSITION_COLORS = ["#0058FF", "#9CB34E", "#1D7CA7", "#F59E0B", "#8B5CF6"] as const;
 
 const SYMBOL_NAME_KR: Record<string, string> = {
@@ -99,6 +86,61 @@ const SYMBOL_NAME_KR: Record<string, string> = {
   PEPEUSDT: "페페 무기한",
   SHIBUSDT: "시바이누 무기한",
 };
+
+const DECIMAL_SCALE = 8;
+const ZERO_BI = BigInt(0);
+const TWO_BI = BigInt(2);
+const HUNDRED_BI = BigInt(100);
+const NEG_ONE_BI = BigInt(-1);
+const ONE_BI = BigInt(1);
+
+function pow10BigInt(exp: number): bigint {
+  return BigInt(`1${"0".repeat(Math.max(0, exp))}`);
+}
+
+const DECIMAL_FACTOR = pow10BigInt(DECIMAL_SCALE);
+
+function parseScaledBigInt(raw: string): bigint | null {
+  const cleaned = raw.replace(/,/g, "").trim();
+  const match = /^([+-])?(\d+)(?:\.(\d+))?$/.exec(cleaned);
+  if (!match) return null;
+  const sign = match[1] === "-" ? NEG_ONE_BI : ONE_BI;
+  const whole = BigInt(match[2]);
+  const fracPadded = (match[3] ?? "").slice(0, DECIMAL_SCALE).padEnd(DECIMAL_SCALE, "0");
+  const frac = BigInt(fracPadded || "0");
+  return sign * (whole * DECIMAL_FACTOR + frac);
+}
+
+function formatScaledBigInt(value: bigint, decimals = 2): string {
+  const negative = value < ZERO_BI;
+  const abs = negative ? -value : value;
+  const dropDigits = DECIMAL_SCALE - decimals;
+  const divisor = pow10BigInt(dropDigits);
+  const half = divisor / TWO_BI;
+  const rounded = (abs + half) / divisor;
+  const outFactor = pow10BigInt(decimals);
+  const whole = rounded / outFactor;
+  const frac = (rounded % outFactor).toString().padStart(decimals, "0");
+  const wholeFormatted = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const signPrefix = negative && rounded > ZERO_BI ? "-" : "";
+  return decimals > 0 ? `${signPrefix}${wholeFormatted}.${frac}` : `${signPrefix}${wholeFormatted}`;
+}
+
+function multiplyDecimalStrings(a: string, b: string, decimals = 2): string {
+  const left = parseScaledBigInt(a);
+  const right = parseScaledBigInt(b);
+  if (left === null || right === null) return "0.00";
+  const product = (left * right) / DECIMAL_FACTOR;
+  return formatScaledBigInt(product, decimals);
+}
+
+function computeRoePctString(netPnl: string, initialMargin: string): string {
+  const pnlVal = parseScaledBigInt(netPnl);
+  const marginVal = parseScaledBigInt(initialMargin);
+  if (pnlVal === null || marginVal === null || marginVal <= ZERO_BI) return "0.00";
+  const pctScaled = (pnlVal * HUNDRED_BI * DECIMAL_FACTOR) / marginVal;
+  return formatScaledBigInt(pctScaled, 2);
+}
 
 function pnlColorText(raw: string): string {
   const trimmed = raw.trim();
@@ -119,199 +161,63 @@ function formatKstDateTimeShort(value: string): string {
   return `${y}-${m}-${d} ${hh}:${mm}`;
 }
 
+function toKstDateOnly(value: string): string {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value.slice(0, 10);
+  const kst = new Date(parsed + 9 * 60 * 60 * 1000);
+  const y = kst.getUTCFullYear();
+  const m = String(kst.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(kst.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function symbolNameKr(symbol: string): string {
   return SYMBOL_NAME_KR[symbol.toUpperCase()] ?? `${symbol} 무기한`;
 }
 
-const MOCK_POSITIONS = [
-  {
-    id: 1,
-    symbol: "BTCUSDT",
-    nameKr: "비트코인 무기한",
-    side: "LONG" as const,
-    leverage: 10,
-    quantity: "0.450 BTC",
-    entryPrice: "92,400.00",
-    markPrice: "94,280.50",
-    liqPrice: "83,610.00",
-    margin: "4,158.00 USDT",
-    pnl: "+846.23 USDT",
-    roe: "+20.35%",
-    isPositive: true,
-    marginRatio: 45,
-    color: "#0058FF",
-  },
-  {
-    id: 2,
-    symbol: "ETHUSDT",
-    nameKr: "이더리움 무기한",
-    side: "LONG" as const,
-    leverage: 5,
-    quantity: "3.200 ETH",
-    entryPrice: "3,080.00",
-    markPrice: "3,142.10",
-    liqPrice: "2,495.00",
-    margin: "1,971.20 USDT",
-    pnl: "+198.72 USDT",
-    roe: "+10.08%",
-    isPositive: true,
-    marginRatio: 22,
-    color: "#9CB34E",
-  },
-  {
-    id: 3,
-    symbol: "SOLUSDT",
-    nameKr: "솔라나 무기한",
-    side: "SHORT" as const,
-    leverage: 5,
-    quantity: "20.00 SOL",
-    entryPrice: "215.00",
-    markPrice: "212.40",
-    liqPrice: "255.80",
-    margin: "860.00 USDT",
-    pnl: "+52.00 USDT",
-    roe: "+6.05%",
-    isPositive: true,
-    marginRatio: 10,
-    color: "#1D7CA7",
-  },
-];
+function resolveRowSymbol(
+  row: Record<string, unknown>,
+  symbolById: ReadonlyMap<number, TradingSymbol>,
+): { base: string; pair: string; nameKr: string; fullNameKr: string } {
+  const symId = typeof row.tradingSymbolId === "number" ? row.tradingSymbolId : undefined;
+  const found = symId !== undefined ? symbolById.get(symId) : undefined;
+  if (found) {
+    const base = found.symbol.toUpperCase().replace(/USDT$/i, "");
+    const quote = (found.quoteAsset || "USDT").toUpperCase();
+    const pair = `${base}${quote}`;
+    const fullNameKr = SYMBOL_NAME_KR[pair] ?? `${found.name} 무기한`;
+    const nameKr = found.name || fullNameKr.replace(" 무기한", "");
+    return { base, pair, nameKr, fullNameKr };
+  }
+  const rawSym =
+    typeof row.symbol === "string" && row.symbol.trim()
+      ? row.symbol.trim().toUpperCase()
+      : "BTCUSDT";
+  const pair = rawSym.endsWith("USDT") ? rawSym : `${rawSym}USDT`;
+  const base = pair.replace(/USDT$/i, "");
+  const fullNameKr = symbolNameKr(pair);
+  return { base, pair, nameKr: fullNameKr.replace(" 무기한", ""), fullNameKr };
+}
 
-const MOCK_CLOSED_PNL = [
-  {
-    id: 101,
-    closedAt: "2026-11-08 09:42:11",
-    symbol: "BTCUSDT",
-    nameKr: "비트코인 무기한",
-    side: "LONG",
-    leverage: 10,
-    entryPrice: "91,150.00",
-    exitPrice: "93,400.00",
-    quantity: "0.300 BTC",
-    realizedPnl: "+675.00 USDT",
-    roe: "+24.68%",
-    isPositive: true,
-  },
-  {
-    id: 102,
-    closedAt: "2026-11-07 21:15:04",
-    symbol: "XRPUSDT",
-    nameKr: "리플 무기한",
-    side: "SHORT",
-    leverage: 5,
-    entryPrice: "0.5820",
-    exitPrice: "0.5910",
-    quantity: "2,000 XRP",
-    realizedPnl: "-18.00 USDT",
-    roe: "-7.73%",
-    isPositive: false,
-  },
-];
-
-const MOCK_ORDERS = [
-  {
-    id: 3001,
-    orderedAt: "2026-11-08 10:12:30",
-    symbol: "BTCUSDT",
-    nameKr: "비트코인",
-    side: "BUY",
-    sideLabel: "매수/롱",
-    orderType: "MARKET",
-    orderStatus: "COMPLETED",
-    orderPrice: "시장가",
-    orderQuantity: "0.450 BTC",
-    filledQuantity: "0.450 BTC",
-    avgFilledPrice: "92,400.00 USDT",
-  },
-  {
-    id: 3002,
-    orderedAt: "2026-11-08 09:50:18",
-    symbol: "ETHUSDT",
-    nameKr: "이더리움",
-    side: "BUY",
-    sideLabel: "매수/롱",
-    orderType: "LIMIT",
-    orderStatus: "COMPLETED",
-    orderPrice: "3,080.00 USDT",
-    orderQuantity: "3.200 ETH",
-    filledQuantity: "3.200 ETH",
-    avgFilledPrice: "3,080.00 USDT",
-  },
-  {
-    id: 3003,
-    orderedAt: "2026-11-08 08:30:00",
-    symbol: "BTCUSDT",
-    nameKr: "비트코인",
-    side: "SELL",
-    sideLabel: "매도/숏 (익절대기)",
-    orderType: "LIMIT",
-    orderStatus: "PENDING",
-    orderPrice: "96,500.00 USDT",
-    orderQuantity: "0.200 BTC",
-    filledQuantity: "0.000 BTC",
-    avgFilledPrice: "-",
-  },
-];
-
-const MOCK_TRADES = [
-  {
-    id: 4001,
-    executedAt: "2026-11-08 10:12:30",
-    symbol: "BTCUSDT",
-    nameKr: "비트코인",
-    side: "BUY",
-    sideLabel: "매수/롱",
-    price: "92,400.00 USDT",
-    quantity: "0.450 BTC",
-    totalAmount: "41,580.00 USDT",
-    fee: "12.47 USDT",
-    realizedProfit: "0.00 USDT",
-  },
-  {
-    id: 4002,
-    executedAt: "2026-11-08 09:42:11",
-    symbol: "BTCUSDT",
-    nameKr: "비트코인",
-    side: "SELL",
-    sideLabel: "매도/청산",
-    price: "93,400.00 USDT",
-    quantity: "0.300 BTC",
-    totalAmount: "28,020.00 USDT",
-    fee: "8.41 USDT",
-    realizedProfit: "+675.00 USDT",
-  },
-];
-
-const FINISHED_CONTEST_SEASONS = [
-  {
-    seasonId: "2026-S1",
-    seasonTitle: "2026 정규 시즌 1 선물 랭킹전",
-    period: "2026.09.01 ~ 2026.09.30",
-    seedMoney: "10,000.00 USDT",
-    finalEquity: "24,860.00 USDT",
-    finalRoi: "+148.60%",
-    finalRank: "1위 / 412명",
-    winRate: "74.2% (23승 8패)",
-    status: "정산완료",
-  },
-  {
-    seasonId: "2026-PRE",
-    seasonTitle: "2026 프리시즌 오픈 토너먼트",
-    period: "2026.07.15 ~ 2026.08.15",
-    seedMoney: "10,000.00 USDT",
-    finalEquity: "13,420.50 USDT",
-    finalRoi: "+34.21%",
-    finalRank: "12위 / 285명",
-    winRate: "65.0% (13승 7패)",
-    status: "정산완료",
-  },
-];
+function formatActionSideLabel(sideRaw: string, actionRaw: string): {
+  isBuy: boolean;
+  label: string;
+} {
+  const isLong = sideRaw === "LONG" || sideRaw === "BUY";
+  if (actionRaw === "LIQUIDATE") {
+    return { isBuy: !isLong, label: isLong ? "롱 강제청산" : "숏 강제청산" };
+  }
+  if (actionRaw === "CLOSE") {
+    return { isBuy: !isLong, label: isLong ? "롱 종료" : "숏 종료" };
+  }
+  return { isBuy: isLong, label: isLong ? "롱 진입" : "숏 진입" };
+}
 
 function formatSignedUsdt(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith("-")) return `${trimmed} USDT`;
   if (trimmed.startsWith("+")) return `${trimmed} USDT`;
-  if (trimmed === "0" || trimmed === "0.00") return "0.00 USDT";
+  if (!/[1-9]/.test(trimmed)) return "0.00 USDT";
   return `+${trimmed} USDT`;
 }
 
@@ -320,7 +226,7 @@ function formatSignedPct(raw: string): string {
   if (trimmed.startsWith("-") || trimmed.startsWith("+")) {
     return trimmed.endsWith("%") ? trimmed : `${trimmed}%`;
   }
-  if (trimmed === "0" || trimmed === "0.00") return "0.00%";
+  if (!/[1-9]/.test(trimmed)) return "0.00%";
   return `+${trimmed.endsWith("%") ? trimmed : `${trimmed}%`}`;
 }
 
@@ -347,21 +253,7 @@ export function MemberMyProfilePage({
     "posts" | "replies" | "likedPosts" | "likedReplies" | "reports"
   >("posts");
   const [followModalType, setFollowModalType] = useState<"followers" | "followings" | null>(null);
-  const [followers, setFollowers] = useState<FollowMemberItem[]>(INITIAL_FOLLOWERS);
-  const [followings, setFollowings] = useState<FollowMemberItem[]>(INITIAL_FOLLOWINGS);
   const [followOverrides, setFollowOverrides] = useState<Record<number, boolean>>({});
-  const [fallbackReports, setFallbackReports] = useState([
-    {
-      id: 501,
-      targetType: "POST" as const,
-      targetId: 501,
-      postId: 501,
-      title: "외부 리딩방 불법 홍보 게시글",
-      reason: "스팸 홍보/도배글입니다.",
-      reportedAt: "2026-11-07",
-      status: "접수완료",
-    },
-  ]);
 
   // 5대 원장 검색 필터 상태
   const [filterSymbol, setFilterSymbol] = useState("");
@@ -371,222 +263,6 @@ export function MemberMyProfilePage({
   const [filterEndDate, setFilterEndDate] = useState("");
 
   const communitySentinelRef = useRef<HTMLDivElement>(null);
-
-  const profileQuery = useQuery({
-    queryKey: ["member", "profile", member.memberId, member.generation],
-    enabled: isOwnAndLoggedIn,
-    queryFn: () => session.request("/members/me") as Promise<ProfileResponse>,
-  });
-
-  // [T-1] 공개 포트폴리오 API 조회 (모두 열람 가능)
-  const publicPortfolioQuery = useQuery({
-    queryKey: ["member", "public-portfolio", targetMemberId, tradingBase, member.generation],
-    enabled: targetMemberId > 0,
-    queryFn: async ({ signal }) =>
-      parsePublicMemberPortfolio(
-        await tradingJson(tradingBase, `portfolios/members/${targetMemberId}`, { signal }),
-      ),
-  });
-
-  // 시즌별 대회 참가 자산 및 정산 이력 API 조회 (본인 로그인 시 /account/seasons, 타인/공개 시 /public/members/{id}/seasons)
-  const memberContestSeasonsQuery = useQuery({
-    queryKey: [
-      "member",
-      "contest-seasons",
-      targetMemberId,
-      isOwnAndLoggedIn,
-      tradingBase,
-      member.generation,
-    ],
-    enabled: targetMemberId > 0,
-    queryFn: async ({ signal }) =>
-      isOwnAndLoggedIn
-        ? session.authorized(cred =>
-            fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
-          )
-        : fetchPublicMemberContestSeasons(targetMemberId, { baseUrl: tradingBase, signal }),
-  });
-
-  // 본인 로그인 시 5대 원장 실시간 API 조회
-  const ownerOrdersQuery = useQuery({
-    queryKey: [
-      "member",
-      "trading-orders",
-      member.memberId,
-      member.generation,
-      filterSymbol,
-      filterSide,
-      filterStatus,
-      filterStartDate,
-      filterEndDate,
-    ],
-    enabled: isOwnAndLoggedIn && detailTab === "orders",
-    queryFn: async ({ signal }) => {
-      const params = new URLSearchParams({ limit: "50" });
-      if (filterSymbol.trim()) params.set("symbol", filterSymbol.trim().toUpperCase());
-      if (filterSide === "BUY") params.set("side", "LONG");
-      else if (filterSide === "SELL") params.set("side", "SHORT");
-      if (filterStatus === "COMPLETED") params.set("status", "FILLED");
-      else if (filterStatus === "CANCELED") params.set("status", "CANCELLED");
-      else if (filterStatus) params.set("status", filterStatus);
-      if (filterStartDate) params.set("createdFrom", `${filterStartDate}T00:00:00Z`);
-      if (filterEndDate) params.set("createdBefore", `${filterEndDate}T23:59:59Z`);
-      return session.authorized(cred =>
-        tradingJson(tradingBase, `account/orders?${params.toString()}`, {
-          token: cred.accessToken,
-          signal,
-        }),
-      ) as Promise<Array<Record<string, unknown>>>;
-    },
-  });
-
-  const ownerFillsQuery = useQuery({
-    queryKey: ["member", "trading-fills", member.memberId, member.generation],
-    enabled: isOwnAndLoggedIn && detailTab === "trades",
-    queryFn: async ({ signal }) =>
-      session.authorized(cred =>
-        tradingJson(tradingBase, "account/fills?limit=50", { token: cred.accessToken, signal }),
-      ) as Promise<Array<Record<string, unknown>>>,
-  });
-
-  const ownerClosedPositionsQuery = useQuery({
-    queryKey: ["member", "trading-closed-positions", member.memberId, member.generation],
-    enabled: isOwnAndLoggedIn && detailTab === "pnl",
-    queryFn: async ({ signal }) =>
-      session.authorized(cred =>
-        tradingJson(tradingBase, "account/positions/history?limit=50", {
-          token: cred.accessToken,
-          signal,
-        }),
-      ) as Promise<Record<string, unknown>>,
-  });
-
-  const ownerPendingOrdersQuery = useQuery({
-    queryKey: ["member", "trading-pending-orders", member.memberId, member.generation],
-    enabled: isOwnAndLoggedIn,
-    queryFn: async ({ signal }) =>
-      session.authorized(cred =>
-        tradingJson(tradingBase, "account/orders/pending", { token: cred.accessToken, signal }),
-      ) as Promise<Array<Record<string, unknown>>>,
-  });
-
-  // 팔로워/팔로잉 모달 실데이터 조회
-  const followModalQuery = useQuery({
-    queryKey: ["member", "follow-modal", targetMemberId, followModalType, member.generation],
-    enabled: followModalType !== null && targetMemberId > 0,
-    queryFn: async ({ signal }) => {
-      const path = `/members/${targetMemberId}/${followModalType}?size=20`;
-      const raw = isOwnAndLoggedIn
-        ? await session.request(path, { signal })
-        : await contentJson(origin, path, { signal });
-      return parseFollowPage(raw);
-    },
-  });
-
-  // [C-6] 커뮤니티활동 커서 기반 무한스크롤
-  const communityPostsInfinite = useInfiniteQuery({
-    queryKey: ["member", "community-posts", targetMemberId, member.generation],
-    enabled: targetMemberId > 0,
-    initialPageParam: undefined as number | undefined,
-    queryFn: async ({ pageParam, signal }) => {
-      const search = new URLSearchParams({ size: "10" });
-      if (pageParam) search.set("cursorId", String(pageParam));
-      const basePath = isOwnAndLoggedIn
-        ? `/members/me/community/posts?${search.toString()}`
-        : `/members/${targetMemberId}/community/posts?${search.toString()}`;
-      return parseCommunityPostPage(
-        await readCommunityOrPublic(origin, session, member, basePath, signal),
-      );
-    },
-    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
-  });
-
-  const communityCommentsInfinite = useInfiniteQuery({
-    queryKey: ["member", "community-comments", targetMemberId, member.generation],
-    enabled: targetMemberId > 0,
-    initialPageParam: undefined as number | undefined,
-    queryFn: async ({ pageParam, signal }) => {
-      const search = new URLSearchParams({ size: "10" });
-      if (pageParam) search.set("cursorId", String(pageParam));
-      const basePath = isOwnAndLoggedIn
-        ? `/members/me/community/comments?${search.toString()}`
-        : `/members/${targetMemberId}/community/comments?${search.toString()}`;
-      return parseMemberCommunityCommentPage(
-        await readCommunityOrPublic(origin, session, member, basePath, signal),
-      );
-    },
-    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
-  });
-
-  const communityLikedPostsInfinite = useInfiniteQuery({
-    queryKey: ["member", "community-liked-posts", targetMemberId, member.generation],
-    enabled: targetMemberId > 0,
-    initialPageParam: undefined as number | undefined,
-    queryFn: async ({ pageParam, signal }) => {
-      const search = new URLSearchParams({ size: "10" });
-      if (pageParam) search.set("cursorId", String(pageParam));
-      const basePath = isOwnAndLoggedIn
-        ? `/members/me/community/liked-posts?${search.toString()}`
-        : `/members/${targetMemberId}/community/liked-posts?${search.toString()}`;
-      return parseCommunityPostPage(
-        await readCommunityOrPublic(origin, session, member, basePath, signal),
-      );
-    },
-    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
-  });
-
-  const communityLikedCommentsInfinite = useInfiniteQuery({
-    queryKey: ["member", "community-liked-comments", targetMemberId, member.generation],
-    enabled: targetMemberId > 0,
-    initialPageParam: undefined as number | undefined,
-    queryFn: async ({ pageParam, signal }) => {
-      const search = new URLSearchParams({ size: "10" });
-      if (pageParam) search.set("cursorId", String(pageParam));
-      const basePath = isOwnAndLoggedIn
-        ? `/members/me/community/liked-comments?${search.toString()}`
-        : `/members/${targetMemberId}/community/liked-comments?${search.toString()}`;
-      return parseMemberCommunityCommentPage(
-        await readCommunityOrPublic(origin, session, member, basePath, signal),
-      );
-    },
-    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
-  });
-
-  const communityReportsInfinite = useInfiniteQuery({
-    queryKey: ["member", "community-reports", member.memberId, member.generation],
-    enabled: isOwnAndLoggedIn,
-    initialPageParam: undefined as number | undefined,
-    queryFn: async ({ pageParam, signal }) => {
-      const search = new URLSearchParams({ size: "10" });
-      if (pageParam) search.set("cursorId", String(pageParam));
-      return parseMemberCommunityReportPage(
-        await session.request(`/members/me/community/reports?${search.toString()}`, { signal }),
-      );
-    },
-    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
-  });
-
-  const cancelReportMutation = useMutation({
-    mutationFn: async (item: { targetType: "POST" | "COMMENT"; targetId: number; id: number }) => {
-      const endpoint =
-        item.targetType === "POST"
-          ? `/community/posts/${item.targetId}/reports`
-          : `/community/comments/${item.targetId}/reports`;
-      return parseCommunityReport(await session.request(endpoint, { method: "DELETE" }));
-    },
-    onSuccess: (_data, item) => {
-      setFallbackReports(curr => curr.filter(r => r.id !== item.id));
-      void queryClient.invalidateQueries({
-        queryKey: ["member", "community-reports", member.memberId],
-      });
-    },
-  });
-
-  const nickname = profileQuery.data?.nickname ?? member.nickname ?? "트레이더";
-  const profileMsg =
-    profileQuery.data?.profileMessage ?? "리스크 관리와 손절 원칙을 지키는 선물 트레이더입니다.";
-  const followerCount = profileQuery.data?.followerCount ?? followers.length;
-  const followingCount = profileQuery.data?.followingCount ?? followings.length;
 
   // 권한별 탭 목록 및 활성 탭 결정
   // 로그인 본인: 4개 탭 (내 모의투자 자산 | 시즌별 대회 자산 | 포트폴리오 | 커뮤니티활동)
@@ -608,6 +284,268 @@ export function MemberMyProfilePage({
     selectedTab && visibleMainTabs.some(t => t.value === selectedTab)
       ? selectedTab
       : defaultTab;
+
+  const profileQuery = useQuery({
+    queryKey: ["member", "profile", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn,
+    queryFn: () => session.request("/members/me") as Promise<ProfileResponse>,
+  });
+
+  const followSummaryQuery = useQuery({
+    queryKey: ["member", "follow-summary", targetMemberId, member.generation],
+    enabled: isOwnAndLoggedIn && targetMemberId > 0,
+    queryFn: async ({ signal }) =>
+      parseFollowSummary(
+        await session.request(`/members/${targetMemberId}/follows`, { signal }),
+        targetMemberId,
+      ),
+  });
+
+  const symbolsQuery = useQuery({
+    queryKey: ["trading", "symbols", tradingBase],
+    enabled: isOwnAndLoggedIn,
+    staleTime: 60_000,
+    queryFn: async ({ signal }) => parseSymbols(await marketSymbolsJson(tradingBase, signal)),
+  });
+
+  const symbolById = useMemo(() => {
+    const map = new Map<number, TradingSymbol>();
+    for (const sym of symbolsQuery.data ?? []) {
+      map.set(sym.id, sym);
+    }
+    return map;
+  }, [symbolsQuery.data]);
+
+  const exactFilterSymbolId = useMemo(() => {
+    const keyword = filterSymbol.trim().toUpperCase().replace(/USDT$/i, "");
+    if (!keyword || !symbolsQuery.data) return undefined;
+    const exact = symbolsQuery.data.find(
+      item => item.symbol.toUpperCase().replace(/USDT$/i, "") === keyword,
+    );
+    return exact?.id;
+  }, [filterSymbol, symbolsQuery.data]);
+
+  // [T-1] 공개 포트폴리오 API 조회
+  const publicPortfolioQuery = useQuery({
+    queryKey: ["member", "public-portfolio", targetMemberId, tradingBase, member.generation],
+    enabled: targetMemberId > 0,
+    queryFn: async ({ signal }) =>
+      parsePublicMemberPortfolio(
+        await tradingJson(tradingBase, `portfolios/members/${targetMemberId}`, { signal }),
+      ),
+  });
+
+  // 시즌별 대회 참가 자산 및 정산 이력 API 조회
+  const memberContestSeasonsQuery = useQuery({
+    queryKey: [
+      "member",
+      "contest-seasons",
+      targetMemberId,
+      isOwnAndLoggedIn,
+      tradingBase,
+      member.generation,
+    ],
+    enabled: targetMemberId > 0,
+    queryFn: async ({ signal }) =>
+      isOwnAndLoggedIn
+        ? session.authorized(cred =>
+            fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
+          )
+        : fetchPublicMemberContestSeasons(targetMemberId, { baseUrl: tradingBase, signal }),
+  });
+
+  // 본인 로그인 시 5대 원장 실시간 API 조회 (계좌 미개설 409 시 불필요 재시도 방지)
+  const ownerOrdersQuery = useQuery({
+    queryKey: [
+      "member",
+      "trading-orders",
+      member.memberId,
+      member.generation,
+      exactFilterSymbolId ?? null,
+      filterSide,
+      filterStatus,
+    ],
+    enabled: isOwnAndLoggedIn && activeMainTab === "mock-assets" && detailTab === "orders",
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (exactFilterSymbolId !== undefined) {
+        params.set("tradingSymbolId", String(exactFilterSymbolId));
+      }
+      if (filterSide === "BUY") params.set("side", "LONG");
+      else if (filterSide === "SELL") params.set("side", "SHORT");
+      if (filterStatus === "COMPLETED") params.set("status", "FILLED");
+      else if (
+        filterStatus === "PENDING" ||
+        filterStatus === "CANCELED" ||
+        filterStatus === "REJECTED"
+      ) {
+        params.set("status", filterStatus);
+      }
+      return session.authorized(cred =>
+        tradingJson(tradingBase, `account/orders?${params.toString()}`, {
+          token: cred.accessToken,
+          signal,
+        }),
+      ) as Promise<Array<Record<string, unknown>>>;
+    },
+  });
+
+  const ownerFillsQuery = useQuery({
+    queryKey: ["member", "trading-fills", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn && activeMainTab === "mock-assets" && detailTab === "trades",
+    retry: false,
+    queryFn: async ({ signal }) =>
+      session.authorized(cred =>
+        tradingJson(tradingBase, "account/fills?limit=50", { token: cred.accessToken, signal }),
+      ) as Promise<Array<Record<string, unknown>>>,
+  });
+
+  const ownerClosedPositionsQuery = useQuery({
+    queryKey: ["member", "trading-closed-positions", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn && activeMainTab === "mock-assets" && detailTab === "pnl",
+    retry: false,
+    queryFn: async ({ signal }) =>
+      session.authorized(cred =>
+        tradingJson(tradingBase, "account/positions/history?limit=50", {
+          token: cred.accessToken,
+          signal,
+        }),
+      ) as Promise<Record<string, unknown>>,
+  });
+
+  const ownerPendingOrdersQuery = useQuery({
+    queryKey: ["member", "trading-pending-orders", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn && activeMainTab === "mock-assets",
+    retry: false,
+    queryFn: async ({ signal }) =>
+      session.authorized(cred =>
+        tradingJson(tradingBase, "account/orders/pending", { token: cred.accessToken, signal }),
+      ) as Promise<Array<Record<string, unknown>>>,
+  });
+
+  // 팔로워/팔로잉 모달 실데이터 커서 페이지네이션 조회 (백엔드 최대 size=10 준수)
+  const followModalInfinite = useInfiniteQuery({
+    queryKey: ["member", "follow-modal", targetMemberId, followModalType, member.generation],
+    enabled: followModalType !== null && targetMemberId > 0,
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const path = `/members/${targetMemberId}/${followModalType}?${search.toString()}`;
+      const raw = isOwnAndLoggedIn
+        ? await session.request(path, { signal })
+        : await contentJson(origin, path, { signal });
+      return parseFollowPage(raw);
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  // [C-6] 커뮤니티활동 커서 기반 무한스크롤 (커뮤니티 탭 진입 시에만 요청)
+  const communityPostsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-posts", targetMemberId, member.generation],
+    enabled: targetMemberId > 0 && activeMainTab === "community" && communityTab === "posts",
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const basePath = isOwnAndLoggedIn
+        ? `/members/me/community/posts?${search.toString()}`
+        : `/members/${targetMemberId}/community/posts?${search.toString()}`;
+      return parseCommunityPostPage(
+        await readCommunityOrPublic(origin, session, member, basePath, signal),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const communityCommentsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-comments", targetMemberId, member.generation],
+    enabled: targetMemberId > 0 && activeMainTab === "community" && communityTab === "replies",
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const basePath = isOwnAndLoggedIn
+        ? `/members/me/community/comments?${search.toString()}`
+        : `/members/${targetMemberId}/community/comments?${search.toString()}`;
+      return parseMemberCommunityCommentPage(
+        await readCommunityOrPublic(origin, session, member, basePath, signal),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const communityLikedPostsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-liked-posts", targetMemberId, member.generation],
+    enabled: targetMemberId > 0 && activeMainTab === "community" && communityTab === "likedPosts",
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const basePath = isOwnAndLoggedIn
+        ? `/members/me/community/liked-posts?${search.toString()}`
+        : `/members/${targetMemberId}/community/liked-posts?${search.toString()}`;
+      return parseCommunityPostPage(
+        await readCommunityOrPublic(origin, session, member, basePath, signal),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const communityLikedCommentsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-liked-comments", targetMemberId, member.generation],
+    enabled:
+      targetMemberId > 0 && activeMainTab === "community" && communityTab === "likedReplies",
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      const basePath = isOwnAndLoggedIn
+        ? `/members/me/community/liked-comments?${search.toString()}`
+        : `/members/${targetMemberId}/community/liked-comments?${search.toString()}`;
+      return parseMemberCommunityCommentPage(
+        await readCommunityOrPublic(origin, session, member, basePath, signal),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const communityReportsInfinite = useInfiniteQuery({
+    queryKey: ["member", "community-reports", member.memberId, member.generation],
+    enabled: isOwnAndLoggedIn && activeMainTab === "community" && communityTab === "reports",
+    initialPageParam: undefined as number | undefined,
+    queryFn: async ({ pageParam, signal }) => {
+      const search = new URLSearchParams({ size: "10" });
+      if (pageParam) search.set("cursorId", String(pageParam));
+      return parseMemberCommunityReportPage(
+        await session.request(`/members/me/community/reports?${search.toString()}`, { signal }),
+      );
+    },
+    getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
+  });
+
+  const cancelReportMutation = useMutation({
+    mutationFn: async (item: { targetType: "POST" | "COMMENT"; targetId: number; id: number }) => {
+      const endpoint =
+        item.targetType === "POST"
+          ? `/community/posts/${item.targetId}/reports`
+          : `/community/comments/${item.targetId}/reports`;
+      return parseCommunityReport(await session.request(endpoint, { method: "DELETE" }));
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["member", "community-reports", member.memberId],
+      });
+    },
+  });
+
+  const nickname = profileQuery.data?.nickname ?? member.nickname ?? "게스트";
+  const profileMsg = isOwnAndLoggedIn
+    ? (profileQuery.data?.profileMessage || "등록된 상태메시지가 없습니다.")
+    : "로그인하면 내 모의투자 원장과 대회 자산, 커뮤니티 활동을 관리할 수 있습니다.";
+  const followerCount = followSummaryQuery.data?.followerCount ?? 0;
+  const followingCount = followSummaryQuery.data?.followingCount ?? 0;
 
   // 커뮤니티활동 무한스크롤 IntersectionObserver 연동
   const activeInfinite =
@@ -644,111 +582,100 @@ export function MemberMyProfilePage({
     return () => observer.disconnect();
   });
 
-  // 공개 포트폴리오 실데이터 바인딩 (클라이언트 조회 완료 후 계좌 미개설 시 0 상태 표시)
-  const portfolioResolved = publicPortfolioQuery.isSuccess;
   const livePortfolio =
     publicPortfolioQuery.data && publicPortfolioQuery.data.accountExists
       ? publicPortfolioQuery.data
       : null;
 
-  const contestResolved = memberContestSeasonsQuery.isSuccess;
-  const liveContestParticipations = contestResolved
-    ? (memberContestSeasonsQuery.data?.participatingSeasons ?? [])
-    : memberContestSeasonsQuery.data?.activeSeason
+  const liveContestParticipations =
+    memberContestSeasonsQuery.data?.participatingSeasons ??
+    (memberContestSeasonsQuery.data?.activeSeason
       ? [memberContestSeasonsQuery.data.activeSeason]
-      : [];
+      : []);
 
-  const finishedContestSeasonsDisplay = contestResolved
-    ? (memberContestSeasonsQuery.data?.pastSeasons ?? []).map(item => ({
-        seasonId: String(item.seasonId),
-        seasonTitle: item.title,
-        period: `${formatContestDateOnly(item.contestStartAt)} ~ ${formatContestDateOnly(item.contestEndAt)}`,
-        seedMoney: formatContestUsdt(item.seedMoney),
-        finalEquity: formatContestUsdt(item.totalEquity),
-        finalRoi: formatContestSignedRoi(item.roiPct),
-        finalRank: `${item.rank ?? "-"}위 / ${item.totalParticipants}명`,
-        winRate: item.winRate !== undefined ? formatContestWinRate(item.winRate) : "-",
-        status: item.statusLabel || "정산완료",
-      }))
-    : FINISHED_CONTEST_SEASONS;
+  const finishedContestSeasonsDisplay = (memberContestSeasonsQuery.data?.pastSeasons ?? []).map(
+    item => ({
+      seasonId: String(item.seasonId),
+      seasonTitle: item.title,
+      period: `${formatContestDateOnly(item.contestStartAt)} ~ ${formatContestDateOnly(item.contestEndAt)}`,
+      seedMoney: formatContestUsdt(item.seedMoney),
+      finalEquity: formatContestUsdt(item.totalEquity),
+      finalRoi: formatContestSignedRoi(item.roiPct),
+      finalRank: `${item.rank ?? "-"}위 / ${item.totalParticipants}명`,
+      winRate: item.winRate !== undefined ? formatContestWinRate(item.winRate) : "-",
+      status: item.statusLabel || "정산완료",
+    }),
+  );
 
-  const displayPositions = livePortfolio
-    ? livePortfolio.positions.map((pos, idx) => ({
-        id: pos.id,
-        symbol: pos.symbol,
-        nameKr: symbolNameKr(pos.symbol),
-        side: pos.side,
-        leverage: pos.leverage,
-        quantity: `${pos.quantity} ${pos.symbol.replace(/USDT$/i, "")}`,
-        entryPrice: pos.entryPrice,
-        markPrice: pos.markPrice,
-        liqPrice: pos.liquidationPrice || "-",
-        margin: `${pos.margin} USDT`,
-        pnl: formatSignedUsdt(pos.unrealizedPnl),
-        roe: formatSignedPct(pos.roePct),
-        isPositive: isNonNegativeDecimal(pos.unrealizedPnl),
-        marginRatio: Math.round(Number(pos.marginRatioPct) || 0),
-        color: POSITION_COLORS[idx % POSITION_COLORS.length],
-      }))
-    : portfolioResolved
-      ? []
-      : MOCK_POSITIONS;
+  const displayPositions = useMemo(
+    () =>
+      livePortfolio
+        ? livePortfolio.positions.map((pos, idx) => ({
+            id: pos.id,
+            symbol: pos.symbol,
+            nameKr: symbolNameKr(pos.symbol),
+            side: pos.side,
+            leverage: pos.leverage,
+            quantity: `${pos.quantity} ${pos.symbol.replace(/USDT$/i, "")}`,
+            entryPrice: pos.entryPrice,
+            markPrice: pos.markPrice,
+            liqPrice: pos.liquidationPrice || "-",
+            margin: `${pos.margin} USDT`,
+            pnl: formatSignedUsdt(pos.unrealizedPnl),
+            roe: formatSignedPct(pos.roePct),
+            isPositive: isNonNegativeDecimal(pos.unrealizedPnl),
+            marginRatio: Math.max(0, Math.min(100, Math.round(Number(pos.marginRatioPct) || 0))),
+            color: POSITION_COLORS[idx % POSITION_COLORS.length],
+          }))
+        : [],
+    [livePortfolio],
+  );
+
+  const donutSegments = useMemo(() => {
+    const activePositions = displayPositions.filter(pos => pos.marginRatio > 0);
+    return activePositions.reduce<Array<{ key: string; color: string; pct: number; offset: number }>>(
+      (acc, pos) => {
+        const currentOffset = acc.reduce((sum, item) => sum + item.pct, 0);
+        const pct = Math.min(pos.marginRatio, Math.max(0, 100 - currentOffset));
+        return [
+          ...acc,
+          {
+            key: `${pos.id}-${pos.side}`,
+            color: pos.color,
+            pct,
+            offset: currentOffset,
+          },
+        ];
+      },
+      [],
+    );
+  }, [displayPositions]);
 
   const usedMarginRatioDisplay = livePortfolio
     ? `${livePortfolio.allocation.usedMarginRatioPct}%`
-    : portfolioResolved
-      ? "0.0%"
-      : "77.0%";
+    : "0.0%";
   const availableCashRatioDisplay = livePortfolio
     ? `${livePortfolio.allocation.availableCashRatioPct}%`
-    : portfolioResolved
-      ? "100.0%"
-      : "23%";
-  const longRatioDisplay = livePortfolio
-    ? livePortfolio.allocation.longRatioPct
-    : portfolioResolved
-      ? "0"
-      : "87.7";
-  const shortRatioDisplay = livePortfolio
-    ? livePortfolio.allocation.shortRatioPct
-    : portfolioResolved
-      ? "0"
-      : "12.3";
+    : "100.0%";
+  const longRatioDisplay = livePortfolio ? livePortfolio.allocation.longRatioPct : "0";
+  const shortRatioDisplay = livePortfolio ? livePortfolio.allocation.shortRatioPct : "0";
   const longMarginDisplay = livePortfolio
     ? `${livePortfolio.allocation.longMarginUsdt} USDT`
-    : portfolioResolved
-      ? "0.00 USDT"
-      : "6,129.20 USDT";
+    : "0.00 USDT";
   const shortMarginDisplay = livePortfolio
     ? `${livePortfolio.allocation.shortMarginUsdt} USDT`
-    : portfolioResolved
-      ? "0.00 USDT"
-      : "860.00 USDT";
-  const longCountDisplay = livePortfolio
-    ? livePortfolio.allocation.longPositionCount
-    : portfolioResolved
-      ? 0
-      : 2;
-  const shortCountDisplay = livePortfolio
-    ? livePortfolio.allocation.shortPositionCount
-    : portfolioResolved
-      ? 0
-      : 1;
+    : "0.00 USDT";
+  const longCountDisplay = livePortfolio ? livePortfolio.allocation.longPositionCount : 0;
+  const shortCountDisplay = livePortfolio ? livePortfolio.allocation.shortPositionCount : 0;
   const usedMarginTotalDisplay = livePortfolio
     ? `${livePortfolio.wallet.usedMargin} USDT`
-    : portfolioResolved
-      ? "0.00 USDT"
-      : "6,989.20 USDT";
+    : "0.00 USDT";
   const availableBalanceDisplay = livePortfolio
     ? `${livePortfolio.wallet.availableBalance} USDT`
-    : portfolioResolved
-      ? "0.00 USDT"
-      : "4,107.75 USDT";
+    : "0.00 USDT";
   const winRateDisplay = livePortfolio
     ? `${livePortfolio.closedTradeSummary.winRatePct}% (${livePortfolio.closedTradeSummary.winCount}승 ${livePortfolio.closedTradeSummary.lossCount}패)`
-    : portfolioResolved
-      ? "0.0% (0승 0패)"
-      : "68.4% (13승 6패)";
+    : "0.0% (0승 0패)";
   const avgLeverageDisplay =
     displayPositions.length > 0
       ? `${(
@@ -771,147 +698,185 @@ export function MemberMyProfilePage({
         isNegative: livePortfolio.wallet.totalPnl.trim().startsWith("-"),
         unit: "USDT",
       }
-    : portfolioResolved
-      ? {
-          title: "모의투자 선물 지갑",
-          totalAsset: "0.00 USDT",
-          cashBalance: "0.00 USDT",
-          totalBuyAmount: "0.00 USDT",
-          totalCoinValue: "0.00 USDT",
-          totalProfit: "0.00 USDT",
-          totalRoi: "0.00%",
-          isPositive: false,
-          isNegative: false,
-          unit: "USDT",
-        }
-      : {
-          title: "모의투자 선물 지갑",
-          totalAsset: "11,096.95 USDT",
-          cashBalance: "4,107.75 USDT",
-          totalBuyAmount: "6,989.20 USDT",
-          totalCoinValue: "8,086.15 USDT",
-          totalProfit: "+1,096.95 USDT",
-          totalRoi: "+10.97%",
-          isPositive: true,
-          unit: "USDT",
-        };
+    : {
+        title: "모의투자 선물 지갑",
+        totalAsset: "0.00 USDT",
+        cashBalance: "0.00 USDT",
+        totalBuyAmount: "0.00 USDT",
+        totalCoinValue: "0.00 USDT",
+        totalProfit: "0.00 USDT",
+        totalRoi: "0.00%",
+        isPositive: false,
+        isNegative: false,
+        unit: "USDT",
+      };
 
-  // 원장 주문 내역 바인딩
-  const liveOrders = ownerOrdersQuery.data
-    ? ownerOrdersQuery.data.map((row, idx) => {
-        const sym = String(row.symbol ?? "BTCUSDT");
-        const sideRaw = String(row.side ?? "LONG");
-        const isBuy = sideRaw === "LONG" || sideRaw === "BUY";
-        const typeRaw = String(row.type ?? "MARKET");
-        const statusRaw = String(row.status ?? "FILLED");
-        const normalizedStatus =
-          statusRaw === "FILLED"
-            ? "COMPLETED"
-            : statusRaw === "CANCELLED"
-              ? "CANCELED"
-              : statusRaw;
-        return {
-          id: typeof row.orderId === "number" ? row.orderId : typeof row.id === "number" ? row.id : idx + 1,
-          orderedAt: String(row.createdAt ?? row.orderedAt ?? ""),
-          symbol: sym,
-          nameKr: symbolNameKr(sym).replace(" 무기한", ""),
-          side: isBuy ? "BUY" : "SELL",
-          sideLabel: isBuy ? "매수/롱" : "매도/숏",
-          orderType: typeRaw,
-          orderStatus: normalizedStatus,
-          orderPrice: typeRaw === "MARKET" ? "시장가" : `${String(row.limitPrice ?? row.price ?? "0")} USDT`,
-          orderQuantity: `${String(row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
-          filledQuantity: `${String(row.filledQuantity ?? row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
-          avgFilledPrice: `${String(row.executionPrice ?? row.averageFillPrice ?? "-")} USDT`,
-        };
-      })
-    : null;
+  // 원장 주문 내역 바인딩 (tradingSymbolId + fill 서브객체 정확 매핑)
+  const liveOrders = useMemo(() => {
+    if (!ownerOrdersQuery.data) return [];
+    return ownerOrdersQuery.data.map((row, idx) => {
+      const sym = resolveRowSymbol(row, symbolById);
+      const sideRaw = String(row.side ?? "LONG");
+      const actionRaw = String(row.action ?? "OPEN");
+      const { isBuy, label: sideLabel } = formatActionSideLabel(sideRaw, actionRaw);
+      const typeRaw = String(row.type ?? "MARKET");
+      const statusRaw = String(row.status ?? "FILLED");
+      const normalizedStatus =
+        statusRaw === "FILLED"
+          ? "COMPLETED"
+          : statusRaw === "CANCELLED"
+            ? "CANCELED"
+            : statusRaw;
+      const fillObj =
+        row.fill && typeof row.fill === "object" ? (row.fill as Record<string, unknown>) : null;
+      const rawCreatedAt = String(row.createdAt ?? row.orderedAt ?? "");
+      const filledQtyRaw =
+        fillObj?.quantity ??
+        row.filledQuantity ??
+        (normalizedStatus === "COMPLETED" ? row.quantity : "0");
+      const avgPriceRaw = fillObj?.price ?? row.executionPrice ?? row.averageFillPrice;
+      return {
+        id:
+          typeof row.orderId === "number"
+            ? row.orderId
+            : typeof row.id === "number"
+              ? row.id
+              : idx + 1,
+        rawCreatedAt,
+        orderedAt: formatKstDateTimeShort(rawCreatedAt),
+        symbol: sym.pair,
+        nameKr: sym.nameKr,
+        filterSideKey: sideRaw === "LONG" || sideRaw === "BUY" ? "BUY" : "SELL",
+        side: isBuy ? "BUY" : "SELL",
+        sideLabel,
+        orderType: typeRaw,
+        orderStatus: normalizedStatus,
+        reason: typeof row.reason === "string" ? row.reason : null,
+        orderPrice:
+          typeRaw === "MARKET" ? "시장가" : `${String(row.limitPrice ?? row.price ?? "0")} USDT`,
+        orderQuantity: `${String(row.quantity ?? "0")} ${sym.base}`,
+        filledQuantity: `${String(filledQtyRaw ?? "0")} ${sym.base}`,
+        avgFilledPrice: avgPriceRaw ? `${String(avgPriceRaw)} USDT` : "-",
+      };
+    });
+  }, [ownerOrdersQuery.data, symbolById]);
 
-  const filteredOrders = (ownerOrdersQuery.isSuccess ? (liveOrders ?? []) : (liveOrders ?? MOCK_ORDERS)).filter(item => {
-    if (filterSymbol && !item.symbol.includes(filterSymbol.toUpperCase())) return false;
-    if (filterSide && item.side !== filterSide) return false;
-    if (filterStatus && item.orderStatus !== filterStatus) return false;
-    if (filterStartDate && item.orderedAt && item.orderedAt.slice(0, 10) < filterStartDate) return false;
-    if (filterEndDate && item.orderedAt && item.orderedAt.slice(0, 10) > filterEndDate) return false;
-    return true;
-  });
+  const filteredOrders = useMemo(() => {
+    return liveOrders.filter(item => {
+      if (filterSymbol.trim()) {
+        const kw = filterSymbol.trim().toUpperCase();
+        if (!item.symbol.includes(kw) && !item.nameKr.toUpperCase().includes(kw)) return false;
+      }
+      if (filterSide && item.filterSideKey !== filterSide) return false;
+      if (filterStatus && item.orderStatus !== filterStatus) return false;
+      if (filterStartDate && item.rawCreatedAt) {
+        if (toKstDateOnly(item.rawCreatedAt) < filterStartDate) return false;
+      }
+      if (filterEndDate && item.rawCreatedAt) {
+        if (toKstDateOnly(item.rawCreatedAt) > filterEndDate) return false;
+      }
+      return true;
+    });
+  }, [liveOrders, filterSymbol, filterSide, filterStatus, filterStartDate, filterEndDate]);
 
-  const openOrders = ownerPendingOrdersQuery.data
-    ? ownerPendingOrdersQuery.data.map((row, idx) => {
-        const sym = String(row.symbol ?? "BTCUSDT");
-        const sideRaw = String(row.side ?? "LONG");
-        const isBuy = sideRaw === "LONG" || sideRaw === "BUY";
-        return {
-          id: typeof row.orderId === "number" ? row.orderId : typeof row.id === "number" ? row.id : idx + 1,
-          orderedAt: String(row.createdAt ?? ""),
-          symbol: sym,
-          nameKr: symbolNameKr(sym).replace(" 무기한", ""),
-          side: isBuy ? "BUY" : "SELL",
-          sideLabel: isBuy ? "매수/롱" : "매도/숏",
-          orderType: String(row.type ?? "LIMIT"),
-          orderStatus: "PENDING",
-          orderPrice: `${String(row.limitPrice ?? row.price ?? "0")} USDT`,
-          orderQuantity: `${String(row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
-          filledQuantity: `0 ${sym.replace(/USDT$/i, "")}`,
-          avgFilledPrice: "-",
-        };
-      })
-    : ownerPendingOrdersQuery.isSuccess
-      ? []
-      : MOCK_ORDERS.filter(item => item.orderStatus === "PENDING");
+  const openOrders = useMemo(() => {
+    if (!ownerPendingOrdersQuery.data) return [];
+    return ownerPendingOrdersQuery.data.map((row, idx) => {
+      const sym = resolveRowSymbol(row, symbolById);
+      const sideRaw = String(row.side ?? "LONG");
+      const actionRaw = String(row.action ?? "OPEN");
+      const { isBuy, label: sideLabel } = formatActionSideLabel(sideRaw, actionRaw);
+      const rawCreatedAt = String(row.createdAt ?? "");
+      return {
+        id:
+          typeof row.orderId === "number"
+            ? row.orderId
+            : typeof row.id === "number"
+              ? row.id
+              : idx + 1,
+        orderedAt: formatKstDateTimeShort(rawCreatedAt),
+        symbol: sym.pair,
+        nameKr: sym.nameKr,
+        side: isBuy ? "BUY" : "SELL",
+        sideLabel,
+        orderType: String(row.type ?? "LIMIT"),
+        orderStatus: "PENDING",
+        orderPrice: `${String(row.limitPrice ?? row.price ?? "0")} USDT`,
+        orderQuantity: `${String(row.quantity ?? "0")} ${sym.base}`,
+        filledQuantity: `0 ${sym.base}`,
+        avgFilledPrice: "-",
+      };
+    });
+  }, [ownerPendingOrdersQuery.data, symbolById]);
 
-  const closedPnlRows = (() => {
+  const closedPnlRows = useMemo(() => {
     const rawItems =
       ownerClosedPositionsQuery.data && Array.isArray(ownerClosedPositionsQuery.data.items)
         ? (ownerClosedPositionsQuery.data.items as Array<Record<string, unknown>>)
         : null;
-    if (!rawItems) return ownerClosedPositionsQuery.isSuccess ? [] : MOCK_CLOSED_PNL;
+    if (!rawItems) return [];
     return rawItems.map((row, idx) => {
-      const sym = String(row.symbol ?? "BTCUSDT");
-      const netPnl = String(row.netPnl ?? row.realizedPnl ?? "0");
+      const sym = resolveRowSymbol(row, symbolById);
+      const netPnl = String(row.netRealizedPnl ?? row.netPnl ?? row.realizedPnl ?? "0");
+      const roeRaw =
+        typeof row.roePct === "string"
+          ? row.roePct
+          : computeRoePctString(netPnl, String(row.initialMargin ?? "0"));
+      const qtyRaw = String(row.initialQuantity ?? row.closedQuantity ?? row.quantity ?? "0");
+      const statusRaw = String(row.status ?? "CLOSED");
       return {
         id: typeof row.positionId === "number" ? row.positionId : idx + 1,
-        closedAt: String(row.closedAt ?? ""),
-        symbol: sym,
-        nameKr: symbolNameKr(sym),
+        closedAt: formatKstDateTimeShort(String(row.closedAt ?? "")),
+        symbol: sym.pair,
+        nameKr: sym.fullNameKr,
         side: String(row.side ?? "LONG"),
+        status: statusRaw,
         leverage: typeof row.leverage === "number" ? row.leverage : 1,
         entryPrice: String(row.entryPrice ?? "0"),
         exitPrice: String(row.exitPrice ?? row.closePrice ?? "0"),
-        quantity: `${String(row.closedQuantity ?? row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
+        quantity: `${qtyRaw} ${sym.base}`,
         realizedPnl: formatSignedUsdt(netPnl),
-        roe: formatSignedPct(String(row.roePct ?? "0")),
+        roe: formatSignedPct(roeRaw),
         isPositive: isNonNegativeDecimal(netPnl),
       };
     });
-  })();
+  }, [ownerClosedPositionsQuery.data, symbolById]);
 
-  const tradeRows = ownerFillsQuery.data
-    ? ownerFillsQuery.data.map((row, idx) => {
-        const sym = String(row.symbol ?? "BTCUSDT");
-        const sideRaw = String(row.side ?? "LONG");
-        const isBuy = sideRaw === "LONG" || sideRaw === "BUY";
-        const pnlRaw = String(row.realizedPnl ?? "0");
-        return {
-          id: typeof row.fillId === "number" ? row.fillId : idx + 1,
-          executedAt: String(row.executedAt ?? ""),
-          symbol: sym,
-          nameKr: symbolNameKr(sym).replace(" 무기한", ""),
-          side: isBuy ? "BUY" : "SELL",
-          sideLabel: isBuy ? "매수/롱" : "매도/숏",
-          price: `${String(row.executionPrice ?? row.price ?? "0")} USDT`,
-          quantity: `${String(row.quantity ?? "0")} ${sym.replace(/USDT$/i, "")}`,
-          totalAmount: `${String(row.notional ?? "0")} USDT`,
-          fee: `${String(row.fee ?? "0")} USDT`,
-          realizedProfit: formatSignedUsdt(pnlRaw),
-        };
-      })
-    : ownerFillsQuery.isSuccess
-      ? []
-      : MOCK_TRADES;
+  const tradeRows = useMemo(() => {
+    if (!ownerFillsQuery.data) return [];
+    return ownerFillsQuery.data.map((row, idx) => {
+      const sym = resolveRowSymbol(row, symbolById);
+      const sideRaw = String(row.side ?? "LONG");
+      const actionRaw = String(row.action ?? "OPEN");
+      const { isBuy, label: sideLabel } = formatActionSideLabel(sideRaw, actionRaw);
+      const priceRaw = String(row.price ?? row.executionPrice ?? "0");
+      const qtyRaw = String(row.quantity ?? "0");
+      const notionalStr =
+        typeof row.notional === "string"
+          ? row.notional
+          : multiplyDecimalStrings(priceRaw, qtyRaw, 2);
+      const pnlRaw = String(row.realizedPnl ?? "0");
+      return {
+        id: typeof row.fillId === "number" ? row.fillId : idx + 1,
+        executedAt: formatKstDateTimeShort(String(row.executedAt ?? "")),
+        symbol: sym.pair,
+        nameKr: sym.nameKr,
+        side: isBuy ? "BUY" : "SELL",
+        sideLabel,
+        price: `${priceRaw} USDT`,
+        quantity: `${qtyRaw} ${sym.base}`,
+        totalAmount: `${notionalStr} USDT`,
+        fee: `${String(row.fee ?? "0")} USDT`,
+        realizedProfit: formatSignedUsdt(pnlRaw),
+      };
+    });
+  }, [ownerFillsQuery.data, symbolById]);
 
-  const modalFollowList: FollowMemberItem[] = followModalQuery.data
-    ? followModalQuery.data.content.map(entry => {
+  const modalFollowList: FollowMemberItem[] = useMemo(() => {
+    if (!followModalInfinite.data) return [];
+    return followModalInfinite.data.pages
+      .flatMap(page => page.content)
+      .map(entry => {
         const defaultFollowing = entry.followedByMe ?? (followModalType === "followings");
         return {
           memberId: entry.memberId,
@@ -921,56 +886,41 @@ export function MemberMyProfilePage({
           following: followOverrides[entry.memberId] ?? defaultFollowing,
           followsMe: followModalType === "followers",
         };
-      })
-    : followModalQuery.isSuccess
-      ? []
-      : followModalType === "followers"
-        ? followers
-        : followings;
+      });
+  }, [followModalInfinite.data, followModalType, followOverrides]);
 
   function toggleFollowInModal(person: FollowMemberItem) {
+    if (!isOwnAndLoggedIn) return;
     const currentlyFollowing = person.following;
     setFollowOverrides(prev => ({ ...prev, [person.memberId]: !currentlyFollowing }));
-    setFollowers(curr =>
-      curr.map(item =>
-        item.memberId === person.memberId ? { ...item, following: !currentlyFollowing } : item,
-      ),
-    );
-    setFollowings(curr =>
-      curr.map(item =>
-        item.memberId === person.memberId ? { ...item, following: !currentlyFollowing } : item,
-      ),
-    );
-    if (isOwnAndLoggedIn) {
-      const nextMethod = currentlyFollowing ? "DELETE" : "PUT";
-      void session
-        .request(`/members/${person.memberId}/follows`, { method: nextMethod })
-        .then(() => {
-          void queryClient.invalidateQueries({ queryKey: ["member", "follow-modal"] });
-          void queryClient.invalidateQueries({ queryKey: ["member", "profile"] });
-        })
-        .catch(() => {
-          setFollowOverrides(prev => ({ ...prev, [person.memberId]: currentlyFollowing }));
-        });
-    }
+    const nextMethod = currentlyFollowing ? "DELETE" : "PUT";
+    void session
+      .request(`/members/${person.memberId}/follows`, { method: nextMethod })
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["member", "follow-modal"] });
+        void queryClient.invalidateQueries({ queryKey: ["member", "follow-summary"] });
+        void queryClient.invalidateQueries({ queryKey: ["member", "profile"] });
+      })
+      .catch(() => {
+        setFollowOverrides(prev => ({ ...prev, [person.memberId]: currentlyFollowing }));
+      });
   }
 
-  const liveMyPosts: CommunityPost[] | null = communityPostsInfinite.data
+  const liveMyPosts: CommunityPost[] = communityPostsInfinite.data
     ? communityPostsInfinite.data.pages.flatMap(p => p.items)
-    : null;
-  const liveMyComments: MemberCommunityCommentItem[] | null = communityCommentsInfinite.data
+    : [];
+  const liveMyComments: MemberCommunityCommentItem[] = communityCommentsInfinite.data
     ? communityCommentsInfinite.data.pages.flatMap(p => p.items)
-    : null;
-  const liveLikedPosts: CommunityPost[] | null = communityLikedPostsInfinite.data
+    : [];
+  const liveLikedPosts: CommunityPost[] = communityLikedPostsInfinite.data
     ? communityLikedPostsInfinite.data.pages.flatMap(p => p.items)
-    : null;
-  const liveLikedComments: MemberCommunityCommentItem[] | null =
-    communityLikedCommentsInfinite.data
-      ? communityLikedCommentsInfinite.data.pages.flatMap(p => p.items)
-      : null;
-  const liveReports: MemberCommunityReportItem[] | null = communityReportsInfinite.data
+    : [];
+  const liveLikedComments: MemberCommunityCommentItem[] = communityLikedCommentsInfinite.data
+    ? communityLikedCommentsInfinite.data.pages.flatMap(p => p.items)
+    : [];
+  const liveReports: MemberCommunityReportItem[] = communityReportsInfinite.data
     ? communityReportsInfinite.data.pages.flatMap(p => p.items)
-    : null;
+    : [];
 
   return (
     <MemberShell
@@ -994,8 +944,12 @@ export function MemberMyProfilePage({
                 followerCount: isOwnAndLoggedIn ? followerCount : 0,
                 followingCount: isOwnAndLoggedIn ? followingCount : 0,
               }}
-              onClickFollowers={() => setFollowModalType("followers")}
-              onClickFollowings={() => setFollowModalType("followings")}
+              onClickFollowers={() => {
+                if (isOwnAndLoggedIn) setFollowModalType("followers");
+              }}
+              onClickFollowings={() => {
+                if (isOwnAndLoggedIn) setFollowModalType("followings");
+              }}
               actionArea={
                 isOwnAndLoggedIn ? (
                   <div className="space-y-2">
@@ -1024,7 +978,7 @@ export function MemberMyProfilePage({
                   <span className="text-gray-400">
                     {livePortfolio && livePortfolio.roundNumber > 0
                       ? `${livePortfolio.roundNumber}회차 시드머니: ${livePortfolio.initialSeed} USDT`
-                      : "1회차 시드머니: 10,000 USDT"}
+                      : "시드머니: 10,000 USDT"}
                   </span>
                   <Link href="/trading" className="font-bold text-blue-400 hover:underline">
                     모의투자 하러가기 →
@@ -1090,36 +1044,20 @@ export function MemberMyProfilePage({
                               stroke="#E5E7EB"
                               strokeWidth="4.5"
                             />
-                            <circle
-                              cx="18"
-                              cy="18"
-                              r="14"
-                              fill="none"
-                              stroke="#0058FF"
-                              strokeWidth="4.5"
-                              strokeDasharray="45 55"
-                              strokeDashoffset="0"
-                            />
-                            <circle
-                              cx="18"
-                              cy="18"
-                              r="14"
-                              fill="none"
-                              stroke="#9CB34E"
-                              strokeWidth="4.5"
-                              strokeDasharray="22 78"
-                              strokeDashoffset="-45"
-                            />
-                            <circle
-                              cx="18"
-                              cy="18"
-                              r="14"
-                              fill="none"
-                              stroke="#1D7CA7"
-                              strokeWidth="4.5"
-                              strokeDasharray="10 90"
-                              strokeDashoffset="-67"
-                            />
+                            {donutSegments.map(seg => (
+                              <circle
+                                key={seg.key}
+                                cx="18"
+                                cy="18"
+                                r="14"
+                                pathLength={100}
+                                fill="none"
+                                stroke={seg.color}
+                                strokeWidth="4.5"
+                                strokeDasharray={`${seg.pct} ${100 - seg.pct}`}
+                                strokeDashoffset={-seg.offset}
+                              />
+                            ))}
                           </svg>
                           <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
                             <span className="text-[10px] font-bold text-gray-400">증거금 비중</span>
@@ -1130,13 +1068,16 @@ export function MemberMyProfilePage({
                         </div>
                         <ul className="w-full flex-1 space-y-2 text-xs">
                           {displayPositions.map(pos => (
-                            <li key={pos.symbol} className="flex items-center justify-between">
+                            <li
+                              key={`${pos.id}-${pos.side}`}
+                              className="flex items-center justify-between"
+                            >
                               <span className="flex items-center gap-2 font-bold text-gray-700">
                                 <span
                                   className="inline-block h-2.5 w-2.5 rounded-full"
                                   style={{ backgroundColor: pos.color }}
                                 />
-                                {pos.symbol}
+                                {pos.symbol} ({pos.side})
                               </span>
                               <span className="font-black text-gray-900">{pos.marginRatio}%</span>
                             </li>
@@ -1235,54 +1176,69 @@ export function MemberMyProfilePage({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
-                            {displayPositions.map(pos => (
-                              <tr key={pos.id} className="hover:bg-gray-50">
-                                <td className="px-4 py-3.5 font-black text-gray-900">
-                                  <div>{pos.nameKr}</div>
-                                  <div className="text-[11px] font-bold text-gray-400">
-                                    {pos.symbol} · 격리 {pos.leverage}x
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3.5">
-                                  <span
-                                    className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
-                                      pos.side === "LONG"
-                                        ? "bg-red-50 text-red-500"
-                                        : "bg-blue-50 text-blue-600"
-                                    }`}
-                                  >
-                                    {pos.side}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3.5 text-right font-bold text-gray-800">
-                                  {pos.quantity}
-                                </td>
-                                <td className="px-4 py-3.5 text-right font-medium text-gray-600">
-                                  ${pos.entryPrice}
-                                </td>
-                                <td className="px-4 py-3.5 text-right font-bold text-gray-900">
-                                  ${pos.markPrice}
-                                </td>
-                                <td className="px-4 py-3.5 text-right font-semibold text-amber-600">
-                                  ${pos.liqPrice}
-                                </td>
-                                <td className="px-4 py-3.5 text-right font-bold text-gray-700">
-                                  {pos.margin}
-                                </td>
-                                <td className={`px-4 py-3.5 text-right font-black ${pnlColorText(pos.pnl)}`}>
-                                  <div>{pos.pnl}</div>
-                                  <div className="text-[11px]">{pos.roe}</div>
-                                </td>
-                                <td className="px-4 py-3.5 text-right whitespace-nowrap">
-                                  <Link
-                                    href={`/community/all?sharePosition=${pos.symbol.replace("USDT", "")}`}
-                                    className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
-                                  >
-                                    포지션 공유
-                                  </Link>
+                            {displayPositions.length === 0 ? (
+                              <tr>
+                                <td
+                                  colSpan={9}
+                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                                >
+                                  {publicPortfolioQuery.isLoading
+                                    ? "포지션 현황을 불러오는 중입니다…"
+                                    : "현재 보유 중인 선물 포지션이 없습니다."}
                                 </td>
                               </tr>
-                            ))}
+                            ) : (
+                              displayPositions.map(pos => (
+                                <tr key={`${pos.id}-${pos.side}`} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3.5 font-black text-gray-900">
+                                    <div>{pos.nameKr}</div>
+                                    <div className="text-[11px] font-bold text-gray-400">
+                                      {pos.symbol} · 격리 {pos.leverage}x
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3.5">
+                                    <span
+                                      className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
+                                        pos.side === "LONG"
+                                          ? "bg-red-50 text-red-500"
+                                          : "bg-blue-50 text-blue-600"
+                                      }`}
+                                    >
+                                      {pos.side}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-bold text-gray-800">
+                                    {pos.quantity}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-medium text-gray-600">
+                                    ${pos.entryPrice}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-bold text-gray-900">
+                                    ${pos.markPrice}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-semibold text-amber-600">
+                                    {pos.liqPrice === "-" ? "-" : `$${pos.liqPrice}`}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-bold text-gray-700">
+                                    {pos.margin}
+                                  </td>
+                                  <td
+                                    className={`px-4 py-3.5 text-right font-black ${pnlColorText(pos.pnl)}`}
+                                  >
+                                    <div>{pos.pnl}</div>
+                                    <div className="text-[11px]">{pos.roe}</div>
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                                    <Link
+                                      href={`/community/all?sharePosition=MOCK_POS_${pos.id}`}
+                                      className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
+                                    >
+                                      포지션 공유
+                                    </Link>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -1301,16 +1257,12 @@ export function MemberMyProfilePage({
                             className={`mt-1 text-xl font-black ${pnlColorText(
                               livePortfolio
                                 ? formatSignedUsdt(livePortfolio.wallet.realizedPnl)
-                                : portfolioResolved
-                                  ? "0.00 USDT"
-                                  : "+657.00 USDT",
+                                : "0.00 USDT",
                             )}`}
                           >
                             {livePortfolio
                               ? formatSignedUsdt(livePortfolio.wallet.realizedPnl)
-                              : portfolioResolved
-                                ? "0.00 USDT"
-                                : "+657.00 USDT"}
+                              : "0.00 USDT"}
                           </p>
                         </div>
                         <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4">
@@ -1319,16 +1271,12 @@ export function MemberMyProfilePage({
                             className={`mt-1 text-xl font-black ${pnlColorText(
                               livePortfolio
                                 ? formatSignedUsdt(livePortfolio.wallet.unrealizedPnl)
-                                : portfolioResolved
-                                  ? "0.00 USDT"
-                                  : "+1,096.95 USDT",
+                                : "0.00 USDT",
                             )}`}
                           >
                             {livePortfolio
                               ? formatSignedUsdt(livePortfolio.wallet.unrealizedPnl)
-                              : portfolioResolved
-                                ? "0.00 USDT"
-                                : "+1,096.95 USDT"}
+                              : "0.00 USDT"}
                           </p>
                         </div>
                         <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4">
@@ -1349,39 +1297,55 @@ export function MemberMyProfilePage({
                               <th className="px-4 py-3.5 text-right">진입가격</th>
                               <th className="px-4 py-3.5 text-right">종료가격</th>
                               <th className="px-4 py-3.5 text-right">청산수량</th>
-                              <th className="px-4 py-3.5 text-right">실현손익 (ROE)</th>
+                              <th className="px-4 py-3.5 text-right">순실현손익 (ROE)</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
-                            {closedPnlRows.map(row => (
-                              <tr key={row.id} className="hover:bg-gray-50">
-                                <td className="px-4 py-3.5 text-gray-500">{row.closedAt}</td>
-                                <td className="px-4 py-3.5 font-bold text-gray-900">
-                                  {row.nameKr} ({row.symbol} · {row.leverage}x)
-                                </td>
-                                <td className="px-4 py-3.5">
-                                  <span
-                                    className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
-                                      row.side === "LONG"
-                                        ? "bg-red-50 text-red-500"
-                                        : "bg-blue-50 text-blue-600"
-                                    }`}
-                                  >
-                                    {row.side}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3.5 text-right">${row.entryPrice}</td>
-                                <td className="px-4 py-3.5 text-right font-bold">${row.exitPrice}</td>
-                                <td className="px-4 py-3.5 text-right">{row.quantity}</td>
+                            {closedPnlRows.length === 0 ? (
+                              <tr>
                                 <td
-                                  className={`px-4 py-3.5 text-right font-black ${
-                                    row.isPositive ? "text-red-500" : "text-blue-600"
-                                  }`}
+                                  colSpan={7}
+                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
                                 >
-                                  {row.realizedPnl} ({row.roe})
+                                  {ownerClosedPositionsQuery.isLoading
+                                    ? "손익현황을 불러오는 중입니다…"
+                                    : "종료된 포지션 손익 이력이 없습니다."}
                                 </td>
                               </tr>
-                            ))}
+                            ) : (
+                              closedPnlRows.map(row => (
+                                <tr key={row.id} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3.5 text-gray-500">{row.closedAt}</td>
+                                  <td className="px-4 py-3.5 font-bold text-gray-900">
+                                    {row.nameKr} ({row.symbol} · {row.leverage}x)
+                                  </td>
+                                  <td className="px-4 py-3.5">
+                                    <span
+                                      className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
+                                        row.side === "LONG"
+                                          ? "bg-red-50 text-red-500"
+                                          : "bg-blue-50 text-blue-600"
+                                      }`}
+                                    >
+                                      {row.side}
+                                      {row.status === "LIQUIDATED" ? " · 강제청산" : ""}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right">${row.entryPrice}</td>
+                                  <td className="px-4 py-3.5 text-right font-bold">
+                                    ${row.exitPrice}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right">{row.quantity}</td>
+                                  <td
+                                    className={`px-4 py-3.5 text-right font-black ${pnlColorText(
+                                      row.realizedPnl,
+                                    )}`}
+                                  >
+                                    {row.realizedPnl} ({row.roe})
+                                  </td>
+                                </tr>
+                              ))
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -1406,8 +1370,8 @@ export function MemberMyProfilePage({
                           className="h-9 rounded-xl border border-gray-300 bg-white px-3 text-xs font-bold"
                         >
                           <option value="">구분 전체</option>
-                          <option value="BUY">매수/롱</option>
-                          <option value="SELL">매도/숏</option>
+                          <option value="BUY">롱 (LONG)</option>
+                          <option value="SELL">숏 (SHORT)</option>
                         </select>
                         <select
                           aria-label="주문 상태 필터"
@@ -1417,9 +1381,9 @@ export function MemberMyProfilePage({
                         >
                           <option value="">상태 전체</option>
                           <option value="PENDING">대기중</option>
-                          <option value="PARTIALLY_FILLED">부분체결</option>
                           <option value="COMPLETED">체결완료</option>
                           <option value="CANCELED">취소</option>
+                          <option value="REJECTED">주문거절</option>
                         </select>
                         <input
                           type="date"
@@ -1460,41 +1424,63 @@ export function MemberMyProfilePage({
                               <th className="px-4 py-3.5">유형</th>
                               <th className="px-4 py-3.5 text-right">주문가격</th>
                               <th className="px-4 py-3.5 text-right">주문수량</th>
-                              <th className="px-4 py-3.5 text-right">체결수량</th>
+                              <th className="px-4 py-3.5 text-right">체결수량 / 체결가</th>
                               <th className="px-4 py-3.5 text-right">상태</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
-                            {filteredOrders.map(order => (
-                              <tr key={order.id} className="hover:bg-gray-50">
-                                <td className="px-4 py-3.5 text-gray-500">{order.orderedAt}</td>
-                                <td className="px-4 py-3.5 font-bold text-gray-900">
-                                  {order.nameKr} ({order.symbol})
-                                </td>
+                            {filteredOrders.length === 0 ? (
+                              <tr>
                                 <td
-                                  className={`px-4 py-3.5 font-bold ${
-                                    order.side === "BUY" ? "text-red-500" : "text-blue-600"
-                                  }`}
+                                  colSpan={8}
+                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
                                 >
-                                  {order.sideLabel}
-                                </td>
-                                <td className="px-4 py-3.5 text-gray-600">
-                                  {order.orderType === "MARKET" ? "시장가" : "지정가"}
-                                </td>
-                                <td className="px-4 py-3.5 text-right font-medium">{order.orderPrice}</td>
-                                <td className="px-4 py-3.5 text-right">{order.orderQuantity}</td>
-                                <td className="px-4 py-3.5 text-right font-bold">{order.filledQuantity}</td>
-                                <td className="px-4 py-3.5 text-right font-bold text-gray-700">
-                                  {order.orderStatus === "COMPLETED"
-                                    ? "체결완료"
-                                    : order.orderStatus === "CANCELED"
-                                      ? "취소"
-                                      : order.orderStatus === "PARTIALLY_FILLED"
-                                        ? "부분체결"
-                                        : "대기중"}
+                                  {ownerOrdersQuery.isLoading
+                                    ? "주문내역을 불러오는 중입니다…"
+                                    : "조회된 주문 내역이 없습니다."}
                                 </td>
                               </tr>
-                            ))}
+                            ) : (
+                              filteredOrders.map(order => (
+                                <tr key={order.id} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3.5 text-gray-500">{order.orderedAt}</td>
+                                  <td className="px-4 py-3.5 font-bold text-gray-900">
+                                    {order.nameKr} ({order.symbol})
+                                  </td>
+                                  <td
+                                    className={`px-4 py-3.5 font-bold ${
+                                      order.side === "BUY" ? "text-red-500" : "text-blue-600"
+                                    }`}
+                                  >
+                                    {order.sideLabel}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-gray-600">
+                                    {order.orderType === "MARKET" ? "시장가" : "지정가"}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-medium">
+                                    {order.orderPrice}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right">{order.orderQuantity}</td>
+                                  <td className="px-4 py-3.5 text-right font-bold">
+                                    <div>{order.filledQuantity}</div>
+                                    {order.avgFilledPrice !== "-" && (
+                                      <div className="text-[11px] font-medium text-gray-400">
+                                        {order.avgFilledPrice}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-bold text-gray-700">
+                                    {order.orderStatus === "COMPLETED"
+                                      ? "체결완료"
+                                      : order.orderStatus === "CANCELED"
+                                        ? "취소"
+                                        : order.orderStatus === "REJECTED"
+                                          ? "주문거절"
+                                          : "대기중"}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -1517,28 +1503,47 @@ export function MemberMyProfilePage({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
-                          {tradeRows.map(trade => (
-                            <tr key={trade.id} className="hover:bg-gray-50">
-                              <td className="px-4 py-3.5 text-gray-500">{trade.executedAt}</td>
-                              <td className="px-4 py-3.5 font-bold text-gray-900">
-                                {trade.nameKr} ({trade.symbol})
-                              </td>
+                          {tradeRows.length === 0 ? (
+                            <tr>
                               <td
-                                className={`px-4 py-3.5 font-bold ${
-                                  trade.side === "BUY" ? "text-red-500" : "text-blue-600"
-                                }`}
+                                colSpan={8}
+                                className="px-4 py-10 text-center text-xs font-bold text-gray-400"
                               >
-                                {trade.sideLabel}
-                              </td>
-                              <td className="px-4 py-3.5 text-right font-bold">{trade.price}</td>
-                              <td className="px-4 py-3.5 text-right">{trade.quantity}</td>
-                              <td className="px-4 py-3.5 text-right">{trade.totalAmount}</td>
-                              <td className="px-4 py-3.5 text-right text-gray-500">{trade.fee}</td>
-                              <td className={`px-4 py-3.5 text-right font-black ${pnlColorText(trade.realizedProfit)}`}>
-                                {trade.realizedProfit}
+                                {ownerFillsQuery.isLoading
+                                  ? "거래내역을 불러오는 중입니다…"
+                                  : "체결된 거래 내역이 없습니다."}
                               </td>
                             </tr>
-                          ))}
+                          ) : (
+                            tradeRows.map(trade => (
+                              <tr key={trade.id} className="hover:bg-gray-50">
+                                <td className="px-4 py-3.5 text-gray-500">{trade.executedAt}</td>
+                                <td className="px-4 py-3.5 font-bold text-gray-900">
+                                  {trade.nameKr} ({trade.symbol})
+                                </td>
+                                <td
+                                  className={`px-4 py-3.5 font-bold ${
+                                    trade.side === "BUY" ? "text-red-500" : "text-blue-600"
+                                  }`}
+                                >
+                                  {trade.sideLabel}
+                                </td>
+                                <td className="px-4 py-3.5 text-right font-bold">{trade.price}</td>
+                                <td className="px-4 py-3.5 text-right">{trade.quantity}</td>
+                                <td className="px-4 py-3.5 text-right">{trade.totalAmount}</td>
+                                <td className="px-4 py-3.5 text-right text-gray-500">
+                                  {trade.fee}
+                                </td>
+                                <td
+                                  className={`px-4 py-3.5 text-right font-black ${pnlColorText(
+                                    trade.realizedProfit,
+                                  )}`}
+                                >
+                                  {trade.realizedProfit}
+                                </td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1558,25 +1563,46 @@ export function MemberMyProfilePage({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
-                          {openOrders.map(order => (
-                            <tr key={order.id} className="hover:bg-gray-50">
-                              <td className="px-4 py-3.5 text-gray-500">{order.orderedAt}</td>
-                              <td className="px-4 py-3.5 font-bold text-gray-900">
-                                {order.nameKr} ({order.symbol})
-                              </td>
-                              <td className={`px-4 py-3.5 font-bold ${order.side === "BUY" ? "text-red-500" : "text-blue-600"}`}>{order.sideLabel}</td>
-                              <td className="px-4 py-3.5 text-right font-bold">{order.orderPrice}</td>
-                              <td className="px-4 py-3.5 text-right">{order.orderQuantity}</td>
-                              <td className="px-4 py-3.5 text-right whitespace-nowrap">
-                                <Link
-                                  href="/trading"
-                                  className="inline-flex shrink-0 whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100"
-                                >
-                                  모의투자에서 취소
-                                </Link>
+                          {openOrders.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={6}
+                                className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                              >
+                                {ownerPendingOrdersQuery.isLoading
+                                  ? "미체결 주문을 확인하는 중입니다…"
+                                  : "현재 대기 중인 미체결 주문이 없습니다."}
                               </td>
                             </tr>
-                          ))}
+                          ) : (
+                            openOrders.map(order => (
+                              <tr key={order.id} className="hover:bg-gray-50">
+                                <td className="px-4 py-3.5 text-gray-500">{order.orderedAt}</td>
+                                <td className="px-4 py-3.5 font-bold text-gray-900">
+                                  {order.nameKr} ({order.symbol})
+                                </td>
+                                <td
+                                  className={`px-4 py-3.5 font-bold ${
+                                    order.side === "BUY" ? "text-red-500" : "text-blue-600"
+                                  }`}
+                                >
+                                  {order.sideLabel}
+                                </td>
+                                <td className="px-4 py-3.5 text-right font-bold">
+                                  {order.orderPrice}
+                                </td>
+                                <td className="px-4 py-3.5 text-right">{order.orderQuantity}</td>
+                                <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                                  <Link
+                                    href="/trading"
+                                    className="inline-flex shrink-0 whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100"
+                                  >
+                                    모의투자에서 취소
+                                  </Link>
+                                </td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1591,9 +1617,7 @@ export function MemberMyProfilePage({
                 <div className="card rounded-2xl border border-gray-200 bg-white p-6 space-y-6">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-lg font-black text-gray-900">
-                        시즌별 대회 자산 현황
-                      </h3>
+                      <h3 className="text-lg font-black text-gray-900">시즌별 대회 자산 현황</h3>
                       <p className="mt-0.5 text-xs text-gray-500">
                         내 시즌별 대회 실시간 자산과 종료된 시즌의 확정 대회 자산을 모두 조회합니다.
                       </p>
@@ -1611,7 +1635,6 @@ export function MemberMyProfilePage({
                   </div>
 
                   {contestSubTab === "live" ? (
-                    /* ① 내 시즌별 대회 실시간 자산 */
                     liveContestParticipations.length > 0 ? (
                       <div className="space-y-4">
                         {liveContestParticipations.map(item => {
@@ -1625,7 +1648,8 @@ export function MemberMyProfilePage({
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-[#0058FF]">
-                                    {item.displayStatus === "LIVE" ? "LIVE" : item.statusLabel} · {item.title}
+                                    {item.displayStatus === "LIVE" ? "LIVE" : item.statusLabel} ·{" "}
+                                    {item.title}
                                   </span>
                                   <h4 className="text-sm font-black text-gray-900">
                                     내 시즌별 대회 실시간 자산
@@ -1652,25 +1676,33 @@ export function MemberMyProfilePage({
 
                               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                                 <div className="rounded-xl border border-gray-200 bg-white p-3.5">
-                                  <span className="text-[11px] font-bold text-gray-400">실시간 대회 평가자산</span>
+                                  <span className="text-[11px] font-bold text-gray-400">
+                                    실시간 대회 평가자산
+                                  </span>
                                   <p className="mt-1 text-base font-black text-gray-900">
                                     {formatContestUsdt(item.totalEquity)}
                                   </p>
                                 </div>
                                 <div className="rounded-xl border border-gray-200 bg-white p-3.5">
-                                  <span className="text-[11px] font-bold text-gray-400">대회 가용 증거금</span>
+                                  <span className="text-[11px] font-bold text-gray-400">
+                                    대회 가용 증거금
+                                  </span>
                                   <p className="mt-1 text-base font-black text-gray-900">
                                     {formatContestUsdt(item.availableBalance)}
                                   </p>
                                 </div>
                                 <div className="rounded-xl border border-gray-200 bg-white p-3.5">
-                                  <span className="text-[11px] font-bold text-gray-400">실시간 대회 수익금</span>
+                                  <span className="text-[11px] font-bold text-gray-400">
+                                    실시간 대회 수익금
+                                  </span>
                                   <p className={`mt-1 text-base font-black ${pnlColorText(pnlStr)}`}>
                                     {pnlStr}
                                   </p>
                                 </div>
                                 <div className="rounded-xl border border-gray-200 bg-white p-3.5">
-                                  <span className="text-[11px] font-bold text-gray-400">실시간 대회 수익률(ROI)</span>
+                                  <span className="text-[11px] font-bold text-gray-400">
+                                    실시간 대회 수익률(ROI)
+                                  </span>
                                   <p className={`mt-1 text-base font-black ${pnlColorText(roiStr)}`}>
                                     {roiStr}
                                   </p>
@@ -1683,7 +1715,9 @@ export function MemberMyProfilePage({
                     ) : (
                       <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-8 text-center space-y-3">
                         <p className="text-sm font-bold text-gray-600">
-                          현재 참가 중인 진행 시즌 대회가 없습니다.
+                          {memberContestSeasonsQuery.isLoading
+                            ? "대회 참가 정보를 불러오는 중입니다…"
+                            : "현재 참가 중인 진행 시즌 대회가 없습니다."}
                         </p>
                         <Link
                           href="/contest"
@@ -1694,7 +1728,6 @@ export function MemberMyProfilePage({
                       </div>
                     )
                   ) : (
-                    /* ② 종료된 시즌의 대회 자산 */
                     <section className="space-y-3">
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-black text-gray-900">
@@ -1707,7 +1740,9 @@ export function MemberMyProfilePage({
 
                       {finishedContestSeasonsDisplay.length === 0 ? (
                         <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-8 text-center text-xs font-bold text-gray-400">
-                          종료된 대회 참가 이력이 없습니다.
+                          {memberContestSeasonsQuery.isLoading
+                            ? "정산 이력을 확인하는 중입니다…"
+                            : "종료된 대회 참가 이력이 없습니다."}
                         </div>
                       ) : (
                         <div className="overflow-x-auto rounded-2xl border border-gray-200">
@@ -1726,14 +1761,22 @@ export function MemberMyProfilePage({
                               {finishedContestSeasonsDisplay.map(season => (
                                 <tr key={season.seasonId} className="hover:bg-gray-50">
                                   <td className="px-4 py-3.5">
-                                    <div className="font-black text-gray-900">{season.seasonTitle}</div>
+                                    <div className="font-black text-gray-900">
+                                      {season.seasonTitle}
+                                    </div>
                                     <div className="text-[11px] text-gray-400">{season.period}</div>
                                   </td>
-                                  <td className="px-4 py-3.5 text-right text-gray-600">{season.seedMoney}</td>
+                                  <td className="px-4 py-3.5 text-right text-gray-600">
+                                    {season.seedMoney}
+                                  </td>
                                   <td className="px-4 py-3.5 text-right font-black text-gray-900">
                                     {season.finalEquity}
                                   </td>
-                                  <td className={`px-4 py-3.5 text-right font-black ${pnlColorText(season.finalRoi)}`}>
+                                  <td
+                                    className={`px-4 py-3.5 text-right font-black ${pnlColorText(
+                                      season.finalRoi,
+                                    )}`}
+                                  >
                                     {season.finalRoi}
                                   </td>
                                   <td className="px-4 py-3.5 text-right font-bold text-[#0058FF]">
@@ -1741,7 +1784,9 @@ export function MemberMyProfilePage({
                                   </td>
                                   <td className="px-4 py-3.5 text-right">
                                     <div className="font-bold text-gray-800">{season.winRate}</div>
-                                    <span className="text-[11px] font-bold text-gray-400">{season.status}</span>
+                                    <span className="text-[11px] font-bold text-gray-400">
+                                      {season.status}
+                                    </span>
                                   </td>
                                 </tr>
                               ))}
@@ -1784,36 +1829,20 @@ export function MemberMyProfilePage({
                                 stroke="#E5E7EB"
                                 strokeWidth="4.5"
                               />
-                              <circle
-                                cx="18"
-                                cy="18"
-                                r="14"
-                                fill="none"
-                                stroke="#0058FF"
-                                strokeWidth="4.5"
-                                strokeDasharray="45 55"
-                                strokeDashoffset="0"
-                              />
-                              <circle
-                                cx="18"
-                                cy="18"
-                                r="14"
-                                fill="none"
-                                stroke="#9CB34E"
-                                strokeWidth="4.5"
-                                strokeDasharray="22 78"
-                                strokeDashoffset="-45"
-                              />
-                              <circle
-                                cx="18"
-                                cy="18"
-                                r="14"
-                                fill="none"
-                                stroke="#1D7CA7"
-                                strokeWidth="4.5"
-                                strokeDasharray="10 90"
-                                strokeDashoffset="-67"
-                              />
+                              {donutSegments.map(seg => (
+                                <circle
+                                  key={seg.key}
+                                  cx="18"
+                                  cy="18"
+                                  r="14"
+                                  pathLength={100}
+                                  fill="none"
+                                  stroke={seg.color}
+                                  strokeWidth="4.5"
+                                  strokeDasharray={`${seg.pct} ${100 - seg.pct}`}
+                                  strokeDashoffset={-seg.offset}
+                                />
+                              ))}
                             </svg>
                             <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
                               <span className="text-[10px] font-bold text-gray-400">사용 비중</span>
@@ -1825,13 +1854,16 @@ export function MemberMyProfilePage({
 
                           <ul className="w-full flex-1 space-y-2 text-xs">
                             {displayPositions.map(pos => (
-                              <li key={pos.symbol} className="flex items-center justify-between">
+                              <li
+                                key={`${pos.id}-${pos.side}`}
+                                className="flex items-center justify-between"
+                              >
                                 <span className="flex items-center gap-2 font-bold text-gray-700">
                                   <span
                                     className="inline-block h-2.5 w-2.5 rounded-full"
                                     style={{ backgroundColor: pos.color }}
                                   />
-                                  {pos.symbol}
+                                  {pos.symbol} ({pos.side})
                                 </span>
                                 <span className="font-black text-gray-900">{pos.marginRatio}%</span>
                               </li>
@@ -1913,55 +1945,106 @@ export function MemberMyProfilePage({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
-                            {displayPositions.map(pos => (
-                              <tr key={pos.symbol} className="hover:bg-gray-50">
-                                <td className="px-4 py-3.5 font-black text-gray-900">
-                                  {pos.nameKr} ({pos.symbol} · {pos.leverage}x)
-                                </td>
-                                <td className="px-4 py-3.5">
-                                  <span
-                                    className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
-                                      pos.side === "LONG"
-                                        ? "bg-red-50 text-red-500"
-                                        : "bg-blue-50 text-blue-600"
-                                    }`}
-                                  >
-                                    {pos.side}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3.5 text-right font-bold text-gray-800">
-                                  {pos.quantity}
-                                </td>
-                                <td className="px-4 py-3.5 text-right text-gray-600">
-                                  ${pos.entryPrice}
-                                </td>
-                                <td className="px-4 py-3.5 text-right font-bold text-gray-900">
-                                  ${pos.markPrice}
-                                </td>
-                                <td className={`px-4 py-3.5 text-right font-black ${pnlColorText(pos.pnl)}`}>
-                                  {pos.pnl} ({pos.roe})
-                                </td>
-                                <td className="px-4 py-3.5 text-right whitespace-nowrap">
-                                  <Link
-                                    href={`/community/all?sharePosition=${pos.symbol.replace("USDT", "")}`}
-                                    className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
-                                  >
-                                    포지션 공유
-                                  </Link>
+                            {displayPositions.length === 0 ? (
+                              <tr>
+                                <td
+                                  colSpan={7}
+                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                                >
+                                  {!isOwnAndLoggedIn
+                                    ? "로그인하면 내 모의투자 포지션 포트폴리오를 확인할 수 있습니다."
+                                    : publicPortfolioQuery.isLoading
+                                      ? "포트폴리오를 불러오는 중입니다…"
+                                      : "현재 보유 중인 선물 포지션이 없습니다."}
                                 </td>
                               </tr>
-                            ))}
+                            ) : (
+                              displayPositions.map(pos => (
+                                <tr key={`${pos.id}-${pos.side}`} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3.5 font-black text-gray-900">
+                                    {pos.nameKr} ({pos.symbol} · {pos.leverage}x)
+                                  </td>
+                                  <td className="px-4 py-3.5">
+                                    <span
+                                      className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
+                                        pos.side === "LONG"
+                                          ? "bg-red-50 text-red-500"
+                                          : "bg-blue-50 text-blue-600"
+                                      }`}
+                                    >
+                                      {pos.side}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-bold text-gray-800">
+                                    {pos.quantity}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right text-gray-600">
+                                    ${pos.entryPrice}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right font-bold text-gray-900">
+                                    ${pos.markPrice}
+                                  </td>
+                                  <td
+                                    className={`px-4 py-3.5 text-right font-black ${pnlColorText(pos.pnl)}`}
+                                  >
+                                    {pos.pnl} ({pos.roe})
+                                  </td>
+                                  <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                                    <Link
+                                      href={`/community/all?sharePosition=MOCK_POS_${pos.id}`}
+                                      className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[11px] font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
+                                    >
+                                      포지션 공유
+                                    </Link>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
                           </tbody>
                         </table>
                       </div>
                     </div>
+
+                    {livePortfolio && livePortfolio.symbolPerformances.length > 0 && (
+                      <div>
+                        <h3 className="mb-3 text-base font-black text-gray-900">
+                          종목별 누적 실현손익 성과
+                        </h3>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          {livePortfolio.symbolPerformances.map(perf => {
+                            const netStr = formatSignedUsdt(perf.economicPnl);
+                            return (
+                              <div
+                                key={perf.symbol}
+                                className="rounded-xl border border-gray-200 bg-[#F9FAFB] p-3.5 text-xs"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-black text-gray-900">{perf.symbol}</span>
+                                  <span className="text-[11px] font-bold text-gray-400">
+                                    체결 {perf.fillCount}회 · 비중 {perf.turnoverSharePercent}%
+                                  </span>
+                                </div>
+                                <p className={`mt-1.5 text-sm font-black ${pnlColorText(netStr)}`}>
+                                  {netStr}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
                     <h3 className="text-base font-black text-gray-900">시즌별 대회 참가 성적 요약</h3>
-                    {finishedContestSeasonsDisplay.length === 0 && liveContestParticipations.length === 0 ? (
+                    {finishedContestSeasonsDisplay.length === 0 &&
+                    liveContestParticipations.length === 0 ? (
                       <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        참여한 모의투자 대회 시즌 기록이 없습니다.
+                        {!isOwnAndLoggedIn
+                          ? "로그인하면 참여한 모의투자 대회 시즌 기록을 확인할 수 있습니다."
+                          : memberContestSeasonsQuery.isLoading
+                            ? "대회 시즌 기록을 불러오는 중입니다…"
+                            : "참여한 모의투자 대회 시즌 기록이 없습니다."}
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1992,7 +2075,11 @@ export function MemberMyProfilePage({
                             <span className="text-xs font-bold text-[#0058FF]">
                               {season.seasonTitle}
                             </span>
-                            <p className={`mt-2 text-2xl font-black ${pnlColorText(season.finalRoi)}`}>
+                            <p
+                              className={`mt-2 text-2xl font-black ${pnlColorText(
+                                season.finalRoi,
+                              )}`}
+                            >
                               {season.finalRoi}
                             </p>
                             <p className="mt-1 text-xs font-bold text-gray-600">
@@ -2035,132 +2122,109 @@ export function MemberMyProfilePage({
               >
                 {communityTab === "posts" && (
                   <div className="space-y-3">
-                    {liveMyPosts ? (
-                      liveMyPosts.length === 0 ? (
-                        <div className="py-10 text-center text-xs font-bold text-gray-400">
-                          작성한 커뮤니티 게시글이 없습니다.
-                        </div>
-                      ) : (
-                        liveMyPosts.map(post => (
-                          <article key={post.id} className="rounded-xl border border-gray-200 p-4">
-                            <div className="flex items-center justify-between text-xs text-gray-400">
-                              <span className="font-bold text-[#0058FF]">
-                                {communityCategoryLabel(post.category as CommunityCategory)}
-                                {post.symbolTag ? ` · #${post.symbolTag}` : ""}
-                              </span>
-                              <span>{formatKstDateTimeShort(post.createdAt)}</span>
-                            </div>
-                            <Link
-                              href={`/community/all/${post.id}`}
-                              className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
-                            >
-                              {post.title}
-                            </Link>
-                            <p className="mt-1 line-clamp-2 text-xs text-gray-600">
-                              {post.content}
-                            </p>
-                          </article>
-                        ))
-                      )
+                    {liveMyPosts.length === 0 ? (
+                      <div className="py-10 text-center text-xs font-bold text-gray-400">
+                        {!isOwnAndLoggedIn
+                          ? "로그인하면 작성한 커뮤니티 게시글을 확인할 수 있습니다."
+                          : communityPostsInfinite.isLoading
+                            ? "작성한 게시글을 불러오는 중입니다…"
+                            : "작성한 커뮤니티 게시글이 없습니다."}
+                      </div>
                     ) : (
-                      <article className="rounded-xl border border-gray-200 p-4">
-                        <div className="flex items-center justify-between text-xs text-gray-400">
-                          <span className="font-bold text-[#0058FF]">포지션 공유 · #BTC</span>
-                          <span>2026-11-08</span>
-                        </div>
-                        <Link
-                          href="/community"
-                          className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
-                        >
-                          BTC 10배 롱 포지션 진입 및 손절가 공유
-                        </Link>
-                        <p className="mt-1 text-xs text-gray-600">
-                          지지 구간 확인 후 진입했으며 손절가는 -25% ROE 지점으로 설정했습니다.
-                        </p>
-                      </article>
+                      liveMyPosts.map(post => (
+                        <article key={post.id} className="rounded-xl border border-gray-200 p-4">
+                          <div className="flex items-center justify-between text-xs text-gray-400">
+                            <span className="font-bold text-[#0058FF]">
+                              {communityCategoryLabel(post.category as CommunityCategory)}
+                              {post.symbolTag ? ` · #${post.symbolTag}` : ""}
+                            </span>
+                            <span>{formatKstDateTimeShort(post.createdAt)}</span>
+                          </div>
+                          <Link
+                            href={`/community/all/${post.id}`}
+                            className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
+                          >
+                            {post.title}
+                          </Link>
+                          <p className="mt-1 line-clamp-2 text-xs text-gray-600">{post.content}</p>
+                        </article>
+                      ))
                     )}
                   </div>
                 )}
 
                 {communityTab === "replies" && (
                   <div className="space-y-3">
-                    {liveMyComments ? (
-                      liveMyComments.length === 0 ? (
-                        <div className="py-10 text-center text-xs font-bold text-gray-400">
-                          작성한 댓글 내역이 없습니다.
-                        </div>
-                      ) : (
-                        liveMyComments.map(comment => (
-                          <div
-                            key={comment.id}
-                            className="rounded-xl border border-gray-200 p-4 text-xs"
-                          >
-                            <Link
-                              href={`/community/all/${comment.postId}`}
-                              className="font-bold text-gray-900 hover:text-[#0058FF]"
-                            >
-                              “{comment.content}”
-                            </Link>
-                            <p className="mt-1 text-gray-400">원문: {comment.postTitle}</p>
-                          </div>
-                        ))
-                      )
-                    ) : (
-                      <div className="rounded-xl border border-gray-200 p-4 text-xs">
-                        <p className="font-bold text-gray-900">
-                          “감사합니다! 리스크 관리가 최우선입니다.”
-                        </p>
-                        <p className="mt-1 text-gray-400">
-                          원문: BTC 10배 롱 포지션 진입 및 손절가 공유
-                        </p>
+                    {liveMyComments.length === 0 ? (
+                      <div className="py-10 text-center text-xs font-bold text-gray-400">
+                        {!isOwnAndLoggedIn
+                          ? "로그인하면 작성한 댓글 내역을 확인할 수 있습니다."
+                          : communityCommentsInfinite.isLoading
+                            ? "작성한 댓글을 불러오는 중입니다…"
+                            : "작성한 댓글 내역이 없습니다."}
                       </div>
+                    ) : (
+                      liveMyComments.map(comment => (
+                        <div
+                          key={comment.id}
+                          className="rounded-xl border border-gray-200 p-4 text-xs"
+                        >
+                          <Link
+                            href={`/community/all/${comment.postId}`}
+                            className="font-bold text-gray-900 hover:text-[#0058FF]"
+                          >
+                            “{comment.content}”
+                          </Link>
+                          <p className="mt-1 text-gray-400">원문: {comment.postTitle}</p>
+                        </div>
+                      ))
                     )}
                   </div>
                 )}
 
                 {communityTab === "likedPosts" && (
                   <div className="space-y-3">
-                    {liveLikedPosts ? (
-                      liveLikedPosts.length === 0 ? (
-                        <div className="py-10 text-center text-xs font-bold text-gray-400">
-                          좋아요한 게시글 내역이 없습니다.
-                        </div>
-                      ) : (
-                        liveLikedPosts.map(post => (
-                          <div
-                            key={post.id}
-                            className="rounded-xl border border-gray-200 p-4 text-xs"
-                          >
-                            <span className="inline-flex items-center gap-1 font-bold text-gray-700">
-                              <V1IconHeart className="h-3.5 w-3.5" />
-                              <span>좋아요 표시한 게시글</span>
-                            </span>
-                            <Link
-                              href={`/community/all/${post.id}`}
-                              className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
-                            >
-                              {post.title}
-                            </Link>
-                          </div>
-                        ))
-                      )
-                    ) : (
-                      <div className="rounded-xl border border-gray-200 p-4 text-xs">
-                        <span className="inline-flex items-center gap-1 font-bold text-gray-700">
-                          <V1IconHeart className="h-3.5 w-3.5" />
-                          <span>좋아요 표시한 게시글</span>
-                        </span>
-                        <p className="mt-1 text-sm font-black text-gray-900">
-                          ETH/BTC 상대강도 반등 시그널 및 단기 스위칭 전략 공유
-                        </p>
+                    {liveLikedPosts.length === 0 ? (
+                      <div className="py-10 text-center text-xs font-bold text-gray-400">
+                        {!isOwnAndLoggedIn
+                          ? "로그인하면 좋아요한 게시글을 확인할 수 있습니다."
+                          : communityLikedPostsInfinite.isLoading
+                            ? "좋아요한 게시글을 불러오는 중입니다…"
+                            : "좋아요한 게시글 내역이 없습니다."}
                       </div>
+                    ) : (
+                      liveLikedPosts.map(post => (
+                        <div
+                          key={post.id}
+                          className="rounded-xl border border-gray-200 p-4 text-xs"
+                        >
+                          <span className="inline-flex items-center gap-1 font-bold text-gray-700">
+                            <V1IconHeart className="h-3.5 w-3.5" />
+                            <span>좋아요 표시한 게시글</span>
+                          </span>
+                          <Link
+                            href={`/community/all/${post.id}`}
+                            className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
+                          >
+                            {post.title}
+                          </Link>
+                        </div>
+                      ))
                     )}
                   </div>
                 )}
 
                 {communityTab === "likedReplies" && (
                   <div className="space-y-3">
-                    {liveLikedComments && liveLikedComments.length > 0 ? (
+                    {liveLikedComments.length === 0 ? (
+                      <div className="py-10 text-center text-xs font-bold text-gray-400">
+                        {!isOwnAndLoggedIn
+                          ? "로그인하면 좋아요한 댓글을 확인할 수 있습니다."
+                          : communityLikedCommentsInfinite.isLoading
+                            ? "좋아요한 댓글을 불러오는 중입니다…"
+                            : "좋아요한 댓글 내역이 없습니다."}
+                      </div>
+                    ) : (
                       liveLikedComments.map(comment => (
                         <div
                           key={comment.id}
@@ -2179,73 +2243,37 @@ export function MemberMyProfilePage({
                           <p className="mt-0.5 text-gray-400">원문: {comment.postTitle}</p>
                         </div>
                       ))
-                    ) : (
-                      <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        좋아요한 댓글 내역이 없습니다.
-                      </div>
                     )}
                   </div>
                 )}
 
                 {isOwnAndLoggedIn && communityTab === "reports" && (
                   <div className="space-y-3">
-                    {liveReports ? (
-                      liveReports.length === 0 ? (
-                        <div className="py-10 text-center text-xs font-bold text-gray-400">
-                          접수된 신고 내역이 없습니다.
-                        </div>
-                      ) : (
-                        liveReports.map(item => (
-                          <div
-                            key={item.id}
-                            className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-gray-200 p-4 text-xs"
-                          >
-                            <div>
-                              <span className="rounded bg-red-50 px-2 py-0.5 font-bold text-red-600">
-                                {item.targetType === "POST" ? "게시글" : "댓글"} 신고 · 접수완료
-                              </span>
-                              <p className="mt-1.5 font-bold text-gray-900">{item.title}</p>
-                              <p className="mt-0.5 text-gray-500">
-                                사유: {item.reasonDescription}
-                              </p>
-                            </div>
-                            <V1Button
-                              variant="white"
-                              size="xs"
-                              disabled={cancelReportMutation.isPending}
-                              onClick={() =>
-                                cancelReportMutation.mutate({
-                                  targetType: item.targetType,
-                                  targetId: item.targetId,
-                                  id: item.id,
-                                })
-                              }
-                            >
-                              신고 취소
-                            </V1Button>
-                          </div>
-                        ))
-                      )
-                    ) : fallbackReports.length === 0 ? (
+                    {liveReports.length === 0 ? (
                       <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        접수된 신고 내역이 없습니다.
+                        {communityReportsInfinite.isLoading
+                          ? "신고 내역을 불러오는 중입니다…"
+                          : "접수된 신고 내역이 없습니다."}
                       </div>
                     ) : (
-                      fallbackReports.map(item => (
+                      liveReports.map(item => (
                         <div
                           key={item.id}
                           className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-gray-200 p-4 text-xs"
                         >
                           <div>
                             <span className="rounded bg-red-50 px-2 py-0.5 font-bold text-red-600">
-                              게시글 신고 · {item.status}
+                              {item.targetType === "POST" ? "게시글" : "댓글"} 신고 · 접수완료
                             </span>
                             <p className="mt-1.5 font-bold text-gray-900">{item.title}</p>
-                            <p className="mt-0.5 text-gray-500">사유: {item.reason}</p>
+                            <p className="mt-0.5 text-gray-500">
+                              사유: {item.reasonDescription}
+                            </p>
                           </div>
                           <V1Button
                             variant="white"
                             size="xs"
+                            disabled={cancelReportMutation.isPending}
                             onClick={() =>
                               cancelReportMutation.mutate({
                                 targetType: item.targetType,
@@ -2297,52 +2325,66 @@ export function MemberMyProfilePage({
       >
         {modalFollowList.length === 0 ? (
           <p className="py-8 text-center text-xs font-bold text-gray-400">
-            표시할 회원이 없습니다.
+            {followModalInfinite.isLoading ? "회원 목록을 불러오는 중입니다…" : "표시할 회원이 없습니다."}
           </p>
         ) : (
-          <ul className="divide-y divide-gray-100">
-            {modalFollowList.map(person => (
-              <li key={person.memberId} className="flex items-center justify-between gap-3 py-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <V1UserAvatar
-                    src={person.profileImgUrl}
-                    memberId={person.memberId}
-                    nickname={person.nickname}
-                    size="md"
-                  />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={`/members/${person.memberId}`}
-                        className="truncate text-sm font-bold text-gray-900 hover:text-[#0058FF]"
-                        onClick={() => {
-                          setFollowModalType(null);
-                          setFollowOverrides({});
-                        }}
-                      >
-                        {person.nickname}
-                      </Link>
-                      {person.followsMe && (
-                        <span className="shrink-0 whitespace-nowrap rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">
-                          나를 팔로우 중
-                        </span>
-                      )}
+          <div className="space-y-3">
+            <ul className="divide-y divide-gray-100">
+              {modalFollowList.map(person => (
+                <li key={person.memberId} className="flex items-center justify-between gap-3 py-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <V1UserAvatar
+                      src={person.profileImgUrl}
+                      memberId={person.memberId}
+                      nickname={person.nickname}
+                      size="md"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          href={`/members/${person.memberId}`}
+                          className="truncate text-sm font-bold text-gray-900 hover:text-[#0058FF]"
+                          onClick={() => {
+                            setFollowModalType(null);
+                            setFollowOverrides({});
+                          }}
+                        >
+                          {person.nickname}
+                        </Link>
+                        {person.followsMe && (
+                          <span className="shrink-0 whitespace-nowrap rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">
+                            나를 팔로우 중
+                          </span>
+                        )}
+                      </div>
+                      <p className="truncate text-xs text-gray-500">{person.profileMsg}</p>
                     </div>
-                    <p className="truncate text-xs text-gray-500">{person.profileMsg}</p>
                   </div>
-                </div>
-                {isOwnAndLoggedIn && person.memberId !== member.memberId && (
-                  <V1Button
-                    variant={person.following ? "gray" : "blue"}
-                    size="xs"
-                    onClick={() => toggleFollowInModal(person)}
-                  >
-                    {person.following ? "팔로우 취소" : "팔로우"}
-                  </V1Button>
-                )}
-              </li>
-            ))}
-          </ul>
+                  {isOwnAndLoggedIn && person.memberId !== member.memberId && (
+                    <V1Button
+                      variant={person.following ? "gray" : "blue"}
+                      size="xs"
+                      onClick={() => toggleFollowInModal(person)}
+                    >
+                      {person.following ? "팔로우 취소" : "팔로우"}
+                    </V1Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {followModalInfinite.hasNextPage && (
+              <div className="flex justify-center pt-1">
+                <V1Button
+                  variant="white"
+                  size="xs"
+                  disabled={followModalInfinite.isFetchingNextPage}
+                  onClick={() => void followModalInfinite.fetchNextPage()}
+                >
+                  {followModalInfinite.isFetchingNextPage ? "불러오는 중…" : "더 보기"}
+                </V1Button>
+              </div>
+            )}
+          </div>
         )}
       </DimModal>
     </MemberShell>

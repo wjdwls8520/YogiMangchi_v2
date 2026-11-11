@@ -5,7 +5,10 @@ import { useEffect, useState } from "react";
 import { useOptionalMember } from "../../member/components/member-provider";
 import { MarketChartPanel } from "../../trading/components/market-chart-panel";
 import { OrderPanel } from "../../trading/components/order-panel";
-import { TradingDataProvider, useOptionalGuestSession } from "../../trading/components/trading-data-provider";
+import {
+  TradingDataProvider,
+  useOptionalGuestSession,
+} from "../../trading/components/trading-data-provider";
 import { useTradingSummary } from "../../trading/api/queries";
 import {
   cn,
@@ -107,12 +110,15 @@ function mapSummaryToTerminalMeta(
   dotColor: string,
 ): ContestSeasonTerminalMeta {
   const { season, participation } = summary;
-  const isSettled = Boolean(season.settledAt) || season.displayStatus === "FINISHED";
+  const isSettled =
+    Boolean(season.settledAt) || season.displayStatus === "FINISHED" || season.isCanceled;
   return {
     seasonId: season.id,
     title: season.title,
     period: `${formatContestDateOnly(season.contestStartAt)} ~ ${formatContestDateOnly(season.contestEndAt)}`,
-    remainingLabel: isSettled ? "시즌 종료 · 정산 확정 완료" : season.statusLabel || "시즌 진행 중",
+    remainingLabel: isSettled
+      ? "시즌 종료 · 정산 확정 완료"
+      : season.statusLabel || "시즌 진행 중",
     walletStatus: isSettled ? "SETTLED" : "ACTIVE",
     seedMoney: formatContestUsdt(participation.seedMoney),
     contestEquity: formatContestUsdt(participation.totalEquity),
@@ -130,12 +136,15 @@ function mapPublicSeasonToTerminalMeta(
   season: ContestSeasonView,
   fallback: ContestSeasonTerminalMeta,
 ): ContestSeasonTerminalMeta {
-  const isSettled = Boolean(season.settledAt) || season.displayStatus === "FINISHED";
+  const isSettled =
+    Boolean(season.settledAt) || season.displayStatus === "FINISHED" || season.isCanceled;
   return {
     seasonId: season.id,
     title: season.title,
     period: `${formatContestDateOnly(season.contestStartAt)} ~ ${formatContestDateOnly(season.contestEndAt)}`,
-    remainingLabel: isSettled ? "시즌 종료 · 정산 확정 완료" : season.statusLabel || "시즌 진행 중",
+    remainingLabel: isSettled
+      ? "시즌 종료 · 정산 확정 완료"
+      : season.statusLabel || "시즌 진행 중",
     walletStatus: isSettled ? "SETTLED" : "ACTIVE",
     seedMoney: formatContestUsdt(season.seedMoney),
     contestEquity: "—",
@@ -176,7 +185,10 @@ export function ContestTradingSubheader({
   const guestCtx = useOptionalGuestSession();
   const baseMeta = resolveContestTerminalMeta(seasonId);
   const [liveMeta, setLiveMeta] = useState<ContestSeasonTerminalMeta | null>(null);
-  const [liveWallet, setLiveWallet] = useState<{ contestEquity: string; availableMargin: string } | null>(null);
+  const [liveWallet, setLiveWallet] = useState<{
+    contestEquity: string;
+    availableMargin: string;
+  } | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -192,28 +204,39 @@ export function ContestTradingSubheader({
           }
         })
         .catch(() => {
-          // Keep static fallback metadata
+          // Keep current metadata on transient network failure
         });
 
-    if (memberCtx?.snapshot.phase === "ready" && memberCtx.session) {
-      void memberCtx.session
-        .authorized(cred =>
-          fetchContestSeasonSummary(targetSeasonId, cred.accessToken, {
-            signal: controller.signal,
-          }),
-        )
-        .then(summary => {
-          if (summary && summary.season && summary.participation) {
-            setLiveMeta(mapSummaryToTerminalMeta(summary, fallbackMeta.dotColor));
-          }
-        })
-        .catch(() => loadFallbackPublicSeason());
-    } else {
-      void loadFallbackPublicSeason();
-    }
+    const refreshSubheaderMeta = () => {
+      if (memberCtx?.snapshot.phase === "ready" && memberCtx.session) {
+        void memberCtx.session
+          .authorized(cred =>
+            fetchContestSeasonSummary(targetSeasonId, cred.accessToken, {
+              signal: controller.signal,
+            }),
+          )
+          .then(summary => {
+            if (summary && summary.season && summary.participation) {
+              setLiveMeta(mapSummaryToTerminalMeta(summary, fallbackMeta.dotColor));
+            }
+          })
+          .catch(() => loadFallbackPublicSeason());
+      } else {
+        void loadFallbackPublicSeason();
+      }
+    };
 
-    return () => controller.abort();
-  }, [seasonId, memberCtx?.session, memberCtx?.snapshot.phase]);
+    refreshSubheaderMeta();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      refreshSubheaderMeta();
+    }, 5_000);
+
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
+  }, [seasonId, memberCtx?.session, memberCtx?.snapshot.phase, memberCtx?.snapshot.generation]);
 
   const rawMeta = liveMeta && liveMeta.seasonId === baseMeta.seasonId ? liveMeta : baseMeta;
   const meta: ContestSeasonTerminalMeta = liveWallet
@@ -295,7 +318,7 @@ export function ContestTradingSubheader({
                 meta.seasonRoi.startsWith("-")
                   ? "text-blue-400"
                   : meta.seasonRoi.startsWith("+")
-                    ? "text-emerald-400"
+                    ? "text-red-400"
                     : "text-gray-300",
               )}
             >

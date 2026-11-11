@@ -16,11 +16,13 @@ import {
   type CommunityCategory,
 } from "../api/community-news";
 import { tradingJson } from "../../trading/api/client";
+import { formatDecimal } from "../../trading/api/account";
 import {
   fetchMyContestSeasons,
   fetchPublicMemberContestSeasons,
   formatContestSignedRoi,
   formatContestUsdt,
+  formatContestWinRate,
   resolveTradingContestBaseUrl,
 } from "../../contest/api/contest-client";
 import { useMember } from "./member-provider";
@@ -37,18 +39,20 @@ import {
 
 function formatSignedUsdt(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed.startsWith("-") || trimmed.startsWith("+")) return `${trimmed} USDT`;
-  if (trimmed === "0" || trimmed === "0.00") return "0.00 USDT";
-  return `+${trimmed} USDT`;
+  const formatted = formatDecimal(trimmed.replace(/^[+-]/, ""));
+  const valueStr = formatted === "—" ? trimmed.replace(/^[+-]/, "") : formatted;
+  if (!/[1-9]/.test(valueStr)) return "0.00 USDT";
+  if (trimmed.startsWith("-")) return `-${valueStr} USDT`;
+  return `+${valueStr} USDT`;
 }
 
 function formatSignedPct(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("-") || trimmed.startsWith("+")) {
-    return trimmed.endsWith("%") ? trimmed : `${trimmed}%`;
-  }
-  if (trimmed === "0" || trimmed === "0.00") return "0.00%";
-  return `+${trimmed.endsWith("%") ? trimmed : `${trimmed}%`}`;
+  const trimmed = raw.trim().replace(/%$/, "");
+  const formatted = formatDecimal(trimmed.replace(/^[+-]/, ""));
+  const valueStr = formatted === "—" ? trimmed.replace(/^[+-]/, "") : formatted;
+  if (!/[1-9]/.test(valueStr)) return "0.00%";
+  if (trimmed.startsWith("-")) return `-${valueStr}%`;
+  return `+${valueStr}%`;
 }
 
 function publicPnlColor(raw: string): string {
@@ -91,6 +95,13 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const profile = useQuery({
     queryKey: ["member", "public", memberId],
+    enabled: memberId > 0,
+    retry: (failureCount, err) => {
+      if (err instanceof ContentApiError && (err.status === 404 || err.code === "MEMBER_NOT_FOUND")) {
+        return false;
+      }
+      return failureCount < 1;
+    },
     queryFn: async ({ signal }) => {
       const value = parseProfile(await contentJson(origin, `/members/${memberId}`, { signal }));
       if (value.memberId !== memberId) throw new ContentApiError(422);
@@ -98,8 +109,14 @@ export function PublicMember({ memberId }: { memberId: number }) {
     },
   });
 
+  const isMemberNotFound =
+    profile.isError &&
+    profile.error instanceof ContentApiError &&
+    (profile.error.status === 404 || profile.error.code === "MEMBER_NOT_FOUND");
+
   const summary = useQuery({
     queryKey: ["member", "relationship", memberId, ...identity],
+    enabled: memberId > 0 && !isMemberNotFound,
     queryFn: async ({ signal }) =>
       parseFollowSummary(
         await (snapshot.phase === "ready"
@@ -111,6 +128,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const list = useInfiniteQuery({
     queryKey: ["member", "relations", memberId, kind, keyword],
+    enabled: memberId > 0 && !isMemberNotFound,
     initialPageParam: undefined as number | undefined,
     queryFn: async ({ pageParam, signal }) => {
       const params = new URLSearchParams({ size: "10", keyword });
@@ -131,7 +149,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
   // [T-1] 공개 포트폴리오 조회 (누구나 조회 가능)
   const publicPortfolioQuery = useQuery({
     queryKey: ["member", "public-portfolio", memberId, tradingBase, snapshot.generation],
-    enabled: memberId > 0,
+    enabled: memberId > 0 && !isMemberNotFound,
     queryFn: async ({ signal }) =>
       parsePublicMemberPortfolio(
         await tradingJson(tradingBase, `portfolios/members/${memberId}`, { signal }),
@@ -143,7 +161,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const publicContestSeasonsQuery = useQuery({
     queryKey: ["member", "public-contest-seasons", memberId, isOwner, tradingBase, snapshot.generation],
-    enabled: memberId > 0,
+    enabled: memberId > 0 && !isMemberNotFound,
     queryFn: async ({ signal }) =>
       isOwner
         ? session.authorized(cred =>
@@ -152,10 +170,12 @@ export function PublicMember({ memberId }: { memberId: number }) {
         : fetchPublicMemberContestSeasons(memberId, { baseUrl: tradingBase, signal }),
   });
 
-  // [C-6] 커뮤니티활동 커서 기반 무한스크롤 (게시글, 댓글, 좋아요, 좋아요 댓글 전체 공개 / 신고내역 본인 전용)
+  const communityQueriesEnabled = memberId > 0 && !isMemberNotFound && mainTab === "community";
+
+  // [C-6] 커뮤니티활동 커서 기반 무한스크롤 (활성 탭 진입 시 지연 조회)
   const memberPostsInfinite = useInfiniteQuery({
     queryKey: ["member", "public-community-posts", memberId, snapshot.generation],
-    enabled: memberId > 0,
+    enabled: communityQueriesEnabled && communityTab === "posts",
     initialPageParam: undefined as number | undefined,
     queryFn: async ({ pageParam, signal }) => {
       const search = new URLSearchParams({ size: "10" });
@@ -175,7 +195,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const memberCommentsInfinite = useInfiniteQuery({
     queryKey: ["member", "public-community-comments", memberId, snapshot.generation],
-    enabled: memberId > 0,
+    enabled: communityQueriesEnabled && communityTab === "replies",
     initialPageParam: undefined as number | undefined,
     queryFn: async ({ pageParam, signal }) => {
       const search = new URLSearchParams({ size: "10" });
@@ -195,7 +215,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const memberLikedPostsInfinite = useInfiniteQuery({
     queryKey: ["member", "public-community-liked-posts", memberId, snapshot.generation],
-    enabled: memberId > 0,
+    enabled: communityQueriesEnabled && communityTab === "liked-posts",
     initialPageParam: undefined as number | undefined,
     queryFn: async ({ pageParam, signal }) => {
       const search = new URLSearchParams({ size: "10" });
@@ -215,7 +235,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const memberLikedCommentsInfinite = useInfiniteQuery({
     queryKey: ["member", "public-community-liked-comments", memberId, snapshot.generation],
-    enabled: memberId > 0,
+    enabled: communityQueriesEnabled && communityTab === "liked-replies",
     initialPageParam: undefined as number | undefined,
     queryFn: async ({ pageParam, signal }) => {
       const search = new URLSearchParams({ size: "10" });
@@ -235,7 +255,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const ownerReportsInfinite = useInfiniteQuery({
     queryKey: ["member", "public-community-reports", memberId, snapshot.generation],
-    enabled: isOwner,
+    enabled: communityQueriesEnabled && isOwner && communityTab === "reports",
     initialPageParam: undefined as number | undefined,
     queryFn: async ({ pageParam, signal }) => {
       const search = new URLSearchParams({ size: "10" });
@@ -317,6 +337,43 @@ export function PublicMember({ memberId }: { memberId: number }) {
     }
   }
 
+  if (memberId <= 0 || isMemberNotFound) {
+    return (
+      <MemberShell
+        title="공개 프로필"
+        subtitle="요청하신 회원 정보를 확인할 수 없습니다."
+        variant="wide"
+        hideCardHeading
+      >
+        <div
+          className="mx-auto max-w-xl rounded-2xl border border-gray-200 bg-white p-8 text-center space-y-4"
+          data-member-not-found="true"
+        >
+          <h2 className="text-xl font-black text-gray-900">
+            탈퇴했거나 존재하지 않는 회원입니다.
+          </h2>
+          <p className="text-sm font-medium text-gray-500">
+            회원이 탈퇴했거나 잘못된 주소여서 공개 프로필과 포트폴리오를 표시할 수 없습니다.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <Link
+              href="/community"
+              className="inline-flex h-10 items-center justify-center rounded-xl bg-[#0058FF] px-5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+            >
+              커뮤니티로 이동
+            </Link>
+            <Link
+              href="/contest"
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-5 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              실전 투자대회 보기
+            </Link>
+          </div>
+        </div>
+      </MemberShell>
+    );
+  }
+
   const entries =
     list.isError && !list.isFetchNextPageError
       ? undefined
@@ -339,10 +396,10 @@ export function PublicMember({ memberId }: { memberId: number }) {
   const assetSummary = livePortfolio
     ? {
         title: `${displayNickname}님의 모의투자`,
-        totalAsset: `${livePortfolio.wallet.totalEquity} USDT`,
-        cashBalance: `${livePortfolio.wallet.availableBalance} USDT`,
-        totalBuyAmount: `${livePortfolio.wallet.usedMargin} USDT`,
-        totalCoinValue: `${livePortfolio.wallet.balance} USDT`,
+        totalAsset: `${formatDecimal(livePortfolio.wallet.totalEquity)} USDT`,
+        cashBalance: `${formatDecimal(livePortfolio.wallet.availableBalance)} USDT`,
+        totalBuyAmount: `${formatDecimal(livePortfolio.wallet.usedMargin)} USDT`,
+        totalCoinValue: `${formatDecimal(livePortfolio.wallet.balance)} USDT`,
         totalProfit: formatSignedUsdt(livePortfolio.wallet.totalPnl),
         totalRoi: formatSignedPct(livePortfolio.wallet.totalRoiPct),
         isPositive:
@@ -351,30 +408,18 @@ export function PublicMember({ memberId }: { memberId: number }) {
         isNegative: livePortfolio.wallet.totalPnl.trim().startsWith("-"),
         unit: "USDT",
       }
-    : portfolioResolved
-      ? {
-          title: `${displayNickname}님의 모의투자`,
-          totalAsset: "0.00 USDT",
-          cashBalance: "0.00 USDT",
-          totalBuyAmount: "0.00 USDT",
-          totalCoinValue: "0.00 USDT",
-          totalProfit: "0.00 USDT",
-          totalRoi: "0.00%",
-          isPositive: false,
-          isNegative: false,
-          unit: "USDT",
-        }
-      : {
-          title: `${displayNickname}님의 모의투자`,
-          totalAsset: "10,840.00 USDT",
-          cashBalance: "5,240.00 USDT",
-          totalBuyAmount: "5,600.00 USDT",
-          totalCoinValue: "6,440.00 USDT",
-          totalProfit: "+840.00 USDT",
-          totalRoi: "+8.40%",
-          isPositive: true,
-          unit: "USDT",
-        };
+    : {
+        title: `${displayNickname}님의 모의투자`,
+        totalAsset: "0.00 USDT",
+        cashBalance: "0.00 USDT",
+        totalBuyAmount: "0.00 USDT",
+        totalCoinValue: "0.00 USDT",
+        totalProfit: "0.00 USDT",
+        totalRoi: "0.00%",
+        isPositive: false,
+        isNegative: false,
+        unit: "USDT",
+      };
 
   const livePosts = memberPostsInfinite.data
     ? memberPostsInfinite.data.pages.flatMap(p => p.items)
@@ -607,8 +652,10 @@ export function PublicMember({ memberId }: { memberId: number }) {
                   ? "portfolio"
                   : mainTab;
 
-              const longRatioPct = livePortfolio ? livePortfolio.allocation.longRatioPct : "75";
-              const shortRatioPct = livePortfolio ? livePortfolio.allocation.shortRatioPct : "25";
+              const longRatioPct = livePortfolio ? livePortfolio.allocation.longRatioPct : "0";
+              const shortRatioPct = livePortfolio ? livePortfolio.allocation.shortRatioPct : "0";
+              const liveContestSeasons = publicContestSeasonsQuery.data?.participatingSeasons ?? [];
+              const pastContestSeasons = publicContestSeasonsQuery.data?.pastSeasons ?? [];
 
               return (
                 <>
@@ -638,7 +685,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                       }
                     >
                       <div className="py-6 text-xs font-bold text-gray-600">
-                        내 모의투자 자산 원장을 확인합니다. 상세 회차 초기화는{" "}
+                        내 모의투자 자산 원장을 확인합니다. 상세 주문·체결 원장 필터 및 회차 초기화는{" "}
                         <Link href="/me" className="text-[#0058FF] underline">
                           마이페이지
                         </Link>
@@ -659,9 +706,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                       <div className="space-y-3 py-4 text-xs">
                         {(() => {
                           const listItems =
-                            contestTab === "live"
-                              ? (publicContestSeasonsQuery.data?.participatingSeasons ?? [])
-                              : (publicContestSeasonsQuery.data?.pastSeasons ?? []);
+                            contestTab === "live" ? liveContestSeasons : pastContestSeasons;
                           if (listItems.length === 0) {
                             return (
                               <p className="py-6 text-center font-bold text-gray-400">
@@ -707,22 +752,38 @@ export function PublicMember({ memberId }: { memberId: number }) {
                     >
                       {portfolioTab === "mock" ? (
                         <div className="space-y-6">
+                          {publicPortfolioQuery.isError && (
+                            <div
+                              role="alert"
+                              className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-600"
+                            >
+                              공개 포트폴리오 데이터를 불러오지 못했습니다.{" "}
+                              <button
+                                type="button"
+                                className="underline"
+                                onClick={() => void publicPortfolioQuery.refetch()}
+                              >
+                                다시 시도
+                              </button>
+                            </div>
+                          )}
+
                           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
                               <h3 className="text-sm font-black text-gray-900">포지션 증거금 비중 (%)</h3>
                               <p className="mt-2 text-xs text-gray-500">
                                 {livePortfolio
-                                  ? `사용 증거금 비중 ${livePortfolio.allocation.usedMarginRatioPct}% · 가용 USDT ${livePortfolio.allocation.availableCashRatioPct}%`
+                                  ? `사용 증거금 비중 ${formatDecimal(livePortfolio.allocation.usedMarginRatioPct)}% · 가용 USDT ${formatDecimal(livePortfolio.allocation.availableCashRatioPct)}%`
                                   : portfolioResolved
-                                    ? "현재 보유 중인 모의투자 포지션이 없습니다."
+                                    ? "개설된 모의투자 계좌가 없거나 보유 중인 포지션이 없습니다."
                                     : "모의투자 증거금 운용 비중을 불러오고 있습니다."}
                               </p>
                             </div>
                             <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
                               <h3 className="text-sm font-black text-gray-900">롱 / 숏 비율</h3>
                               <div className="mt-3 flex justify-between text-xs font-bold">
-                                <span className="text-red-500">LONG {longRatioPct}%</span>
-                                <span className="text-blue-600">SHORT {shortRatioPct}%</span>
+                                <span className="text-red-500">LONG {formatDecimal(longRatioPct)}%</span>
+                                <span className="text-blue-600">SHORT {formatDecimal(shortRatioPct)}%</span>
                               </div>
                               <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-gray-200">
                                 <div className="h-full bg-red-500" style={{ width: `${longRatioPct}%` }} />
@@ -731,7 +792,39 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             </div>
                           </div>
 
-                          {livePortfolio && livePortfolio.positions.length > 0 && (
+                          {livePortfolio && (
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                              <div className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-3.5">
+                                <span className="text-[11px] font-bold text-gray-400">종료 거래 수</span>
+                                <p className="mt-1 text-base font-black text-gray-900">
+                                  {livePortfolio.closedTradeSummary.closedPositionCount}회
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-3.5">
+                                <span className="text-[11px] font-bold text-gray-400">승률</span>
+                                <p className="mt-1 text-base font-black text-gray-900">
+                                  {formatDecimal(livePortfolio.closedTradeSummary.winRatePct)}%
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-3.5">
+                                <span className="text-[11px] font-bold text-gray-400">익절 / 손절</span>
+                                <p className="mt-1 text-base font-black text-gray-900">
+                                  {livePortfolio.closedTradeSummary.winCount}승 ·{" "}
+                                  {livePortfolio.closedTradeSummary.lossCount}패
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-3.5">
+                                <span className="text-[11px] font-bold text-gray-400">순실현손익</span>
+                                <p
+                                  className={`mt-1 text-sm font-black ${publicPnlColor(livePortfolio.wallet.realizedPnl)}`}
+                                >
+                                  {formatSignedUsdt(livePortfolio.wallet.realizedPnl)}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {livePortfolio && livePortfolio.positions.length > 0 ? (
                             <div className="overflow-x-auto rounded-2xl border border-gray-200">
                               <table className="w-full min-w-[600px] text-left text-xs">
                                 <thead className="border-b border-gray-200 bg-gray-50 font-bold text-gray-500">
@@ -746,16 +839,20 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                 </thead>
                                 <tbody className="divide-y divide-gray-100 bg-white">
                                   {livePortfolio.positions.map(pos => (
-                                    <tr key={pos.id} className="hover:bg-gray-50">
+                                    <tr key={`${pos.id}-${pos.side}`} className="hover:bg-gray-50">
                                       <td className="px-4 py-3 font-black text-gray-900">
                                         {pos.symbol} · {pos.leverage}x
                                       </td>
-                                      <td className="px-4 py-3 font-bold">
+                                      <td
+                                        className={`px-4 py-3 font-bold ${
+                                          pos.side === "LONG" ? "text-red-500" : "text-blue-600"
+                                        }`}
+                                      >
                                         {pos.side}
                                       </td>
                                       <td className="px-4 py-3 text-right">{pos.quantity}</td>
-                                      <td className="px-4 py-3 text-right">${pos.entryPrice}</td>
-                                      <td className="px-4 py-3 text-right">${pos.markPrice}</td>
+                                      <td className="px-4 py-3 text-right">${formatDecimal(pos.entryPrice)}</td>
+                                      <td className="px-4 py-3 text-right">${formatDecimal(pos.markPrice)}</td>
                                       <td className={`px-4 py-3 text-right font-black ${publicPnlColor(pos.unrealizedPnl)}`}>
                                         {formatSignedUsdt(pos.unrealizedPnl)} (
                                         {formatSignedPct(pos.roePct)})
@@ -765,28 +862,109 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                 </tbody>
                               </table>
                             </div>
+                          ) : portfolioResolved ? (
+                            <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] py-8 text-center text-xs font-bold text-gray-400">
+                              {livePortfolio
+                                ? "현재 보유 중인 오픈 포지션이 없습니다."
+                                : "아직 개설된 선물 모의투자 계좌가 없습니다."}
+                            </div>
+                          ) : null}
+
+                          {livePortfolio && livePortfolio.symbolPerformances.length > 0 && (
+                            <div className="space-y-3">
+                              <h3 className="text-sm font-black text-gray-900">종목별 누적 트레이딩 성과</h3>
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                {livePortfolio.symbolPerformances.map(perf => (
+                                  <div
+                                    key={perf.tradingSymbolId}
+                                    className="flex items-center justify-between rounded-xl border border-gray-100 bg-[#F9FAFB] px-4 py-3 text-xs"
+                                  >
+                                    <div>
+                                      <span className="font-black text-gray-900">{perf.symbol}</span>
+                                      <p className="mt-0.5 text-[11px] text-gray-500">
+                                        체결 {perf.fillCount}회 · 비중 {formatDecimal(perf.turnoverSharePercent)}%
+                                      </p>
+                                    </div>
+                                    <span className={`font-black ${publicPnlColor(perf.economicPnl)}`}>
+                                      {formatSignedUsdt(perf.economicPnl)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
                           )}
                         </div>
-                      ) : publicContestSeasonsQuery.data?.participatingSeasons &&
-                        publicContestSeasonsQuery.data.participatingSeasons.length > 0 ? (
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                          {publicContestSeasonsQuery.data.participatingSeasons.map(item => (
-                            <div
-                              key={item.seasonId}
-                              className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-5"
-                            >
-                              <span className="text-xs font-bold text-[#0058FF]">
-                                {item.title}
-                              </span>
-                              <p className={`mt-2 text-2xl font-black ${publicPnlColor(item.roiPct)}`}>
-                                {formatContestSignedRoi(item.roiPct)}
-                              </p>
-                              <p className="mt-1 text-xs font-bold text-gray-600">
-                                순위 {item.rank ?? "-"}위 / {item.totalParticipants}명 · 평가자산{" "}
-                                {formatContestUsdt(item.totalEquity)}
-                              </p>
+                      ) : liveContestSeasons.length > 0 || pastContestSeasons.length > 0 ? (
+                        <div className="space-y-6">
+                          {liveContestSeasons.length > 0 && (
+                            <div className="space-y-3">
+                              <h3 className="text-xs font-black text-[#0058FF]">
+                                진행 중인 대회 시즌 ({liveContestSeasons.length})
+                              </h3>
+                              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                {liveContestSeasons.map(item => (
+                                  <div
+                                    key={`live-${item.seasonId}`}
+                                    className="rounded-2xl border border-blue-100 bg-blue-50/40 p-5"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-xs font-bold text-[#0058FF]">{item.title}</span>
+                                      <span className="rounded-full bg-[#0058FF] px-2 py-0.5 text-[10px] font-bold text-white">
+                                        실시간 LIVE
+                                      </span>
+                                    </div>
+                                    <p className={`mt-2 text-2xl font-black ${publicPnlColor(item.roiPct)}`}>
+                                      {formatContestSignedRoi(item.roiPct)}
+                                    </p>
+                                    <p className="mt-1 text-xs font-bold text-gray-600">
+                                      현재 {item.rank ?? "-"}위 / {item.totalParticipants}명 · 평가자산{" "}
+                                      {formatContestUsdt(item.totalEquity)}
+                                    </p>
+                                    {item.tradeCount !== undefined && (
+                                      <p className="mt-1 text-[11px] text-gray-500">
+                                        거래 {item.tradeCount}회 · 승률 {formatContestWinRate(item.winRate)}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          ))}
+                          )}
+
+                          {pastContestSeasons.length > 0 && (
+                            <div className="space-y-3">
+                              <h3 className="text-xs font-black text-gray-700">
+                                종료 · 정산 완료 시즌 ({pastContestSeasons.length})
+                              </h3>
+                              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                {pastContestSeasons.map(item => (
+                                  <div
+                                    key={`past-${item.seasonId}`}
+                                    className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-5"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-xs font-bold text-gray-800">{item.title}</span>
+                                      <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-bold text-gray-700">
+                                        최종 {item.rank ?? "-"}위
+                                      </span>
+                                    </div>
+                                    <p className={`mt-2 text-2xl font-black ${publicPnlColor(item.roiPct)}`}>
+                                      {formatContestSignedRoi(item.roiPct)}
+                                    </p>
+                                    <p className="mt-1 text-xs font-bold text-gray-600">
+                                      최종 {item.rank ?? "-"}위 / {item.totalParticipants}명 · 최종자산{" "}
+                                      {formatContestUsdt(item.totalEquity)}
+                                    </p>
+                                    {item.tradeCount !== undefined && (
+                                      <p className="mt-1 text-[11px] text-gray-500">
+                                        거래 {item.tradeCount}회 · 승률 {formatContestWinRate(item.winRate)}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div className="py-10 text-center text-xs font-bold text-gray-400">
@@ -846,7 +1024,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             ))
                           ) : (
                             <div className="py-8 text-center text-xs font-medium text-gray-500">
-                              커뮤니티에서 작성한 공개 게시글을 확인합니다.
+                              {memberPostsInfinite.isPending
+                                ? "작성한 게시글을 불러오는 중입니다."
+                                : "작성한 공개 게시글이 없습니다."}
                             </div>
                           )}
                         </div>
@@ -871,7 +1051,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             ))
                           ) : (
                             <div className="py-8 text-center text-xs font-medium text-gray-500">
-                              커뮤니티에서 작성한 공개 댓글을 확인합니다.
+                              {memberCommentsInfinite.isPending
+                                ? "작성한 댓글을 불러오는 중입니다."
+                                : "작성한 공개 댓글이 없습니다."}
                             </div>
                           )}
                         </div>
@@ -899,7 +1081,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             ))
                           ) : (
                             <div className="py-8 text-center text-xs font-medium text-gray-500">
-                              좋아요를 누른 게시글 목록을 확인합니다.
+                              {memberLikedPostsInfinite.isPending
+                                ? "좋아요한 게시글을 불러오는 중입니다."
+                                : "좋아요를 누른 게시글이 없습니다."}
                             </div>
                           )}
                         </div>
@@ -928,7 +1112,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             ))
                           ) : (
                             <div className="py-8 text-center text-xs font-medium text-gray-500">
-                              좋아요를 누른 댓글 목록을 확인합니다.
+                              {memberLikedCommentsInfinite.isPending
+                                ? "좋아요한 댓글을 불러오는 중입니다."
+                                : "좋아요를 누른 댓글이 없습니다."}
                             </div>
                           )}
                         </div>
@@ -968,7 +1154,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             ))
                           ) : (
                             <div className="py-8 text-center text-xs font-medium text-gray-500">
-                              내가 접수한 신고 내역 및 처리 상태를 확인합니다.
+                              내가 접수한 신고 내역이 없습니다.
                             </div>
                           )}
                         </div>

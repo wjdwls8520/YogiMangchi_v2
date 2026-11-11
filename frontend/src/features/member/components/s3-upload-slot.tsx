@@ -192,7 +192,13 @@ export function ProfileImageUploadSlot({
             readOnly
             className="myInput ym-file-display"
             aria-label="선택된 프로필 이미지 파일명"
-            value={activeSelected ? `${activeSelected.name} (${formatBytes(activeSelected.sizeBytes)})` : ""}
+            value={
+              activeSelected
+                ? `${activeSelected.name} (${formatBytes(activeSelected.sizeBytes)})`
+                : resetRequested
+                  ? "기본 프로필 이미지로 초기화 예정"
+                  : ""
+            }
             placeholder="프로필 이미지 선택 (JPG, PNG, WEBP, GIF · 최대 5MB)"
           />
           <label htmlFor={inputId} className="ym-file-trigger">
@@ -209,6 +215,15 @@ export function ProfileImageUploadSlot({
           {(activeSelected || (Boolean(currentImageUrl) && !resetRequested)) && (
             <button type="button" className="ym-file-reset" onClick={handleReset}>
               기본 이미지로 초기화
+            </button>
+          )}
+          {resetRequested && !activeSelected && (
+            <button
+              type="button"
+              className="ym-file-reset text-[#0058FF]"
+              onClick={() => onRequestReset?.(false)}
+            >
+              초기화 취소
             </button>
           )}
         </div>
