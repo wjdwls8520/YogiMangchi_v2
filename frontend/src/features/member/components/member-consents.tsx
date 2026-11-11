@@ -82,9 +82,9 @@ export function MemberConsents() {
       !policies.data ||
       !mine.data ||
       policies.isError ||
-      mine.isError ||
-      policies.isFetching ||
-      mine.isFetching
+      mine.isError
+
+
     )
       return;
     setError(null);
@@ -177,13 +177,13 @@ export function MemberConsents() {
                 bundle={policies.data}
                 selection={selection}
                 onChange={setSelection}
-                pending={pending || policies.isFetching || mine.isFetching}
+                pending={pending}
                 previous={mine.data}
               />
               <button
                 type="button"
                 className="member-primary inline-flex h-11 w-full items-center justify-center rounded-xl bg-[#0058FF] px-5 text-sm font-bold text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-                disabled={pending || policies.isFetching || mine.isFetching}
+                disabled={pending}
                 onClick={() => void accept()}
               >
                 {pending ? "동의 기록 중…" : "필수 정책에 동의하기"}

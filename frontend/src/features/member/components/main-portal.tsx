@@ -342,7 +342,7 @@ export function MainPortal({
     queryKey: ["portal-redis-market-overview", tradingBase],
     initialData: initialMarketOverview,
     staleTime: 3_000,
-    refetchInterval: 5_000,
+    refetchInterval: selectedNews !== null || thumbnailModalOpen ? false : 5_000,
     queryFn: async ({ signal }) => fetchRedisMarketOverview(tradingBase, signal),
   });
 
@@ -350,7 +350,7 @@ export function MainPortal({
     queryKey: ["portal-redis-tickers", tradingBase],
     initialData: initialTickers,
     staleTime: 2_000,
-    refetchInterval: 3_000,
+    refetchInterval: selectedNews !== null || thumbnailModalOpen ? false : 3_000,
     queryFn: async ({ signal }) => marketTickersJson(tradingBase, signal),
   });
 
