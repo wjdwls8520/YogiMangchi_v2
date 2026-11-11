@@ -18,6 +18,11 @@ import {
 import { tradingJson } from "../../trading/api/client";
 import { formatDecimal } from "../../trading/api/account";
 import {
+  formatExchangeCompactPct,
+  formatExchangePrice,
+  formatExchangeQuantity,
+} from "../api/exchange-format";
+import {
   fetchMyContestSeasons,
   fetchPublicMemberContestSeasons,
   formatContestSignedRoi,
@@ -782,8 +787,8 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
                               <h3 className="text-sm font-black text-gray-900">롱 / 숏 비율</h3>
                               <div className="mt-3 flex justify-between text-xs font-bold">
-                                <span className="text-red-500">LONG {formatDecimal(longRatioPct)}%</span>
-                                <span className="text-blue-600">SHORT {formatDecimal(shortRatioPct)}%</span>
+                                <span className="text-red-500">LONG {formatExchangeCompactPct(longRatioPct)}</span>
+                                <span className="text-blue-600">SHORT {formatExchangeCompactPct(shortRatioPct)}</span>
                               </div>
                               <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-gray-200">
                                 <div className="h-full bg-red-500" style={{ width: `${longRatioPct}%` }} />
@@ -850,9 +855,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                       >
                                         {pos.side}
                                       </td>
-                                      <td className="px-4 py-3 text-right">{pos.quantity}</td>
-                                      <td className="px-4 py-3 text-right">${formatDecimal(pos.entryPrice)}</td>
-                                      <td className="px-4 py-3 text-right">${formatDecimal(pos.markPrice)}</td>
+                                      <td className="px-4 py-3 text-right">{formatExchangeQuantity(pos.quantity, pos.symbol.replace(/USDT$/i, ""))}</td>
+                                      <td className="px-4 py-3 text-right">${formatExchangePrice(pos.entryPrice)}</td>
+                                      <td className="px-4 py-3 text-right">${formatExchangePrice(pos.markPrice)}</td>
                                       <td className={`px-4 py-3 text-right font-black ${publicPnlColor(pos.unrealizedPnl)}`}>
                                         {formatSignedUsdt(pos.unrealizedPnl)} (
                                         {formatSignedPct(pos.roePct)})

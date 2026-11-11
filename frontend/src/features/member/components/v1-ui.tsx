@@ -821,35 +821,35 @@ export function V1AssetSummaryCard({
       <div className="relative z-10 space-y-5">
         <div>
           <p className="mb-1 text-sm font-medium text-gray-400">총 보유 자산 (총 자산 추산)</p>
-          <h3 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
+          <h3 className="break-words text-2xl sm:text-3xl font-black tracking-tight text-white tabular-nums">
             {summary.totalAsset}
           </h3>
         </div>
 
         <div>
           <p className="mb-1 text-sm font-medium text-gray-400">가용 잔고 (보유 현금)</p>
-          <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-200">
+          <h3 className="break-words text-xl sm:text-2xl font-bold tracking-tight text-gray-200 tabular-nums">
             {summary.cashBalance}
           </h3>
         </div>
       </div>
 
-      <div className="relative z-10 mt-6 grid grid-cols-2 gap-y-4 border-t border-white/10 pt-5">
+      <div className="relative z-10 mt-6 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-white/10 pt-5 tabular-nums">
         <div className="text-left">
           <p className="mb-1 text-xs font-medium text-gray-400">사용 증거금 (총 매수금액)</p>
-          <p className="text-sm font-bold text-white">{summary.totalBuyAmount}</p>
+          <p className="break-words text-sm font-bold text-white">{summary.totalBuyAmount}</p>
         </div>
         <div className="text-right">
-          <p className="mb-1 text-xs font-medium text-gray-400">포지션 평가금액</p>
-          <p className="text-sm font-bold text-white">{summary.totalCoinValue}</p>
+          <p className="mb-1 text-xs font-medium text-gray-400">지갑 잔고 (확정 원장)</p>
+          <p className="break-words text-sm font-bold text-white">{summary.totalCoinValue}</p>
         </div>
         <div className="text-left">
           <p className="mb-1 text-xs font-medium text-gray-400">평가손익 (미실현/실현)</p>
-          <p className={cn("text-sm font-bold", valueColorClass)}>{summary.totalProfit}</p>
+          <p className={cn("break-words text-sm font-bold", valueColorClass)}>{summary.totalProfit}</p>
         </div>
         <div className="text-right">
           <p className="mb-1 text-xs font-medium text-gray-400">수익률 (ROE)</p>
-          <p className={cn("text-sm font-bold", valueColorClass)}>{summary.totalRoi}</p>
+          <p className={cn("break-words text-sm font-bold", valueColorClass)}>{summary.totalRoi}</p>
         </div>
       </div>
 

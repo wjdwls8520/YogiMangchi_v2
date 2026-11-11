@@ -727,7 +727,8 @@ export function formatContestUsdt(raw: string, ensureTwoDecimals = true): string
 }
 
 export function formatContestSeedPlain(raw: string): string {
-  return formatDecimalThousands(raw, false);
+  const formatted = formatDecimalThousands(raw, false);
+  return formatted.includes(".") ? formatted.replace(/\.?0+$/, "") || "0" : formatted;
 }
 
 export function formatContestSignedUsdt(raw: string): string {
@@ -737,9 +738,9 @@ export function formatContestSignedUsdt(raw: string): string {
   }
   const formatted = formatDecimalThousands(cleaned, true);
   if (formatted.startsWith("-") || formatted.startsWith("+")) {
-    return `${formatted} USDT`;
+    return /[1-9]/.test(formatted) ? `${formatted} USDT` : "0.00 USDT";
   }
-  return `+${formatted} USDT`;
+  return /[1-9]/.test(formatted) ? `+${formatted} USDT` : "0.00 USDT";
 }
 
 export function formatContestSignedRoi(raw: string): string {
@@ -749,9 +750,9 @@ export function formatContestSignedRoi(raw: string): string {
   }
   const formatted = formatDecimalThousands(cleaned, true);
   if (formatted.startsWith("-") || formatted.startsWith("+")) {
-    return `${formatted}%`;
+    return /[1-9]/.test(formatted) ? `${formatted}%` : "0.00%";
   }
-  return `+${formatted}%`;
+  return /[1-9]/.test(formatted) ? `+${formatted}%` : "0.00%";
 }
 
 export function formatContestWinRate(raw: string | number | null | undefined): string {

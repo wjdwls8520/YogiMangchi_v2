@@ -36,6 +36,17 @@ import {
   type MemberCommunityReportItem,
 } from "../api/community-news";
 import {
+  formatExchangeCompactPct,
+  formatExchangeFeeUsdt,
+  formatExchangePct,
+  formatExchangePrice,
+  formatExchangeQuantity,
+  formatExchangeSeedUsdt,
+  formatExchangeSignedPct,
+  formatExchangeSignedUsdt,
+  formatExchangeUsdt,
+} from "../api/exchange-format";
+import {
   V1AssetSummaryCard,
   V1Button,
   V1FolderTabs,
@@ -178,7 +189,7 @@ function symbolNameKr(symbol: string): string {
 function resolveRowSymbol(
   row: Record<string, unknown>,
   symbolById: ReadonlyMap<number, TradingSymbol>,
-): { base: string; pair: string; nameKr: string; fullNameKr: string } {
+): { base: string; pair: string; nameKr: string; fullNameKr: string; tickSize?: string } {
   const symId = typeof row.tradingSymbolId === "number" ? row.tradingSymbolId : undefined;
   const found = symId !== undefined ? symbolById.get(symId) : undefined;
   if (found) {
@@ -187,7 +198,7 @@ function resolveRowSymbol(
     const pair = `${base}${quote}`;
     const fullNameKr = SYMBOL_NAME_KR[pair] ?? `${found.name} 무기한`;
     const nameKr = found.name || fullNameKr.replace(" 무기한", "");
-    return { base, pair, nameKr, fullNameKr };
+    return { base, pair, nameKr, fullNameKr, tickSize: found.priceTickSize };
   }
   const rawSym =
     typeof row.symbol === "string" && row.symbol.trim()
@@ -215,19 +226,19 @@ function formatActionSideLabel(sideRaw: string, actionRaw: string): {
 
 function formatSignedUsdt(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed.startsWith("-")) return `${trimmed} USDT`;
-  if (trimmed.startsWith("+")) return `${trimmed} USDT`;
+  if (trimmed.startsWith("-")) return formatExchangeSignedUsdt(trimmed);
+  if (trimmed.startsWith("+")) return formatExchangeSignedUsdt(trimmed);
   if (!/[1-9]/.test(trimmed)) return "0.00 USDT";
-  return `+${trimmed} USDT`;
+  return formatExchangeSignedUsdt(trimmed);
 }
 
 function formatSignedPct(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith("-") || trimmed.startsWith("+")) {
-    return trimmed.endsWith("%") ? trimmed : `${trimmed}%`;
+    return formatExchangeSignedPct(trimmed);
   }
   if (!/[1-9]/.test(trimmed)) return "0.00%";
-  return `+${trimmed.endsWith("%") ? trimmed : `${trimmed}%`}`;
+  return formatExchangeSignedPct(trimmed);
 }
 
 function isNonNegativeDecimal(raw: string): boolean {
@@ -616,15 +627,16 @@ export function MemberMyProfilePage({
             nameKr: symbolNameKr(pos.symbol),
             side: pos.side,
             leverage: pos.leverage,
-            quantity: `${pos.quantity} ${pos.symbol.replace(/USDT$/i, "")}`,
-            entryPrice: pos.entryPrice,
-            markPrice: pos.markPrice,
-            liqPrice: pos.liquidationPrice || "-",
-            margin: `${pos.margin} USDT`,
+            quantity: formatExchangeQuantity(pos.quantity, pos.symbol.replace(/USDT$/i, "")),
+            entryPrice: formatExchangePrice(pos.entryPrice),
+            markPrice: formatExchangePrice(pos.markPrice),
+            liqPrice: pos.liquidationPrice ? formatExchangePrice(pos.liquidationPrice) : "-",
+            margin: formatExchangeUsdt(pos.margin),
             pnl: formatSignedUsdt(pos.unrealizedPnl),
             roe: formatSignedPct(pos.roePct),
             isPositive: isNonNegativeDecimal(pos.unrealizedPnl),
-            marginRatio: Math.max(0, Math.min(100, Math.round(Number(pos.marginRatioPct) || 0))),
+            marginRatio: Math.max(0, Math.min(100, Number(pos.marginRatioPct) || 0)),
+            marginRatioLabel: formatExchangePct(pos.marginRatioPct, 2),
             color: POSITION_COLORS[idx % POSITION_COLORS.length],
           }))
         : [],
@@ -652,29 +664,29 @@ export function MemberMyProfilePage({
   }, [displayPositions]);
 
   const usedMarginRatioDisplay = livePortfolio
-    ? `${livePortfolio.allocation.usedMarginRatioPct}%`
+    ? formatExchangePct(livePortfolio.allocation.usedMarginRatioPct, 2)
     : "0.0%";
   const availableCashRatioDisplay = livePortfolio
-    ? `${livePortfolio.allocation.availableCashRatioPct}%`
+    ? formatExchangePct(livePortfolio.allocation.availableCashRatioPct, 2)
     : "100.0%";
-  const longRatioDisplay = livePortfolio ? livePortfolio.allocation.longRatioPct : "0";
-  const shortRatioDisplay = livePortfolio ? livePortfolio.allocation.shortRatioPct : "0";
+  const longRatioDisplay = livePortfolio ? formatExchangeCompactPct(livePortfolio.allocation.longRatioPct).replace(/%$/, "") : "0";
+  const shortRatioDisplay = livePortfolio ? formatExchangeCompactPct(livePortfolio.allocation.shortRatioPct).replace(/%$/, "") : "0";
   const longMarginDisplay = livePortfolio
-    ? `${livePortfolio.allocation.longMarginUsdt} USDT`
+    ? formatExchangeUsdt(livePortfolio.allocation.longMarginUsdt)
     : "0.00 USDT";
   const shortMarginDisplay = livePortfolio
-    ? `${livePortfolio.allocation.shortMarginUsdt} USDT`
+    ? formatExchangeUsdt(livePortfolio.allocation.shortMarginUsdt)
     : "0.00 USDT";
   const longCountDisplay = livePortfolio ? livePortfolio.allocation.longPositionCount : 0;
   const shortCountDisplay = livePortfolio ? livePortfolio.allocation.shortPositionCount : 0;
   const usedMarginTotalDisplay = livePortfolio
-    ? `${livePortfolio.wallet.usedMargin} USDT`
+    ? formatExchangeUsdt(livePortfolio.wallet.usedMargin)
     : "0.00 USDT";
   const availableBalanceDisplay = livePortfolio
-    ? `${livePortfolio.wallet.availableBalance} USDT`
+    ? formatExchangeUsdt(livePortfolio.wallet.availableBalance)
     : "0.00 USDT";
   const winRateDisplay = livePortfolio
-    ? `${livePortfolio.closedTradeSummary.winRatePct}% (${livePortfolio.closedTradeSummary.winCount}승 ${livePortfolio.closedTradeSummary.lossCount}패)`
+    ? `${formatExchangePct(livePortfolio.closedTradeSummary.winRatePct, 2)} (${livePortfolio.closedTradeSummary.winCount}승 ${livePortfolio.closedTradeSummary.lossCount}패)`
     : "0.0% (0승 0패)";
   const avgLeverageDisplay =
     displayPositions.length > 0
@@ -686,10 +698,10 @@ export function MemberMyProfilePage({
   const assetSummary = livePortfolio
     ? {
         title: "모의투자 선물 지갑",
-        totalAsset: `${livePortfolio.wallet.totalEquity} USDT`,
-        cashBalance: `${livePortfolio.wallet.availableBalance} USDT`,
-        totalBuyAmount: `${livePortfolio.wallet.usedMargin} USDT`,
-        totalCoinValue: `${livePortfolio.wallet.balance} USDT`,
+        totalAsset: formatExchangeUsdt(livePortfolio.wallet.totalEquity),
+        cashBalance: formatExchangeUsdt(livePortfolio.wallet.availableBalance),
+        totalBuyAmount: formatExchangeUsdt(livePortfolio.wallet.usedMargin),
+        totalCoinValue: formatExchangeUsdt(livePortfolio.wallet.balance),
         totalProfit: formatSignedUsdt(livePortfolio.wallet.totalPnl),
         totalRoi: formatSignedPct(livePortfolio.wallet.totalRoiPct),
         isPositive:
@@ -753,10 +765,10 @@ export function MemberMyProfilePage({
         orderStatus: normalizedStatus,
         reason: typeof row.reason === "string" ? row.reason : null,
         orderPrice:
-          typeRaw === "MARKET" ? "시장가" : `${String(row.limitPrice ?? row.price ?? "0")} USDT`,
-        orderQuantity: `${String(row.quantity ?? "0")} ${sym.base}`,
-        filledQuantity: `${String(filledQtyRaw ?? "0")} ${sym.base}`,
-        avgFilledPrice: avgPriceRaw ? `${String(avgPriceRaw)} USDT` : "-",
+          typeRaw === "MARKET" ? "시장가" : `${formatExchangePrice(String(row.limitPrice ?? row.price ?? "0"), sym.tickSize)} USDT`,
+        orderQuantity: formatExchangeQuantity(String(row.quantity ?? "0"), sym.base),
+        filledQuantity: formatExchangeQuantity(String(filledQtyRaw ?? "0"), sym.base),
+        avgFilledPrice: avgPriceRaw ? `${formatExchangePrice(String(avgPriceRaw), sym.tickSize)} USDT` : "-",
       };
     });
   }, [ownerOrdersQuery.data, symbolById]);
@@ -801,8 +813,8 @@ export function MemberMyProfilePage({
         sideLabel,
         orderType: String(row.type ?? "LIMIT"),
         orderStatus: "PENDING",
-        orderPrice: `${String(row.limitPrice ?? row.price ?? "0")} USDT`,
-        orderQuantity: `${String(row.quantity ?? "0")} ${sym.base}`,
+        orderPrice: `${formatExchangePrice(String(row.limitPrice ?? row.price ?? "0"), sym.tickSize)} USDT`,
+        orderQuantity: formatExchangeQuantity(String(row.quantity ?? "0"), sym.base),
         filledQuantity: `0 ${sym.base}`,
         avgFilledPrice: "-",
       };
@@ -832,9 +844,9 @@ export function MemberMyProfilePage({
         side: String(row.side ?? "LONG"),
         status: statusRaw,
         leverage: typeof row.leverage === "number" ? row.leverage : 1,
-        entryPrice: String(row.entryPrice ?? "0"),
-        exitPrice: String(row.exitPrice ?? row.closePrice ?? "0"),
-        quantity: `${qtyRaw} ${sym.base}`,
+        entryPrice: formatExchangePrice(String(row.entryPrice ?? "0"), sym.tickSize),
+        exitPrice: formatExchangePrice(String(row.exitPrice ?? row.closePrice ?? "0"), sym.tickSize),
+        quantity: formatExchangeQuantity(qtyRaw, sym.base),
         realizedPnl: formatSignedUsdt(netPnl),
         roe: formatSignedPct(roeRaw),
         isPositive: isNonNegativeDecimal(netPnl),
@@ -863,10 +875,10 @@ export function MemberMyProfilePage({
         nameKr: sym.nameKr,
         side: isBuy ? "BUY" : "SELL",
         sideLabel,
-        price: `${priceRaw} USDT`,
-        quantity: `${qtyRaw} ${sym.base}`,
-        totalAmount: `${notionalStr} USDT`,
-        fee: `${String(row.fee ?? "0")} USDT`,
+        price: `${formatExchangePrice(priceRaw, sym.tickSize)} USDT`,
+        quantity: formatExchangeQuantity(qtyRaw, sym.base),
+        totalAmount: formatExchangeUsdt(notionalStr),
+        fee: formatExchangeFeeUsdt(String(row.fee ?? "0")),
         realizedProfit: formatSignedUsdt(pnlRaw),
       };
     });
@@ -977,7 +989,7 @@ export function MemberMyProfilePage({
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-gray-400">
                     {livePortfolio && livePortfolio.roundNumber > 0
-                      ? `${livePortfolio.roundNumber}회차 시드머니: ${livePortfolio.initialSeed} USDT`
+                      ? `${livePortfolio.roundNumber}회차 시드머니: ${formatExchangeSeedUsdt(livePortfolio.initialSeed)}`
                       : "시드머니: 10,000 USDT"}
                   </span>
                   <Link href="/trading" className="font-bold text-blue-400 hover:underline">
@@ -1079,7 +1091,7 @@ export function MemberMyProfilePage({
                                 />
                                 {pos.symbol} ({pos.side})
                               </span>
-                              <span className="font-black text-gray-900">{pos.marginRatio}%</span>
+                              <span className="font-black text-gray-900 tabular-nums">{pos.marginRatioLabel}</span>
                             </li>
                           ))}
                           <li className="flex items-center justify-between border-t border-gray-200 pt-1.5">
@@ -1123,7 +1135,7 @@ export function MemberMyProfilePage({
                           />
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 text-xs">
+                      <div className="grid grid-cols-2 gap-3 border-t border-gray-200 pt-3 text-xs tabular-nums">
                         <div>
                           <span className="text-gray-400">사용 증거금 합계</span>
                           <p className="font-black text-gray-900">{usedMarginTotalDisplay}</p>
@@ -1865,7 +1877,7 @@ export function MemberMyProfilePage({
                                   />
                                   {pos.symbol} ({pos.side})
                                 </span>
-                                <span className="font-black text-gray-900">{pos.marginRatio}%</span>
+                                <span className="font-black text-gray-900 tabular-nums">{pos.marginRatioLabel}</span>
                               </li>
                             ))}
                             <li className="flex items-center justify-between border-t border-gray-200 pt-1.5">
@@ -1913,7 +1925,7 @@ export function MemberMyProfilePage({
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 text-xs">
+                        <div className="grid grid-cols-2 gap-3 border-t border-gray-200 pt-3 text-xs tabular-nums">
                           <div>
                             <span className="text-gray-400">평균 레버리지</span>
                             <p className="font-black text-gray-900">{avgLeverageDisplay}</p>
@@ -2021,7 +2033,7 @@ export function MemberMyProfilePage({
                                 <div className="flex items-center justify-between">
                                   <span className="font-black text-gray-900">{perf.symbol}</span>
                                   <span className="text-[11px] font-bold text-gray-400">
-                                    체결 {perf.fillCount}회 · 비중 {perf.turnoverSharePercent}%
+                                    체결 {perf.fillCount}회 · 비중 {formatExchangePct(perf.turnoverSharePercent, 2)}
                                   </span>
                                 </div>
                                 <p className={`mt-1.5 text-sm font-black ${pnlColorText(netStr)}`}>
