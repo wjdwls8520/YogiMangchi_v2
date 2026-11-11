@@ -113,6 +113,20 @@ class PublicPortfolioAndLedgerFilterIntegrationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.memberId").value(withdrawnMemberId))
                 .andExpect(jsonPath("$.accountExists").value(false));
+
+        // Bankrupt member mock account -> public portfolio still returns accountExists = true with 0 balance and -100% ROI
+        long bankruptMemberId = MEMBERS.incrementAndGet();
+        long bankruptAccountId = members.open(bankruptMemberId).accountId();
+        jdbc.update("update trading.wallet set balance = 0, realized_pnl = -10000 where account_id = ?", bankruptAccountId);
+        jdbc.update("update trading.trading_account set status = 'BANKRUPT' where id = ?", bankruptAccountId);
+
+        mvc.perform(get("/api/v1/trading/portfolios/members/" + bankruptMemberId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.memberId").value(bankruptMemberId))
+                .andExpect(jsonPath("$.accountExists").value(true))
+                .andExpect(jsonPath("$.wallet.balance").value("0"))
+                .andExpect(jsonPath("$.wallet.totalEquity").value("0"))
+                .andExpect(jsonPath("$.wallet.totalRoiPct").value("-100"));
     }
 
     @Test

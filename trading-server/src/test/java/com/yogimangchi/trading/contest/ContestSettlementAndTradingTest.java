@@ -81,6 +81,7 @@ class ContestSettlementAndTradingTest {
     @Autowired private LedgerReconciler reconciler;
     @Autowired private com.yogimangchi.trading.tradingaccount.security.TradingCredentials tradingCredentials;
     @Autowired private com.yogimangchi.trading.tradingaccount.service.MemberWithdrawal memberWithdrawal;
+    @Autowired private com.yogimangchi.trading.execution.trigger.AccountTriggerService accountTriggerService;
     @MockitoBean private TradingEngineGate gate;
 
     private long btc;
@@ -643,7 +644,104 @@ class ContestSettlementAndTradingTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.activeSeason").doesNotExist())
                 .andExpect(jsonPath("$.participatingSeasons.length()").value(0))
-                .andExpect(jsonPath("$.pastSeasons.length()").value(1));
+                .andExpect(jsonPath("$.pastSeasons.length()").value(1))
+                .andExpect(jsonPath("$.pastSeasons[0].rank").value(1))
+                .andExpect(jsonPath("$.pastSeasons[0].totalParticipants").value(1));
+
+        // Withdrawn member is excluded from settled leaderboard and public contest history
+        mvc.perform(get("/api/v1/trading/contest/public/seasons/" + seasonId + "/leaderboard"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].memberId").value(memberId));
+
+        mvc.perform(get("/api/v1/trading/contest/public/members/" + withdrawMemberId + "/seasons"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activeSeason").doesNotExist())
+                .andExpect(jsonPath("$.participatingSeasons.length()").value(0))
+                .andExpect(jsonPath("$.pastSeasons.length()").value(0));
+    }
+
+    @Test
+    void cancelApplicationNicknameSyncWithdrawalPendingGuardAndPostEndTriggerBlockWorkEndToEnd() throws Exception {
+        long adminId = MEMBERS.incrementAndGet();
+        long memberId = MEMBERS.incrementAndGet();
+        long pendingWithdrawMemberId = MEMBERS.incrementAndGet();
+        String adminBearer = "Bearer " + adminToken(adminId);
+        String memberBearer = "Bearer " + memberToken(memberId);
+        String pendingWithdrawBearer = "Bearer " + memberToken(pendingWithdrawMemberId);
+
+        Instant now = Instant.now();
+        long seasonId = createSeasonViaAdmin(adminBearer, "신청취소·닉네임동기화·종료후트리거차단 시즌", "10000",
+                now.minusSeconds(3600), now.plusSeconds(3600), now.minusSeconds(600), now.plusSeconds(3600));
+
+        // 1. Voluntary cancel application -> CANCELED, removed from pending, does not pollute rejected, can re-apply
+        applyForSeason(memberBearer, seasonId, "초기닉네임");
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/v1/trading/contest/seasons/" + seasonId + "/applications")
+                        .header("Authorization", memberBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELED"));
+
+        mvc.perform(get("/api/v1/trading/contest/me/overview").header("Authorization", memberBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pendingApplications.length()").value(0))
+                .andExpect(jsonPath("$.rejectedApplications.length()").value(0))
+                .andExpect(jsonPath("$.recruitingSeasons[?(@.season.id==" + seasonId + ")].applied").value(false));
+
+        long reappliedAppId = applyForSeason(memberBearer, seasonId, "재신청닉네임");
+
+        // 2. Member applies, then withdraws BEFORE admin approval -> pending app auto-canceled & admin approve blocked
+        long withdrawPendingAppId = applyForSeason(pendingWithdrawBearer, seasonId, "탈퇴예정신청자");
+        memberWithdrawal.withdraw(pendingWithdrawMemberId);
+
+        assertThat(jdbc.queryForObject("select status from trading.contest_application where id=?", String.class, withdrawPendingAppId))
+                .isEqualTo("CANCELED");
+        assertThat(jdbc.queryForObject("select nickname from trading.contest_application where id=?", String.class, withdrawPendingAppId))
+                .isEqualTo("탈퇴한회원");
+
+        mvc.perform(post("/api/v1/trading/admin/contest/seasons/" + seasonId + "/applicants/" + withdrawPendingAppId + "/approve")
+                        .header("Authorization", adminBearer))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONTEST_APPLICATION_ALREADY_PROCESSED"));
+
+        // Bulk approve only approves the remaining active applicant
+        mvc.perform(post("/api/v1/trading/admin/contest/seasons/" + seasonId + "/applicants/bulk-approve")
+                        .header("Authorization", adminBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].memberId").value(memberId));
+        assertThat(reappliedAppId).isPositive();
+
+        // 3. Nickname sync updates contest_participant + contest_application and evicts leaderboard cache
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/trading/contest/account/nickname")
+                        .header("Authorization", memberBearer)
+                        .contentType("application/json")
+                        .content("{\"nickname\":\"변경된실전닉네임\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nickname").value("변경된실전닉네임"));
+
+        mvc.perform(get("/api/v1/trading/contest/public/seasons/" + seasonId + "/leaderboard"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].nickname").value("변경된실전닉네임"));
+
+        // 4. Post-contestEndAt trigger guard: pending LIMIT order must NOT fill after contest_end_at passes!
+        Long contestAccountId = jdbc.queryForObject(
+                "select account_id from trading.contest_participant where contest_season_id=? and member_id=?",
+                Long.class, seasonId, memberId);
+        LegacyLeverageFixtures.bothDirections(jdbc, contestAccountId, btc);
+        placeOrder(memberBearer, seasonId, "LIMIT", btc, "LONG", "0.5", 10, "900");
+
+        jdbc.update("update trading.contest_season set contest_end_at = now() - interval '5 seconds' where id = ?", seasonId);
+        mark(btc, "850");
+        LatestMarkPrice postEndTick = prices.find(btc).latestPrice().orElseThrow();
+        accountTriggerService.process(contestAccountId, postEndTick, Map.of(btc, postEndTick));
+
+        // Order remains PENDING (not filled after contest end) so settlement cancels it cleanly
+        assertThat(jdbc.queryForObject("select count(*) from trading.trading_order where account_id=? and status='PENDING'", Long.class, contestAccountId))
+                .isEqualTo(1L);
+        assertThat(jdbc.queryForObject("select count(*) from trading.position where account_id=? and status='OPEN'", Long.class, contestAccountId))
+                .isZero();
     }
 
     private long createSeasonViaAdmin(

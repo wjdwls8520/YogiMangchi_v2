@@ -333,8 +333,10 @@ public class ContestSettlementChunkExecutor {
         var rows = jdbc.queryForList("""
                 SELECT cp.id, cp.account_id, cp.seed_money, w.balance, w.realized_pnl
                 FROM trading.contest_participant cp
+                JOIN trading.trading_account a ON a.id = cp.account_id
                 JOIN trading.wallet w ON w.account_id = cp.account_id
                 WHERE cp.contest_season_id = ?
+                  AND a.status <> 'WITHDRAWN'
                 ORDER BY cp.id ASC
                 """, seasonId);
 

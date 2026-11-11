@@ -47,13 +47,16 @@ public class AccountTriggerService {
     private final HedgePositions hedge;
     private final SymbolLeverageService leverage;
     private final TradingEvents events;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     public AccountTriggerService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols,
-            IsolatedMargin isolated, IsolatedCutover cutover, LatestPriceStore livePrices, HedgePositions hedge, SymbolLeverageService leverage, TradingEvents events) {
+            IsolatedMargin isolated, IsolatedCutover cutover, LatestPriceStore livePrices, HedgePositions hedge, SymbolLeverageService leverage, TradingEvents events,
+            org.springframework.jdbc.core.JdbcTemplate jdbc) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.isolated=isolated; this.cutover=cutover; this.livePrices=livePrices;
         this.hedge=hedge; this.leverage=leverage;
         this.events=events;
+        this.jdbc=jdbc;
     }
 
     /** No Redis I/O here. Replay and live execution share the same account lock and atomic financial transaction. */
@@ -73,13 +76,29 @@ public class AccountTriggerService {
     private Exposure load(Long accountId) {
         var account=locks.lockIncludingWithdrawn(accountId);
         if(account.getStatus()!=TradingAccount.Status.ACTIVE)return new Exposure(account,null,List.of(),Map.of(),List.of());
+        if(account.getContestSeasonId()!=null && !isContestSeasonLive(account.getContestSeasonId()))
+            return new Exposure(account,null,List.of(),Map.of(),List.of());
         var open=new ArrayList<>(positions.findByAccountIdAndStatusOrderByIdAsc(accountId,Position.Status.OPEN));
         var byId=new HashMap<Long,Position>();open.forEach(p->byId.put(p.getId(),p));
         return new Exposure(account,wallets.findById(accountId).orElseThrow(),open,byId,orders.findByAccountIdAndStatusOrderByIdAsc(accountId,TradingOrder.Status.PENDING));
     }
+    private boolean isContestSeasonLive(Long seasonId) {
+        java.time.OffsetDateTime tsNow=Instant.now().atOffset(java.time.ZoneOffset.UTC);
+        Boolean live=jdbc.queryForObject("""
+                SELECT EXISTS(
+                    SELECT 1 FROM trading.contest_season
+                    WHERE id = ?
+                      AND is_canceled = false
+                      AND settled_at IS NULL
+                      AND contest_start_at <= ?
+                      AND contest_end_at >= ?
+                )
+                """,Boolean.class,seasonId,tsNow,tsNow);
+        return Boolean.TRUE.equals(live);
+    }
     private void processAccount(Exposure state,LatestMarkPrice tick,Map<Long,LatestMarkPrice> book,boolean recorded) {
         var account=state.account();
-        if(account.getStatus()!=TradingAccount.Status.ACTIVE)return;
+        if(account.getStatus()!=TradingAccount.Status.ACTIVE || state.wallet()==null)return;
         Long accountId=account.getId();var wallet=state.wallet();var open=state.open();var byId=state.byId();var pending=state.pending();
         Set<Long> required = new HashSet<>(Set.of(tick.tradingSymbolId()));
         open.forEach(p -> required.add(p.getTradingSymbolId()));
