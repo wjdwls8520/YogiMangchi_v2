@@ -65,8 +65,19 @@ public class MemberProfiles {
         if(reqMessage != null && (reqMessage.length() > 255 || reqMessage.indexOf('\0') >= 0)) {
             throw invalid();
         }
+        CommunityS3Service.UploadResult uploaded = null;
         if(hasNewImage) {
             s3.validateImageFile(profileImage);
+            var previewMember = members.findById(memberId)
+                    .filter(m -> m.getStatus() == Member.Status.ACTIVE)
+                    .orElseThrow(AuthFailure::unauthorized);
+            if(reqNickname != null && !reqNickname.equals(previewMember.getNickname()) && members.existsByNickname(reqNickname)) {
+                throw new AuthFailure("NICKNAME_UNAVAILABLE",HttpStatus.CONFLICT);
+            }
+            if(reqMessage == null && previewMember.getProfileMessage().length() > 255) {
+                throw new AuthFailure("PROFILE_MESSAGE_UPDATE_REQUIRED",HttpStatus.CONFLICT);
+            }
+            uploaded = s3.validateAndUploadProfileImage(profileImage);
         }
 
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
@@ -84,8 +95,7 @@ public class MemberProfiles {
         member.changeBasicProfile(reqNickname,message);
 
         String oldS3Key = member.getProfileImgS3Key();
-        if(hasNewImage) {
-            CommunityS3Service.UploadResult uploaded = s3.validateAndUploadProfileImage(profileImage);
+        if(uploaded != null) {
             member.changeProfileImage(uploaded.url(),uploaded.key());
             if(oldS3Key != null && !oldS3Key.isBlank() && !oldS3Key.equals(uploaded.key())) {
                 s3.registerAfterCommitDelete(List.of(oldS3Key),"PROFILE_IMAGE_REPLACED");
