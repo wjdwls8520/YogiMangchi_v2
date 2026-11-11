@@ -47,6 +47,12 @@ springdoc:
     enabled: true
 
 marketdata:
+  clock:
+    skew-check-enabled: ${MARKET_CLOCK_SKEW_CHECK_ENABLED:false}
+    warning-threshold: ${MARKET_CLOCK_WARNING_THRESHOLD:12h}
+    degraded-threshold: ${MARKET_CLOCK_DEGRADED_THRESHOLD:48h}
+    reject-threshold: ${MARKET_CLOCK_REJECT_THRESHOLD:365d}
+    max-receipt-future: ${MARKET_CLOCK_MAX_RECEIPT_FUTURE:5m}
   websocket:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
   overview:

@@ -214,4 +214,27 @@ class RedisMarketDataBridgeTests {
     private LatestMarkPrice price(String amount, Instant time) {
         return new LatestMarkPrice(11L, new BigDecimal(amount), time, time);
     }
+
+    @Test
+    void unattendedPolicyPublishesAndReadsFreshSnapshotDespiteMultiDayProviderClockDrift() throws Exception {
+        var unattendedFanout = new MarketDataFanout();
+        var unattendedBridge = new RedisMarketDataBridge(
+                connections, mapper, unattendedFanout, MarkPriceTimePolicy.UNATTENDED);
+        try {
+            unattendedBridge.start();
+            await().atMost(Duration.ofSeconds(10))
+                    .until(() -> unattendedBridge.health().state() == RedisMarketDataBridge.State.HEALTHY);
+            Instant now = Instant.now();
+            var driftedPrice = new LatestMarkPrice(
+                    77L, new BigDecimal("94280.50"), now.minus(Duration.ofDays(45)), now);
+            unattendedBridge.accept(MarketDataEvent.price(driftedPrice));
+            await().atMost(Duration.ofSeconds(3))
+                    .until(() -> unattendedBridge.readSharedSnapshot(77L).status() == LatestPriceStore.Status.FRESH);
+            assertThat(unattendedBridge.readSharedSnapshot(77L).latestPrice()).contains(driftedPrice);
+            assertThat(unattendedBridge.health().gapSequence()).isZero();
+        } finally {
+            unattendedBridge.close();
+            unattendedFanout.close();
+        }
+    }
 }
