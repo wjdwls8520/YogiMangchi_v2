@@ -32,7 +32,7 @@ import {
   type CommunitySort,
   type SharedPositionSnapshot,
 } from "../api/community-news";
-import { tradingJson } from "../../trading/api/client";
+import { marketSymbolsJson, tradingJson } from "../../trading/api/client";
 import { formatDecimal, parseSummary } from "../../trading/api/account";
 import { parseSymbols } from "../../trading/market/catalog";
 import {
@@ -74,6 +74,8 @@ export const V1_REPORT_REASONS: readonly CommunityReportReason[] = [
   { code: "ABUSE", description: "욕설/생명경시/혐오/차별적 표현입니다." },
   { code: "PRIVACY", description: "개인정보 노출 게시물입니다." },
   { code: "INAPPROPRIATE", description: "불쾌한 표현이 있습니다." },
+  { code: "FRAUD", description: "사기·투자 유도·금전 요구 게시물입니다." },
+  { code: "ETC", description: "기타 운영정책 위반 게시물입니다." },
 ] as const;
 
 const SELECTABLE_CATEGORIES: readonly CommunityCategory[] = [
@@ -324,6 +326,7 @@ export function CommunityBoard({
   initialPage,
   initialComments,
   initialV1Tab = "all",
+  initialCategory = "",
   highlightPostId,
   initialPendingNewPostsCount = 0,
   initialContestSeasons = null,
@@ -333,6 +336,7 @@ export function CommunityBoard({
   initialPage?: CommunityPostPage;
   initialComments?: Record<number, CommunityComment[]>;
   initialV1Tab?: "all" | "best" | "latest";
+  initialCategory?: "" | CommunityCategory;
   highlightPostId?: number;
   initialPendingNewPostsCount?: number;
   initialContestSeasons?: PublicSeasonsOverviewResponse | null;
@@ -344,7 +348,7 @@ export function CommunityBoard({
 
   const [v1Tab, setV1Tab] = useState<"all" | "best" | "latest">(initialV1Tab);
   const [sort, setSort] = useState<CommunitySort>(initialV1Tab === "best" ? "POPULAR" : "LATEST");
-  const [category, setCategory] = useState<"" | CommunityCategory>("");
+  const [category, setCategory] = useState<"" | CommunityCategory>(initialCategory);
   const [symbolTag, setSymbolTag] = useState<string>("");
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -463,7 +467,7 @@ export function CommunityBoard({
           item => item.displayStatus === "LIVE",
         );
         if (liveSeasons.length > 0) {
-          const symbols = parseSymbols(await tradingJson(tradingBase, "symbols", { signal }));
+          const symbols = parseSymbols(await marketSymbolsJson(tradingBase, signal));
           for (const season of liveSeasons) {
             try {
               const rawSummary = (await session.authorized(cred =>
@@ -919,6 +923,13 @@ export function CommunityBoard({
       );
     },
     onSuccess: result => {
+      setLatestCheckedItems(prev =>
+        prev.map(p =>
+          p.id === result.postId
+            ? { ...p, likeCount: result.likeCount, likedByMe: result.likedByMe }
+            : p,
+        ),
+      );
       setPrependedPosts(prev =>
         prev.map(p =>
           p.id === result.postId
@@ -1547,7 +1558,7 @@ export function CommunityBoard({
             <V1Button
               variant={isLoggedIn ? "blue" : "gray"}
               size="sm"
-              disabled={!isLoggedIn}
+              aria-disabled={!isLoggedIn}
               className={
                 !isLoggedIn
                   ? "border-gray-200 bg-gray-200 text-gray-400 cursor-default hover:bg-gray-200 disabled:opacity-100"
@@ -1563,7 +1574,7 @@ export function CommunityBoard({
             </V1Button>
             <button
               type="button"
-              disabled={!isLoggedIn}
+              aria-disabled={!isLoggedIn}
               onClick={() => {
                 if (!requireReadyMember()) return;
                 const defaultPos = liveShareablePositions[0] ?? null;
@@ -1853,7 +1864,7 @@ export function CommunityBoard({
                         ) : (
                           <button
                             type="button"
-                            disabled={!isLoggedIn}
+                            aria-disabled={!isLoggedIn}
                             className={
                               isLoggedIn
                                 ? "rounded-lg px-2.5 py-1 text-xs font-bold text-gray-400 hover:bg-gray-100 hover:text-red-500 cursor-pointer"
@@ -2074,7 +2085,7 @@ export function CommunityBoard({
                       <div className="flex items-center gap-3">
                         <button
                           type="button"
-                          disabled={!isLoggedIn}
+                          aria-disabled={!isLoggedIn}
                           className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
                             !isLoggedIn
                               ? "bg-gray-200 text-gray-400 cursor-default"
@@ -2159,7 +2170,7 @@ export function CommunityBoard({
                                     <div className="flex items-center gap-1.5">
                                       <button
                                         type="button"
-                                        disabled={!isLoggedIn}
+                                        aria-disabled={!isLoggedIn}
                                         aria-pressed={Boolean(comment.likedByMe)}
                                         className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold ${
                                           !isLoggedIn
@@ -2249,7 +2260,7 @@ export function CommunityBoard({
                                       ) : (
                                         <button
                                           type="button"
-                                          disabled={!isLoggedIn}
+                                          aria-disabled={!isLoggedIn}
                                           className={
                                             isLoggedIn
                                               ? "text-gray-400 hover:text-red-500 cursor-pointer"
@@ -2356,7 +2367,7 @@ export function CommunityBoard({
                                               <div className="flex items-center gap-1.5">
                                                 <button
                                                   type="button"
-                                                  disabled={!isLoggedIn}
+                                                  aria-disabled={!isLoggedIn}
                                                   aria-pressed={Boolean(reply.likedByMe)}
                                                   className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold ${
                                                     !isLoggedIn
@@ -2448,7 +2459,7 @@ export function CommunityBoard({
                                                 ) : (
                                                   <button
                                                     type="button"
-                                                    disabled={!isLoggedIn}
+                                                    aria-disabled={!isLoggedIn}
                                                     className={
                                                       isLoggedIn
                                                         ? "text-gray-400 hover:text-red-500 cursor-pointer"
@@ -2886,7 +2897,7 @@ export function CommunityBoard({
       <div className="fixed bottom-6 right-6 z-30">
         <button
           type="button"
-          disabled={!isLoggedIn}
+          aria-disabled={!isLoggedIn}
           onClick={() => {
             if (!requireReadyMember()) return;
             setWriteModalOpen(true);
@@ -3016,14 +3027,14 @@ export function CommunityBoard({
           <input
             name="title"
             required
-            maxLength={50}
+            maxLength={120}
             placeholder="제목을 입력해주세요"
             className="h-11 w-full rounded-xl border border-gray-300 bg-white px-4 text-sm font-bold text-gray-900 focus:bg-white focus:border-[#0058FF] focus:outline-none"
           />
           <textarea
             name="content"
             required
-            maxLength={2000}
+            maxLength={4000}
             rows={5}
             placeholder="자유롭게 이야기를 나눠보세요. (타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다.)"
             className="w-full rounded-xl border border-gray-300 bg-white p-4 text-sm text-gray-900 focus:bg-white focus:border-[#0058FF] focus:outline-none"

@@ -94,7 +94,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
         {query.data && <WalletOverview wallet={query.data.wallet} layout="grid" stale={query.stale} />}
         <PortfolioAllocationChart positions={portfolioPositions(positions,symbols)} view={query.error ? "unavailable" : query.loading ? "loading" : "data"} />
         {auxiliary === "portfolio" && <SymbolPerformance />}
-        {snapshot.mode === "member" && auxiliary === "portfolio" && <MemberSimulation />}
+        {snapshot.mode === "member" && !snapshot.contestSeasonId && auxiliary === "portfolio" && <MemberSimulation />}
       </section>
       </>}
     </dialog>

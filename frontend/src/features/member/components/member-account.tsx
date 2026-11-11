@@ -12,6 +12,7 @@ import { MemberShell, ProfileEditForm } from "./member-views";
 import { MemberWithdrawal } from "./member-withdrawal";
 import { MemberConsents } from "./member-consents";
 import { ProfileImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
+import { syncContestAccountNickname } from "../../contest/api/contest-client";
 
 export function MemberAccount() {
   const { session, snapshot } = useMember();
@@ -49,12 +50,13 @@ export function MemberAccount() {
     setMessage(null);
     setRequestError(null);
     try {
+      let updated;
       if (selectedProfileImage?.rawFile) {
         const formData = new FormData();
         if (nicknameChanged) formData.append("nickname", nickname);
         formData.append("profileMessage", profileMessage);
         formData.append("profileImage", selectedProfileImage.rawFile);
-        parseOwnProfile(
+        updated = parseOwnProfile(
           await session.request("/members/me/profile", {
             method: "PATCH",
             body: formData,
@@ -62,7 +64,7 @@ export function MemberAccount() {
           snapshot.memberId!,
         );
       } else if (resetProfileImage) {
-        parseOwnProfile(
+        updated = parseOwnProfile(
           await session.request("/members/me/profile", {
             method: "PATCH",
             body: {
@@ -74,7 +76,7 @@ export function MemberAccount() {
           snapshot.memberId!,
         );
       } else {
-        parseOwnProfile(
+        updated = parseOwnProfile(
           await session.request("/members/me/profile", {
             method: "PATCH",
             body: { ...(nicknameChanged ? { nickname } : {}), profileMessage },
@@ -82,13 +84,24 @@ export function MemberAccount() {
           snapshot.memberId!,
         );
       }
+      session.setNickname(updated.nickname, snapshot.memberId!, snapshot.generation);
+      if (nicknameChanged) {
+        await session
+          .authorized(cred => syncContestAccountNickname(updated.nickname, cred.accessToken), false)
+          .catch(() => {});
+      }
       setSelectedProfileImage(null);
       setResetProfileImage(false);
-      await client.invalidateQueries({ queryKey: ["member"] });
-      await client.invalidateQueries({ queryKey: ["community"] });
-      await client.invalidateQueries({ queryKey: ["community-posts"] });
-      await client.invalidateQueries({ queryKey: ["community-post-detail"] });
-      await client.invalidateQueries({ queryKey: ["community-comments"] });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["member"] }),
+        client.invalidateQueries({ queryKey: ["community"] }),
+        client.invalidateQueries({ queryKey: ["community-posts"] }),
+        client.invalidateQueries({ queryKey: ["community-post-detail"] }),
+        client.invalidateQueries({ queryKey: ["community-comments"] }),
+        client.invalidateQueries({ queryKey: ["contest-sidebar-member-profile"] }),
+        client.invalidateQueries({ queryKey: ["contest-member-profile"] }),
+        client.invalidateQueries({ queryKey: ["community-sidebar-contest-top5"] }),
+      ]);
       setMessage("프로필을 저장했습니다.");
     } catch (err) {
       setError(contentMessage(err));

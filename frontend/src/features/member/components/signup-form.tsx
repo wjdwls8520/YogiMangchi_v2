@@ -5,11 +5,25 @@ import { usePolicies, PolicyConsentControl } from "./policy-controls";
 import type { ConsentSelection } from "../api/policies";
 import { NicknameInput } from "./nickname-input";
 import { NicknameCheck } from "./nickname-check";
-import { ProfileImageUploadSlot } from "./s3-upload-slot";
+import { ProfileImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
 
-export function SignupForm({ onSubmit, pending }: { onSubmit: FormEventHandler<HTMLFormElement>; pending: boolean }) {
+export function SignupForm({
+  onSubmit,
+  pending,
+  defaultNickname = "",
+  defaultProfileMessage = "",
+  selectedProfileImage,
+  onSelectProfileImage,
+}: {
+  onSubmit: FormEventHandler<HTMLFormElement>;
+  pending: boolean;
+  defaultNickname?: string;
+  defaultProfileMessage?: string;
+  selectedProfileImage?: SelectedS3File | null;
+  onSelectProfileImage?: (file: SelectedS3File | null) => void;
+}) {
   const policies = usePolicies(), [selection, setSelection] = useState<ConsentSelection>({});
-  const [bioLength, setBioLength] = useState(0);
+  const [bioLength, setBioLength] = useState(() => Array.from(defaultProfileMessage).length);
 
   return (
     <form className="member-fields ym-signup-form" onSubmit={onSubmit}>
@@ -19,7 +33,7 @@ export function SignupForm({ onSubmit, pending }: { onSubmit: FormEventHandler<H
           <div className="ym-input-btn-row">
             <label className="ym-input-grow">
               <span className="sr-only">닉네임</span>
-              <NicknameInput />
+              <NicknameInput initialValue={defaultNickname} enforcePattern />
             </label>
             <NicknameCheck />
           </div>
@@ -28,7 +42,12 @@ export function SignupForm({ onSubmit, pending }: { onSubmit: FormEventHandler<H
 
         <div className="ym-field-group">
           <span className="ym-field-title">프로필 이미지 등록</span>
-          <ProfileImageUploadSlot slotName="signup-profile-image" compact />
+          <ProfileImageUploadSlot
+            slotName="signup-profile-image"
+            compact
+            selectedFile={selectedProfileImage}
+            onSelectFile={onSelectProfileImage}
+          />
         </div>
 
         <div className="ym-field-group">
@@ -40,6 +59,7 @@ export function SignupForm({ onSubmit, pending }: { onSubmit: FormEventHandler<H
             <textarea
               name="profileMessage"
               className="myTextarea"
+              defaultValue={defaultProfileMessage}
               maxLength={255}
               rows={3}
               placeholder="관심 종목이나 선호하는 트레이딩 스타일을 입력해 주세요."

@@ -78,7 +78,7 @@ import {
   parseMarketOverviewPayload,
 } from "../src/features/member/api/market-overview";
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
-import { ContestHub } from "../src/features/contest/components/contest-hub";
+import { ContestHub, ContestListCard } from "../src/features/contest/components/contest-hub";
 import { ContestTradingSubheader } from "../src/features/contest/components/contest-trading-terminal";
 import {
   AdminContestList,
@@ -88,6 +88,8 @@ import { AdminContestDetail } from "../src/features/admin/components/admin-conte
 import { AdminHeader } from "../src/features/admin/components/admin-layout";
 import {
   applyForContestSeason,
+  cancelContestSeasonApplication,
+  syncContestAccountNickname,
   approveAdminContestApplicant,
   bulkApproveAdminContestApplicants,
   cleanupRemainingAdminContestSeason,
@@ -119,6 +121,11 @@ import {
   authenticateGuestTradingSocket,
   resolveContestTradingPath,
 } from "../src/features/trading/api/guest-session";
+import {
+  TradingApiError,
+  marketSymbolsJson,
+} from "../src/features/trading/api/client";
+import { mutationMessage } from "../src/features/trading/api/mutation-request";
 import { AdminUsers } from "../src/features/admin/components/admin-users";
 import { AdminCommunity } from "../src/features/admin/components/admin-community";
 import { AdminReportsView } from "../src/features/admin/components/admin-reports";
@@ -3141,4 +3148,166 @@ test("커뮤니티 우측 대회투자 TOP5는 가짜 목업 없이 Redis 기반
   } finally {
     client.clear();
   }
+});
+
+
+test("회원-대회-심볼-탈퇴보호 전 생애주기 API 계약 및 금지 표현(터미널·not-allowed·이모지) 전역 무결성을 검증한다", async () => {
+  const calls: Array<{ url: string; method: string; auth: string; body: string }> = [];
+  const fakeTransport: typeof fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const headers = new Headers(init?.headers);
+    const auth = headers.get("Authorization") ?? "";
+    const body = typeof init?.body === "string" ? init.body : "";
+    calls.push({ url, method, auth, body });
+    if (url.endsWith("/api/v1/symbols")) {
+      return Response.json([
+        {
+          id: 1,
+          symbol: "BTC",
+          name: "비트코인",
+          quoteAsset: "USDT",
+          displaySymbol: "BTC/USDT",
+        },
+      ]);
+    }
+    if (url.includes("/applications") && method === "DELETE") {
+      return Response.json({
+        applicationId: 901,
+        seasonId: 202608,
+        seasonTitle: "2026 매크로 위클리 FOMC 특별 토너먼트",
+        seasonDisplayStatus: "RECRUITING",
+        contestStartAt: "2026-11-19T00:00:00Z",
+        contestEndAt: "2026-11-26T14:59:00Z",
+        memberId: 7,
+        nickname: "퀀트고수",
+        status: "CANCELED",
+        rejectReason: null,
+        appliedAt: "2026-11-10T01:00:00Z",
+        processedAt: "2026-11-11T02:00:00Z",
+        processedByMemberId: 7,
+      });
+    }
+    if (url.endsWith("/contest/account/nickname") && method === "PATCH") {
+      return Response.json({ updatedCount: 2 });
+    }
+    return Response.json({});
+  };
+
+  // 1. marketSymbolsJson은 /api/v1/trading/symbols가 아닌 공개 /api/v1/symbols를 호출해야 한다
+  const symbols = (await marketSymbolsJson(
+    "http://localhost:8081",
+    undefined,
+    fakeTransport,
+  )) as Array<{ id: number; symbol: string }>;
+  assert.equal(symbols.length, 1);
+  assert.equal(symbols[0]?.symbol, "BTC");
+  assert.equal(calls[0]?.url, "http://localhost:8081/api/v1/symbols");
+  assert.equal(calls[0]?.method, "GET");
+
+  // 2. 대회 참가 신청 취소(DELETE) 및 대회 계좌 닉네임 동기화(PATCH) 계약 검증
+  const canceled = await cancelContestSeasonApplication(202608, "jwt-member-7", {
+    baseUrl: "http://localhost:8081",
+    transport: fakeTransport,
+  });
+  assert.equal(canceled.status, "CANCELED");
+  assert.equal(
+    calls[1]?.url,
+    "http://localhost:8081/api/v1/trading/contest/seasons/202608/applications",
+  );
+  assert.equal(calls[1]?.method, "DELETE");
+  assert.equal(calls[1]?.auth, "Bearer jwt-member-7");
+
+  const synced = await syncContestAccountNickname("새닉네임8", "jwt-member-7", {
+    baseUrl: "http://localhost:8081",
+    transport: fakeTransport,
+  });
+  assert.equal(synced.updatedCount, 2);
+  assert.equal(calls[2]?.url, "http://localhost:8081/api/v1/trading/contest/account/nickname");
+  assert.equal(calls[2]?.method, "PATCH");
+  assert.equal(calls[2]?.auth, "Bearer jwt-member-7");
+  assert.equal(JSON.parse(calls[2]?.body ?? "{}").nickname, "새닉네임8");
+
+  // 3. session.setNickname 즉시 반영 및 세대(generation) 불일치 보호 검증
+  const epoch = Date.parse("2026-11-11T12:00:00Z");
+  const jwtToken = `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: "7", roles: ["ROLE_MEMBER"] })).toString("base64url")}.sig`;
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "초기닉네임",
+            accessToken: jwtToken,
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+  assert.equal(session.getSnapshot().nickname, "초기닉네임");
+  const gen = session.getSnapshot().generation;
+  session.setNickname("변경닉네임", 7, gen + 99);
+  assert.equal(session.getSnapshot().nickname, "초기닉네임");
+  session.setNickname("변경닉네임", 7, gen);
+  assert.equal(session.getSnapshot().nickname, "변경닉네임");
+
+  // 4. 심사 대기 카드(wait)에 신청 취소 버튼 노출 검증
+  const waitCardHtml = renderToStaticMarkup(
+    <ContestListCard
+      contest={{
+        id: 202608,
+        title: "2026 매크로 위클리 FOMC 특별 토너먼트",
+        description: "심사 대기 테스트",
+        seedMoney: "10,000 USDT",
+        recruitmentStartAt: "2026.11.01 00:00",
+        recruitmentEndAt: "2026.11.18 23:59",
+        contestStartAt: "2026.11.19 09:00",
+        contestEndAt: "2026.11.26 23:59",
+        participantCount: 10,
+        cardType: "wait",
+        accentLabel: "심사중",
+        actionLabel: "승인 대기중",
+      }}
+      onCancel={() => {}}
+    />,
+  );
+  assert.equal(waitCardHtml.includes('data-contest-action="cancel-application"'), true);
+  assert.equal(waitCardHtml.includes("신청 취소"), true);
+
+  // 5. 탈퇴/미존재 회원 및 대회 신청 에러 한국어 메시지 매핑 검증
+  assert.equal(
+    contentMessage(new ContentApiError(404, "MEMBER_NOT_FOUND")),
+    "탈퇴했거나 존재하지 않는 회원입니다.",
+  );
+  assert.equal(
+    mutationMessage(new TradingApiError(409, undefined, "CONTEST_APPLICATION_NOT_PENDING")),
+    "심사 대기 중인 신청 건만 취소할 수 있습니다.",
+  );
+  assert.equal(
+    mutationMessage(new TradingApiError(409, undefined, "CONTEST_RECRUITMENT_CLOSED")),
+    "현재 대회 참가 신청 기간이 아닙니다.",
+  );
+
+  // 6. frontend/src/** 전 파일 금지 단어("터미널", "not-allowed") 및 이모지 0건 검증
+  const emojiRegex = /[\u{1F300}-\u{1FAFF}]/u;
+  const verifySrcCleanliness = (dir: string) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        verifySrcCleanliness(full);
+      } else if (/\.(tsx?|jsx?|css)$/.test(ent.name)) {
+        const text = fs.readFileSync(full, "utf8");
+        assert.equal(text.includes("터미널"), false, `Forbidden "터미널" in ${full}`);
+        assert.equal(text.includes("not-allowed"), false, `Forbidden "not-allowed" in ${full}`);
+        assert.equal(emojiRegex.test(text), false, `Forbidden emoji in ${full}`);
+      }
+    }
+  };
+  verifySrcCleanliness(path.join(process.cwd(), "src"));
 });

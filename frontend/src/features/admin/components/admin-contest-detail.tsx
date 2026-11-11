@@ -312,7 +312,7 @@ export function AdminContestDetail({
         appliedAt: formatContestDateTime(r.appliedAt),
         rejectedAt: formatContestDateTime(r.processedAt ?? r.appliedAt),
         rejectReason: r.rejectReason ?? "운영 기준 미충족으로 반려 처리되었습니다.",
-        processedBy: "총괄관리자",
+        processedBy: r.processedByMemberId ? `관리자 #${r.processedByMemberId}` : "시스템",
       })),
     );
 
@@ -405,7 +405,11 @@ export function AdminContestDetail({
         }
       })
       .catch(() => {
-        // Keep fallback detail seed data when server is unreachable
+        if (controller.signal.aborted) return;
+        setApplicants([]);
+        setParticipants([]);
+        setRejectedList([]);
+        setOperationBanner("대회 시즌 상세 정보를 불러오지 못했습니다. 시즌 ID 및 서버 상태를 확인해 주세요.");
       });
 
     return () => controller.abort();
@@ -1040,6 +1044,13 @@ export function AdminContestDetail({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
+                  {participants.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="px-4 py-10 text-center font-bold text-gray-400">
+                        현재 승인된 시즌 참가자가 없습니다.
+                      </td>
+                    </tr>
+                  ) : null}
                   {participants.map(participant => (
                     <tr key={participant.participantId} className="hover:bg-gray-50">
                       <td className="px-4 py-3.5 font-black text-gray-500 tabular-nums whitespace-nowrap">
@@ -1123,6 +1134,13 @@ export function AdminContestDetail({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
+                  {rejectedList.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-10 text-center font-bold text-gray-400">
+                        반려 처리된 신청 이력이 없습니다.
+                      </td>
+                    </tr>
+                  ) : null}
                   {rejectedList.map(item => (
                     <tr key={item.rejectedId} className="hover:bg-gray-50">
                       <td className="px-4 py-3.5 whitespace-nowrap">

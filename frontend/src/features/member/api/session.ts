@@ -205,6 +205,13 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
       if (snapshot.role === role) return;
       snapshot = { ...snapshot, role }; emit();
     },
+    setNickname(nickname: string, memberId: number, generation: number) {
+      const trimmed = nickname.trim();
+      if (!trimmed || snapshot.phase !== "ready" || snapshot.memberId !== memberId || snapshot.generation !== generation) return;
+      if (snapshot.nickname === trimmed && (!access || access.nickname === trimmed)) return;
+      if (access) access = Object.freeze({ ...access, nickname: trimmed });
+      snapshot = { ...snapshot, nickname: trimmed }; emit();
+    },
     async restore() { if (access && !refreshRequired && Date.parse(access.expiresAt) - now() >= 30_000) return; await refresh(); },
     refresh, checkExpiry,
     complete: () => authenticate("/auth/login/complete"),

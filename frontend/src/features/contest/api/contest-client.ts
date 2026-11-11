@@ -294,7 +294,15 @@ async function contestApiJson<T>(
       } catch {
         // Ignore unreadable problem body
       }
-      throw new TradingApiError(response.status, undefined, code);
+      const contestErrorMessages: Record<string, string> = {
+        CONTEST_APPLICATION_NOT_PENDING: "심사 대기 중인 신청 건만 취소할 수 있습니다.",
+        CONTEST_RECRUITMENT_CLOSED: "현재 대회 참가 신청 기간이 아닙니다.",
+        CONTEST_ALREADY_APPLIED: "이미 참가 신청했거나 참여 중인 대회 시즌입니다.",
+        CONTEST_NOT_RUNNING: "대회 진행 시간에만 주문·수정이 가능합니다.",
+        CONTEST_PARTICIPATION_REQUIRED: "승인된 대회 참가자만 거래할 수 있습니다.",
+        CONTEST_SEASON_NOT_FOUND: "대회 시즌 정보를 찾을 수 없습니다.",
+      };
+      throw new TradingApiError(response.status, code ? contestErrorMessages[code] : undefined, code);
     }
 
     const text = await response.text();
@@ -502,6 +510,31 @@ export async function applyForContestSeason(
     ...options,
     token,
     method: "POST",
+    body: { nickname },
+  });
+}
+
+export async function cancelContestSeasonApplication(
+  seasonId: number,
+  token: string,
+  options: ContestRequestOptions = {},
+): Promise<ContestApplicationView> {
+  return contestApiJson<ContestApplicationView>(`contest/seasons/${seasonId}/applications`, {
+    ...options,
+    token,
+    method: "DELETE",
+  });
+}
+
+export async function syncContestAccountNickname(
+  nickname: string,
+  token: string,
+  options: ContestRequestOptions = {},
+): Promise<{ updatedCount: number }> {
+  return contestApiJson<{ updatedCount: number }>("contest/account/nickname", {
+    ...options,
+    token,
+    method: "PATCH",
     body: { nickname },
   });
 }

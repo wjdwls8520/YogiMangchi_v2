@@ -5,7 +5,7 @@ export class ContentApiError extends Error {
 }
 const codes = new Set([
   "SERVICE_TEMPORARILY_UNAVAILABLE", "NICKNAME_ALREADY_EXISTS", "NICKNAME_UNAVAILABLE", "MEMBER_BUSY", "INVALID_REQUEST", "INVALID_PROFILE", "INVALID_NICKNAME",
-  "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "MEMBER_NOT_ACTIVE", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS",
+  "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "MEMBER_NOT_ACTIVE", "MEMBER_NOT_FOUND", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS",
   "POLICY_VERSION_OR_CONSENT_INVALID", "POLICY_VERSION_CHANGED", "REQUIRED_CONSENT_MISSING", "POLICY_VERSION_REQUIRED",
   "LOGIN_PROOF_REQUIRED", "LOGIN_PROOF_EXPIRED", "CSRF_INVALID", "PROFILE_MESSAGE_UPDATE_REQUIRED", "RESOURCE_ALREADY_EXISTS", "RESOURCE_NOT_FOUND",
   "FILE_VIDEO_NOT_ALLOWED", "FILE_TYPE_NOT_ALLOWED", "GIF_FILE_TOO_LARGE", "IMAGE_FILE_TOO_LARGE", "FILE_TOTAL_SIZE_EXCEEDED", "FILE_COUNT_EXCEEDED",
@@ -79,6 +79,7 @@ export function contentMessage(error: unknown) {
   if (error.code === "PROFILE_MESSAGE_UPDATE_REQUIRED") return "기존 소개가 현재 입력 한도를 초과합니다. 소개를 255자 이내로 수정해 주세요.";
   if (error.code === "MEMBER_ALREADY_EXISTS") return "이미 가입된 소셜 계정입니다. 현재 로그인 상태를 확인해 주세요.";
   if (error.code === "RESOURCE_ALREADY_EXISTS") return "이미 처리된 정보와 요청이 충돌했습니다. 현재 상태를 먼저 확인해 주세요.";
+  if (error.code === "MEMBER_NOT_FOUND") return "탈퇴했거나 존재하지 않는 회원입니다.";
   if (error.code === "RESOURCE_NOT_FOUND") return "요청한 게시글·댓글·뉴스 또는 회원을 찾을 수 없습니다.";
   if (error.code === "FILE_VIDEO_NOT_ALLOWED") return "동영상 파일은 업로드할 수 없습니다. 이미지(JPG, PNG, WEBP 최대 5MB) 또는 GIF 움짤(최대 3MB)만 첨부해 주세요.";
   if (error.code === "FILE_TYPE_NOT_ALLOWED") return "지원하지 않는 파일 형식입니다. JPG, PNG, WEBP 또는 GIF(움짤) 파일만 첨부할 수 있습니다.";
