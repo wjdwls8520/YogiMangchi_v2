@@ -556,7 +556,8 @@ public class CommunityService {
         boolean hasFileMutations = (body.deleteFileIds() != null && !body.deleteFileIds().isEmpty())
                 || (newFiles != null && newFiles.stream().anyMatch(f -> f != null && !f.isEmpty()));
         if (body.category() == null && body.symbolTag() == null && body.title() == null
-                && body.content() == null && body.sharedPosition() == null && !hasFileMutations) {
+                && body.content() == null && body.sharedPosition() == null
+                && !Boolean.TRUE.equals(body.clearSharedPosition()) && !hasFileMutations) {
             throw invalidRequest();
         }
 
@@ -1565,11 +1566,15 @@ public class CommunityService {
         return trimmed;
     }
 
+    private static boolean isMaskedAuthorStatus(String memberStatus, String nickname) {
+        return memberStatus == null || !"ACTIVE".equals(memberStatus) || nickname == null;
+    }
+
     private CommunityPostResponse mapRawPost(ResultSet rs, Long viewerId) throws SQLException {
         long authorId = rs.getLong("member_id");
         String nickname = rs.getString("member_nickname");
         String memberStatus = rs.getString("member_status");
-        boolean authorWithdrawn = "WITHDRAWN".equals(memberStatus) || nickname == null;
+        boolean authorWithdrawn = isMaskedAuthorStatus(memberStatus, nickname);
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
         String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
         return new CommunityPostResponse(
@@ -1599,7 +1604,7 @@ public class CommunityService {
         long authorId = rs.getLong("member_id");
         String nickname = rs.getString("member_nickname");
         String memberStatus = rs.getString("member_status");
-        boolean authorWithdrawn = "WITHDRAWN".equals(memberStatus) || nickname == null;
+        boolean authorWithdrawn = isMaskedAuthorStatus(memberStatus, nickname);
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
         String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
 
@@ -1616,7 +1621,7 @@ public class CommunityService {
         if (targetMemberId != null) {
             String rawTargetNick = rs.getString("target_member_nickname");
             String rawTargetStatus = rs.getString("target_member_status");
-            boolean targetWithdrawn = "WITHDRAWN".equals(rawTargetStatus) || rawTargetNick == null;
+            boolean targetWithdrawn = isMaskedAuthorStatus(rawTargetStatus, rawTargetNick);
             targetNickname = targetWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : rawTargetNick;
         }
 
@@ -1651,7 +1656,7 @@ public class CommunityService {
         long authorId = rs.getLong("member_id");
         String nickname = rs.getString("member_nickname");
         String memberStatus = rs.getString("member_status");
-        boolean authorWithdrawn = "WITHDRAWN".equals(memberStatus) || nickname == null;
+        boolean authorWithdrawn = isMaskedAuthorStatus(memberStatus, nickname);
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
         String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
 
@@ -1668,7 +1673,7 @@ public class CommunityService {
         if (targetMemberId != null) {
             String rawTargetNick = rs.getString("target_member_nickname");
             String rawTargetStatus = rs.getString("target_member_status");
-            boolean targetWithdrawn = "WITHDRAWN".equals(rawTargetStatus) || rawTargetNick == null;
+            boolean targetWithdrawn = isMaskedAuthorStatus(rawTargetStatus, rawTargetNick);
             targetNickname = targetWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : rawTargetNick;
         }
 
