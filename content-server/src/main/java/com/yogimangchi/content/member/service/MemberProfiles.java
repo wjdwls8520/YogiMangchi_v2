@@ -33,7 +33,7 @@ public class MemberProfiles {
                 member.getId(),
                 member.getNickname(),
                 member.getProfileMessage(),
-                member.getProfileImgUrl(),
+                s3.sanitizeProfileImageUrl(member.getProfileImgUrl()),
                 member.getCreatedAt());
     }
 
@@ -111,7 +111,7 @@ public class MemberProfiles {
                 member.getId(),
                 member.getNickname(),
                 member.getProfileMessage(),
-                member.getProfileImgUrl(),
+                s3.sanitizeProfileImageUrl(member.getProfileImgUrl()),
                 member.getRole().name(),
                 member.getCreatedAt());
     }

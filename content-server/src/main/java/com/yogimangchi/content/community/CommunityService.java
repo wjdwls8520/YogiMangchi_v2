@@ -1396,7 +1396,7 @@ public class CommunityService {
                         rs.getLong("post_id"),
                         rs.getString("original_name"),
                         rs.getLong("file_size"),
-                        rs.getString("file_url"),
+                        s3.sanitizePostFileUrl(rs.getString("file_url")),
                         rs.getString("content_type"),
                         rs.getTimestamp("created_at").toInstant()),
                 postIds.toArray());
@@ -1576,7 +1576,7 @@ public class CommunityService {
         String memberStatus = rs.getString("member_status");
         boolean authorWithdrawn = isMaskedAuthorStatus(memberStatus, nickname);
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
-        String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
+        String displayProfileImgUrl = authorWithdrawn ? null : s3.sanitizeProfileImageUrl(rs.getString("member_profile_img_url"));
         return new CommunityPostResponse(
                 rs.getLong("id"),
                 authorId,
@@ -1600,13 +1600,13 @@ public class CommunityService {
         );
     }
 
-    private static CommunityCommentResponse mapComment(ResultSet rs, Long viewerId) throws SQLException {
+    private CommunityCommentResponse mapComment(ResultSet rs, Long viewerId) throws SQLException {
         long authorId = rs.getLong("member_id");
         String nickname = rs.getString("member_nickname");
         String memberStatus = rs.getString("member_status");
         boolean authorWithdrawn = isMaskedAuthorStatus(memberStatus, nickname);
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
-        String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
+        String displayProfileImgUrl = authorWithdrawn ? null : s3.sanitizeProfileImageUrl(rs.getString("member_profile_img_url"));
 
         long parentRaw = rs.getLong("parent_comment_id");
         Long parentCommentId = rs.wasNull() ? null : parentRaw;
@@ -1652,13 +1652,13 @@ public class CommunityService {
         );
     }
 
-    private static MemberCommunityCommentItem mapMemberCommentItem(ResultSet rs, Long viewerId) throws SQLException {
+    private MemberCommunityCommentItem mapMemberCommentItem(ResultSet rs, Long viewerId) throws SQLException {
         long authorId = rs.getLong("member_id");
         String nickname = rs.getString("member_nickname");
         String memberStatus = rs.getString("member_status");
         boolean authorWithdrawn = isMaskedAuthorStatus(memberStatus, nickname);
         String displayNickname = authorWithdrawn ? WITHDRAWN_AUTHOR_NICKNAME : nickname;
-        String displayProfileImgUrl = authorWithdrawn ? null : rs.getString("member_profile_img_url");
+        String displayProfileImgUrl = authorWithdrawn ? null : s3.sanitizeProfileImageUrl(rs.getString("member_profile_img_url"));
 
         long parentRaw = rs.getLong("parent_comment_id");
         Long parentCommentId = rs.wasNull() ? null : parentRaw;

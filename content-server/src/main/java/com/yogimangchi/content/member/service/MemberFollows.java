@@ -1,5 +1,6 @@
 package com.yogimangchi.content.member.service;
 
+import com.yogimangchi.content.community.CommunityS3Service;
 import com.yogimangchi.content.member.dto.*;
 import com.yogimangchi.content.member.entity.Member;
 import com.yogimangchi.content.member.repository.MemberRepository;
@@ -15,7 +16,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class MemberFollows {
     private final MemberRepository members;
     private final JdbcTemplate jdbc;
-    public MemberFollows(MemberRepository members,JdbcTemplate jdbc) { this.members=members; this.jdbc=jdbc; }
+    private final CommunityS3Service s3;
+    public MemberFollows(MemberRepository members,JdbcTemplate jdbc) { this(members,jdbc,null); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public MemberFollows(MemberRepository members,JdbcTemplate jdbc,CommunityS3Service s3) { this.members=members; this.jdbc=jdbc; this.s3=s3; }
     public record Summary(Long memberId,long followerCount,long followingCount,boolean followed,boolean follower,boolean mine) { }
     @Transactional(timeout=5)
     public FollowResponse change(Long actorId,Long targetId,boolean follow) {
@@ -56,13 +60,13 @@ public class MemberFollows {
         var rows=viewerId==null
                 ? jdbc.query("select f.id,m.id member_id,m.nickname,m.profile_message,m.profile_img_url,f.created_at from content.member_follow f join content.member m on m.id=f."+other
                         +" where f."+owner+"=? and f.active and m.status='ACTIVE' and f.id<? and position(lower(?) in lower(m.nickname))>0 order by f.id desc limit ?",
-                        (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),r.getString("profile_img_url"),r.getTimestamp("created_at").toInstant(),null)),
+                        (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),s3==null?r.getString("profile_img_url"):s3.sanitizeProfileImageUrl(r.getString("profile_img_url")),r.getTimestamp("created_at").toInstant(),null)),
                         memberId,cursorId==null ? Long.MAX_VALUE : cursorId,search,limit+1)
                 : jdbc.query("select f.id,m.id member_id,m.nickname,m.profile_message,m.profile_img_url,f.created_at,"
                         +"exists(select 1 from content.member_follow vf where vf.follower_id=? and vf.following_id=m.id and vf.active) followed_by_me "
                         +"from content.member_follow f join content.member m on m.id=f."+other
                         +" where f."+owner+"=? and f.active and m.status='ACTIVE' and f.id<? and position(lower(?) in lower(m.nickname))>0 order by f.id desc limit ?",
-                        (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),r.getString("profile_img_url"),r.getTimestamp("created_at").toInstant(),r.getBoolean("followed_by_me"))),
+                        (r,n) -> new Row(r.getLong("id"),new FollowPage.Entry(r.getLong("member_id"),r.getString("nickname"),r.getString("profile_message"),s3==null?r.getString("profile_img_url"):s3.sanitizeProfileImageUrl(r.getString("profile_img_url")),r.getTimestamp("created_at").toInstant(),r.getBoolean("followed_by_me"))),
                         viewerId,memberId,cursorId==null ? Long.MAX_VALUE : cursorId,search,limit+1);
         boolean hasNext=rows.size()>limit; var page=rows.subList(0,Math.min(limit,rows.size()));
         Long next=hasNext ? page.get(page.size()-1).id() : null;

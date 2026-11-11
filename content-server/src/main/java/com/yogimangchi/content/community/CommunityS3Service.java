@@ -4,6 +4,9 @@ import com.yogimangchi.content.error.AuthFailure;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -12,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -64,12 +68,27 @@ public class CommunityS3Service {
             "gif"
     );
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final byte[] PLACEHOLDER_SVG_BYTES = (
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"640\" height=\"360\" viewBox=\"0 0 640 360\">"
+                    + "<rect width=\"640\" height=\"360\" rx=\"20\" fill=\"#F8FAFC\"/>"
+                    + "<rect x=\"16\" y=\"16\" width=\"608\" height=\"328\" rx=\"14\" fill=\"#FFFFFF\" stroke=\"#E2E8F0\" stroke-width=\"2\"/>"
+                    + "<circle cx=\"320\" cy=\"150\" r=\"28\" fill=\"#EFF6FF\"/>"
+                    + "<path d=\"M308 156l8-10 7 8 10-13 11 15H308z\" fill=\"#2563EB\"/>"
+                    + "<text x=\"320\" y=\"212\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"15\" font-weight=\"700\" fill=\"#1E293B\">로컬 안전 미리보기 이미지</text>"
+                    + "<text x=\"320\" y=\"238\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"12\" fill=\"#64748B\">외부 클라우드(S3) 호출 차단 · 로컬 무과금 실행 모드</text>"
+                    + "</svg>"
+    ).getBytes(StandardCharsets.UTF_8);
 
     public record UploadResult(
             String key,
             String url,
             String originalName,
             long size,
+            String contentType
+    ) { }
+
+    public record LocalMediaPayload(
+            byte[] bytes,
             String contentType
     ) { }
 
@@ -82,20 +101,35 @@ public class CommunityS3Service {
 
     private final String bucket;
     private final String region;
+    private final String normalizedPublicBaseUrl;
+    private final Path localStorageRoot;
     private final S3Client s3Client;
     private final JdbcTemplate jdbc;
     private final TransactionTemplate requiresNewTx;
     private final Set<String> simulatedStore = ConcurrentHashMap.newKeySet();
+    private final Map<String, LocalMediaPayload> localMemoryStore = new ConcurrentHashMap<>();
     private final Set<String> simulatedDeleteFailureKeys = ConcurrentHashMap.newKeySet();
     private final AtomicInteger realS3PutCounter = new AtomicInteger();
     private final AtomicInteger realS3DeleteCounter = new AtomicInteger();
 
     public CommunityS3Service(String bucket, String accessKey, String secretKey, String region) {
-        this(bucket, accessKey, secretKey, region, null, null);
+        this(true, null, bucket, accessKey, secretKey, region, null, null);
+    }
+
+    public CommunityS3Service(
+            String bucket,
+            String accessKey,
+            String secretKey,
+            String region,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager txManager) {
+        this(true, null, bucket, accessKey, secretKey, region, jdbc, txManager);
     }
 
     @Autowired
     public CommunityS3Service(
+            @Value("${content.s3.enabled:false}") boolean s3Enabled,
+            @Value("${content.s3.public-base-url:http://localhost:8080}") String publicBaseUrl,
             @Value("${content.s3.bucket:}") String bucket,
             @Value("${content.s3.access-key:}") String accessKey,
             @Value("${content.s3.secret-key:}") String secretKey,
@@ -104,6 +138,11 @@ public class CommunityS3Service {
             PlatformTransactionManager txManager) {
         this.bucket = bucket == null ? "" : bucket.strip();
         this.region = (region == null || region.isBlank()) ? "ap-northeast-2" : region.strip();
+        String trimmedBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.strip().replaceAll("/+$", "");
+        this.normalizedPublicBaseUrl = trimmedBaseUrl.isEmpty() ? null : trimmedBaseUrl;
+        this.localStorageRoot = this.normalizedPublicBaseUrl != null
+                ? Path.of(".gradle", "local-runtime", "uploads").toAbsolutePath().normalize()
+                : null;
         this.jdbc = jdbc;
         if (txManager != null) {
             TransactionTemplate tpl = new TransactionTemplate(txManager);
@@ -115,7 +154,7 @@ public class CommunityS3Service {
         }
         String trimmedAccess = accessKey == null ? "" : accessKey.strip();
         String trimmedSecret = secretKey == null ? "" : secretKey.strip();
-        if (!this.bucket.isEmpty() && !trimmedAccess.isEmpty() && !trimmedSecret.isEmpty()) {
+        if (s3Enabled && !this.bucket.isEmpty() && !trimmedAccess.isEmpty() && !trimmedSecret.isEmpty()) {
             this.s3Client = S3Client.builder()
                     .region(Region.of(this.region))
                     .credentialsProvider(StaticCredentialsProvider.create(
@@ -149,6 +188,77 @@ public class CommunityS3Service {
 
     public void clearSimulatedDeleteFailures() {
         simulatedDeleteFailureKeys.clear();
+    }
+
+    public String sanitizeProfileImageUrl(String rawUrl) {
+        if (rawUrl == null || rawUrl.isBlank()) {
+            return null;
+        }
+        if (s3Client == null && isExternalAwsUrl(rawUrl)) {
+            return null;
+        }
+        return rawUrl;
+    }
+
+    public String sanitizePostFileUrl(String rawUrl) {
+        if (rawUrl == null || rawUrl.isBlank()) {
+            return rawUrl;
+        }
+        if (s3Client == null && isExternalAwsUrl(rawUrl)) {
+            String base = normalizedPublicBaseUrl != null ? normalizedPublicBaseUrl : "http://localhost:8080";
+            return base + "/api/v1/community/local-media/placeholder.svg";
+        }
+        return rawUrl;
+    }
+
+    private static boolean isExternalAwsUrl(String rawUrl) {
+        String lower = rawUrl.strip().toLowerCase(Locale.ROOT);
+        return lower.contains("amazonaws.com") && !lower.contains("/yogimangchi-local/");
+    }
+
+    public LocalMediaPayload readLocalMedia(String rawKey) {
+        if (rawKey == null || rawKey.isBlank()) {
+            return null;
+        }
+        String key = rawKey.strip();
+        while (key.startsWith("/")) {
+            key = key.substring(1);
+        }
+        if ("placeholder.svg".equals(key)) {
+            return new LocalMediaPayload(PLACEHOLDER_SVG_BYTES, "image/svg+xml");
+        }
+        if (key.contains("..") || key.indexOf('\\') >= 0 || key.indexOf('\0') >= 0) {
+            return null;
+        }
+        if (!key.startsWith(PROFILE_PREFIX + "/") && !key.startsWith(POST_PREFIX + "/")) {
+            return null;
+        }
+        LocalMediaPayload cached = localMemoryStore.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        if (localStorageRoot != null) {
+            Path target = localStorageRoot.resolve(key).normalize();
+            if (target.startsWith(localStorageRoot) && Files.isRegularFile(target)) {
+                try {
+                    byte[] bytes = Files.readAllBytes(target);
+                    LocalMediaPayload loaded = new LocalMediaPayload(bytes, contentTypeFromKey(key));
+                    localMemoryStore.put(key, loaded);
+                    return loaded;
+                } catch (IOException ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String contentTypeFromKey(String key) {
+        String lower = key.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        return "image/png";
     }
 
     public UploadResult validateAndUploadProfileImage(MultipartFile file) {
@@ -255,7 +365,7 @@ public class CommunityS3Service {
         String ext = extractExtension(originalName, file.getContentType());
         String dateSegment = LocalDate.now(ZoneOffset.UTC).format(DATE_FMT);
         String key = dirPrefix + "/" + dateSegment + "/" + UUID.randomUUID() + "." + ext;
-        String contentType = file.getContentType().strip();
+        String contentType = normalizeMimeType(file.getContentType());
         long size = file.getSize();
 
         if (s3Client != null) {
@@ -278,14 +388,29 @@ public class CommunityS3Service {
             return new UploadResult(key, url, originalName, size, contentType);
         }
 
-        // Local/Test fallback when S3_BUCKET credentials are not configured
-        try (InputStream is = file.getInputStream()) {
-            is.read();
+        // Local/Test zero-billing storage when S3 is disabled or unconfigured
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
         } catch (IOException e) {
             throw invalidRequest();
         }
         simulatedStore.add(key);
-        String url = "https://s3." + region + ".amazonaws.com/yogimangchi-local/" + key;
+        localMemoryStore.put(key, new LocalMediaPayload(bytes, contentType));
+        if (localStorageRoot != null) {
+            Path target = localStorageRoot.resolve(key).normalize();
+            if (target.startsWith(localStorageRoot)) {
+                try {
+                    Files.createDirectories(target.getParent());
+                    Files.write(target, bytes);
+                } catch (IOException e) {
+                    log.warn("Failed to persist local media file for key={}", key);
+                }
+            }
+        }
+        String url = normalizedPublicBaseUrl != null
+                ? normalizedPublicBaseUrl + "/api/v1/community/local-media/" + key
+                : "https://s3." + region + ".amazonaws.com/yogimangchi-local/" + key;
         return new UploadResult(key, url, originalName, size, contentType);
     }
 
@@ -307,7 +432,25 @@ public class CommunityS3Service {
                 return false;
             }
         }
-        return simulatedStore.remove(key);
+        localMemoryStore.remove(key);
+        boolean removedDisk = deleteLocalFileQuietly(key);
+        boolean removedMem = simulatedStore.remove(key);
+        return removedMem || removedDisk;
+    }
+
+    private boolean deleteLocalFileQuietly(String key) {
+        if (localStorageRoot == null || key.contains("..") || key.indexOf('\\') >= 0) {
+            return false;
+        }
+        Path target = localStorageRoot.resolve(key).normalize();
+        if (!target.startsWith(localStorageRoot)) {
+            return false;
+        }
+        try {
+            return Files.deleteIfExists(target);
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 
     public void deleteOrEnqueueRetry(String key, String reason) {
