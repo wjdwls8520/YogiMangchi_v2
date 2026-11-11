@@ -3500,3 +3500,48 @@ test("거래소 표준 소수점·단위 포맷터가 18자리 정밀 원장 값
     client.clear();
   }
 });
+
+
+test("checkbox line-height alignment and modal idle anti-flicker / scrollbar-gap compensation stay intact", () => {
+  const globalsCss = fs.readFileSync(
+    path.join(process.cwd(), "src/app/globals.css"),
+    "utf8",
+  );
+  assert.match(globalsCss, /label\.member-check,\s*\.member-fields label\.member-check/);
+  assert.match(globalsCss, /\.member-shell \.member-check\s*\{[\s\S]*?gap:\s*10px;[\s\S]*?line-height:\s*22px;/);
+  assert.match(globalsCss, /\.member-shell \.member-check input\[type="checkbox"\]\s*\{[\s\S]*?margin:\s*2px 0 0 0;/);
+
+  const memberSimSrc = fs.readFileSync(
+    path.join(process.cwd(), "src/features/trading/components/member-simulation.tsx"),
+    "utf8",
+  );
+  assert.equal(
+    memberSimSrc.includes("canRestart = admission.trade && enabled && !current.isError && !current.isFetching"),
+    false,
+    "background 5s refetch must not toggle canRestart / blocked banner while popup is idle",
+  );
+  assert.match(memberSimSrc, /useCurrentRound\(dialogOpen\)/);
+  assert.match(memberSimSrc, /useDialogScrollLock\(dialog\)/);
+
+  resetScrollLockForTest();
+  const mockWin = {
+    scrollY: 320,
+    innerWidth: 1920,
+    scrollTo: () => {},
+  };
+  const mockDoc = {
+    body: {
+      style: {} as Record<string, string>,
+      dataset: {} as Record<string, string | undefined>,
+    },
+    documentElement: {
+      scrollTop: 320,
+      clientWidth: 1905,
+      style: {} as Record<string, string>,
+    },
+  };
+  lockBodyScroll(mockWin, mockDoc);
+  assert.equal(mockDoc.body.style.paddingRight, "15px");
+  unlockBodyScroll(mockWin, mockDoc);
+  assert.equal(mockDoc.body.style.paddingRight, "");
+});

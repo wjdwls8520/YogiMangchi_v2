@@ -921,6 +921,8 @@ export function ContestHub() {
   const contentOrigin = memberCtx?.origin ?? "http://localhost:8080";
 
   const [guideOpen, setGuideOpen] = useState(false);
+  const guideOpenRef = useRef(false);
+  useEffect(() => { guideOpenRef.current = guideOpen; }, [guideOpen]);
   const [activeCatalogTab, setActiveCatalogTab] = useState<"available" | "pending" | "history">(
     "available",
   );
@@ -1173,7 +1175,8 @@ export function ContestHub() {
 
     refreshContestOverview();
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "hidden") return;
+
+      if (document.visibilityState === "hidden" || guideOpenRef.current) return;
       refreshContestOverview();
     }, 10_000);
 
@@ -1242,7 +1245,8 @@ export function ContestHub() {
 
     refreshLeaderboard();
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "hidden") return;
+
+      if (document.visibilityState === "hidden" || guideOpenRef.current) return;
       refreshLeaderboard();
     }, 3_000);
 

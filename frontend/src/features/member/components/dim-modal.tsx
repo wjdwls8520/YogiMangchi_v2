@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useId, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { V1IconClose } from "./v1-ui";
 
 interface ScrollLockTargetWindow {
   scrollY: number;
+  innerWidth?: number;
   scrollTo: (x: number, y: number) => void;
 }
 
@@ -15,12 +16,15 @@ interface ScrollLockTargetDocument {
   };
   documentElement: {
     scrollTop?: number;
+    clientWidth?: number;
     style: Record<string, string>;
   };
 }
 
 let activeLockCount = 0;
 let savedScrollY = 0;
+let compensatedPaddingRight = false;
+let previousPaddingRight = "";
 
 export function lockBodyScroll(
   win: ScrollLockTargetWindow | undefined = typeof window !== "undefined" ? window : undefined,
@@ -29,6 +33,10 @@ export function lockBodyScroll(
   if (!win || !doc) return 0;
   if (activeLockCount === 0) {
     savedScrollY = win.scrollY || doc.documentElement.scrollTop || 0;
+    const scrollbarGap =
+      typeof win.innerWidth === "number" && typeof doc.documentElement.clientWidth === "number"
+        ? Math.max(0, win.innerWidth - doc.documentElement.clientWidth)
+        : 0;
     doc.body.dataset.scrollLocked = "true";
     doc.body.dataset.savedScrollY = String(savedScrollY);
     doc.body.style.position = "fixed";
@@ -37,6 +45,14 @@ export function lockBodyScroll(
     doc.body.style.right = "0";
     doc.body.style.width = "100%";
     doc.body.style.overflow = "hidden";
+    if (scrollbarGap > 0) {
+      compensatedPaddingRight = true;
+      previousPaddingRight = doc.body.style.paddingRight ?? "";
+      doc.body.style.paddingRight = `${scrollbarGap}px`;
+    } else {
+      compensatedPaddingRight = false;
+      previousPaddingRight = "";
+    }
     doc.documentElement.style.overflow = "hidden";
     doc.documentElement.style.scrollbarWidth = "none";
   }
@@ -62,6 +78,11 @@ export function unlockBodyScroll(
     doc.body.style.right = "";
     doc.body.style.width = "";
     doc.body.style.overflow = "";
+    if (compensatedPaddingRight) {
+      doc.body.style.paddingRight = previousPaddingRight;
+      compensatedPaddingRight = false;
+      previousPaddingRight = "";
+    }
     doc.documentElement.style.overflow = "";
     doc.documentElement.style.scrollbarWidth = "";
     win.scrollTo(0, restoreY);
@@ -73,6 +94,8 @@ export function unlockBodyScroll(
 export function resetScrollLockForTest() {
   activeLockCount = 0;
   savedScrollY = 0;
+  compensatedPaddingRight = false;
+  previousPaddingRight = "";
 }
 
 export function useDimScrollLock(open: boolean) {
@@ -131,16 +154,18 @@ export function DimModal({
   maxWidth?: string;
 }) {
   const titleId = useId();
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useDimScrollLock(open);
 
   useEffect(() => {
     if (!open || typeof window === "undefined") return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

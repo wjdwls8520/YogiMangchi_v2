@@ -925,6 +925,7 @@ export function AdminContestDetail({
                       <input
                         type="checkbox"
                         aria-label="전체 신청자 선택"
+                        className="m-0 h-4 w-4 align-middle accent-[#0058FF]"
                         checked={isAllApplicantsSelected}
                         onChange={() =>
                           setSelectedApplicantIds(
@@ -959,6 +960,7 @@ export function AdminContestDetail({
                           <input
                             type="checkbox"
                             aria-label={`${applicant.nickname} 선택`}
+                            className="m-0 h-4 w-4 align-middle accent-[#0058FF]"
                             checked={selectedApplicantIds.includes(
                               applicant.applicantId,
                             )}

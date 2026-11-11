@@ -496,7 +496,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                     <button
                       type="button"
                       className="member-primary flex h-10 w-full items-center justify-center rounded-xl bg-[#0058FF] text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
-                      disabled={pending || !summary.data || summary.isFetching || summary.isError}
+                      disabled={pending || !summary.data || summary.isError}
                       onClick={() => void changeFollow()}
                     >
                       {pending ? "처리 중…" : summary.data?.followed ? "팔로우 취소" : "팔로우"}

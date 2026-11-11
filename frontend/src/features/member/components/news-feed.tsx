@@ -1039,7 +1039,7 @@ export function NewsFeed({
     queryKey: ["public-news-highlights", origin],
     initialData: initialHighlights,
     staleTime: 10_000,
-    refetchInterval: 15_000,
+    refetchInterval: selectedDetail !== null ? false : 15_000,
     queryFn: async ({ signal }) => {
       const next = parseNewsHighlights(await contentJson(origin, "/news/highlights", { signal }));
       setSseSentimentSummary(null);
@@ -1052,7 +1052,7 @@ export function NewsFeed({
     queryKey: ["portal-redis-market-overview", tradingBase],
     initialData: initialMarketOverview,
     staleTime: 3_000,
-    refetchInterval: 5_000,
+    refetchInterval: selectedDetail !== null ? false : 5_000,
     queryFn: async ({ signal }) => fetchRedisMarketOverview(tradingBase, signal),
   });
 

@@ -562,7 +562,7 @@ export function CommunityBoard({
     queryKey: ["community-sidebar-contest-seasons", tradingBase],
     initialData: initialContestSeasons ?? undefined,
     staleTime: 5_000,
-    refetchInterval: 10_000,
+    refetchInterval: writeModalOpen || reportTarget !== null ? false : 10_000,
     refetchIntervalInBackground: false,
     queryFn: async ({ signal }) => fetchPublicContestSeasons({ baseUrl: tradingBase, signal }),
   });
@@ -610,7 +610,7 @@ export function CommunityBoard({
     placeholderData: prev =>
       prev && prev.season.id === activeSidebarSeasonId ? prev : undefined,
     staleTime: 2_000,
-    refetchInterval: activeSidebarSeason?.displayStatus === "FINISHED" ? 30_000 : 3_000,
+    refetchInterval: writeModalOpen || reportTarget !== null ? false : activeSidebarSeason?.displayStatus === "FINISHED" ? 30_000 : 3_000,
     refetchIntervalInBackground: false,
     queryFn: async ({ signal }) =>
       fetchPublicContestLeaderboard(activeSidebarSeasonId!, {
@@ -1982,9 +1982,10 @@ export function CommunityBoard({
                           </div>
                         )}
                         {post.sharedPosition && (
-                          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700">
+                          <label className="flex cursor-pointer select-none items-center gap-2.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold leading-5 text-gray-700">
                             <input
                               type="checkbox"
+                              className="m-0 h-4 w-4 shrink-0 accent-[#0058FF]"
                               checked={editDetachSharedPosition}
                               onChange={e => setEditDetachSharedPosition(e.currentTarget.checked)}
                             />
@@ -3014,10 +3015,11 @@ export function CommunityBoard({
                 <span className="text-[11px] font-bold text-gray-600">
                   공유할 실시간 포지션 스냅샷 미리보기
                 </span>
-                <label className="flex cursor-pointer items-center gap-1.5 text-xs font-bold text-gray-600">
+                <label className="inline-flex cursor-pointer select-none items-center gap-2 text-xs font-bold leading-5 text-gray-600">
                   <input
                     type="checkbox"
                     name="showPnlAmount"
+                    className="m-0 h-4 w-4 shrink-0 accent-[#0058FF]"
                     checked={modalShowPnlAmount}
                     onChange={event => setModalShowPnlAmount(event.currentTarget.checked)}
                   />
