@@ -115,10 +115,18 @@ export function feeInclusiveRatioQuantity(
     return "0";
   }
 }
+export function formatEditableDecimal(value: string | null | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) return trimmed;
+  if (!trimmed.includes(".")) return trimmed;
+  return trimmed.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+}
 export function suggestPassiveLimitPrice(
   markPrice: string | null | undefined,
   side: "LONG" | "SHORT",
   tickSize?: string | null,
+  close = false,
 ): string | null {
   if (!markPrice || !validSizingPrice(markPrice)) return null;
   try {
@@ -134,8 +142,9 @@ export function suggestPassiveLimitPrice(
       const precision = Math.min(18, Math.max(0, marketPricePrecision(markPrice, tickSize)));
       stepUnits = BigInt(10) ** BigInt(18 - precision);
     }
+    const mustBeBelowMark = (side === "LONG") !== close;
     let candidate: bigint;
-    if (side === "LONG") {
+    if (mustBeBelowMark) {
       if (hasSub18Remainder) {
         candidate = (markFloor18 / stepUnits) * stepUnits;
       } else {

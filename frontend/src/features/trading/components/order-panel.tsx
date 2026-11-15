@@ -12,11 +12,13 @@ import { freshMarkPrice } from "../market/selected-market";
 import { useTradingSummary } from "../api/queries";
 import { isRecoveringQuote, readSubmitQuote } from "../api/quote";
 import { useOrderQuote } from "../api/quote-query";
+import { TradingApiError } from "../api/client";
 import { mutationMessage } from "../api/mutation-request";
 import { isolatedReady } from "../api/margin";
 import { useSymbolLeverage } from "../api/leverage";
 import { useTradingMutation } from "../api/mutations";
 import {
+  decimalUnits,
   estimatedOrderWithFee,
   feeInclusiveRatioQuantity,
   suggestPassiveLimitPrice,
@@ -24,7 +26,7 @@ import {
   validQuantity,
   validSizingPrice,
 } from "../api/order-input";
-import { formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, minimumOpenIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
+import { balanceIssue, formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, minimumOpenIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
 import { orderReceiptLabel } from "../api/orders";
@@ -79,12 +81,19 @@ function OpenOrderPanel({active}:{active:boolean}) {
   // Commit the reset, so switching A -> B -> A cannot resurrect A's old inputs.
   if (switched) { setForm(form); setResult(null); setServerWarning(null); }
   useEffect(() => () => { sizingRequest.current?.abort(); preflightRequest.current?.abort(); }, [identity,symbol?.id]);
-  const action = useTradingMutation((issue, command, requestSession) => {
-    if (command.kind !== "open" || command.tradingSymbolId !== symbol?.id || `${requestSession.accountId}:${requestSession.generation}` !== identity
-      || command.quantity !== form.quantity.trim() || command.type !== form.type || command.leverage !== leverage
-      || (command.type === "LIMIT" && command.limitPrice !== form.limitPrice.trim())) return;
-    setServerWarning({ side: command.side, issue });
-  });
+  const action = useTradingMutation(
+    (issue, command, requestSession) => {
+      if (command.kind !== "open" || command.tradingSymbolId !== symbol?.id || `${requestSession.accountId}:${requestSession.generation}` !== identity
+        || command.quantity !== form.quantity.trim() || command.type !== form.type || command.leverage !== leverage
+        || (command.type === "LIMIT" && command.limitPrice !== form.limitPrice.trim())) return;
+      setServerWarning({ side: command.side, issue });
+    },
+    (error, command) => {
+      if (command.kind === "open" && error instanceof TradingApiError && error.code === "LEVERAGE_MISMATCH") {
+        void (command.side === "LONG" ? longLeverage : shortLeverage).refresh();
+      }
+    },
+  );
   const mark = freshMarkPrice(market);
   const ready = !account.error && isolatedReady(account.data?.wallet) && leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
   const locked = snapshot.retrying || preparing || action.pending || action.unconfirmed || snapshot.phase !== "ready";
@@ -103,8 +112,13 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const suggestedPassive = suggestPassiveLimitPrice(mark?.decimal, form.side, symbol?.priceTickSize);
   const canSize = ready && availableBalance != null && (form.type === "LIMIT" ? (validLimitPrice(price) || !!suggestedPassive) : validSizingPrice(price));
   const ratioDisabled = locked || (form.type === "MARKET" && !canSize);
+  const hasSameSidePosition = Boolean(
+    symbol && account.data?.positions.some((p) => p.tradingSymbolId === symbol.id && p.side === form.side),
+  );
   const quoteRequest = symbol ? {tradingSymbolId:symbol.id,type:form.type,side:form.side,quantity,...(form.type === "LIMIT" ? {limitPrice:price} : {})} : null;
-  const quote = useOrderQuote(quoteRequest, active && ready && valid && !minimumIssue && !passiveRelation && !preparing);
+  // Local 18-decimal BigInt math already computes exact standalone margin + fee in 0ms;
+  // reserve server /orders/quote calls for open Hedge position merges to eliminate DB lock contention.
+  const quote = useOrderQuote(quoteRequest, active && ready && hasSameSidePosition && valid && !minimumIssue && !passiveRelation && !preparing);
   const localEstimate = valid && validSizingPrice(price) ? estimatedOrderWithFee(quantity, price, leverage, form.type) : null;
   const estimate = (quote.data?.leverage === leverage ? quote.data : undefined) ?? localEstimate ?? undefined;
   function update(values: Partial<OpenForm>, nextLeverageOverride?: number) {
@@ -152,7 +166,8 @@ function OpenOrderPanel({active}:{active:boolean}) {
     update({ ratio: percent, ...nextLimitPatch, quantity: instantQuantity });
     const crossing = form.type === "LIMIT" ? marketableLimitIssue(form.side, targetPrice, mark?.decimal) : null;
     const belowMin = validQuantity(instantQuantity) ? minimumOpenIssue(instantQuantity, targetPrice) : null;
-    if (!ready || !symbol || crossing || belowMin || !validQuantity(instantQuantity)) return;
+    // Standalone positions already get exact 8-decimal fee-inclusive sizing locally without locking the server row.
+    if (!hasSameSidePosition || !ready || !symbol || crossing || belowMin || !validQuantity(instantQuantity)) return;
     const ticket=++sizingTicket.current, controller=new AbortController(); sizingRequest.current=controller;
     const requestType = form.type, requestSide = form.side, requestLimitInput = nextLimitPatch.limitPrice ?? form.limitPrice;
     try {
@@ -187,16 +202,57 @@ function OpenOrderPanel({active}:{active:boolean}) {
     const targetLeverageState = side === "LONG" ? longLeverage : shortLeverage;
     if (submitLocked || targetLeverageState.blocked() || !targetLeverageState.data || submitting.current) return;
     const submitLeverage = targetLeverageState.data.leverage;
-    update({ side }, submitLeverage);
-    const commandForm = formForSide(form,side,submitLeverage);
-    const issue = preflightOrder(commandForm, side, ready, freshMarkPrice(market)?.decimal, availableBalance);
-    // A percentage submission asks the server to size again at the current price and leverage.
-    if (issue && !(form.ratio > 0 && (issue.kind === "balance" || issue.kind === "minimum"))) {
+    const latestMark = freshMarkPrice(market)?.decimal;
+    const sameSideOpen = Boolean(
+      symbol && account.data?.positions.some((p) => p.tradingSymbolId === symbol.id && p.side === side),
+    );
+    // When no same-side Hedge position exists, size directly in 0ms and dispatch POST /orders in a single round-trip!
+    const directQuantity = !sameSideOpen && form.ratio > 0 && availableBalance != null
+      ? feeInclusiveRatioQuantity(
+          availableBalance,
+          form.type === "LIMIT" ? price : (latestMark ?? ""),
+          submitLeverage,
+          form.ratio,
+          form.type,
+        )
+      : quantity;
+
+    update({ side, ...(directQuantity !== quantity && validQuantity(directQuantity) ? { quantity: directQuantity, ratio: form.ratio } : {}) }, submitLeverage);
+    const commandForm = formForSide({ ...form, quantity: directQuantity }, side, submitLeverage);
+    const issue = preflightOrder(commandForm, side, ready, latestMark, availableBalance);
+    if (issue && !(sameSideOpen && form.ratio > 0 && (issue.kind === "balance" || issue.kind === "minimum"))) {
       if (issue.kind !== "minimum") setServerWarning({ side, issue });
       notices.push({kind:"error",title:"주문을 제출할 수 없습니다",message:issue.message});
       return;
     }
     if (!symbol) return;
+
+    if (!sameSideOpen) {
+      const submitPrice = form.type === "LIMIT" ? price : (latestMark ?? "");
+      const withFee = estimatedOrderWithFee(directQuantity, submitPrice, submitLeverage, form.type);
+      if (availableBalance != null && withFee && decimalUnits(withFee.totalRequired) > decimalUnits(availableBalance)) {
+        const feeBalanceIssue = balanceIssue(form.type);
+        setServerWarning({ side, issue: feeBalanceIssue });
+        notices.push({ kind: "error", title: "주문을 제출할 수 없습니다", message: feeBalanceIssue.message });
+        return;
+      }
+      submitting.current = true;
+      try {
+        complete(await action.submit({
+          kind: "open",
+          tradingSymbolId: symbol.id,
+          type: form.type,
+          side,
+          quantity: directQuantity,
+          leverage: submitLeverage,
+          ...(form.type === "LIMIT" ? { limitPrice: price } : {}),
+        }));
+      } finally {
+        submitting.current = false;
+      }
+      return;
+    }
+
     submitting.current=true; setPreparing(true);
     const controller=new AbortController(); preflightRequest.current=controller;
     try {

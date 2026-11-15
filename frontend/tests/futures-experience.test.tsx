@@ -163,7 +163,8 @@ test("trade history distinguishes stop loss, manual close and liquidation withou
   for(const [change,label] of [[{reason:"STOP_LOSS"},"손절 청산"],[{reason:null},"청산"],[{},"청산"],[{action:"LIQUIDATE",reason:null},"강제청산"]] as const){
     const html=renderToStaticMarkup(<FillHistoryTable fills={parseFills([{...raw,...change}])} symbols={symbols}/>);
     assert.match(html,new RegExp(`<small>${label}</small>`));
-    assert.equal((html.match(/role="columnheader"/g)??[]).length,9);
+    assert.doesNotMatch(html,/table-record-detail/);
+    assert.equal((html.match(/role="columnheader"/g)??[]).length,11);
     assert.match(html,/Long ×3/);assert.match(html,/0.02762505/);
   }
 });

@@ -17,14 +17,26 @@ import {
   estimatedOrder,
   estimatedOrderWithFee,
   feeInclusiveRatioQuantity,
+  formatEditableDecimal,
   ratioQuantity,
   suggestPassiveLimitPrice,
 } from "../src/features/trading/api/order-input";
-import { balanceIssue, formForSymbol, marketableLimitIssue, orderRejection, preflightOrder, type OpenForm } from "../src/features/trading/api/order-preflight";
-import { tradingMutationEffects } from "../src/features/trading/api/mutations";
+import {
+  balanceIssue,
+  formForSymbol,
+  marketableLimitIssue,
+  orderRejection,
+  preflightOrder,
+  validatePendingOrderAmend,
+  type OpenForm,
+} from "../src/features/trading/api/order-preflight";
+import { syncOrderIntoPendingCache, tradingMutationEffects } from "../src/features/trading/api/mutations";
+import { orderNotice } from "../src/features/trading/api/notices";
 import { tradingKeys } from "../src/features/trading/api/query-keys";
 import { retryTradingQuery, tradingJson, TradingApiError } from "../src/features/trading/api/client";
 import { mutationRequest } from "../src/features/trading/api/mutation-request";
+import { canonicalJournalCommand, journalCommandsConflict } from "../src/features/trading/api/command-journal";
+import { resolveContestTradingPath } from "../src/features/trading/api/guest-session";
 
 const now=Date.parse("2026-10-16T00:00:00Z");
 const symbol={id:1,symbol:"BTC",name:"Bitcoin",quoteAsset:"USDT",displaySymbol:"BTC / USDT"};
@@ -227,4 +239,151 @@ test("fee-inclusive ratio sizing and passive limit suggestion handle crossing li
   assert.equal(microLong, "0.00001233");
   assert.equal(marketableLimitIssue("SHORT", microShort!, "0.00001234"), null);
   assert.equal(marketableLimitIssue("LONG", microLong!, "0.00001234"), null);
+});
+
+test("amend command request, journal conflict serialization, contest path routing, and synchronous cache sync", () => {
+  const amendCmd = { kind: "amend" as const, orderId: 31, quantity: "0.75", limitPrice: "61200.5" };
+  const req = mutationRequest(amendCmd);
+  assert.equal(req.path, "account/orders/31/amend");
+  assert.deepEqual(req.body, { quantity: "0.75", limitPrice: "61200.5" });
+  assert.equal(resolveContestTradingPath(req.path, 202602), "contest/seasons/202602/orders/31/amend");
+
+  const parsed = canonicalJournalCommand(amendCmd);
+  assert.deepEqual(parsed, amendCmd);
+  assert.equal(journalCommandsConflict(amendCmd, { kind: "cancel", orderId: 31 }), true);
+  assert.equal(journalCommandsConflict(amendCmd, { kind: "amend", orderId: 31, quantity: "1", limitPrice: "61000" }), true);
+  assert.equal(journalCommandsConflict(amendCmd, { kind: "cancel", orderId: 32 }), false);
+
+  assert.equal(formatEditableDecimal("61200.500000000000000000"), "61200.5");
+  assert.equal(formatEditableDecimal("100.00000000"), "100");
+  assert.equal(suggestPassiveLimitPrice("64899.2", "LONG", "0.10", true), "64899.3");
+  assert.equal(suggestPassiveLimitPrice("64899.2", "SHORT", "0.10", true), "64899.1");
+
+  const client = new QueryClient();
+  const snapshot = { phase: "ready" as const, accountId: 7, generation: 1 };
+  const baseOrder = {
+    orderId: 31,
+    positionId: null,
+    tradingSymbolId: 1,
+    type: "LIMIT",
+    action: "OPEN",
+    side: "LONG",
+    status: "PENDING",
+    quantity: "0.50000000",
+    feeRate: "0.000300000000000000",
+    reservedFee: "9.000000000000000000",
+    leverage: 10,
+    requestedLeverage: 10,
+    limitPrice: "60000.000000000000000000",
+    reservedMargin: "3009.000000000000000000",
+    reservedCloseQuantity: "0.000000000000000000",
+    createdAt: "2026-10-16T00:00:00Z",
+    completedAt: null,
+    reason: null,
+    fill: null,
+  };
+  client.setQueryData(tradingKeys.pending(snapshot), [baseOrder]);
+  const amendedOrder = { ...baseOrder, quantity: "0.75000000", limitPrice: "61200.500000000000000000", reservedMargin: "4603.767112500000000000" };
+  syncOrderIntoPendingCache(client, snapshot, amendedOrder);
+  const cached = client.getQueryData<typeof baseOrder[]>(tradingKeys.pending(snapshot));
+  assert.equal(cached?.[0]?.quantity, "0.75000000");
+  assert.equal(cached?.[0]?.limitPrice, "61200.500000000000000000");
+  assert.equal(orderNotice(amendedOrder, amendCmd).title, "지정가 주문이 수정되었습니다");
+  client.clear();
+});
+
+test("validatePendingOrderAmend credits existing reservedMargin for OPEN and enforces inverted passive rules for CLOSE", () => {
+  const openOrder = {
+    action: "OPEN",
+    side: "LONG",
+    leverage: 10,
+    quantity: "1",
+    limitPrice: "60000",
+    reservedMargin: "6018", // 6000 margin + 18 fee already locked in this order
+  };
+  // Increasing to 1.5 BTC @ 60000 needs 9000 + 27 = 9027 USDT; available 3100 + existing 6018 = 9118 USDT -> allowed!
+  assert.equal(
+    validatePendingOrderAmend({
+      order: openOrder,
+      draftQuantity: "1.5",
+      draftPrice: "60000",
+      markPrice: "65000",
+      availableBalance: "3100",
+    }),
+    null,
+  );
+  // Exceeding available + existing reservedMargin is rejected before submit
+  assert.equal(
+    validatePendingOrderAmend({
+      order: openOrder,
+      draftQuantity: "1.5",
+      draftPrice: "60000",
+      markPrice: "65000",
+      availableBalance: "3000",
+    })?.kind,
+    "balance",
+  );
+  // Crossing Mark Price for OPEN LONG (>= Mark) is rejected
+  assert.equal(
+    validatePendingOrderAmend({
+      order: openOrder,
+      draftQuantity: "1",
+      draftPrice: "65000",
+      markPrice: "65000",
+      availableBalance: "5000",
+    })?.kind,
+    "marketable",
+  );
+  // Below 10 USDT notional is rejected
+  assert.equal(
+    validatePendingOrderAmend({
+      order: openOrder,
+      draftQuantity: "0.0001",
+      draftPrice: "60000",
+      markPrice: "65000",
+      availableBalance: "5000",
+    })?.kind,
+    "minimum",
+  );
+
+  const closeLongOrder = {
+    action: "CLOSE",
+    side: "LONG",
+    leverage: 10,
+    quantity: "0.4",
+    limitPrice: "68000",
+    reservedMargin: "0",
+  };
+  // LONG CLOSE must be ABOVE Mark Price (take-profit passive limit)
+  assert.equal(
+    validatePendingOrderAmend({
+      order: closeLongOrder,
+      draftQuantity: "0.6",
+      draftPrice: "64000",
+      markPrice: "65000",
+      positionFreeCloseQuantity: "0.3",
+    })?.kind,
+    "marketable",
+  );
+  // Free close 0.3 + current order 0.4 = max 0.7 BTC -> 0.7 passes, 0.71 fails
+  assert.equal(
+    validatePendingOrderAmend({
+      order: closeLongOrder,
+      draftQuantity: "0.7",
+      draftPrice: "68000",
+      markPrice: "65000",
+      positionFreeCloseQuantity: "0.3",
+    }),
+    null,
+  );
+  assert.equal(
+    validatePendingOrderAmend({
+      order: closeLongOrder,
+      draftQuantity: "0.71",
+      draftPrice: "68000",
+      markPrice: "65000",
+      positionFreeCloseQuantity: "0.3",
+    })?.kind,
+    "balance",
+  );
 });
