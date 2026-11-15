@@ -12,7 +12,14 @@ import { formForSide, formForBookPrice, ratioInputQuantity } from "../src/featur
 import { SelectedMarketProvider } from "../src/features/trading/components/selected-market-provider";
 import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
 import { MemberProvider } from "../src/features/member/components/member-provider";
-import { estimatedOrder, ratioQuantity } from "../src/features/trading/api/order-input";
+import {
+  decimalUnits,
+  estimatedOrder,
+  estimatedOrderWithFee,
+  feeInclusiveRatioQuantity,
+  ratioQuantity,
+  suggestPassiveLimitPrice,
+} from "../src/features/trading/api/order-input";
 import { balanceIssue, formForSymbol, marketableLimitIssue, orderRejection, preflightOrder, type OpenForm } from "../src/features/trading/api/order-preflight";
 import { tradingMutationEffects } from "../src/features/trading/api/mutations";
 import { tradingKeys } from "../src/features/trading/api/query-keys";
@@ -191,4 +198,33 @@ test("new server error code cannot leak credentials or enable automatic mutation
     assert.ok(error instanceof TradingApiError);assert.equal(error.code,"MARKETABLE_LIMIT_NOT_ALLOWED");assert.equal(retryTradingQuery(0,error),false);
     assert.equal(JSON.stringify(error).includes(secret),false);assert.equal(String(error).includes(secret),false);return true;
   });
+});
+
+test("fee-inclusive ratio sizing and passive limit suggestion handle crossing limit prices smoothly without errors", () => {
+  // Exact reproduction of Short 1x LIMIT 64896.80 vs Mark 64899.2 with 5687.42 USDT available balance
+  const qty = feeInclusiveRatioQuantity("5687.42", "64896.80", 1, 100, "LIMIT");
+  assert.equal(qty, "0.08761162");
+  const est = estimatedOrderWithFee(qty, "64896.80", 1, "LIMIT");
+  assert.ok(est);
+  assert.equal(decimalUnits(est.totalRequired) <= decimalUnits("5687.42"), true);
+  // 1 satoshi larger exceeds 5687.42 USDT when 0.03% fee is included
+  const nextEst = estimatedOrderWithFee("0.08761163", "64896.80", 1, "LIMIT");
+  assert.ok(nextEst);
+  assert.equal(decimalUnits(nextEst.totalRequired) > decimalUnits("5687.42"), true);
+
+  // Passive price suggestion aligns to tickSize and guarantees marketableLimitIssue === null
+  const shortPassive = suggestPassiveLimitPrice("64899.2", "SHORT", "0.10");
+  const longPassive = suggestPassiveLimitPrice("64899.2", "LONG", "0.10");
+  assert.equal(shortPassive, "64899.3");
+  assert.equal(longPassive, "64899.1");
+  assert.equal(marketableLimitIssue("SHORT", shortPassive!, "64899.2"), null);
+  assert.equal(marketableLimitIssue("LONG", longPassive!, "64899.2"), null);
+
+  // Sub-dollar / micro-tick assets
+  const microShort = suggestPassiveLimitPrice("0.00001234", "SHORT", "0.00000001");
+  const microLong = suggestPassiveLimitPrice("0.00001234", "LONG", "0.00000001");
+  assert.equal(microShort, "0.00001235");
+  assert.equal(microLong, "0.00001233");
+  assert.equal(marketableLimitIssue("SHORT", microShort!, "0.00001234"), null);
+  assert.equal(marketableLimitIssue("LONG", microLong!, "0.00001234"), null);
 });
