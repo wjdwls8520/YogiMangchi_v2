@@ -54,5 +54,11 @@ export function useSelectedMarket() {
   if (!market) throw new Error("SelectedMarketProvider required");
   return {...metadata, market};
 }
+export function useOptionalSelectedMarket() {
+  const metadata = useContext(MetadataContext);
+  const market = useContext(PriceContext);
+  if (!metadata || !market) return null;
+  return { ...metadata, market };
+}
 export function usePositionMarkets() { return useContext(PositionPriceContext); }
 export function useSelectedBook() { return useContext(BookContext); }

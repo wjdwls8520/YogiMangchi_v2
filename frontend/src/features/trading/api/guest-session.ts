@@ -5,6 +5,8 @@ import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract"
 import type { QuoteRequest } from "./quote";
 import { parseStopLoss, stopLossRequest, type StopLossCommand } from "./stop-loss-contract";
 import { parseOrder } from "./orders";
+import { decimalUnits } from "./order-input";
+import { comparePrices } from "../market/price-format";
 import { parseGuestRetry } from "./guest-retry";
 import { openTradingEvents, parseTradingEvents, type EventState, type TradingEvent } from "./trading-events";
 import { parseRestart } from "./member-rounds";
@@ -114,6 +116,13 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         const order=parseOrder(await tradingJson(origin,resolvePath(`account/orders/${entry.command.orderId}`),{token:sentToken,signal},transport));
         if(order.orderId!==entry.command.orderId)throw new TradingApiError(422);
         result={status:"FOUND",operation:"CANCEL",observedAt:new Date(now()).toISOString(),resultKind:"ORDER_CURRENT",result:order};
+      } else if(entry.command.kind==="amend") {
+        const order=parseOrder(await tradingJson(origin,resolvePath(`account/orders/${entry.command.orderId}`),{token:sentToken,signal},transport));
+        if(order.orderId!==entry.command.orderId)throw new TradingApiError(422);
+        const applied=order.status!=="PENDING"||(order.limitPrice!==null&&decimalUnits(order.quantity)===decimalUnits(entry.command.quantity)&&comparePrices(order.limitPrice,entry.command.limitPrice)===0);
+        result=applied
+          ? {status:"FOUND",operation:"AMEND",observedAt:new Date(now()).toISOString(),resultKind:"ORDER_CURRENT",result:order}
+          : {status:"NOT_OBSERVED",operation:"AMEND",observedAt:new Date(now()).toISOString(),resultKind:null,result:null};
       } else result=parseCommandResult(await tradingJson(origin,resolvePath("account/command-results/query"),{token:sentToken,signal,method:"POST",body:commandResultRequest(entry)},transport),entry);
       if(!owned()||signal?.aborted)throw new DOMException("Session changed","AbortError");
       if(result.status==="FOUND"&&result.operation==="MEMBER_RESTART") {

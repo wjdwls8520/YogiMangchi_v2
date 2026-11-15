@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { marketEndpoints, parseSymbols, loadedSymbolCatalog, failedSymbolCatalog, catalogStateLabel, type SymbolCatalog, type TradingSymbol } from "../market/catalog";
 import { retryDelay } from "../market/stream";
-import { useMarketTickers, useTradingSummary } from "../api/queries";
+import { useMarketTickers, useTradingOrders, useTradingSummary } from "../api/queries";
 import { SymbolSelector } from "./symbol-selector";
 import { TradingChart } from "./trading-chart";
 import { MarketHeader } from "./market-header";
@@ -17,6 +17,7 @@ import { useGuestSession } from "./trading-data-provider";
 
 export function MarketChartPanel({ children }: { children: ReactNode }) {
   const account = useTradingSummary();
+  const pendingOrders = useTradingOrders("pending");
   const {snapshot:guest} = useGuestSession();
   const [mainView, setMainView] = useState<"chart" | "order" | "portfolio">("chart");
   const [analysisView, setAnalysisView] = useState<"chart" | "book">("chart");
@@ -68,7 +69,14 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   }, [catalogRevision]);
   const selected = catalog.symbols.find((entry) => entry.id === selectedId)
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
-  const positionIds = JSON.stringify([...new Set((account.data?.positions??[]).map(position=>position.tradingSymbolId).filter(id=>id!==selected?.id && catalog.symbols.some(symbol=>symbol.id===id)))].sort((a,b)=>a-b));
+  const positionIds = JSON.stringify([
+    ...new Set(
+      [
+        ...(account.data?.positions ?? []).map((position) => position.tradingSymbolId),
+        ...(pendingOrders.data ?? []).map((order) => order.tradingSymbolId),
+      ].filter((id) => id !== selected?.id && catalog.symbols.some((symbol) => symbol.id === id)),
+    ),
+  ].sort((a, b) => a - b));
   function openSheet() {
     if (!sheet.current || sheet.current.open) return;
     sheet.current.showModal();

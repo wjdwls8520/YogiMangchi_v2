@@ -33,13 +33,25 @@ export function tradingMutationEffects(client: Pick<QueryClient, "invalidateQuer
       if (!current(request.session)) return;
       const queryKey = tradingKeys.account(request.session);
       const financial = (query: { queryKey: readonly unknown[] }) => ["summary", "pending", "recovery"].includes(String(query.queryKey[3]));
-      // Keep the request locked until wallet/positions, reservations and risk state
-      // are rechecked. Slow history/performance must not delay its confirmed result.
-      const required = client.invalidateQueries({ queryKey, predicate: financial });
-      void client.invalidateQueries({ queryKey, predicate: query => !financial(query) }).catch(() => {});
-      await required;
+      void client.invalidateQueries({ queryKey, predicate: query => !financial(query) });
+      await client.invalidateQueries({ queryKey, predicate: financial });
     },
   };
+}
+
+export function syncOrderIntoPendingCache(client: QueryClient, session: SessionSnapshot, order: TradingOrder) {
+  const pendingKey = tradingKeys.pending(session);
+  client.setQueryData<readonly TradingOrder[] | undefined>(pendingKey, (previous) => {
+    if (!previous) return order.status === "PENDING" ? [order] : previous;
+    if (order.status !== "PENDING") {
+      return previous.filter((item) => item.orderId !== order.orderId);
+    }
+    const exists = previous.some((item) => item.orderId === order.orderId);
+    if (exists) {
+      return previous.map((item) => (item.orderId === order.orderId ? order : item));
+    }
+    return [...previous, order].sort((a, b) => a.orderId - b.orderId);
+  });
 }
 
 export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
@@ -55,7 +67,12 @@ export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
   const mutation = useMutation({ retry: false,
     mutationFn: (request: { command: TradingCommand; session: SessionSnapshot }) => intent.execute(request.command, request.session),
     ...effects,
-    onSuccess: (order, request) => { if (isCurrent(request.session)) notices.push(orderNotice(order, request.command)); },
+    onSuccess: (order, request) => {
+      if (isCurrent(request.session)) {
+        syncOrderIntoPendingCache(client, request.session, order);
+        notices.push(orderNotice(order, request.command));
+      }
+    },
     onError: (error, request) => {
       if (!isCurrent(request.session)) return;
       reportAdmissionRejection(client, request.session, error);

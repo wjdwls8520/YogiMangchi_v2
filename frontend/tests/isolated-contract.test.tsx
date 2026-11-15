@@ -200,9 +200,17 @@ test("OrderSnapshotDetail fetches account/orders/{orderId} and renders refreshed
         </TradingDataProvider>
       </MemberProvider>,
     );
-    assert.match(pendingHtml, /단건 상태 재조회/);
+    assert.doesNotMatch(pendingHtml, /table-record-detail/);
+    assert.match(pendingHtml, /data-variant="orders"/);
+    assert.match(pendingHtml, /#31/);
+    assert.match(pendingHtml, /×10/);
+    assert.match(pendingHtml, /4\.90 USDT/);
+    assert.match(pendingHtml, /수정하기/);
     const historyHtml = renderToStaticMarkup(<OrderHistoryTable orders={[sampleOrder]} symbols={symbols} />);
-    assert.match(historyHtml, /단건 상태 재조회/);
+    assert.doesNotMatch(historyHtml, /table-record-detail/);
+    assert.match(historyHtml, /data-variant="orders"/);
+    assert.match(historyHtml, /#31/);
+    assert.match(historyHtml, /Settlement Adj\./);
     const detailHtml = renderToStaticMarkup(<OrderSnapshotDetail order={sampleOrder} symbols={symbols} latest={fetched} />);
     assert.match(detailHtml, /최신 상태: 체결 완료 · 예약 증거금: 0\.00 USDT · 예약 수수료: 0\.00 USDT · 수수료율: 0\.00/);
   } finally {

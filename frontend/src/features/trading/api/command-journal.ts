@@ -32,6 +32,7 @@ export function canonicalJournalCommand(value:unknown):JournalCommand {
       case "open": result={kind:"open",tradingSymbolId:positiveId(v.tradingSymbolId),type:text(v.type) as "MARKET"|"LIMIT",side:text(v.side) as "LONG"|"SHORT",quantity:text(v.quantity),leverage:typeof v.leverage==="number"?v.leverage:fail(),...(v.type==="LIMIT"?{limitPrice:text(v.limitPrice)}:{})};break;
       case "close": result={kind:"close",positionId:positiveId(v.positionId),...(v.quantity===undefined?{}:{quantity:text(v.quantity)})};break;
       case "limitClose": result={kind:"limitClose",positionId:positiveId(v.positionId),limitPrice:text(v.limitPrice),...(v.quantity===undefined?{}:{quantity:text(v.quantity)})};break;
+      case "amend": result={kind:"amend",orderId:positiveId(v.orderId),quantity:text(v.quantity),limitPrice:text(v.limitPrice)};break;
       case "cancel": result={kind:"cancel",orderId:positiveId(v.orderId)};break;
       case "stopLoss": result={kind:"stopLoss",positionId:positiveId(v.positionId),expectedVersion:typeof v.expectedVersion==="number"?v.expectedVersion:fail(),...(v.stopPrice===undefined?{}:{stopPrice:text(v.stopPrice)})};stopLossRequest(result);return result;
       case "guestRetry": return {kind:"guestRetry"};
@@ -46,7 +47,7 @@ export function journalCommandsConflict(a:JournalCommand,b:JournalCommand) {
   if(reset(a)||reset(b))return true;
   if(a.kind==="open"&&b.kind==="open")return a.tradingSymbolId===b.tradingSymbolId&&a.side===b.side;
   if("positionId" in a&&"positionId" in b)return a.positionId===b.positionId;
-  return a.kind==="cancel"&&b.kind==="cancel"&&a.orderId===b.orderId;
+  return (a.kind==="cancel"||a.kind==="amend")&&(b.kind==="cancel"||b.kind==="amend")&&a.orderId===b.orderId;
 }
 const browserLock:JournalLock=async(name,operation)=>{
   if(typeof navigator==="undefined"||!navigator.locks)throw new CommandJournalError("LOCK_UNSUPPORTED");

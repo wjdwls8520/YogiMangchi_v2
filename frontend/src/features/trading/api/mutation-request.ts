@@ -8,12 +8,26 @@ export type TradingCommand =
   | { kind: "open"; tradingSymbolId: number; type: "MARKET" | "LIMIT"; side: "LONG" | "SHORT"; quantity: string; leverage: number; limitPrice?: string }
   | { kind: "close"; positionId: number; quantity?: string }
   | { kind: "limitClose"; positionId: number; quantity?: string; limitPrice: string }
+  | { kind: "amend"; orderId: number; quantity: string; limitPrice: string }
   | { kind: "cancel"; orderId: number };
 
 export function mutationRequest(command: TradingCommand) {
-  const targetId = command.kind === "open" ? command.tradingSymbolId : command.kind === "cancel" ? command.orderId : command.positionId;
+  const targetId = command.kind === "open"
+    ? command.tradingSymbolId
+    : command.kind === "cancel" || command.kind === "amend"
+      ? command.orderId
+      : command.positionId;
   if (!Number.isSafeInteger(targetId) || targetId <= 0) throw new TradingApiError(400, "거래 대상을 확인해 주세요.");
   if (command.kind === "cancel") return { path: `account/orders/${command.orderId}/cancel`, body: undefined, keyed: false };
+  if (command.kind === "amend") {
+    if (!validQuantity(command.quantity)) throw new TradingApiError(400, "수량은 양수이며 소수점 8자리 이내여야 합니다.");
+    if (!validLimitPrice(command.limitPrice)) throw new TradingApiError(400, "양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.");
+    return {
+      path: `account/orders/${command.orderId}/amend`,
+      body: { quantity: command.quantity, limitPrice: command.limitPrice },
+      keyed: false,
+    };
+  }
   if (command.quantity !== undefined && !validQuantity(command.quantity)) throw new TradingApiError(400, "수량은 양수이며 소수점 8자리 이내여야 합니다.");
   if (command.kind === "open") {
     if (!validQuantity(command.quantity) || !Number.isInteger(command.leverage) || command.leverage < 1 || command.leverage > SERVER_MAX_LEVERAGE

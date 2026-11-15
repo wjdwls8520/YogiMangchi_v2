@@ -6,9 +6,9 @@ import { parseRestart } from "./member-rounds";
 import { mutationRequest } from "./mutation-request";
 import { canonicalJournalCommand, type JournalEntry } from "./command-journal";
 
-type Operation="OPEN"|"CLOSE"|"LIMIT_CLOSE"|"STOP_LOSS_PUT"|"STOP_LOSS_DELETE"|"MEMBER_RESTART"|"GUEST_RETRY";
+type Operation="OPEN"|"CLOSE"|"LIMIT_CLOSE"|"AMEND"|"STOP_LOSS_PUT"|"STOP_LOSS_DELETE"|"MEMBER_RESTART"|"GUEST_RETRY";
 export type CommandResult = {status:"NOT_OBSERVED";operation:Operation;observedAt:string;resultKind:null;result:null}
-  | {status:"FOUND";operation:"OPEN"|"CLOSE"|"LIMIT_CLOSE"|"CANCEL";observedAt:string;resultKind:"ORDER_CURRENT";result:TradingOrder}
+  | {status:"FOUND";operation:"OPEN"|"CLOSE"|"LIMIT_CLOSE"|"CANCEL"|"AMEND";observedAt:string;resultKind:"ORDER_CURRENT";result:TradingOrder}
   | {status:"FOUND";operation:"STOP_LOSS_PUT"|"STOP_LOSS_DELETE";observedAt:string;resultKind:"ORIGINAL_SNAPSHOT";result:StopLoss}
   | {status:"FOUND";operation:"GUEST_RETRY";observedAt:string;resultKind:"ORIGINAL_SNAPSHOT";result:ReturnType<typeof parseGuestRetry>}
   | {status:"FOUND";operation:"MEMBER_RESTART";observedAt:string;resultKind:"ORIGINAL_SNAPSHOT";result:ReturnType<typeof parseRestart>};
@@ -22,6 +22,7 @@ export function commandResultRequest(entry:JournalEntry) {
     case "stopLoss":return {operation:command.stopPrice===undefined?"STOP_LOSS_DELETE" as const:"STOP_LOSS_PUT" as const,idempotencyKey,request:{positionId:command.positionId,expectedVersion:command.expectedVersion,...(command.stopPrice===undefined?{}:{stopPrice:command.stopPrice})}};
     case "guestRetry":return {operation:"GUEST_RETRY" as const,idempotencyKey};
     case "memberRestart":return {operation:"MEMBER_RESTART" as const,idempotencyKey};
+    case "amend":
     case "cancel":return invalidContract();
   }
 }
