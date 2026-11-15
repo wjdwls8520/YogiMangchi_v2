@@ -12,6 +12,8 @@ import {
 } from "react";
 import { useDimScrollLock } from "./dim-modal";
 import { useOptionalMember } from "./member-provider";
+import { useOptionalNotificationCenter } from "../notifications/notification-context";
+import { formatNotificationCount } from "../notifications/notification-utils";
 import type { MemberRole } from "../api/contracts";
 import {
   writeHeaderAuthHint,
@@ -358,6 +360,27 @@ export function V1IconInfo(props: V1FlatIconProps) {
       <circle cx="12" cy="12" r="10" />
       <line x1="12" y1="16" x2="12" y2="12" />
       <line x1="12" y1="8" x2="12.01" y2="8" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconBell(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="bell" {...props}>
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </BaseFlatIcon>
+  );
+}
+
+export function V1IconTrash(props: V1FlatIconProps) {
+  return (
+    <BaseFlatIcon iconName="trash" {...props}>
+      <path d="M3 6h18" />
+      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
     </BaseFlatIcon>
   );
 }
@@ -980,9 +1003,11 @@ export function V1Header({
   } | null>(null);
   const pathname = usePathname();
   const memberCtx = useOptionalMember();
+  const notifCenter = useOptionalNotificationCenter();
   const phase = memberCtx?.snapshot.phase;
   const isInitialAuthLoading = role === undefined && phase === "loading";
   const isLoggedIn = phase === "ready";
+  const newNotificationCount = isLoggedIn ? (notifCenter?.newCount ?? 0) : 0;
   const isDarkTrading = Boolean(
     pathname?.startsWith("/trading") ||
       (pathname?.startsWith("/contest/") && pathname?.endsWith("/trading")),
@@ -1103,8 +1128,8 @@ export function V1Header({
             ))}
           </nav>
 
-          {/* 3. 오른쪽 액션 영역 (관리자 배지 + 마이페이지 또는 로그인 버튼: 고정 슬롯 및 동일 버튼 규격 유지) */}
-          <div className="ym-gnb-right flex min-h-[38px] md:w-[188px] md:min-w-[188px] md:justify-self-end shrink-0 items-center justify-end gap-2">
+          {/* 3. 오른쪽 액션 영역 (알림벨 + 관리자 배지 + 마이페이지 또는 로그인 버튼: 고정 슬롯 및 동일 버튼 규격 유지) */}
+          <div className="ym-gnb-right flex min-h-[38px] md:w-[188px] md:min-w-[188px] lg:w-[232px] lg:min-w-[232px] md:justify-self-end shrink-0 items-center justify-end gap-2">
             {isInitialAuthLoading ? (
               <div className="ym-gnb-auth-loading flex items-center justify-end gap-2">
                 <Link
@@ -1144,6 +1169,31 @@ export function V1Header({
               </div>
             ) : (
               <>
+                {isLoggedIn ? (
+                  <button
+                    type="button"
+                    data-notification-bell="true"
+                    aria-label="알림 열기"
+                    onClick={() => notifCenter?.toggleDrawer()}
+                    className={cn(
+                      "relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors cursor-pointer focus:outline-none",
+                      isDark
+                        ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
+                    )}
+                  >
+                    <V1IconBell className="h-[19px] w-[19px]" />
+                    {newNotificationCount > 0 ? (
+                      <span
+                        data-notification-badge="true"
+                        className="absolute right-0 top-0 flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-red-500 px-1 text-center text-[9px] font-extrabold leading-none text-white"
+                      >
+                        {formatNotificationCount(newNotificationCount)}
+                      </span>
+                    ) : null}
+                  </button>
+                ) : null}
+
                 {isAdmin ? (
                   <Link
                     href="/admin/contest"
@@ -1230,6 +1280,16 @@ export function V1Header({
               <Link href="/community" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 커뮤니티 · 전체/인기/최신글
               </Link>
+              {isLoggedIn ? (
+                <Link href="/notifications" className="flex items-center justify-between rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
+                  <span>알림 내역</span>
+                  {newNotificationCount > 0 ? (
+                    <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-extrabold text-white">
+                      {formatNotificationCount(newNotificationCount)}
+                    </span>
+                  ) : null}
+                </Link>
+              ) : null}
               <Link href="/me" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
                 마이페이지 · 자산/포트폴리오
               </Link>

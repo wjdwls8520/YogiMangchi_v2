@@ -8,6 +8,7 @@ import { createMemberSession, initialMember, type MemberSession } from "../api/s
 import { MemberRecoveryStatus } from "./member-recovery-status";
 import { MemberConsentGate } from "./member-consents";
 import { bindMemberActivity } from "../api/activity";
+import { NotificationCenterProvider } from "../notifications/notification-context";
 
 const origin = () => contentOrigin(process.env.NEXT_PUBLIC_CONTENT_SERVER_URL || "http://localhost:8080");
 let browserSession: MemberSession | undefined;
@@ -40,7 +41,7 @@ export function MemberProvider({ children, session: provided, client: providedCl
     }
     return () => { unsubscribe(); activity.stop(); channel.current?.close(); channel.current = null; };
   }, [session, client]);
-  return <QueryClientProvider client={client}><Context.Provider value={context}><MemberRecoveryStatus /><MemberConsentGate>{children}</MemberConsentGate></Context.Provider></QueryClientProvider>;
+  return <QueryClientProvider client={client}><Context.Provider value={context}><MemberRecoveryStatus /><MemberConsentGate><NotificationCenterProvider>{children}</NotificationCenterProvider></MemberConsentGate></Context.Provider></QueryClientProvider>;
 }
 export function useMember() {
   const context = useContext(Context);
