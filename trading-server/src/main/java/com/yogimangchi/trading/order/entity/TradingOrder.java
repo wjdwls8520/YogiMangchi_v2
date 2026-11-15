@@ -171,6 +171,27 @@ public class TradingOrder {
         reservedMargin = TradingFees.reservation(limitPrice, quantity, effectiveLeverage, feeRate);
         leverage = effectiveLeverage;
     }
+    public void amendPendingOpen(BigDecimal newQuantity, BigDecimal newLimitPrice, int effectiveLeverage) {
+        requirePending();
+        if (type != Type.LIMIT || action != Action.OPEN) {
+            throw new IllegalStateException("Only PENDING LIMIT OPEN orders reserve margin");
+        }
+        TradingMath.validateNewOrder(newQuantity, effectiveLeverage, newLimitPrice);
+        quantity = newQuantity.setScale(TradingMath.QUANTITY_SCALE);
+        limitPrice = TradingMath.amount(newLimitPrice);
+        leverage = effectiveLeverage;
+        reservedMargin = TradingFees.reservation(newLimitPrice, newQuantity, effectiveLeverage, feeRate);
+    }
+    public void amendPendingClose(BigDecimal newQuantity, BigDecimal newLimitPrice) {
+        requirePending();
+        if (type != Type.LIMIT || action != Action.CLOSE) {
+            throw new IllegalStateException("Only PENDING LIMIT CLOSE orders reserve close quantity");
+        }
+        TradingMath.validateQuantity(newQuantity);
+        TradingMath.validatePrice(newLimitPrice);
+        quantity = newQuantity.setScale(TradingMath.QUANTITY_SCALE);
+        limitPrice = TradingMath.amount(newLimitPrice);
+    }
     public BigDecimal getFilledPrice() { return filledPrice; }
     public String getRequestFingerprint() { return requestFingerprint; }
     public Instant getCreatedAt() { return createdAt; }
