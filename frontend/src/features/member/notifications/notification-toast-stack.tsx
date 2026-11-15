@@ -32,7 +32,8 @@ export function NotificationToastStack({
   return (
     <div
       data-notification-toast-stack="true"
-      className="pointer-events-none fixed right-4 top-[72px] z-[65] flex w-[calc(100vw-2rem)] max-w-[368px] flex-col gap-2.5"
+      data-toast-position="top-center"
+      className="pointer-events-none fixed left-1/2 top-[72px] z-[65] flex w-[calc(100vw-2rem)] max-w-[384px] -translate-x-1/2 flex-col gap-2.5"
     >
       {toasts.map(toast => {
         const toneStyles = getNotificationTradeToneStyles(toast.tradeTone);

@@ -4036,6 +4036,8 @@ test("V1 규격 실시간 알림은 체결(시장가·지정가·손절)·강제
     assert.equal(pageAndOverlayHtml.includes(">99+<"), true);
     assert.equal(pageAndOverlayHtml.includes('data-notification-drawer="true"'), true);
     assert.equal(pageAndOverlayHtml.includes('data-notification-toast-stack="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes('data-toast-position="top-center"'), true);
+    assert.match(pageAndOverlayHtml, /left-1\/2 top-\[72px\][^"]*-translate-x-1\/2/);
     assert.equal(pageAndOverlayHtml.includes('data-notifications-page="true"'), true);
     assert.match(pageAndOverlayHtml, /비트코인 시장가 주문 체결되었습니다\./);
     assert.match(pageAndOverlayHtml, /\[제3회 선물 챔피언십\] 대회가 종료되었습니다! \(최종 2위\)/);
