@@ -271,6 +271,115 @@ public class TradingOrderService {
     }
 
     @Transactional
+    public OrderResponse amend(Long accountId, Long orderId, AmendOrderRequest request) {
+        gate.enterTradingTransaction();
+        if (orderId == null || orderId <= 0 || request == null || request.quantity() == null || request.limitPrice() == null) {
+            throw new BusinessException(ErrorCode.INVALID_ORDER);
+        }
+        try {
+            TradingMath.validateQuantity(request.quantity());
+            TradingMath.validatePrice(request.limitPrice());
+        } catch (TradingMath.LimitExceeded limit) {
+            throw new BusinessException(ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED);
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.INVALID_ORDER);
+        }
+        TradingAccount account = locks.lock(accountId);
+        gate.requireAccountClear(accountId);
+        requireActive(account);
+        TradingOrder order = orders.findById(orderId)
+                .filter(o -> o.getAccountId().equals(accountId))
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
+        if (order.getStatus() != TradingOrder.Status.PENDING) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_PENDING);
+        }
+        if (order.getType() != TradingOrder.Type.LIMIT
+                || (order.getAction() != TradingOrder.Action.OPEN && order.getAction() != TradingOrder.Action.CLOSE)) {
+            throw new BusinessException(ErrorCode.INVALID_ORDER);
+        }
+        if (symbols.findById(order.getTradingSymbolId()).filter(s -> s.getStatus() == TradingSymbolStatus.ACTIVE).isEmpty()) {
+            throw new BusinessException(ErrorCode.SYMBOL_NOT_AVAILABLE);
+        }
+        Wallet wallet = wallet(accountId);
+        Instant now = now();
+        if (order.getAction() == TradingOrder.Action.CLOSE) {
+            Position position = positions.findById(order.getPositionId())
+                    .filter(p -> p.getAccountId().equals(accountId))
+                    .orElseThrow(() -> new BusinessException(ErrorCode.POSITION_NOT_FOUND));
+            if (position.getStatus() != Position.Status.OPEN) {
+                throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
+            }
+            BigDecimal maxCloseable = position.getFreeCloseQuantity().add(order.getQuantity());
+            if (request.quantity().compareTo(maxCloseable) > 0) {
+                throw new BusinessException(ErrorCode.CLOSE_QUANTITY_EXCEEDED);
+            }
+            AccountValuation.Value value = valuation.calculate(wallet, List.of(position));
+            requireFresh(value);
+            gate.requireCaughtUp(value.prices());
+            BigDecimal mark = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice();
+            if (isolated.risk(position, mark).atRisk()) {
+                throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+            }
+            requirePassiveLimit(position.getSide(), request.limitPrice(), mark, true);
+            if (order.getQuantity().compareTo(request.quantity()) == 0
+                    && order.getLimitPrice().compareTo(request.limitPrice()) == 0) {
+                return OrderResponse.from(order, null);
+            }
+            position.releaseCloseReservation(order.getQuantity());
+            position.reserveClose(request.quantity());
+            order.amendPendingClose(request.quantity(), request.limitPrice());
+            account.recordFinancialChange(now);
+            return OrderResponse.from(order, null);
+        }
+
+        List<Position> open = open(accountId);
+        Position target = hedge.existing(open, order.getTradingSymbolId(), order.getSide());
+        if (open.size() >= TradingMath.MAX_OPEN_POSITIONS && target == null) {
+            throw new BusinessException(ErrorCode.POSITION_LIMIT_REACHED);
+        }
+        int effectiveLeverage = leverage.current(accountId, order.getTradingSymbolId(), order.getSide());
+        var affected = open.stream().filter(p -> p.getTradingSymbolId().equals(order.getTradingSymbolId())).toList();
+        AccountValuation.Value value = valuation.calculate(wallet, affected, Set.of(order.getTradingSymbolId()));
+        requireFresh(value);
+        gate.requireCaughtUp(value.prices());
+        LatestMarkPrice mark = value.prices().get(order.getTradingSymbolId()).latestPrice().orElseThrow();
+        requirePassiveLimit(order.getSide(), request.limitPrice(), mark.domainMarkPrice(), false);
+        BigDecimal newReservation;
+        try {
+            TradingMath.validateNewOrder(request.quantity(), effectiveLeverage, request.limitPrice());
+            if (target != null) {
+                TradingMath.validateQuantity(target.getQuantity().add(request.quantity()));
+                if (target.getEntryNotional().add(request.limitPrice().multiply(request.quantity())).compareTo(TradingMath.MAX_NOTIONAL) > 0) {
+                    throw new TradingMath.LimitExceeded();
+                }
+            }
+            newReservation = TradingFees.reservation(request.limitPrice(), request.quantity(), effectiveLeverage, order.getFeeRate());
+        } catch (TradingMath.LimitExceeded limit) {
+            throw new BusinessException(ErrorCode.ORDER_SIZE_LIMIT_EXCEEDED);
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.INVALID_ORDER);
+        }
+        BigDecimal reservedDelta = newReservation.subtract(order.getReservedMargin());
+        if (reservedDelta.compareTo(value.availableBalance()) > 0) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);
+        }
+        if (target != null && isolated.risk(target, mark.domainMarkPrice()).atRisk()
+                || isolated.projectedOpenRisk(target, order.getSide(), request.quantity(), request.limitPrice(),
+                        effectiveLeverage, mark.domainMarkPrice()).atRisk()) {
+            throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+        }
+        if (order.getQuantity().compareTo(request.quantity()) == 0
+                && order.getLimitPrice().compareTo(request.limitPrice()) == 0
+                && order.getLeverage() == effectiveLeverage) {
+            return OrderResponse.from(order, null);
+        }
+        wallet.reallocateMargin(wallet.getUsedMargin(), wallet.getReservedMargin().add(reservedDelta));
+        order.amendPendingOpen(request.quantity(), request.limitPrice(), effectiveLeverage);
+        account.recordFinancialChange(now);
+        return OrderResponse.from(order, null);
+    }
+
+    @Transactional
     public OrderResponse cancel(Long accountId, Long orderId) {
         gate.enterTradingTransaction();
         TradingAccount account = locks.lock(accountId);

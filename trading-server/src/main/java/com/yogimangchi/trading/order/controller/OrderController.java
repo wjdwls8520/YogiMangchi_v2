@@ -60,6 +60,20 @@ public class OrderController {
     @GetMapping("/orders/pending")
     @Operation(summary="Read own pending OPEN/CLOSE orders and their margin/quantity reservations")
     public List<OrderResponse> pending(@AuthenticationPrincipal TradingPrincipal principal) { return engine.pending(principal.accountId()); }
+    @PostMapping("/orders/{orderId}/amend")
+    @Operation(summary="Amend limitPrice and quantity of an owned pending order under AccountLock",
+            description="Atomically re-checks order PENDING state, fresh Mark Price, passive limit direction, OPEN margin+fee capacity or CLOSE unreserved position quantity, and isolated liquidation risk. If filled or canceled concurrently, returns 409 ORDER_NOT_PENDING without modifying exposures.")
+    public OrderResponse amendPost(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long orderId,
+            @RequestBody AmendOrderRequest request) {
+        return engine.amend(principal.accountId(), orderId, request);
+    }
+    @PatchMapping("/orders/{orderId}")
+    @Operation(summary="Amend limitPrice and quantity of an owned pending order under AccountLock",
+            description="RESTful PATCH alias for pending order modification with identical pessimistic locking and financial validation.")
+    public OrderResponse amendPatch(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long orderId,
+            @RequestBody AmendOrderRequest request) {
+        return engine.amend(principal.accountId(), orderId, request);
+    }
     @PostMapping("/orders/{orderId}/cancel")
     @Operation(summary="Cancel an owned pending order and release its margin or close quantity",
             description="Repeated cancel is idempotent. A fill that wins the race returns 409. Cancellation remains available during price/Redis outages.")

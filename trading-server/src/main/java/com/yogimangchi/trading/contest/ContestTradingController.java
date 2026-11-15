@@ -9,6 +9,7 @@ import com.yogimangchi.trading.execution.recovery.RiskRecoveryController;
 import com.yogimangchi.trading.leverage.dto.LeverageRequest;
 import com.yogimangchi.trading.leverage.dto.LeverageResponse;
 import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
+import com.yogimangchi.trading.order.dto.AmendOrderRequest;
 import com.yogimangchi.trading.order.dto.ClosePositionRequest;
 import com.yogimangchi.trading.order.dto.CreateOrderRequest;
 import com.yogimangchi.trading.order.dto.LimitCloseRequest;
@@ -43,6 +44,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -171,6 +173,32 @@ public class ContestTradingController {
             @Valid @RequestBody CreateOrderRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
         OrderResponse response = orderService.create(accountId, idempotencyKey, request);
+        contestService.evictContestCache(seasonId);
+        return response;
+    }
+
+    @PostMapping("/orders/{orderId:[0-9]+}/amend")
+    @Operation(summary = "Amend limitPrice and quantity of a pending order in the active contest season")
+    public OrderResponse amendOrderPost(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @PathVariable Long seasonId,
+            @PathVariable Long orderId,
+            @Valid @RequestBody AmendOrderRequest request) {
+        Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        OrderResponse response = orderService.amend(accountId, orderId, request);
+        contestService.evictContestCache(seasonId);
+        return response;
+    }
+
+    @PatchMapping("/orders/{orderId:[0-9]+}")
+    @Operation(summary = "Amend limitPrice and quantity of a pending order in the active contest season")
+    public OrderResponse amendOrderPatch(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @PathVariable Long seasonId,
+            @PathVariable Long orderId,
+            @Valid @RequestBody AmendOrderRequest request) {
+        Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        OrderResponse response = orderService.amend(accountId, orderId, request);
         contestService.evictContestCache(seasonId);
         return response;
     }
