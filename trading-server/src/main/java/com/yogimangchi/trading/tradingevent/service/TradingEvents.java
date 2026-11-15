@@ -22,8 +22,13 @@ import org.springframework.transaction.support.*;
 public class TradingEvents {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications;
     private final Map<Long,AtomicBoolean> watchers=new ConcurrentHashMap<>();
-    public TradingEvents(JdbcTemplate jdbc,ObjectMapper mapper) { this.jdbc=jdbc; this.mapper=mapper; }
+    public TradingEvents(JdbcTemplate jdbc,ObjectMapper mapper) { this(jdbc,mapper,null); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public TradingEvents(JdbcTemplate jdbc,ObjectMapper mapper,org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications) {
+        this.jdbc=jdbc; this.mapper=mapper; this.notifications=notifications;
+    }
 
     @Transactional(propagation=Propagation.MANDATORY)
     public void record(TradingOrder order,Fill fill) {
@@ -37,6 +42,8 @@ public class TradingEvents {
         Instant time=order.getCompletedAt()==null ? order.getCreatedAt() : order.getCompletedAt();
         jdbc.update("insert into trading.trading_event(account_id,order_id,order_status,event_type,payload,occurred_at) values (?,?,?,?,cast(? as jsonb),?) on conflict(order_id,order_status) do nothing",
                 order.getAccountId(),order.getId(),order.getStatus().name(),type,payload,time.atOffset(ZoneOffset.UTC));
+        var notifier=notifications!=null ? notifications.getIfAvailable() : null;
+        if(notifier!=null) notifier.notifyOrderEventAfterCommit(order,fill);
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
                 var signal=watchers.get(order.getAccountId());

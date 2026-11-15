@@ -63,6 +63,19 @@ public class ContestService {
     private final AccountValuation valuation;
     private final TradingAccountService tradingAccountService;
     private final RedisContestLeaderboardStore leaderboardStore;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications;
+
+    public ContestService(
+            JdbcTemplate jdbc,
+            EntityManager entities,
+            TradingAccountRepository accounts,
+            WalletRepository wallets,
+            PositionRepository positions,
+            AccountValuation valuation,
+            TradingAccountService tradingAccountService,
+            RedisContestLeaderboardStore leaderboardStore) {
+        this(jdbc, entities, accounts, wallets, positions, valuation, tradingAccountService, leaderboardStore, null);
+    }
 
     @Autowired
     public ContestService(
@@ -73,7 +86,8 @@ public class ContestService {
             PositionRepository positions,
             AccountValuation valuation,
             TradingAccountService tradingAccountService,
-            RedisContestLeaderboardStore leaderboardStore) {
+            RedisContestLeaderboardStore leaderboardStore,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications) {
         this.jdbc = jdbc;
         this.entities = entities;
         this.accounts = accounts;
@@ -82,6 +96,7 @@ public class ContestService {
         this.valuation = valuation;
         this.tradingAccountService = tradingAccountService;
         this.leaderboardStore = leaderboardStore;
+        this.notifications = notifications;
     }
 
     private static final String SEASON_SELECT = """
@@ -762,6 +777,12 @@ public class ContestService {
                 WHERE id = ?
                 """, tsNow, adminMemberId, applicationId);
 
+        if (!"APPROVED".equals(appStatus)) {
+            var notifier = notifications != null ? notifications.getIfAvailable() : null;
+            if (notifier != null) {
+                notifier.notifyContestApplicationApprovedAfterCommit(applicantMemberId, seasonId, applicationId, now);
+            }
+        }
         return applicantMemberId;
     }
 
@@ -843,6 +864,13 @@ public class ContestService {
                 WHERE a.id = ?
                 """, applicationId);
         evictContestCache(seasonId);
+        if (!"REJECTED".equals(appRows.get(0).get("status"))) {
+            long applicantMemberId = ((Number) appRows.get(0).get("member_id")).longValue();
+            var notifier = notifications != null ? notifications.getIfAvailable() : null;
+            if (notifier != null) {
+                notifier.notifyContestApplicationRejectedAfterCommit(applicantMemberId, seasonId, applicationId, safeReason, now);
+            }
+        }
         return mapApplicationRow(updated, now);
     }
 

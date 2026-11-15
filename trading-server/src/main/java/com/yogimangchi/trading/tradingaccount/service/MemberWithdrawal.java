@@ -30,6 +30,7 @@ public class MemberWithdrawal {
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.contest.RedisContestLeaderboardStore> leaderboardStores;
     private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.tradingevent.websocket.TradingEventWebSocketHandler> wsHandlers;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationSseService> notificationSse;
     public MemberWithdrawal(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,
             PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events,
             com.yogimangchi.trading.tradinground.MemberRounds rounds,
@@ -37,10 +38,21 @@ public class MemberWithdrawal {
             org.springframework.jdbc.core.JdbcTemplate jdbc,
             org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.contest.RedisContestLeaderboardStore> leaderboardStores,
             org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.tradingevent.websocket.TradingEventWebSocketHandler> wsHandlers) {
+        this(entities,accounts,wallets,positions,orders,locks,events,rounds,risk,jdbc,leaderboardStores,wsHandlers,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public MemberWithdrawal(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,
+            PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events,
+            com.yogimangchi.trading.tradinground.MemberRounds rounds,
+            com.yogimangchi.trading.execution.recovery.RiskAdmission risk,
+            org.springframework.jdbc.core.JdbcTemplate jdbc,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.contest.RedisContestLeaderboardStore> leaderboardStores,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.tradingevent.websocket.TradingEventWebSocketHandler> wsHandlers,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationSseService> notificationSse) {
         this.risk=risk;
         this.entities=entities; this.accounts=accounts; this.wallets=wallets; this.positions=positions;
         this.orders=orders; this.locks=locks; this.events=events;this.rounds=rounds;
-        this.jdbc=jdbc; this.leaderboardStores=leaderboardStores; this.wsHandlers=wsHandlers;
+        this.jdbc=jdbc; this.leaderboardStores=leaderboardStores; this.wsHandlers=wsHandlers; this.notificationSse=notificationSse;
     }
     @Transactional(timeout=10)
     public void withdraw(Long memberId) {
@@ -125,12 +137,25 @@ public class MemberWithdrawal {
                   AND nickname <> '탈퇴한회원'
                 """,memberId);
 
+        jdbc.update("DELETE FROM trading.notification WHERE receiver_member_id = ?", memberId);
+        jdbc.update("DELETE FROM trading.notification_state WHERE member_id = ?", memberId);
+
         var leaderboardStore=leaderboardStores.getIfAvailable();
         if(leaderboardStore!=null) {
             if(affectedSeasonIds.isEmpty()) leaderboardStore.evictPublicSeasons();
             else affectedSeasonIds.forEach(leaderboardStore::evictSeason);
         }
 
+        var sse=notificationSse!=null ? notificationSse.getIfAvailable() : null;
+        if(sse!=null) {
+            sse.disconnectMember(memberId);
+            if(org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override public void afterCommit() { sse.disconnectMember(memberId); }
+                        });
+            }
+        }
         var wsHandler=wsHandlers.getIfAvailable();
         if(wsHandler!=null) {
             wsHandler.disconnectMember(memberId);
