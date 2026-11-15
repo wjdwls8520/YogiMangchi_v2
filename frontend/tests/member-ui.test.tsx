@@ -6,6 +6,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { MemberProvider } from "../src/features/member/components/member-provider";
+import { NotificationCenterProvider } from "../src/features/member/notifications/notification-context";
+import { NotificationsPageView } from "../src/features/member/notifications/notifications-page-view";
+import {
+  formatNotificationCount,
+  formatNotificationDescription,
+  formatNotificationTitle,
+  getNotificationDetailFields,
+  getNotificationNavigationTarget,
+  getNotificationTradeMeta,
+  normalizeRawNotification,
+} from "../src/features/member/notifications/notification-utils";
 import { MemberConsents } from "../src/features/member/components/member-consents";
 import { MemberLoginView, ProfileEditForm, SignupForm } from "../src/features/member/components/member-views";
 import { GuestStartDialog } from "../src/features/trading/components/guest-access";
@@ -1208,7 +1219,7 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     assert.equal(loggedInHeaderHtml.includes('href="/signup"'), false);
     assert.equal(loggedInHeaderHtml.includes('href="/assets"'), false);
     assert.equal(loggedInHeaderHtml.includes("테마 전환"), false);
-    assert.equal(loggedInHeaderHtml.includes("알림 열기"), false);
+    assert.equal(loggedInHeaderHtml.includes("알림 열기"), true);
     assert.equal(loggedInHeaderHtml.includes("내 프로필 아바타"), false);
     const newsIdx = loggedInHeaderHtml.indexOf('href="/news"');
     const tradingIdx = loggedInHeaderHtml.indexOf('href="/trading"');
@@ -3733,6 +3744,303 @@ test("community header keeps only position share, post edit view hides comments 
     );
     assert.equal(guestDetailHtml.includes('data-comment-action="edit"'), false);
     assert.equal(guestDetailHtml.includes('data-comment-action="delete"'), false);
+  } finally {
+    client.clear();
+  }
+});
+
+test("V1 규격 실시간 알림은 체결(시장가·지정가·손절)·강제청산·대회 승인/반려/종료 정산·커뮤니티 댓글·@멘션·좋아요 묶음·팔로우와 벨/드로어/토스트/전체내역을 렌더링한다", async () => {
+  const nowIso = new Date().toISOString();
+
+  // 1. 시장가·지정가·손절 체결 및 강제청산 포맷 검증
+  const marketOpen = normalizeRawNotification("TRADING", {
+    notificationId: 101,
+    actorMemberId: null,
+    category: "MOCK",
+    type: "ORDER_COMPLETED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      displayNameKr: "비트코인",
+      symbol: "BTCUSDT",
+      orderType: "MARKET",
+      positionSide: "LONG",
+      positionAction: "OPEN",
+      quantity: "0.5",
+      executedAmount: "48500",
+      price: "97000",
+    },
+  });
+  assert.equal(formatNotificationTitle(marketOpen), "비트코인 시장가 주문 체결되었습니다.");
+  assert.equal(getNotificationTradeMeta(marketOpen).sideLabel, "Long / Open · 시장가");
+  assert.equal(getNotificationTradeMeta(marketOpen).tone, "long");
+  assert.equal(
+    getNotificationNavigationTarget(marketOpen)?.href,
+    "/me?tab=mock-assets&detailTab=trades",
+  );
+
+  const limitClose = normalizeRawNotification("TRADING", {
+    notificationId: 102,
+    actorMemberId: null,
+    category: "MOCK",
+    type: "ORDER_COMPLETED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      displayNameKr: "이더리움",
+      symbol: "ETHUSDT",
+      orderType: "LIMIT",
+      positionSide: "SHORT",
+      positionAction: "CLOSE",
+      quantity: "2",
+      executedAmount: "6400",
+      realizedPnl: "185.5",
+    },
+  });
+  assert.equal(formatNotificationTitle(limitClose), "이더리움 지정가 주문 체결되었습니다.");
+  assert.match(formatNotificationDescription(limitClose), /실현손익 \+185\.5 USDT/);
+  assert.equal(getNotificationTradeMeta(limitClose).sideLabel, "Short / Close · 지정가");
+
+  const stopLossFill = normalizeRawNotification("TRADING", {
+    notificationId: 103,
+    actorMemberId: null,
+    category: "MOCK",
+    type: "ORDER_COMPLETED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      displayNameKr: "솔라나",
+      orderType: "STOP_MARKET",
+      positionSide: "LONG",
+      positionAction: "CLOSE",
+      quantity: "10",
+      executedAmount: "1800",
+      realizedPnl: "-45",
+    },
+  });
+  assert.equal(formatNotificationTitle(stopLossFill), "솔라나 손절 주문 체결되었습니다.");
+
+  const liquidation = normalizeRawNotification("TRADING", {
+    notificationId: 104,
+    actorMemberId: null,
+    category: "MOCK",
+    type: "LIQUIDATION_COMPLETED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      displayNameKr: "비트코인",
+      positionSide: "LONG",
+      liquidationPrice: "88100",
+      closeQuantity: "1",
+      realizedPnl: "-9800",
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(liquidation),
+    "[청산 알림] 비트코인 포지션이 강제 청산되었습니다.",
+  );
+  assert.equal(getNotificationTradeMeta(liquidation).tone, "warning");
+  assert.match(formatNotificationDescription(liquidation), /청산가 88,100 USDT/);
+
+  // 2. 대회 승인·반려·종료 최종 순위 정산 검증
+  const contestApproved = normalizeRawNotification("TRADING", {
+    notificationId: 105,
+    actorMemberId: null,
+    category: "CONTEST",
+    type: "CONTEST_APPLICATION_APPROVED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: { seasonId: 3, seasonTitle: "제3회 선물 챔피언십" },
+  });
+  assert.equal(
+    formatNotificationTitle(contestApproved),
+    "[제3회 선물 챔피언십] 신청이 승인되었습니다!",
+  );
+  assert.equal(getNotificationNavigationTarget(contestApproved)?.href, "/contest");
+
+  const contestRejected = normalizeRawNotification("TRADING", {
+    notificationId: 106,
+    actorMemberId: null,
+    category: "CONTEST",
+    type: "CONTEST_APPLICATION_REJECTED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      seasonId: 3,
+      seasonTitle: "제3회 선물 챔피언십",
+      rejectReason: "참가 조건 재확인 요망",
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(contestRejected),
+    "[제3회 선물 챔피언십] 신청이 반려되었습니다.",
+  );
+  assert.equal(formatNotificationDescription(contestRejected), "사유: 참가 조건 재확인 요망");
+
+  const contestSettled = normalizeRawNotification("TRADING", {
+    notificationId: 107,
+    actorMemberId: null,
+    category: "CONTEST",
+    type: "CONTEST_SEASON_SETTLED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      seasonId: 3,
+      seasonTitle: "제3회 선물 챔피언십",
+      finalRank: 2,
+      totalParticipants: 48,
+      finalRoiPct: "64.25",
+      finalBalance: "16425",
+      finalRealizedPnl: "6425",
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(contestSettled),
+    "[제3회 선물 챔피언십] 대회가 종료되었습니다! (최종 2위)",
+  );
+  assert.match(formatNotificationDescription(contestSettled), /48명 중 2위 · 수익률 \+64\.25%/);
+  assert.equal(
+    getNotificationNavigationTarget(contestSettled)?.href,
+    "/me?tab=contest-assets&contestSubTab=finished",
+  );
+  assert.equal(
+    getNotificationDetailFields(contestSettled).some(f => f.value === "2위 / 48명"),
+    true,
+  );
+
+  // 3. 커뮤니티 댓글·@멘션·좋아요 묶음·팔로우 검증
+  const mentionReply = normalizeRawNotification("CONTENT", {
+    notificationId: 201,
+    actorMemberId: 33,
+    category: "COMMUNITY",
+    type: "REPLY_COMMENT_CREATED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      actorNickname: "차트장인",
+      postId: 55,
+      postTitle: "BTC 지지선 분석",
+      replyId: 777,
+      content: "@트레이더11 좋은 관점 감사합니다!",
+      mentioned: true,
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(mentionReply),
+    '차트장인님이 글 "BTC 지지선 분석"의 댓글에서 회원님을 @멘션했습니다.',
+  );
+  assert.equal(
+    getNotificationNavigationTarget(mentionReply)?.href,
+    "/community/all/55#comment-777",
+  );
+
+  const groupedLike = normalizeRawNotification("CONTENT", {
+    notificationId: 202,
+    actorMemberId: 44,
+    category: "COMMUNITY",
+    type: "POST_LIKED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      latestActorNickname: "고래추적자",
+      groupCount: 4,
+      postId: 55,
+      postTitle: "BTC 지지선 분석",
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(groupedLike),
+    '고래추적자님 외 3명이 내 글 "BTC 지지선 분석"을 좋아합니다.',
+  );
+
+  const followNotif = normalizeRawNotification("CONTENT", {
+    notificationId: 203,
+    actorMemberId: 88,
+    category: "FOLLOW",
+    type: "FOLLOW_CREATED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: { actorNickname: "스캘퍼왕", actorMemberId: 88 },
+  });
+  assert.equal(formatNotificationTitle(followNotif), "스캘퍼왕님이 나를 팔로우했습니다.");
+  assert.equal(getNotificationNavigationTarget(followNotif)?.href, "/members/88");
+  assert.equal(formatNotificationCount(125), "99+");
+
+  // 4. V1Header 벨 배지, 드로어, 토스트, /notifications 전체 내역 페이지 SSR 렌더링 검증
+  const client = new QueryClient();
+  const epoch = Date.now();
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 11,
+            nickname: "트레이더11",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+
+  try {
+    const pageAndOverlayHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <NotificationCenterProvider
+          initialState={{
+            items: [marketOpen, contestSettled, mentionReply, groupedLike],
+            newCount: 102,
+            unreadCount: 4,
+            isDrawerOpen: true,
+            toasts: [
+              {
+                id: "toast-1",
+                uid: marketOpen.uid,
+                source: "TRADING",
+                notificationId: 101,
+                type: "ORDER_COMPLETED",
+                category: "MOCK",
+                title: formatNotificationTitle(marketOpen),
+                description: formatNotificationDescription(marketOpen),
+                createdAt: nowIso,
+                tradeTone: "long",
+                tradeSideLabel: "Long / Open · 시장가",
+                href: "/me?tab=mock-assets&detailTab=trades",
+              },
+            ],
+          }}
+        >
+          <NotificationsPageView initialTab="ALL" />
+        </NotificationCenterProvider>
+      </MemberProvider>,
+    );
+
+    assert.equal(pageAndOverlayHtml.includes('data-notification-bell="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes('data-notification-badge="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes(">99+<"), true);
+    assert.equal(pageAndOverlayHtml.includes('data-notification-drawer="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes('data-notification-toast-stack="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes('data-notifications-page="true"'), true);
+    assert.match(pageAndOverlayHtml, /비트코인 시장가 주문 체결되었습니다\./);
+    assert.match(pageAndOverlayHtml, /\[제3회 선물 챔피언십\] 대회가 종료되었습니다! \(최종 2위\)/);
+    assert.match(pageAndOverlayHtml, /@멘션했습니다/);
+    assert.match(pageAndOverlayHtml, /고래추적자님 외 3명/);
   } finally {
     client.clear();
   }

@@ -247,8 +247,12 @@ function isNonNegativeDecimal(raw: string): boolean {
 
 export function MemberMyProfilePage({
   initialMainTab,
+  initialDetailTab,
+  initialContestSubTab,
 }: {
   initialMainTab?: MyPageMainTab;
+  initialDetailTab?: LedgerDetailTab;
+  initialContestSubTab?: ContestSubTab;
 } = {}) {
   const { origin, snapshot: member, session } = useMember();
   const queryClient = useQueryClient();
@@ -257,8 +261,8 @@ export function MemberMyProfilePage({
   const tradingBase = resolveTradingContestBaseUrl();
 
   const [selectedTab, setSelectedTab] = useState<MyPageMainTab | null>(initialMainTab ?? null);
-  const [detailTab, setDetailTab] = useState<LedgerDetailTab>("holdings");
-  const [contestSubTab, setContestSubTab] = useState<ContestSubTab>("live");
+  const [detailTab, setDetailTab] = useState<LedgerDetailTab>(initialDetailTab ?? "holdings");
+  const [contestSubTab, setContestSubTab] = useState<ContestSubTab>(initialContestSubTab ?? "live");
   const [portfolioTab, setPortfolioTab] = useState<"mock" | "contest">("mock");
   const [communityTab, setCommunityTab] = useState<
     "posts" | "replies" | "likedPosts" | "likedReplies" | "reports"

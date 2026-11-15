@@ -757,6 +757,26 @@ export function CommunityBoard({
         : undefined,
   });
 
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      activePostId === null ||
+      !commentsQuery.data?.items?.length
+    ) {
+      return;
+    }
+    const hash = window.location.hash;
+    if (!hash || !hash.startsWith("#comment-")) return;
+    const targetId = hash.slice(1);
+    const frame = window.requestAnimationFrame(() => {
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activePostId, commentsQuery.data?.items]);
+
   const reportReasonsQuery = useQuery({
     queryKey: ["community-report-reasons", origin],
     enabled: reportTarget !== null,
