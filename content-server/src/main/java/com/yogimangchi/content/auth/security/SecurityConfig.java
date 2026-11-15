@@ -37,6 +37,9 @@ public class SecurityConfig {
             a.requestMatchers(HttpMethod.GET,"/api/v1/admin/members","/api/v1/admin/community/posts","/api/v1/admin/community/posts/active-author","/api/v1/admin/community/posts/withdrawn-author","/api/v1/admin/community/replies","/api/v1/admin/community/replies/active-author","/api/v1/admin/community/replies/withdrawn-author","/api/v1/admin/community/reports").authenticated();
             a.requestMatchers(HttpMethod.DELETE,"/api/v1/admin/members/{memberId:[0-9]+}","/api/v1/admin/community/posts/{postId:[0-9]+}","/api/v1/admin/community/replies/{replyId:[0-9]+}","/api/v1/admin/community/reports/{targetType}/{targetId:[0-9]+}/reporters/{reporterId:[0-9]+}").authenticated();
             a.requestMatchers(HttpMethod.POST,"/api/v1/admin/community/reports/{targetType}/{targetId:[0-9]+}/moderate").authenticated();
+            a.requestMatchers(HttpMethod.GET,"/api/v1/notifications","/api/v1/notifications/status","/api/v1/notifications/subscribe").authenticated();
+            a.requestMatchers(HttpMethod.PUT,"/api/v1/notifications/check","/api/v1/notifications/read","/api/v1/notifications/read-all","/api/v1/notifications/{notificationId:[0-9]+}/read").authenticated();
+            a.requestMatchers(HttpMethod.DELETE,"/api/v1/notifications","/api/v1/notifications/read","/api/v1/notifications/{notificationId:[0-9]+}").authenticated();
             if(docs) a.requestMatchers("/v3/api-docs","/v3/api-docs/**","/v3/api-docs.yaml","/swagger-ui.html","/swagger-ui/**").permitAll();
             a.anyRequest().denyAll();
         }).cors(c -> c.configurationSource(cors))
@@ -67,7 +70,7 @@ public class SecurityConfig {
         List<String> origins=Arrays.stream(value.split(",")).map(String::trim).filter(v -> !v.isEmpty()).toList();
         if(origins.isEmpty() || origins.stream().anyMatch(v -> v.contains("*"))) throw new IllegalArgumentException("Explicit Content origins required");
         var config=new CorsConfiguration(); config.setAllowedOrigins(origins); config.setAllowCredentials(true);
-        config.setAllowedMethods(List.of("GET","POST","PUT","DELETE","PATCH","OPTIONS")); config.setAllowedHeaders(List.of("Authorization","Content-Type","X-CSRF-TOKEN","X-Anon-Viewer-Id"));
+        config.setAllowedMethods(List.of("GET","POST","PUT","DELETE","PATCH","OPTIONS")); config.setAllowedHeaders(List.of("Authorization","Content-Type","X-CSRF-TOKEN","X-Anon-Viewer-Id","Last-Event-ID"));
         config.setExposedHeaders(List.of("Retry-After"));
         config.setMaxAge(600L);
         var source=new UrlBasedCorsConfigurationSource(); source.registerCorsConfiguration("/api/**",config); return source;

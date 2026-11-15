@@ -17,8 +17,13 @@ public class MemberWithdrawals {
     private final RefreshSessionRepository refresh;
     private final JdbcTemplate jdbc;
     private final CommunityS3Service s3;
+    private final com.yogimangchi.content.notification.ContentNotificationSseService notificationSse;
     public MemberWithdrawals(MemberRepository members,RefreshSessionRepository refresh,JdbcTemplate jdbc,CommunityS3Service s3) {
-        this.members=members; this.refresh=refresh; this.jdbc=jdbc; this.s3=s3;
+        this(members,refresh,jdbc,s3,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public MemberWithdrawals(MemberRepository members,RefreshSessionRepository refresh,JdbcTemplate jdbc,CommunityS3Service s3,com.yogimangchi.content.notification.ContentNotificationSseService notificationSse) {
+        this.members=members; this.refresh=refresh; this.jdbc=jdbc; this.s3=s3; this.notificationSse=notificationSse;
     }
     @Transactional(timeout=5)
     public Result request(Long memberId,com.yogimangchi.content.member.dto.WithdrawalRequest body,com.yogimangchi.content.auth.oauth.VerifiedIdentity proof) {
@@ -38,6 +43,11 @@ public class MemberWithdrawals {
         jdbc.update("update content.member_trading_provision set status='CANCELED' where member_id=? and status='PENDING'",memberId);
         jdbc.update("insert into content.member_withdrawal(member_id,status,requested_at,next_attempt_at,confirmation_version,confirmed_at) values (?,'PENDING',?,?,?,?) on conflict(member_id) do nothing",
                 memberId,java.sql.Timestamp.from(now),java.sql.Timestamp.from(now),body.policyVersion(),java.sql.Timestamp.from(now));
+        if(notificationSse!=null && org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                @Override public void afterCommit() { notificationSse.disconnectMember(memberId); }
+            });
+        }
         return new Result(jdbc.queryForObject("select status from content.member_withdrawal where member_id=?",String.class,memberId));
     }
     @Transactional(readOnly=true,timeout=3)

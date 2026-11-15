@@ -17,9 +17,11 @@ public class MemberFollows {
     private final MemberRepository members;
     private final JdbcTemplate jdbc;
     private final CommunityS3Service s3;
-    public MemberFollows(MemberRepository members,JdbcTemplate jdbc) { this(members,jdbc,null); }
+    private final com.yogimangchi.content.notification.ContentNotificationService notifications;
+    public MemberFollows(MemberRepository members,JdbcTemplate jdbc) { this(members,jdbc,null,null); }
+    public MemberFollows(MemberRepository members,JdbcTemplate jdbc,CommunityS3Service s3) { this(members,jdbc,s3,null); }
     @org.springframework.beans.factory.annotation.Autowired
-    public MemberFollows(MemberRepository members,JdbcTemplate jdbc,CommunityS3Service s3) { this.members=members; this.jdbc=jdbc; this.s3=s3; }
+    public MemberFollows(MemberRepository members,JdbcTemplate jdbc,CommunityS3Service s3,com.yogimangchi.content.notification.ContentNotificationService notifications) { this.members=members; this.jdbc=jdbc; this.s3=s3; this.notifications=notifications; }
     public record Summary(Long memberId,long followerCount,long followingCount,boolean followed,boolean follower,boolean mine) { }
     @Transactional(timeout=5)
     public FollowResponse change(Long actorId,Long targetId,boolean follow) {
@@ -32,7 +34,10 @@ public class MemberFollows {
         var target=actorId<targetId ? second : first;
         actor.filter(m -> m.getStatus()==Member.Status.ACTIVE).orElseThrow(AuthFailure::unauthorized);
         target.filter(m -> m.getStatus()==Member.Status.ACTIVE).orElseThrow(MemberFollows::notFound);
-        if(follow) jdbc.update("insert into content.member_follow(follower_id,following_id,active,created_at) values (?,?,true,now()) on conflict(follower_id,following_id) where active do nothing",actorId,targetId);
+        if(follow) {
+            int inserted=jdbc.update("insert into content.member_follow(follower_id,following_id,active,created_at) values (?,?,true,now()) on conflict(follower_id,following_id) where active do nothing",actorId,targetId);
+            if(inserted>0 && notifications!=null) notifications.notifyFollowCreatedAfterCommit(actorId,targetId);
+        }
         else jdbc.update("update content.member_follow set active=false,deactivated_at=now() where follower_id=? and following_id=? and active",actorId,targetId);
         return new FollowResponse(targetId,counts(targetId)[0],follow);
     }

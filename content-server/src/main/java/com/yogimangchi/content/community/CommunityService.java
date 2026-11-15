@@ -304,6 +304,7 @@ public class CommunityService {
     private final ObjectMapper json;
     private final CommunityS3Service s3;
     private final CommunityUxSseService uxSse;
+    private final com.yogimangchi.content.notification.ContentNotificationService notifications;
 
     public CommunityService(
             MemberRepository members,
@@ -311,11 +312,23 @@ public class CommunityService {
             ObjectMapper json,
             CommunityS3Service s3,
             CommunityUxSseService uxSse) {
+        this(members, jdbc, json, s3, uxSse, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public CommunityService(
+            MemberRepository members,
+            JdbcTemplate jdbc,
+            ObjectMapper json,
+            CommunityS3Service s3,
+            CommunityUxSseService uxSse,
+            com.yogimangchi.content.notification.ContentNotificationService notifications) {
         this.members = members;
         this.jdbc = jdbc;
         this.json = json;
         this.s3 = s3;
         this.uxSse = uxSse;
+        this.notifications = notifications;
     }
 
     public List<ReportReasonResponse> listReportReasons() {
@@ -680,9 +693,12 @@ public class CommunityService {
         }
 
         if (like) {
-            jdbc.update(
+            int inserted = jdbc.update(
                     "insert into content.community_post_like(post_id, member_id, created_at) values (?, ?, now()) on conflict(post_id, member_id) do nothing",
                     postId, memberId);
+            if (inserted > 0 && notifications != null) {
+                notifications.notifyPostLikedAfterCommit(memberId, postId);
+            }
         } else {
             jdbc.update(
                     "delete from content.community_post_like where post_id = ? and member_id = ?",
@@ -944,6 +960,11 @@ public class CommunityService {
                 "update content.community_post set comment_count = (select count(*) from content.community_comment where post_id = ? and status = 'ACTIVE') where id = ?",
                 postId, postId);
 
+        if (notifications != null) {
+            notifications.notifyCommentCreatedAfterCommit(
+                    memberId, postId, commentId, parentCommentId, targetCommentId, targetMemberId, content);
+        }
+
         return querySingleComment(commentId, memberId);
     }
 
@@ -1036,9 +1057,12 @@ public class CommunityService {
         }
 
         if (like) {
-            jdbc.update(
+            int inserted = jdbc.update(
                     "insert into content.community_comment_like(comment_id, member_id, created_at) values (?, ?, now()) on conflict(comment_id, member_id) do nothing",
                     commentId, memberId);
+            if (inserted > 0 && notifications != null) {
+                notifications.notifyCommentLikedAfterCommit(memberId, commentId);
+            }
         } else {
             jdbc.update(
                     "delete from content.community_comment_like where comment_id = ? and member_id = ?",
