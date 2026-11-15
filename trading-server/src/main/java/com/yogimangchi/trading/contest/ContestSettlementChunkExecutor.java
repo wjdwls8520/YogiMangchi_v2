@@ -51,6 +51,7 @@ public class ContestSettlementChunkExecutor {
     private final FillRepository fills;
     private final LatestPriceStore priceStore;
     private final TradingEvents events;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications;
 
     public ContestSettlementChunkExecutor(
             JdbcTemplate jdbc,
@@ -62,6 +63,21 @@ public class ContestSettlementChunkExecutor {
             FillRepository fills,
             LatestPriceStore priceStore,
             TradingEvents events) {
+        this(jdbc, entities, locks, wallets, positions, orders, fills, priceStore, events, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ContestSettlementChunkExecutor(
+            JdbcTemplate jdbc,
+            EntityManager entities,
+            AccountLock locks,
+            WalletRepository wallets,
+            PositionRepository positions,
+            TradingOrderRepository orders,
+            FillRepository fills,
+            LatestPriceStore priceStore,
+            TradingEvents events,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications) {
         this.jdbc = jdbc;
         this.entities = entities;
         this.locks = locks;
@@ -71,6 +87,7 @@ public class ContestSettlementChunkExecutor {
         this.fills = fills;
         this.priceStore = priceStore;
         this.events = events;
+        this.notifications = notifications;
     }
 
     public record RunContext(Long runId, int attemptNo, Instant startedAt) { }
@@ -415,6 +432,11 @@ public class ContestSettlementChunkExecutor {
                 participantCount,
                 tsNow,
                 run.runId());
+
+        var notifier = notifications != null ? notifications.getIfAvailable() : null;
+        if (notifier != null) {
+            notifier.notifyContestSeasonSettledAfterCommit(seasonId, settledAt);
+        }
 
         return new ContestSettlementResultResponse(
                 run.runId(),
