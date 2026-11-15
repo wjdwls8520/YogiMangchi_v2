@@ -635,7 +635,8 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
     assert.match(html, /<select[^>]*aria-label="정렬 선택"/);
     assert.match(html, /<span>원장 스냅샷 검증됨<\/span><svg[^>]*data-flat-icon="check"/);
     assert.match(html, /BTCUSDT 무기한/);
-    assert.match(html, /data-flat-icon="pen"[\s\S]*?<span>글쓰기 모달 열기<\/span>/);
+    assert.equal(html.includes("글쓰기 모달 열기"), false);
+    assert.equal(html.slice(0, html.indexOf("lg:flex")).includes("모의투자 하러가기"), false);
     assert.match(html, /data-flat-icon="chart-bar"[\s\S]*?<span>포지션 공유하기<\/span>/);
     assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(html), false);
     assert.match(html, /<option value="POPULAR"[^>]*>인기글<\/option>/);
@@ -2817,7 +2818,7 @@ test("실시간 뉴스 투자 심리는 SSE 센티먼트 요약과 Redis 마켓 
 
     assert.equal(newsHtml.includes("모의투자 하러가기"), true);
     assert.equal(portalHtml.includes("모의투자 하러가기"), true);
-    assert.equal(communityHtml.includes("모의투자 하러가기"), true);
+    assert.equal(communityHtml.includes("포지션 공유하기"), true);
     assert.equal(newsHtml.includes("터미널"), false);
     assert.equal(portalHtml.includes("터미널"), false);
     assert.equal(communityHtml.includes("터미널"), false);
@@ -3544,4 +3545,195 @@ test("checkbox line-height alignment and modal idle anti-flicker / scrollbar-gap
   assert.equal(mockDoc.body.style.paddingRight, "15px");
   unlockBodyScroll(mockWin, mockDoc);
   assert.equal(mockDoc.body.style.paddingRight, "");
+});
+
+
+test("community header keeps only position share, post edit view hides comments and position share, and only comment authors see edit/delete on detail page", async () => {
+  const epoch = Date.now();
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "트레이더7",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+
+  const editTargetPage = parseCommunityPostPage({
+    items: [
+      {
+        id: 21,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorProfileImgUrl: null,
+        authorWithdrawn: false,
+        category: "FREE",
+        symbolTag: "BTC",
+        title: "내 매매 복기 일지",
+        content: "오늘 진입 근거와 복기 내용을 정리합니다.",
+        likeCount: 5,
+        commentCount: 3,
+        likedByMe: false,
+        mine: true,
+        createdAt: "2026-11-11T10:00:00Z",
+        updatedAt: "2026-11-11T10:00:00Z",
+      },
+      {
+        id: 22,
+        memberId: 8,
+        authorNickname: "알파트레이더",
+        authorProfileImgUrl: null,
+        authorWithdrawn: false,
+        category: "ANALYSIS",
+        symbolTag: "ETH",
+        title: "다른 트레이더의 전략 글",
+        content: "피드의 다른 게시글입니다.",
+        likeCount: 2,
+        commentCount: 0,
+        likedByMe: false,
+        mine: false,
+        createdAt: "2026-11-11T09:00:00Z",
+        updatedAt: "2026-11-11T09:00:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+
+  const detailComments = parseCommunityComments({
+    items: [
+      {
+        id: 301,
+        postId: 21,
+        memberId: 8,
+        authorNickname: "알파트레이더",
+        authorWithdrawn: false,
+        parentCommentId: null,
+        content: "다른 사람이 남긴 루트 댓글입니다.",
+        mine: false,
+        createdAt: "2026-11-11T10:05:00Z",
+        updatedAt: "2026-11-11T10:05:00Z",
+      },
+      {
+        id: 302,
+        postId: 21,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        parentCommentId: null,
+        content: "내가 직접 작성한 루트 댓글입니다.",
+        mine: true,
+        createdAt: "2026-11-11T10:06:00Z",
+        updatedAt: "2026-11-11T10:06:00Z",
+      },
+      {
+        id: 303,
+        postId: 21,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        parentCommentId: 301,
+        content: "내가 작성한 대댓글입니다.",
+        mine: true,
+        createdAt: "2026-11-11T10:07:00Z",
+        updatedAt: "2026-11-11T10:07:00Z",
+      },
+      {
+        id: 304,
+        postId: 21,
+        memberId: 9,
+        authorNickname: "솔라나고래",
+        authorWithdrawn: false,
+        parentCommentId: 301,
+        content: "제3자가 작성한 대댓글입니다.",
+        mine: false,
+        createdAt: "2026-11-11T10:08:00Z",
+        updatedAt: "2026-11-11T10:08:00Z",
+      },
+    ],
+  });
+
+  const client = new QueryClient();
+  try {
+    // 1. 게시글 수정 화면(상세페이지에서 진입): 댓글 레이아웃 & 포지션 공유 버튼/옵션 완전 제거
+    const editDetailHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard
+          initialPage={editTargetPage}
+          initialComments={{ 21: detailComments.items }}
+          highlightPostId={21}
+          initialEditingPostId={21}
+        />
+      </MemberProvider>,
+    );
+    assert.match(editDetailHtml, /게시글 수정/);
+    assert.match(editDetailHtml, /이전 화면으로 돌아가기/);
+    assert.match(editDetailHtml, /수정 저장/);
+    assert.equal(editDetailHtml.includes("포지션 공유하기"), false);
+    assert.equal(editDetailHtml.includes("글쓰기 모달 열기"), false);
+    assert.equal(editDetailHtml.includes("모의투자 하러가기 →"), false);
+    assert.equal(editDetailHtml.includes('aria-label="댓글 및 대댓글"'), false);
+    assert.equal(editDetailHtml.includes("댓글 등록"), false);
+    assert.equal(editDetailHtml.includes("내가 직접 작성한 루트 댓글입니다."), false);
+    assert.equal(editDetailHtml.includes("댓글 3"), false);
+    assert.equal(editDetailHtml.includes("좋아요 5"), false);
+    assert.equal(editDetailHtml.includes("게시글 삭제"), false);
+    assert.equal(editDetailHtml.includes("다른 트레이더의 전략 글"), false);
+    // 수정 폼 내 카테고리 셀렉트에서 POSITION(포지션 공유) 선택 불가 확인
+    const editFormMatch = editDetailHtml.match(/<form class="mt-4 space-y-3[\s\S]*?<\/form>/);
+    assert.ok(editFormMatch, "post edit form must render");
+    assert.equal(editFormMatch[0].includes('value="POSITION"'), false);
+
+    // 2. 상세페이지(일반 조회): 댓글 작성자 본인(memberId=7)의 댓글(#302, #303)에만 수정·삭제 선택 버튼 노출, 타인 댓글(#301, #304)에는 미노출
+    const detailHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard
+          initialPage={editTargetPage}
+          initialComments={{ 21: detailComments.items }}
+          highlightPostId={21}
+        />
+      </MemberProvider>,
+    );
+    assert.match(detailHtml, /<span>포지션 공유하기<\/span>/);
+    assert.equal(detailHtml.includes("글쓰기 모달 열기"), false);
+    assert.equal(detailHtml.includes("모의투자 하러가기 →"), false);
+    assert.match(detailHtml, /aria-label="댓글 및 대댓글"/);
+
+    const editButtons = detailHtml.match(/data-comment-action="edit"/g) ?? [];
+    const deleteButtons = detailHtml.match(/data-comment-action="delete"/g) ?? [];
+    assert.equal(editButtons.length, 2, "only own root comment (#302) and own reply (#303) have edit button");
+    assert.equal(deleteButtons.length, 2, "only own root comment (#302) and own reply (#303) have delete button");
+
+    const otherReplyIdx = detailHtml.indexOf('id="comment-304"');
+    assert.ok(otherReplyIdx > -1);
+    const otherReplySlice = detailHtml.slice(otherReplyIdx, otherReplyIdx + 1200);
+    assert.equal(otherReplySlice.includes('data-comment-action="edit"'), false);
+    assert.equal(otherReplySlice.includes('data-comment-action="delete"'), false);
+
+    // 3. 비로그인 상세페이지: 어떤 댓글에도 수정·삭제 버튼 미노출
+    const guestDetailHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialPage={editTargetPage}
+          initialComments={{ 21: detailComments.items }}
+          highlightPostId={21}
+        />
+      </MemberProvider>,
+    );
+    assert.equal(guestDetailHtml.includes('data-comment-action="edit"'), false);
+    assert.equal(guestDetailHtml.includes('data-comment-action="delete"'), false);
+  } finally {
+    client.clear();
+  }
 });

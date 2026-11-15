@@ -334,6 +334,7 @@ export function CommunityBoard({
   initialV1Tab = "all",
   initialCategory = "",
   highlightPostId,
+  initialEditingPostId,
   initialPendingNewPostsCount = 0,
   initialContestSeasons = null,
   initialContestLeaderboard = null,
@@ -344,6 +345,7 @@ export function CommunityBoard({
   initialV1Tab?: "all" | "best" | "latest";
   initialCategory?: "" | CommunityCategory;
   highlightPostId?: number;
+  initialEditingPostId?: number;
   initialPendingNewPostsCount?: number;
   initialContestSeasons?: PublicSeasonsOverviewResponse | null;
   initialContestLeaderboard?: LeaderboardPageResponse | null;
@@ -367,10 +369,15 @@ export function CommunityBoard({
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   const isDetailView = typeof highlightPostId === "number" && Number.isFinite(highlightPostId);
-  const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
+  const [editingPost, setEditingPost] = useState<CommunityPost | null>(() => {
+    if (typeof initialEditingPostId === "number" && initialPage) {
+      return initialPage.items.find(item => item.id === initialEditingPostId && item.mine) ?? null;
+    }
+    return null;
+  });
   const [editDeleteFileIds, setEditDeleteFileIds] = useState<number[]>([]);
   const [editNewImages, setEditNewImages] = useState<SelectedS3File[]>([]);
-  const [editDetachSharedPosition, setEditDetachSharedPosition] = useState(false);
+
 
   const [editingComment, setEditingComment] = useState<CommunityComment | null>(null);
   const [replyParentId, setReplyParentId] = useState<number | null>(null);
@@ -701,7 +708,7 @@ export function CommunityBoard({
     category === "" && sort === "LATEST" && symbolTag === "" && keyword === "";
 
   const postsQuery = useQuery({
-    queryKey: ["community-posts", origin, path, snapshot.generation],
+    queryKey: ["community-posts", origin, path, snapshot.generation, snapshot.memberId],
     queryFn: async () =>
       parseCommunityPostPage(await readCommunityOrPublic(origin, session, snapshot, path)),
     initialData: isDefaultQuery ? initialPage : undefined,
@@ -713,7 +720,7 @@ export function CommunityBoard({
       : undefined;
 
   const detailPostQuery = useQuery({
-    queryKey: ["community-post-detail", origin, highlightPostId, snapshot.generation],
+    queryKey: ["community-post-detail", origin, highlightPostId, snapshot.generation, snapshot.memberId],
     enabled: isDetailView,
     queryFn: async () =>
       parseCommunityPost(
@@ -729,7 +736,7 @@ export function CommunityBoard({
 
   const activePostId = isDetailView ? highlightPostId : null;
   const commentsQuery = useQuery({
-    queryKey: ["community-comments", origin, activePostId, snapshot.generation],
+    queryKey: ["community-comments", origin, activePostId, snapshot.generation, snapshot.memberId],
     enabled: activePostId !== null,
     queryFn: async () =>
       parseCommunityComments(
@@ -762,6 +769,22 @@ export function CommunityBoard({
     reportReasonsQuery.data && reportReasonsQuery.data.length > 0
       ? reportReasonsQuery.data
       : V1_REPORT_REASONS;
+
+  function cancelEditingPost() {
+    setEditingPost(null);
+    setEditDeleteFileIds([]);
+    setEditNewImages([]);
+  }
+
+  function isOwnComment(target: CommunityComment): boolean {
+    if (!isLoggedIn || target.deleted || target.authorWithdrawn) {
+      return false;
+    }
+    if (snapshot.memberId !== null) {
+      return target.memberId === snapshot.memberId;
+    }
+    return Boolean(target.mine);
+  }
 
   function requireReadyMember(): boolean {
     if (snapshot.phase !== "ready") {
@@ -895,7 +918,7 @@ export function CommunityBoard({
       setEditingPost(null);
       setEditDeleteFileIds([]);
       setEditNewImages([]);
-      setEditDetachSharedPosition(false);
+
       setFeedback("게시글이 수정되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
@@ -1099,7 +1122,8 @@ export function CommunityBoard({
           },
         ),
       ),
-    onSuccess: (_data, variables) => {
+    onSuccess: (updated, variables) => {
+      setExtraComments(prev => prev.map(c => (c.id === updated.id ? updated : c)));
       setEditingComment(null);
       setFeedback("댓글이 수정되었습니다.");
       void queryClient.invalidateQueries({
@@ -1115,6 +1139,19 @@ export function CommunityBoard({
         method: "DELETE",
       }),
     onSuccess: (_data, variables) => {
+      setEditingComment(prev => (prev?.id === variables.commentId ? null : prev));
+      setExtraComments(prev => {
+        const hasChildReply = [...serverComments, ...prev].some(
+          c => c.parentCommentId === variables.commentId,
+        );
+        return hasChildReply
+          ? prev.map(c =>
+              c.id === variables.commentId
+                ? { ...c, deleted: true, content: "삭제된 댓글입니다." }
+                : c,
+            )
+          : prev.filter(c => c.id !== variables.commentId);
+      });
       setFeedback("댓글이 삭제되었습니다.");
       void queryClient.invalidateQueries({
         queryKey: ["community-comments", origin, variables.postId],
@@ -1219,8 +1256,8 @@ export function CommunityBoard({
       symbolTag: rawSymbol,
       title,
       content,
-      sharedPosition: editDetachSharedPosition ? null : editingPost.sharedPosition,
-      clearSharedPosition: editDetachSharedPosition,
+      sharedPosition: editingPost.sharedPosition,
+      clearSharedPosition: false,
       deleteFileIds: editDeleteFileIds,
       files: editNewImages,
     });
@@ -1531,6 +1568,8 @@ export function CommunityBoard({
     : null;
   const detailPost = detailPostQuery.data ?? matchedInItems;
   const displayedItems = isDetailView ? (detailPost ? [detailPost] : []) : items;
+  const isEditingMode = editingPost !== null;
+  const visiblePosts = editingPost ? [editingPost] : displayedItems;
   const isLoadingPosts = isDetailView
     ? !detailPost && (detailPostQuery.isLoading || postsQuery.isLoading)
     : postsQuery.isLoading;
@@ -1554,67 +1593,59 @@ export function CommunityBoard({
         <div className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
             <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
-              커뮤니티
+              {isEditingMode ? "게시글 수정" : "커뮤니티"}
             </h2>
             <p className="mt-1 text-sm font-medium text-gray-500">
-              전체글, 주간 인기글, 최신글을 확인하고 모의투자 관점을 공유하세요.
+              {isEditingMode
+                ? "작성한 게시글의 내용과 첨부 이미지를 수정합니다."
+                : "전체글, 주간 인기글, 최신글을 확인하고 모의투자 관점을 공유하세요."}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <V1Button
-              variant={isLoggedIn ? "blue" : "gray"}
-              size="sm"
-              aria-disabled={!isLoggedIn}
-              className={
-                !isLoggedIn
-                  ? "border-gray-200 bg-gray-200 text-gray-400 cursor-default hover:bg-gray-200 disabled:opacity-100"
-                  : ""
-              }
-              onClick={() => {
-                if (!requireReadyMember()) return;
-                setWriteModalOpen(true);
-              }}
-            >
-              <V1IconPen className="mr-1.5 h-3.5 w-3.5" />
-              <span>글쓰기 모달 열기</span>
-            </V1Button>
-            <button
-              type="button"
-              aria-disabled={!isLoggedIn}
-              onClick={() => {
-                if (!requireReadyMember()) return;
-                const defaultPos = liveShareablePositions[0] ?? null;
-                setModalCategory("POSITION");
-                if (defaultPos) {
-                  setModalPositionId(defaultPos.id);
-                  setModalSymbolTag(defaultPos.symbol);
-                } else {
-                  setModalPositionId("");
+          {!isEditingMode && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                aria-disabled={!isLoggedIn}
+                onClick={() => {
+                  if (!requireReadyMember()) return;
+                  const defaultPos = liveShareablePositions[0] ?? null;
+                  setModalCategory("POSITION");
+                  if (defaultPos) {
+                    setModalPositionId(defaultPos.id);
+                    setModalSymbolTag(defaultPos.symbol);
+                  } else {
+                    setModalPositionId("");
+                  }
+                  setWriteModalOpen(true);
+                }}
+                className={
+                  isLoggedIn
+                    ? "inline-flex h-9 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3.5 text-xs font-bold text-[#0058FF] transition-colors hover:bg-blue-100 cursor-pointer"
+                    : "inline-flex h-9 items-center justify-center rounded-xl border border-gray-200 bg-gray-200 px-3.5 text-xs font-bold text-gray-400 cursor-default"
                 }
-                setWriteModalOpen(true);
-              }}
-              className={
-                isLoggedIn
-                  ? "inline-flex h-9 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3.5 text-xs font-bold text-[#0058FF] transition-colors hover:bg-blue-100 cursor-pointer"
-                  : "inline-flex h-9 items-center justify-center rounded-xl border border-gray-200 bg-gray-200 px-3.5 text-xs font-bold text-gray-400 cursor-default"
-              }
-            >
-              <V1IconChartBar className="mr-1.5 h-3.5 w-3.5" />
-              <span>포지션 공유하기</span>
-            </button>
-            <Link
-              href="/trading"
-              className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-300 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
-            >
-              모의투자 하러가기 →
-            </Link>
-          </div>
+              >
+                <V1IconChartBar className="mr-1.5 h-3.5 w-3.5" />
+                <span>포지션 공유하기</span>
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="lg:flex lg:items-start lg:gap-14">
           {/* 좌측/중앙: CommunityTabs + 필터 + CommunityItem 피드 또는 단건 상세 */}
           <div className="min-w-0 flex-1 space-y-6">
-            {isDetailView ? (
+            {isEditingMode ? (
+              <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white px-5 py-3.5">
+                <button
+                  type="button"
+                  onClick={cancelEditingPost}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-700 hover:text-[#0058FF] cursor-pointer"
+                >
+                  <V1IconArrowLeft className="h-3.5 w-3.5" />
+                  <span>이전 화면으로 돌아가기</span>
+                </button>
+              </div>
+            ) : isDetailView ? (
               <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white px-5 py-3.5">
                 <Link
                   href={`/community/${v1Tab}`}
@@ -1755,7 +1786,7 @@ export function CommunityBoard({
               </div>
             )}
 
-            {displayedItems.length === 0 && !isLoadingPosts && !loadError && (
+            {visiblePosts.length === 0 && !isLoadingPosts && !loadError && (
               <div className="card rounded-2xl border border-gray-200 bg-white py-16 text-center text-sm text-gray-500">
                 조건에 맞는 게시글이 없습니다. 첫 번째 관점을 남겨보세요!
               </div>
@@ -1763,7 +1794,7 @@ export function CommunityBoard({
 
             {/* 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 토스트 팝업 (피드 전용, 레이아웃 자리 미차지) */}
             <div ref={feedTopRef} className="scroll-mt-24" />
-            {!isDetailView && pendingNewPostsCount > 0 && (
+            {!isDetailView && !isEditingMode && pendingNewPostsCount > 0 && (
               <div
                 className="pointer-events-none fixed left-1/2 top-20 z-40 -translate-x-1/2"
                 role="status"
@@ -1785,7 +1816,7 @@ export function CommunityBoard({
 
             {/* V1 CommunityItem 카드 스트림 */}
             <div className="space-y-4">
-              {displayedItems.map(post => {
+              {visiblePosts.map(post => {
                 const isOpen = isDetailView && activePostId === post.id;
                 const isEditing = editingPost?.id === post.id;
 
@@ -1830,30 +1861,45 @@ export function CommunityBoard({
                       {/* V1 ActionMenu (본인: 수정/삭제, 타인: 신고 / 신고 취소) */}
                       <div className="flex flex-wrap items-center gap-1.5">
                         {post.mine ? (
-                          <>
+                          isEditing ? (
                             <button
                               type="button"
-                              className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-50"
-                              onClick={() => {
-                                setEditingPost(isEditing ? null : post);
-                                setEditDeleteFileIds([]);
-                                setEditNewImages([]);
-                                setEditDetachSharedPosition(false);
-                              }}
+                              className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                              onClick={cancelEditingPost}
                             >
-                              {isEditing ? "수정 취소" : "게시글 수정"}
+                              수정 취소
                             </button>
-                            <button
-                              type="button"
-                              className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-100"
-                              onClick={() => {
-                                if (requireReadyMember()) deletePostMutation.mutate(post.id);
-                              }}
-                              disabled={deletePostMutation.isPending}
-                            >
-                              게시글 삭제
-                            </button>
-                          </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                                onClick={() => {
+                                  if (!requireReadyMember()) return;
+                                  setEditingPost(post);
+                                  setEditDeleteFileIds([]);
+                                  setEditNewImages([]);
+                                  setEditingComment(null);
+                                  setReplyParentId(null);
+                                  setReplyTargetCommentId(null);
+                                  setReplyTargetMemberId(null);
+                                  setReplyTargetNickname(null);
+                                }}
+                              >
+                                게시글 수정
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-100 cursor-pointer"
+                                onClick={() => {
+                                  if (requireReadyMember()) deletePostMutation.mutate(post.id);
+                                }}
+                                disabled={deletePostMutation.isPending}
+                              >
+                                게시글 삭제
+                              </button>
+                            </>
+                          )
                         ) : post.reportedByMe ? (
                           <button
                             type="button"
@@ -1897,17 +1943,26 @@ export function CommunityBoard({
                         <div className="grid grid-cols-2 gap-2">
                           <label className="block">
                             <span className="mb-1 block text-xs font-bold text-gray-700">카테고리</span>
-                            <select
-                              name="category"
-                              defaultValue={post.category}
-                              className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-xs font-bold"
-                            >
-                              {SELECTABLE_CATEGORIES.map(item => (
-                                <option key={item} value={item}>
-                                  {communityCategoryLabel(item)}
-                                </option>
-                              ))}
-                            </select>
+                            {post.category === "POSITION" ? (
+                              <>
+                                <input type="hidden" name="category" value="POSITION" />
+                                <div className="flex h-9 w-full items-center rounded-lg border border-gray-200 bg-gray-100 px-2.5 text-xs font-bold text-gray-500">
+                                  {communityCategoryLabel("POSITION")} (변경 불가)
+                                </div>
+                              </>
+                            ) : (
+                              <select
+                                name="category"
+                                defaultValue={post.category}
+                                className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-xs font-bold"
+                              >
+                                {SELECTABLE_CATEGORIES.filter(item => item !== "POSITION").map(item => (
+                                  <option key={item} value={item}>
+                                    {communityCategoryLabel(item)}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                           </label>
                           <label className="block">
                             <span className="mb-1 block text-xs font-bold text-gray-700">종목 태그</span>
@@ -1981,17 +2036,6 @@ export function CommunityBoard({
                             </ul>
                           </div>
                         )}
-                        {post.sharedPosition && (
-                          <label className="flex cursor-pointer select-none items-center gap-2.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold leading-5 text-gray-700">
-                            <input
-                              type="checkbox"
-                              className="m-0 h-4 w-4 shrink-0 accent-[#0058FF]"
-                              checked={editDetachSharedPosition}
-                              onChange={e => setEditDetachSharedPosition(e.currentTarget.checked)}
-                            />
-                            <span>첨부된 포지션 스냅샷 제거</span>
-                          </label>
-                        )}
                         <CommunityImageUploadSlot
                           files={editNewImages}
                           onChange={setEditNewImages}
@@ -2008,12 +2052,7 @@ export function CommunityBoard({
                             type="button"
                             variant="gray"
                             size="sm"
-                            onClick={() => {
-                              setEditingPost(null);
-                              setEditDeleteFileIds([]);
-                              setEditNewImages([]);
-                              setEditDetachSharedPosition(false);
-                            }}
+                            onClick={cancelEditingPost}
                           >
                             취소
                           </V1Button>
@@ -2088,6 +2127,7 @@ export function CommunityBoard({
                     )}
 
                     {/* 하단: V1 액션 바 (LikeButton + BubbleButton + 더보기) */}
+                    {!isEditing && (
                     <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
                       <div className="flex items-center gap-3">
                         <button
@@ -2145,9 +2185,10 @@ export function CommunityBoard({
                         )}
                       </div>
                     </div>
+                    )}
 
-                    {/* V1 CommentContainer & CommentForm (상세페이지 전용) */}
-                    {isOpen && (
+                    {/* V1 CommentContainer & CommentForm (상세페이지 전용 — 게시글 수정 중에는 완전 숨김) */}
+                    {isOpen && !isEditing && (
                       <section
                         className="mt-4 space-y-4 border-t border-gray-100 pt-4"
                         aria-label="댓글 및 대댓글"
@@ -2220,22 +2261,25 @@ export function CommunityBoard({
                                           {isReplyingRoot ? "답글 취소" : "답글 달기"}
                                         </button>
                                       )}
-                                      {comment.mine ? (
+                                      {isOwnComment(comment) ? (
                                         <>
                                           <button
                                             type="button"
-                                            className="font-bold text-gray-600 hover:underline"
+                                            data-comment-action="edit"
+                                            className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-bold text-gray-700 transition-colors hover:bg-gray-100 cursor-pointer"
                                             onClick={() =>
                                               setEditingComment(
                                                 editingComment?.id === comment.id ? null : comment,
                                               )
                                             }
                                           >
-                                            댓글 수정
+                                            {editingComment?.id === comment.id ? "수정 취소" : "수정"}
                                           </button>
                                           <button
                                             type="button"
-                                            className="font-bold text-red-500 hover:underline"
+                                            data-comment-action="delete"
+                                            disabled={deleteCommentMutation.isPending}
+                                            className="rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-600 transition-colors hover:bg-red-100 cursor-pointer disabled:opacity-60"
                                             onClick={() => {
                                               if (requireReadyMember()) {
                                                 deleteCommentMutation.mutate({
@@ -2245,7 +2289,7 @@ export function CommunityBoard({
                                               }
                                             }}
                                           >
-                                            댓글 삭제
+                                            삭제
                                           </button>
                                         </>
                                       ) : comment.reportedByMe ? (
@@ -2320,8 +2364,21 @@ export function CommunityBoard({
                                       required
                                       maxLength={1000}
                                     />
-                                    <V1Button type="submit" variant="blue" size="xs">
-                                      댓글 저장
+                                    <V1Button
+                                      type="submit"
+                                      variant="blue"
+                                      size="xs"
+                                      disabled={updateCommentMutation.isPending}
+                                    >
+                                      수정 저장
+                                    </V1Button>
+                                    <V1Button
+                                      type="button"
+                                      variant="gray"
+                                      size="xs"
+                                      onClick={() => setEditingComment(null)}
+                                    >
+                                      취소
                                     </V1Button>
                                   </form>
                                 ) : (
@@ -2368,7 +2425,7 @@ export function CommunityBoard({
                                                   @{reply.targetNickname}
                                                 </span>
                                               )}
-                                              {reply.content}
+                                              {editingComment?.id !== reply.id && reply.content}
                                             </span>
                                             {!reply.deleted && (
                                               <div className="flex items-center gap-1.5">
@@ -2417,11 +2474,12 @@ export function CommunityBoard({
                                                     {isReplyingChild ? "답글 취소" : "답글 달기"}
                                                   </button>
                                                 )}
-                                                {reply.mine ? (
+                                                {isOwnComment(reply) ? (
                                                   <>
                                                     <button
                                                       type="button"
-                                                      className="font-bold text-gray-600 hover:underline"
+                                                      data-comment-action="edit"
+                                                      className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-bold text-gray-700 transition-colors hover:bg-gray-100 cursor-pointer"
                                                       onClick={() =>
                                                         setEditingComment(
                                                           editingComment?.id === reply.id
@@ -2430,11 +2488,13 @@ export function CommunityBoard({
                                                         )
                                                       }
                                                     >
-                                                      댓글 수정
+                                                      {editingComment?.id === reply.id ? "수정 취소" : "수정"}
                                                     </button>
                                                     <button
                                                       type="button"
-                                                      className="font-bold text-red-500 hover:underline"
+                                                      data-comment-action="delete"
+                                                      disabled={deleteCommentMutation.isPending}
+                                                      className="rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-600 transition-colors hover:bg-red-100 cursor-pointer disabled:opacity-60"
                                                       onClick={() => {
                                                         if (requireReadyMember()) {
                                                           deleteCommentMutation.mutate({
@@ -2513,8 +2573,21 @@ export function CommunityBoard({
                                                 required
                                                 maxLength={1000}
                                               />
-                                              <V1Button type="submit" variant="blue" size="xs">
-                                                댓글 저장
+                                              <V1Button
+                                                type="submit"
+                                                variant="blue"
+                                                size="xs"
+                                                disabled={updateCommentMutation.isPending}
+                                              >
+                                                수정 저장
+                                              </V1Button>
+                                              <V1Button
+                                                type="button"
+                                                variant="gray"
+                                                size="xs"
+                                                onClick={() => setEditingComment(null)}
+                                              >
+                                                취소
                                               </V1Button>
                                             </form>
                                           )}
@@ -2622,7 +2695,7 @@ export function CommunityBoard({
             </div>
 
             {/* 10개 단위 커서 기반 무한스크롤 센티넬 & 보조 더보기 버튼 (피드 전용) */}
-            {!isDetailView && (
+            {!isDetailView && !isEditingMode && (
               <div
                 ref={loadMoreSentinelRef}
                 data-infinite-scroll="community-sentinel"
@@ -2900,25 +2973,27 @@ export function CommunityBoard({
         </div>
       </div>
 
-      {/* V1 우측 하단 플로팅 글쓰기 버튼 (FloatMenu.tsx 100% 카피) */}
-      <div className="fixed bottom-6 right-6 z-30">
-        <button
-          type="button"
-          aria-disabled={!isLoggedIn}
-          onClick={() => {
-            if (!requireReadyMember()) return;
-            setWriteModalOpen(true);
-          }}
-          aria-label="글쓰기 모달 열기"
-          className={
-            isLoggedIn
-              ? "flex items-center justify-center rounded-full bg-[#0058FF] p-5 text-white transition-colors hover:bg-blue-700 cursor-pointer"
-              : "flex items-center justify-center rounded-full bg-gray-200 p-5 text-gray-400 cursor-default"
-          }
-        >
-          <V1IconPen className="h-6 w-6" />
-        </button>
-      </div>
+      {/* V1 우측 하단 플로팅 글쓰기 버튼 (게시글 수정 화면에서는 숨김) */}
+      {!isEditingMode && (
+        <div className="fixed bottom-6 right-6 z-30">
+          <button
+            type="button"
+            aria-disabled={!isLoggedIn}
+            onClick={() => {
+              if (!requireReadyMember()) return;
+              setWriteModalOpen(true);
+            }}
+            aria-label="글쓰기"
+            className={
+              isLoggedIn
+                ? "flex items-center justify-center rounded-full bg-[#0058FF] p-5 text-white transition-colors hover:bg-blue-700 cursor-pointer"
+                : "flex items-center justify-center rounded-full bg-gray-200 p-5 text-gray-400 cursor-default"
+            }
+          >
+            <V1IconPen className="h-6 w-6" />
+          </button>
+        </div>
+      )}
 
       {/* V1 WriteModal (글쓰기 모달) */}
       <DimModal
