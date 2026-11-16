@@ -19,6 +19,7 @@ import {
   feeInclusiveRatioQuantity,
   formatEditableDecimal,
   ratioQuantity,
+  stepDecimalPrice,
   suggestPassiveLimitPrice,
 } from "../src/features/trading/api/order-input";
 import {
@@ -256,6 +257,10 @@ test("amend command request, journal conflict serialization, contest path routin
 
   assert.equal(formatEditableDecimal("61200.500000000000000000"), "61200.5");
   assert.equal(formatEditableDecimal("100.00000000"), "100");
+  assert.equal(stepDecimalPrice("64615.7", "64615.7", "0.10", 1), "64615.8");
+  assert.equal(stepDecimalPrice("64615.7", "64615.7", "0.10", -1), "64615.6");
+  assert.equal(stepDecimalPrice("", "64615.70000000", "0.10", -1), "64615.6");
+  assert.equal(stepDecimalPrice("0.1", "0.1", "0.2", -1), "0.1");
   assert.equal(suggestPassiveLimitPrice("64899.2", "LONG", "0.10", true), "64899.3");
   assert.equal(suggestPassiveLimitPrice("64899.2", "SHORT", "0.10", true), "64899.1");
 

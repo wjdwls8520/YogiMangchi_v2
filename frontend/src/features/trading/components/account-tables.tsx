@@ -23,6 +23,7 @@ import {
   decimalUnits,
   estimatedOrderWithFee,
   formatEditableDecimal,
+  stepDecimalPrice,
   suggestPassiveLimitPrice,
   unitsDecimal,
   validLimitPrice,
@@ -172,7 +173,13 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
               </span>
             ),
             action: <PositionCloseEntry position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} layout="row" />,
-            stopLoss: <PositionStopLoss position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} />,
+            stopLoss: (
+              <PositionStopLoss
+                position={position}
+                symbol={symbolLabel(position.tradingSymbolId, symbols)}
+                priceTickSize={symbols.find((s) => s.id === position.tradingSymbolId)?.priceTickSize}
+              />
+            ),
           },
         };
       })}
@@ -325,7 +332,7 @@ export function PendingOrderAmend({
       </button>
       <dialog
         ref={dialog}
-        className="position-close-dialog pending-amend-dialog"
+        className="position-close-dialog pending-amend-dialog ym-exchange-modal"
         aria-modal="true"
         aria-labelledby={`amend-order-${order.orderId}`}
         onClick={(event) => {
@@ -342,36 +349,51 @@ export function PendingOrderAmend({
           trigger.current?.focus({ preventScroll: true });
         }}
       >
-        <h2 id={`amend-order-${order.orderId}`}>
-          {symbol} <span data-side={order.side}>{order.side} {order.leverage}×</span> 주문 수정 <small className="text-xs font-normal text-terminal-muted">#{order.orderId}</small>
-        </h2>
-        <dl className="close-availability">
+        <header className="ym-modal-header">
+          <div className="ym-modal-title-group">
+            <h2 id={`amend-order-${order.orderId}`}>주문 수정</h2>
+            <span className="ym-modal-badge" data-side={order.side}>
+              {unit}USDT · {order.side === "LONG" ? "Long" : "Short"} {order.leverage}× · #{order.orderId}
+            </span>
+          </div>
+          <button type="button" className="ym-modal-close" aria-label="닫기" disabled={amendAction.pending} onClick={closeDialog}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+        </header>
+
+        <dl className="ym-modal-kv-list">
           <div>
-            <dt>현재 지정가</dt>
+            <dt>Order Price</dt>
             <dd>{formatMarketPrice(order.limitPrice, symbolMeta?.priceTickSize)}</dd>
           </div>
           <div>
-            <dt>현재 Mark Price</dt>
+            <dt>Mark Price</dt>
             <dd>{formatMarketPrice(markDecimal, symbolMeta?.priceTickSize)}</dd>
           </div>
           <div>
-            <dt>{isClose ? "최대 청산 수량" : "가용 자산"}</dt>
-            <dd>
+            <dt>{isClose ? "Max Close Qty" : "Available"}</dt>
+            <dd className="ym-modal-liq">
               {isClose
                 ? (maxCloseUnits ? `${maxCloseUnits} ${unit}` : `${formatEditableDecimal(order.quantity)} ${unit}`)
                 : `${formatDecimal(summary.data?.wallet.availableBalance)} USDT`}
             </dd>
           </div>
         </dl>
+
         <form
+          className="ym-modal-form"
           onSubmit={(event) => {
             event.preventDefault();
             void submitAmend();
           }}
         >
-          <div>
-            <div className="flex items-center justify-between gap-2">
-              <label className="field-label" htmlFor={`amend-price-${order.orderId}`}>지정가 · USDT</label>
+          <div className="ym-modal-field">
+            <div className="ym-modal-field-head">
+              <label htmlFor={`amend-price-${order.orderId}`}>
+                Limit Price <span>USDT</span>
+              </label>
               {suggestedPassive && (
                 <button
                   type="button"
@@ -382,65 +404,111 @@ export function PendingOrderAmend({
                     setDraftPrice(suggestedPassive);
                   }}
                 >
-                  {crossingIssue ? `가능가(${formatMarketPrice(suggestedPassive, symbolMeta?.priceTickSize)}) 맞춤` : `현재가 기준 (${formatMarketPrice(suggestedPassive, symbolMeta?.priceTickSize)})`}
+                  {crossingIssue
+                    ? `가능가(${formatMarketPrice(suggestedPassive, symbolMeta?.priceTickSize)}) 맞춤`
+                    : `Mark 기준 (${formatMarketPrice(suggestedPassive, symbolMeta?.priceTickSize)})`}
                 </button>
               )}
             </div>
-            <input
-              id={`amend-price-${order.orderId}`}
-              className="order-leverage-input"
-              inputMode="decimal"
-              value={draftPrice}
-              disabled={amendAction.pending || amendAction.unconfirmed}
-              placeholder={formatEditableDecimal(order.limitPrice) || "가격 입력"}
-              onChange={(event) => {
-                setLocalError(null);
-                setDraftPrice(event.target.value);
-              }}
-            />
+            <div className="ym-modal-stepper-box">
+              <input
+                id={`amend-price-${order.orderId}`}
+                inputMode="decimal"
+                autoComplete="off"
+                value={draftPrice}
+                disabled={amendAction.pending || amendAction.unconfirmed}
+                placeholder={formatEditableDecimal(order.limitPrice) || "가격 입력"}
+                onChange={(event) => {
+                  setLocalError(null);
+                  setDraftPrice(event.target.value);
+                }}
+              />
+              <div className="ym-modal-steppers">
+                <button
+                  type="button"
+                  aria-label="지정가 내리기"
+                  disabled={amendAction.pending || amendAction.unconfirmed}
+                  onClick={() => {
+                    const next = stepDecimalPrice(draftPrice, order.limitPrice ?? markDecimal, symbolMeta?.priceTickSize, -1);
+                    if (next) {
+                      setLocalError(null);
+                      setDraftPrice(next);
+                    }
+                  }}
+                >
+                  −
+                </button>
+                <i aria-hidden="true" />
+                <button
+                  type="button"
+                  aria-label="지정가 올리기"
+                  disabled={amendAction.pending || amendAction.unconfirmed}
+                  onClick={() => {
+                    const next = stepDecimalPrice(draftPrice, order.limitPrice ?? markDecimal, symbolMeta?.priceTickSize, 1);
+                    if (next) {
+                      setLocalError(null);
+                      setDraftPrice(next);
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </div>
+            </div>
           </div>
-          <div>
-            <label className="field-label" htmlFor={`amend-qty-${order.orderId}`}>수량 · {unit}</label>
-            <input
-              id={`amend-qty-${order.orderId}`}
-              className="order-leverage-input"
-              inputMode="decimal"
-              value={draftQty}
-              disabled={amendAction.pending || amendAction.unconfirmed}
-              placeholder={formatEditableDecimal(order.quantity) || "수량 입력"}
-              onChange={(event) => {
-                setLocalError(null);
-                setDraftQty(event.target.value);
-              }}
-            />
+
+          <div className="ym-modal-field">
+            <div className="ym-modal-field-head">
+              <label htmlFor={`amend-qty-${order.orderId}`}>
+                Qty <span>{unit}</span>
+              </label>
+              <span className="ym-modal-field-meta">
+                기존 <strong>{formatEditableDecimal(order.quantity)}</strong> {unit}
+              </span>
+            </div>
+            <div className="ym-modal-stepper-box">
+              <input
+                id={`amend-qty-${order.orderId}`}
+                inputMode="decimal"
+                autoComplete="off"
+                value={draftQty}
+                disabled={amendAction.pending || amendAction.unconfirmed}
+                placeholder={formatEditableDecimal(order.quantity) || "수량 입력"}
+                onChange={(event) => {
+                  setLocalError(null);
+                  setDraftQty(event.target.value);
+                }}
+              />
+            </div>
           </div>
+
           {!isClose && previewOpen && (
-            <dl className="order-estimates">
-              <div>
-                <dt>기존 예약 자산</dt>
-                <dd>{formatDecimal(order.reservedMargin)} USDT</dd>
-              </div>
-              <div>
-                <dt>수정 후 필요 자산</dt>
-                <dd>{formatDecimal(previewOpen.totalRequired)} USDT</dd>
-              </div>
-            </dl>
+            <div className="ym-modal-estimate">
+              <span>
+                기존 예약 <strong>{formatDecimal(order.reservedMargin)} USDT</strong>
+              </span>
+              <span>
+                수정 후 <strong>{formatDecimal(previewOpen.totalRequired)} USDT</strong>
+              </span>
+            </div>
           )}
+
           {(localError || liveIssue?.message || amendAction.error) && (
-            <p role="alert" className="order-warning">
+            <p role="alert" className="ym-modal-alert">
               {localError ?? liveIssue?.message ?? amendAction.error}
             </p>
           )}
-          <div className="guest-dialog-actions">
-            <button type="button" className="guest-cancel" disabled={amendAction.pending} onClick={closeDialog}>
-              닫기
-            </button>
+
+          <div className="ym-modal-footer">
             <button
               type="submit"
-              className="guest-start-button"
+              className="ym-modal-btn-confirm"
               disabled={amendAction.pending || (!amendAction.unconfirmed && Boolean(liveIssue))}
             >
               {amendAction.pending ? "처리 중…" : amendAction.unconfirmed ? "수정 요청 재전송" : "주문 수정"}
+            </button>
+            <button type="button" className="ym-modal-btn-cancel" disabled={amendAction.pending} onClick={closeDialog}>
+              닫기
             </button>
           </div>
         </form>
