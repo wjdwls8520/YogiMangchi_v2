@@ -153,12 +153,16 @@ test("PositionStopLoss modal displays Entry/Mark/Liq. prices, computes -25% ROE 
         </TradingDataProvider>
       </MemberProvider>,
     );
-    assert.match(html, /평균 진입가 \(Entry Price\)<\/dt><dd>100<\/dd>/);
-    assert.match(html, /현재 Mark Price<\/dt><dd>101\.25<\/dd>/);
-    assert.match(html, /예상 강제청산가 \(Liq\. Price\)<\/dt><dd>91<\/dd>/);
-    assert.match(html, /유효 범위: 강제청산가 초과 ~ 현재 Mark 미만/);
+    assert.match(html, /class="position-close-dialog ym-exchange-modal"/);
+    assert.match(html, /Entry Price<\/dt><dd>100<\/dd>/);
+    assert.match(html, /Mark Price<\/dt><dd>101\.25<\/dd>/);
+    assert.match(html, /Liq\. Price<\/dt><dd class="ym-modal-liq">91<\/dd>/);
+    assert.match(html, /aria-label="손절 가격 내리기"/);
+    assert.match(html, /aria-label="손절 가격 올리기"/);
     for (const label of ["-10%", "-25%", "-50%", "-75%"]) assert.equal(html.includes(`>${label}</button>`), true, label);
-    assert.match(html, /예상 실현 손익\(Gross\): -2\.50 USDT \(-25\.00%\) · 예상 수수료\(0\.05%\): 0\.05 USDT/);
+    assert.match(html, /Est\. PnL[\s\S]*?-2\.50 USDT \(-25\.00%\)[\s\S]*?Fee <strong>0\.05 USDT<\/strong>/);
+    assert.match(html, />확인<\/button>/);
+    assert.match(html, />취소<\/button>/);
   } finally {
     client.clear();
   }
@@ -205,7 +209,7 @@ test("OrderSnapshotDetail fetches account/orders/{orderId} and renders refreshed
     assert.match(pendingHtml, /#31/);
     assert.match(pendingHtml, /×10/);
     assert.match(pendingHtml, /4\.90 USDT/);
-    const amendDialog = pendingHtml.match(/<dialog\b[^>]*class="position-close-dialog pending-amend-dialog"[^>]*>[\s\S]*?<\/dialog>/)?.[0];
+    const amendDialog = pendingHtml.match(/<dialog\b[^>]*class="[^"]*pending-amend-dialog[^"]*"[^>]*>[\s\S]*?<\/dialog>/)?.[0];
     assert.ok(amendDialog, "amend modal dialog must be rendered like Stop Loss");
     assert.doesNotMatch(amendDialog.split(">")[0], /\sopen(?:=|\s|$)/);
     assert.match(amendDialog, /aria-modal="true"/);

@@ -987,9 +987,85 @@
 .pending-row-actions > .pending-order-amend > button { min-height: 28px !important; padding: 0 10px !important; font-size: 11px !important; line-height: 1; white-space: nowrap; cursor: pointer; }
 .pending-amend-trigger { border-color: rgba(99, 102, 241, 0.45) !important; background: rgba(99, 102, 241, 0.14) !important; color: #c7d2fe !important; }
 .pending-amend-trigger:hover:enabled { background: rgba(99, 102, 241, 0.24) !important; color: #ffffff !important; }
-.pending-amend-dialog .guest-dialog-actions button { min-height: 44px; padding: 0 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
-.pending-amend-dialog .guest-start-button { border-color: var(--color-brand-600); background: var(--color-brand-600); color: var(--color-terminal-ink); }
-.pending-amend-chip { min-height: 22px !important; padding: 2px 6px !important; border-radius: 4px !important; border: 1px solid rgba(245, 158, 11, 0.45) !important; background: rgba(245, 158, 11, 0.15) !important; color: #fde68a !important; font-size: 10px !important; font-weight: 600 !important; cursor: pointer; }
+.pending-amend-chip { min-height: 22px !important; padding: 2px 7px !important; border-radius: 4px !important; border: 1px solid rgba(240, 185, 11, 0.4) !important; background: rgba(240, 185, 11, 0.12) !important; color: #F0B90B !important; font-size: 10px !important; font-weight: 600 !important; cursor: pointer; }
+
+/* Bybit-style Exchange Modal (Stop Loss & Order Amend — Desktop & Mobile) */
+.position-close-dialog.ym-exchange-modal {
+  width: calc(100% - 24px);
+  max-width: 392px;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  border-radius: 10px;
+  border: 1px solid #2B3139;
+  background: #161A1E;
+  padding: 18px 20px;
+  color: #EAECEF;
+}
+.ym-exchange-modal::backdrop { background: rgba(0, 0, 0, 0.72); }
+.ym-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.ym-modal-title-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.ym-exchange-modal .ym-modal-header h2 { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.25; color: #EAECEF; }
+.ym-modal-badge { display: inline-flex; align-items: center; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600; background: #1E2329; color: #B7BDC6; }
+.ym-modal-badge[data-side="LONG"] { background: rgba(14, 203, 129, 0.12); color: #0ECB81; }
+.ym-modal-badge[data-side="SHORT"] { background: rgba(246, 70, 93, 0.12); color: #F6465D; }
+.ym-exchange-modal .ym-modal-close { width: 32px; height: 32px; min-height: 32px !important; padding: 0 !important; border: 0 !important; border-radius: 6px !important; background: transparent !important; color: #848E9C !important; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: pointer; }
+.ym-exchange-modal .ym-modal-close:hover:enabled { background: #232830 !important; color: #EAECEF !important; }
+.ym-modal-kv-list { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; padding: 0 0 14px; border-bottom: 1px solid #232830; }
+.ym-modal-kv-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; line-height: 1.35; }
+.ym-modal-kv-list dt { color: #848E9C; font-weight: 400; }
+.ym-modal-kv-list dd { margin: 0; color: #EAECEF; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ym-modal-kv-list dd.ym-modal-liq { color: #F0B90B; }
+.ym-modal-active-sl { display: inline-flex; align-items: center; gap: 8px; }
+.ym-exchange-modal .ym-modal-inline-clear { min-height: 22px !important; padding: 0 7px !important; border-radius: 4px !important; border: 1px solid rgba(246, 70, 93, 0.4) !important; background: rgba(246, 70, 93, 0.1) !important; color: #F6465D !important; font-size: 11px !important; font-weight: 600 !important; cursor: pointer; }
+.ym-exchange-modal .ym-modal-inline-clear:hover:enabled { background: rgba(246, 70, 93, 0.2) !important; }
+.ym-exchange-modal .ym-modal-form { margin: 0 !important; display: flex; flex-direction: column; gap: 14px; }
+.ym-modal-field { display: flex; flex-direction: column; gap: 8px; }
+.ym-modal-field-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.ym-modal-field-head label { color: #EAECEF; font-weight: 600; }
+.ym-modal-field-head label > span { color: #848E9C; font-weight: 500; margin-left: 2px; }
+.ym-modal-field-meta { font-size: 11px; color: #848E9C; font-variant-numeric: tabular-nums; }
+.ym-modal-field-meta strong { color: #F0B90B; font-weight: 600; }
+.ym-modal-input-row { display: flex; align-items: stretch; gap: 8px; }
+.ym-modal-stepper-box { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; height: 42px; padding: 0 6px 0 12px; border-radius: 6px; border: 1px solid #2B3139; background: #1E2329; transition: border-color 0.15s ease; }
+.ym-modal-stepper-box:focus-within { border-color: #F0B90B; }
+.ym-modal-stepper-box input { flex: 1 1 auto; min-width: 0; width: 100%; height: 100%; border: 0; outline: none; background: transparent; color: #EAECEF; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ym-modal-stepper-box input::placeholder { color: #5E6673; font-weight: 400; }
+.ym-modal-steppers { display: inline-flex; align-items: center; flex-shrink: 0; }
+.ym-exchange-modal .ym-modal-steppers button { width: 30px; height: 30px; min-height: 30px !important; padding: 0 !important; border: 0 !important; border-radius: 4px !important; background: transparent !important; color: #848E9C !important; font-size: 16px !important; font-weight: 500 !important; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.ym-exchange-modal .ym-modal-steppers button:hover:enabled { background: #2B3139 !important; color: #EAECEF !important; }
+.ym-modal-steppers i { width: 1px; height: 14px; background: #2B3139; display: inline-block; margin: 0 2px; }
+.ym-modal-trigger-box { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; height: 42px; padding: 0 12px; border-radius: 6px; border: 1px solid #2B3139; background: #1E2329; color: #F0B90B; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
+.ym-modal-preset-bar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 3px; border-radius: 6px; background: #1E2329; }
+.ym-exchange-modal .ym-modal-preset-bar button { height: 28px; min-height: 28px !important; padding: 0 4px !important; border: 0 !important; border-radius: 4px !important; background: transparent !important; color: #848E9C !important; font-size: 11px !important; font-weight: 600 !important; cursor: pointer; }
+.ym-exchange-modal .ym-modal-preset-bar button:hover:enabled { background: #2B3139 !important; color: #EAECEF !important; }
+.ym-exchange-modal .ym-modal-preset-bar button[data-active] { background: rgba(240, 185, 11, 0.15) !important; color: #F0B90B !important; }
+.ym-modal-estimate { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 6px; background: #1E2329; font-size: 11px; color: #848E9C; font-variant-numeric: tabular-nums; }
+.ym-modal-estimate strong { color: #EAECEF; font-weight: 600; }
+.ym-modal-estimate strong[data-trend="up"] { color: #0ECB81; }
+.ym-modal-estimate strong[data-trend="down"] { color: #F6465D; }
+.ym-modal-subtle { margin: 0; font-size: 12px; color: #848E9C; }
+.ym-modal-alert { margin: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(246, 70, 93, 0.35); background: rgba(246, 70, 93, 0.1); color: #FCA5A5; font-size: 12px; line-height: 1.45; }
+.ym-modal-footer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding-top: 2px; }
+.ym-exchange-modal .ym-modal-btn-confirm { height: 42px; min-height: 42px !important; padding: 0 14px !important; border-radius: 6px !important; border: 1px solid #F0B90B !important; background: rgba(240, 185, 11, 0.08) !important; color: #F0B90B !important; font-size: 13px !important; font-weight: 700 !important; cursor: pointer; }
+.ym-exchange-modal .ym-modal-btn-confirm:hover:enabled { background: rgba(240, 185, 11, 0.18) !important; }
+.ym-exchange-modal .ym-modal-btn-confirm:disabled { border-color: #2B3139 !important; background: #1E2329 !important; color: #5E6673 !important; cursor: default; }
+.ym-exchange-modal .ym-modal-btn-cancel { height: 42px; min-height: 42px !important; padding: 0 14px !important; border-radius: 6px !important; border: 1px solid #363C45 !important; background: #1E2329 !important; color: #EAECEF !important; font-size: 13px !important; font-weight: 600 !important; cursor: pointer; }
+.ym-exchange-modal .ym-modal-btn-cancel:hover:enabled { background: #2B3139 !important; }
+@media (max-width: 639px) {
+  .position-close-dialog.ym-exchange-modal {
+    width: calc(100% - 20px);
+    max-width: 100%;
+    padding: 16px;
+    border-radius: 12px;
+  }
+  .ym-modal-stepper-box,
+  .ym-modal-trigger-box { height: 44px; }
+  .ym-modal-stepper-box input { font-size: 16px; }
+  .ym-exchange-modal .ym-modal-steppers button { width: 34px; height: 34px; min-height: 34px !important; }
+  .ym-exchange-modal .ym-modal-preset-bar button { height: 34px; min-height: 34px !important; font-size: 12px !important; }
+  .ym-exchange-modal .ym-modal-btn-confirm,
+  .ym-exchange-modal .ym-modal-btn-cancel { height: 44px; min-height: 44px !important; font-size: 14px !important; }
+}
 @media (width >= 64rem) { .order-book > .order-book-note:not([role]) { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; } }
 .activity-extra-dialog { width:min(72rem,calc(100% - 24px)); max-width:72rem; max-height:85dvh; overflow:auto; }
 @media (width >= 64rem) { .trading-table th { background:var(--color-terminal-panel); font-size:11px; font-weight:400; } .account-records-heading { background:var(--color-terminal-panel); min-height:32px; font-size:12px; } .trading-table[data-variant="positions"] [data-key="action"] { right:6.75rem; } .trading-table[data-variant="positions"] [data-key="stopLoss"] { position:sticky; right:0; min-width:6.75rem; width:6.75rem; border-left:1px solid var(--color-terminal-line); background:var(--color-terminal-panel); z-index:1; } .trading-table[data-variant="positions"] th[data-key="stopLoss"] { z-index:20; } .trading-table .position-close-actions button, .trading-table .position-stop-loss > button { min-height:28px; padding:0 10px; font-size:11px; white-space:nowrap; flex-shrink:0; } }

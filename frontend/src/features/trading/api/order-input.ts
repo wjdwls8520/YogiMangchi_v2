@@ -163,3 +163,35 @@ export function suggestPassiveLimitPrice(
     return null;
   }
 }
+
+export function stepDecimalPrice(
+  currentPrice: string,
+  fallbackPrice: string | null | undefined,
+  tickSize: string | null | undefined,
+  delta: 1 | -1,
+): string | null {
+  try {
+    const trimmed = currentPrice.trim();
+    const seed = validLimitPrice(trimmed)
+      ? trimmed
+      : fallbackPrice && validSizingPrice(fallbackPrice)
+        ? formatEditableDecimal(fallbackPrice)
+        : "";
+    if (!seed || !validLimitPrice(seed)) return null;
+    const baseUnits = decimalUnits(seed);
+    let stepUnits = BigInt(0);
+    if (tickSize && validLimitPrice(tickSize)) {
+      stepUnits = decimalUnits(tickSize);
+    }
+    if (stepUnits <= BigInt(0)) {
+      const precision = Math.min(18, Math.max(0, marketPricePrecision(seed, tickSize)));
+      stepUnits = BigInt(10) ** BigInt(18 - precision);
+    }
+    const nextUnits = baseUnits + BigInt(delta) * stepUnits;
+    if (nextUnits <= BigInt(0)) return seed;
+    const formatted = unitsDecimal(nextUnits, 18);
+    return validLimitPrice(formatted) ? formatted : seed;
+  } catch {
+    return null;
+  }
+}
