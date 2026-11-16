@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { knownOrderReason, orderReason } from "../api/order-reason";
 import { orderStatusLabel, parseOrder, type TradingOrder } from "../api/orders";
 import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/account";
@@ -24,6 +24,7 @@ import {
   estimatedOrderWithFee,
   formatEditableDecimal,
   suggestPassiveLimitPrice,
+  unitsDecimal,
   validLimitPrice,
   validQuantity,
 } from "../api/order-input";
@@ -167,7 +168,7 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
             pnl: (
               <span className="table-stack" data-trend={pnlTrend(valuation.pnl)}>
                 {formatDecimal(valuation.pnl)} USDT
-                <small>{formatDecimal(valuation.roe)}% · 참고</small>
+                <small>{formatDecimal(valuation.roe)}%</small>
               </span>
             ),
             action: <PositionCloseEntry position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} layout="row" />,
@@ -179,26 +180,29 @@ export function PositionTable({ positions, symbols }: { positions: readonly Posi
   );
 }
 
-type PendingEditState = {
-  orderId: number;
-  quantity: string;
-  limitPrice: string;
-};
-
-function PendingOrderInteractiveBody({
-  orders,
-  symbols,
+export function PendingOrderAmend({
+  order,
+  symbol,
+  symbolMeta,
 }: {
-  orders: readonly TradingOrder[];
-  symbols: readonly TradingSymbol[];
+  order: TradingOrder;
+  symbol: string;
+  symbolMeta?: TradingSymbol;
 }) {
   const { snapshot } = useOptionalGuestSession()!;
   const summary = useTradingSummary();
   const amendAction = useTradingMutation();
   const selectedMarket = useOptionalSelectedMarket();
   const positionPrices = usePositionMarkets();
-  const [edit, setEdit] = useState<PendingEditState | null>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [draftQty, setDraftQty] = useState(() => formatEditableDecimal(order.quantity));
+  const [draftPrice, setDraftPrice] = useState(() => formatEditableDecimal(order.limitPrice));
   const [localError, setLocalError] = useState<string | null>(null);
+
+  const unit = symbolMeta?.symbol ?? symbol.split(" /")[0] ?? "수량";
+  const isClose = order.action === "CLOSE";
 
   function resolveSymbolMark(symbolId: number): string | undefined {
     if (selectedMarket?.symbol?.id === symbolId) {
@@ -209,37 +213,63 @@ function PendingOrderInteractiveBody({
     return freshMarkPrice({ symbolId, state: "READY", recovery: 0, price: candidate })?.decimal;
   }
 
-  function startEditing(order: TradingOrder) {
+  function openDialog() {
+    if (snapshot.phase !== "ready" || dialog.current?.open) return;
     amendAction.clearError();
     setLocalError(null);
-    setEdit({
-      orderId: order.orderId,
-      quantity: formatEditableDecimal(order.quantity),
-      limitPrice: formatEditableDecimal(order.limitPrice),
-    });
+    setDraftQty(formatEditableDecimal(order.quantity));
+    setDraftPrice(formatEditableDecimal(order.limitPrice));
+    setOpen(true);
+    dialog.current?.showModal();
   }
 
-  function cancelEditing() {
+  function closeDialog() {
+    if (amendAction.pending) return;
     amendAction.clearError();
     setLocalError(null);
-    setEdit(null);
+    dialog.current?.close();
   }
 
-  async function saveAmend(order: TradingOrder) {
-    if (!edit || edit.orderId !== order.orderId || amendAction.pending) return;
-    setLocalError(null);
-    const trimmedQty = edit.quantity.trim();
-    const trimmedPrice = edit.limitPrice.trim();
-    const markDecimal = resolveSymbolMark(order.tradingSymbolId);
-    const targetPos = order.action === "CLOSE" && order.positionId != null
-      ? summary.data?.positions.find((p) => p.id === order.positionId)
-      : undefined;
+  const markDecimal = open ? resolveSymbolMark(order.tradingSymbolId) : undefined;
+  const targetPos = open && isClose && order.positionId != null
+    ? summary.data?.positions.find((p) => p.id === order.positionId)
+    : undefined;
+  const suggestedPassive = open
+    ? suggestPassiveLimitPrice(markDecimal, order.side as "LONG" | "SHORT", symbolMeta?.priceTickSize, isClose)
+    : null;
+  const crossingIssue = open
+    ? passiveLimitIssueForAction(order.side as "LONG" | "SHORT", order.action as "OPEN" | "CLOSE", draftPrice.trim(), markDecimal)
+    : null;
+  const liveIssue = open
+    ? validatePendingOrderAmend({
+        order,
+        draftQuantity: draftQty,
+        draftPrice,
+        markPrice: markDecimal,
+        availableBalance: summary.data?.wallet.availableBalance,
+        positionFreeCloseQuantity: targetPos?.freeCloseQuantity,
+      })
+    : null;
+  const previewOpen = open && !isClose && validQuantity(draftQty.trim()) && validLimitPrice(draftPrice.trim())
+    ? estimatedOrderWithFee(draftQty.trim(), draftPrice.trim(), order.leverage, "LIMIT")
+    : null;
 
+  async function submitAmend() {
+    if (amendAction.pending || snapshot.phase !== "ready") return;
+    setLocalError(null);
+    if (amendAction.unconfirmed) {
+      const retried = await amendAction.retry();
+      if (retried) dialog.current?.close();
+      return;
+    }
+    const trimmedQty = draftQty.trim();
+    const trimmedPrice = draftPrice.trim();
+    const latestMark = resolveSymbolMark(order.tradingSymbolId);
     const issue = validatePendingOrderAmend({
       order,
       draftQuantity: trimmedQty,
       draftPrice: trimmedPrice,
-      markPrice: markDecimal,
+      markPrice: latestMark,
       availableBalance: summary.data?.wallet.availableBalance,
       positionFreeCloseQuantity: targetPos?.freeCloseQuantity,
     });
@@ -247,17 +277,15 @@ function PendingOrderInteractiveBody({
       setLocalError(issue.message);
       return;
     }
-
     const unchanged = order.limitPrice !== null
       && validQuantity(trimmedQty)
       && validLimitPrice(trimmedPrice)
       && decimalUnits(trimmedQty) === decimalUnits(order.quantity)
       && comparePrices(trimmedPrice, order.limitPrice) === 0;
     if (unchanged) {
-      setEdit(null);
+      dialog.current?.close();
       return;
     }
-
     const updated = await amendAction.submit({
       kind: "amend",
       orderId: order.orderId,
@@ -265,40 +293,173 @@ function PendingOrderInteractiveBody({
       limitPrice: trimmedPrice,
     });
     if (updated) {
-      setEdit(null);
       setLocalError(null);
+      dialog.current?.close();
     }
   }
 
+  const maxCloseUnits = open && isClose && targetPos?.freeCloseQuantity != null
+    ? (() => {
+        try {
+          return formatEditableDecimal(
+            unitsDecimal(decimalUnits(targetPos.freeCloseQuantity) + decimalUnits(order.quantity), 18),
+          );
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
+  return (
+    <div className="pending-order-amend">
+      <button
+        ref={trigger}
+        type="button"
+        className="pending-amend-trigger whitespace-nowrap shrink-0"
+        aria-haspopup="dialog"
+        aria-label={`${symbol} 주문 #${order.orderId} 수정하기`}
+        disabled={amendAction.pending || (!amendAction.unconfirmed && amendAction.blocked) || snapshot.phase !== "ready"}
+        onClick={openDialog}
+      >
+        수정하기
+      </button>
+      <dialog
+        ref={dialog}
+        className="position-close-dialog pending-amend-dialog"
+        aria-modal="true"
+        aria-labelledby={`amend-order-${order.orderId}`}
+        onClick={(event) => {
+          if (event.target === event.currentTarget && event.detail < 2 && !amendAction.pending) {
+            closeDialog();
+          }
+        }}
+        onCancel={(event) => {
+          if (amendAction.pending) event.preventDefault();
+        }}
+        onClose={() => {
+          setOpen(false);
+          setLocalError(null);
+          trigger.current?.focus({ preventScroll: true });
+        }}
+      >
+        <h2 id={`amend-order-${order.orderId}`}>
+          {symbol} <span data-side={order.side}>{order.side} {order.leverage}×</span> 주문 수정 <small className="text-xs font-normal text-terminal-muted">#{order.orderId}</small>
+        </h2>
+        <dl className="close-availability">
+          <div>
+            <dt>현재 지정가</dt>
+            <dd>{formatMarketPrice(order.limitPrice, symbolMeta?.priceTickSize)}</dd>
+          </div>
+          <div>
+            <dt>현재 Mark Price</dt>
+            <dd>{formatMarketPrice(markDecimal, symbolMeta?.priceTickSize)}</dd>
+          </div>
+          <div>
+            <dt>{isClose ? "최대 청산 수량" : "가용 자산"}</dt>
+            <dd>
+              {isClose
+                ? (maxCloseUnits ? `${maxCloseUnits} ${unit}` : `${formatEditableDecimal(order.quantity)} ${unit}`)
+                : `${formatDecimal(summary.data?.wallet.availableBalance)} USDT`}
+            </dd>
+          </div>
+        </dl>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitAmend();
+          }}
+        >
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <label className="field-label" htmlFor={`amend-price-${order.orderId}`}>지정가 · USDT</label>
+              {suggestedPassive && (
+                <button
+                  type="button"
+                  className="pending-amend-chip"
+                  disabled={amendAction.pending}
+                  onClick={() => {
+                    setLocalError(null);
+                    setDraftPrice(suggestedPassive);
+                  }}
+                >
+                  {crossingIssue ? `가능가(${formatMarketPrice(suggestedPassive, symbolMeta?.priceTickSize)}) 맞춤` : `현재가 기준 (${formatMarketPrice(suggestedPassive, symbolMeta?.priceTickSize)})`}
+                </button>
+              )}
+            </div>
+            <input
+              id={`amend-price-${order.orderId}`}
+              className="order-leverage-input"
+              inputMode="decimal"
+              value={draftPrice}
+              disabled={amendAction.pending || amendAction.unconfirmed}
+              placeholder={formatEditableDecimal(order.limitPrice) || "가격 입력"}
+              onChange={(event) => {
+                setLocalError(null);
+                setDraftPrice(event.target.value);
+              }}
+            />
+          </div>
+          <div>
+            <label className="field-label" htmlFor={`amend-qty-${order.orderId}`}>수량 · {unit}</label>
+            <input
+              id={`amend-qty-${order.orderId}`}
+              className="order-leverage-input"
+              inputMode="decimal"
+              value={draftQty}
+              disabled={amendAction.pending || amendAction.unconfirmed}
+              placeholder={formatEditableDecimal(order.quantity) || "수량 입력"}
+              onChange={(event) => {
+                setLocalError(null);
+                setDraftQty(event.target.value);
+              }}
+            />
+          </div>
+          {!isClose && previewOpen && (
+            <dl className="order-estimates">
+              <div>
+                <dt>기존 예약 자산</dt>
+                <dd>{formatDecimal(order.reservedMargin)} USDT</dd>
+              </div>
+              <div>
+                <dt>수정 후 필요 자산</dt>
+                <dd>{formatDecimal(previewOpen.totalRequired)} USDT</dd>
+              </div>
+            </dl>
+          )}
+          {(localError || liveIssue?.message || amendAction.error) && (
+            <p role="alert" className="order-warning">
+              {localError ?? liveIssue?.message ?? amendAction.error}
+            </p>
+          )}
+          <div className="guest-dialog-actions">
+            <button type="button" className="guest-cancel" disabled={amendAction.pending} onClick={closeDialog}>
+              닫기
+            </button>
+            <button
+              type="submit"
+              className="guest-start-button"
+              disabled={amendAction.pending || (!amendAction.unconfirmed && Boolean(liveIssue))}
+            >
+              {amendAction.pending ? "처리 중…" : amendAction.unconfirmed ? "수정 요청 재전송" : "주문 수정"}
+            </button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+  );
+}
+
+function PendingOrderInteractiveBody({
+  orders,
+  symbols,
+}: {
+  orders: readonly TradingOrder[];
+  symbols: readonly TradingSymbol[];
+}) {
   const rows: TradingRow[] = orders.map((order) => {
-    const isEditing = edit?.orderId === order.orderId && order.status === "PENDING";
     const sym = symbols.find((s) => s.id === order.tradingSymbolId);
     const symName = symbolLabel(order.tradingSymbolId, symbols);
     const unit = sym?.symbol ?? "수량";
-    const markDecimal = isEditing ? resolveSymbolMark(order.tradingSymbolId) : undefined;
-    const isClose = order.action === "CLOSE";
-    const suggestedPassive = isEditing
-      ? suggestPassiveLimitPrice(markDecimal, order.side as "LONG" | "SHORT", sym?.priceTickSize, isClose)
-      : null;
-    const crossingIssue = isEditing
-      ? passiveLimitIssueForAction(order.side as "LONG" | "SHORT", order.action as "OPEN" | "CLOSE", edit.limitPrice.trim(), markDecimal)
-      : null;
-    const targetPos = isEditing && isClose && order.positionId != null
-      ? summary.data?.positions.find((p) => p.id === order.positionId)
-      : undefined;
-    const liveIssue = isEditing
-      ? validatePendingOrderAmend({
-          order,
-          draftQuantity: edit.quantity,
-          draftPrice: edit.limitPrice,
-          markPrice: markDecimal,
-          availableBalance: summary.data?.wallet.availableBalance,
-          positionFreeCloseQuantity: targetPos?.freeCloseQuantity,
-        })
-      : null;
-    const previewOpen = isEditing && !isClose && validQuantity(edit.quantity.trim()) && validLimitPrice(edit.limitPrice.trim())
-      ? estimatedOrderWithFee(edit.quantity.trim(), edit.limitPrice.trim(), order.leverage, "LIMIT")
-      : null;
 
     return {
       id: String(order.orderId),
@@ -313,130 +474,19 @@ function PendingOrderInteractiveBody({
             <small>{order.action}</small>
           </span>
         ),
-        quantity: isEditing ? (
-          <div className="pending-amend-field">
-            <div className="pending-amend-input-wrap">
-              <input
-                type="text"
-                inputMode="decimal"
-                aria-label={`${symName} 주문 #${order.orderId} 수정 수량`}
-                value={edit.quantity}
-                disabled={amendAction.pending}
-                onChange={(e) => {
-                  setLocalError(null);
-                  setEdit((curr) => (curr && curr.orderId === order.orderId ? { ...curr, quantity: e.target.value } : curr));
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.preventDefault(); void saveAmend(order); }
-                  if (e.key === "Escape") { e.preventDefault(); cancelEditing(); }
-                }}
-                className="pending-amend-input"
-              />
-              <span className="pending-amend-unit">{unit}</span>
-            </div>
-          </div>
-        ) : (
-          quantity(order.quantity, order.tradingSymbolId, symbols, order.limitPrice)
-        ),
-        price: isEditing ? (
-          <div className="pending-amend-field">
-            <div className="pending-amend-input-wrap">
-              <input
-                type="text"
-                inputMode="decimal"
-                aria-label={`${symName} 주문 #${order.orderId} 수정 지정가`}
-                value={edit.limitPrice}
-                disabled={amendAction.pending}
-                onChange={(e) => {
-                  setLocalError(null);
-                  setEdit((curr) => (curr && curr.orderId === order.orderId ? { ...curr, limitPrice: e.target.value } : curr));
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.preventDefault(); void saveAmend(order); }
-                  if (e.key === "Escape") { e.preventDefault(); cancelEditing(); }
-                }}
-                className="pending-amend-input"
-              />
-              <span className="pending-amend-unit">USDT</span>
-            </div>
-            {crossingIssue && suggestedPassive ? (
-              <button
-                type="button"
-                className="pending-amend-chip"
-                disabled={amendAction.pending}
-                onClick={() => {
-                  setLocalError(null);
-                  setEdit((curr) => (curr && curr.orderId === order.orderId ? { ...curr, limitPrice: suggestedPassive } : curr));
-                }}
-              >
-                가능 지정가({formatMarketPrice(suggestedPassive, sym?.priceTickSize)}) 맞춤
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          price(order.limitPrice, order.tradingSymbolId, symbols)
-        ),
-        reservedMargin: order.action === "OPEN" ? (
-          <span className="table-stack">
-            <span>{formatDecimal(order.reservedMargin)} USDT</span>
-            {previewOpen && <small>변경 시 {formatDecimal(previewOpen.totalRequired)} USDT</small>}
-          </span>
-        ) : (
-          <span className="table-stack">
-            <span>청산 예약 {formatEditableDecimal(order.reservedCloseQuantity) || formatEditableDecimal(order.quantity)} {unit}</span>
-            {isEditing && validQuantity(edit.quantity.trim()) && <small>변경 시 {edit.quantity.trim()} {unit}</small>}
-          </span>
-        ),
-        reservedFee: order.action === "OPEN" ? (
-          <span className="table-stack">
-            <span>{formatDecimal(order.reservedFee)} USDT</span>
-            {previewOpen && <small>변경 시 {formatDecimal(previewOpen.estimatedFee)} USDT</small>}
-          </span>
-        ) : (
-          "—"
-        ),
+        quantity: quantity(order.quantity, order.tradingSymbolId, symbols, order.limitPrice),
+        price: price(order.limitPrice, order.tradingSymbolId, symbols),
+        reservedMargin: order.action === "OPEN"
+          ? `${formatDecimal(order.reservedMargin)} USDT`
+          : `청산 예약 ${formatEditableDecimal(order.reservedCloseQuantity) || formatEditableDecimal(order.quantity)} ${unit}`,
+        reservedFee: order.action === "OPEN" ? `${formatDecimal(order.reservedFee)} USDT` : "—",
         feeRate: formatDecimal(order.feeRate),
         status: <Result order={order} />,
         time: kst(order.createdAt),
-        action: isEditing ? (
-          <div className="pending-amend-actions">
-            <div className="pending-amend-buttons">
-              <button
-                type="button"
-                className="pending-amend-save"
-                disabled={amendAction.pending || snapshot.phase !== "ready" || Boolean(liveIssue)}
-                aria-label={`${symName} 주문 #${order.orderId} 수정 저장`}
-                onClick={() => void saveAmend(order)}
-              >
-                {amendAction.pending ? "저장 중…" : amendAction.unconfirmed ? "수정 재전송" : "저장"}
-              </button>
-              <button
-                type="button"
-                className="pending-amend-cancel"
-                disabled={amendAction.pending}
-                onClick={cancelEditing}
-              >
-                닫기
-              </button>
-            </div>
-            {(localError || liveIssue?.message || amendAction.error) && (
-              <p role="alert" className="pending-amend-error">
-                {localError ?? liveIssue?.message ?? amendAction.error}
-              </p>
-            )}
-          </div>
-        ) : (
+        action: (
           <div className="pending-row-actions">
             {order.type === "LIMIT" && order.status === "PENDING" && (
-              <button
-                type="button"
-                className="pending-amend-trigger"
-                disabled={amendAction.pending || amendAction.blocked || snapshot.phase !== "ready"}
-                aria-label={`${symName} 주문 #${order.orderId} 수정하기`}
-                onClick={() => startEditing(order)}
-              >
-                수정하기
-              </button>
+              <PendingOrderAmend order={order} symbol={symName} symbolMeta={sym} />
             )}
             <CancelOrderButton orderId={order.orderId} symbol={symName} />
           </div>

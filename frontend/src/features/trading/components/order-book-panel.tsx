@@ -36,12 +36,11 @@ export function OrderBookPanel({ symbol, book, mark, onSelectPrice }: {
     </div>;
   };
   return <aside ref={container} className="order-book" aria-labelledby="order-book-heading">
-    <header className="section-heading"><h3 id="order-book-heading" className="section-title">Order Book</h3><span className="preview-label">Binance 참고 호가</span></header>
-    <div className="order-book-columns"><span>가격 · USDT</span><span>수량 · {symbol?.symbol ?? "—"}</span></div>
+    <header className="section-heading"><h3 id="order-book-heading" className="section-title">Order Book</h3></header>
+    <div className="order-book-columns"><span>가격(USDT)</span><span>수량({symbol?.symbol ?? "—"})</span></div>
     {levels("ask")}
     <div className="order-book-mark"><span>Mark Price</span><strong>{formatMarketPrice(mark, symbol?.priceTickSize)}</strong></div>
     {levels("bid")}
-    <p className="order-book-note">호가 클릭 → 지정가 입력. 모의투자 체결은 서버 Mark Price 기준입니다.</p>
-    <p role="status" className="order-book-note">{fresh ? `상위 매도·매수 각 ${visibleRows}개 · 최신 호가` : book.status === "STALE" ? "호가가 만료되었습니다. 최신 호가를 기다립니다." : "호가를 이용할 수 없습니다. 수신을 기다리는 중입니다."}</p>
+    {!fresh && <p role="status" className="order-book-note">{book.status === "STALE" ? "호가 갱신 대기 중…" : "호가 수신 대기 중…"}</p>}
   </aside>;
 }

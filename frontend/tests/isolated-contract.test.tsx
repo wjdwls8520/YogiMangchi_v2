@@ -205,7 +205,16 @@ test("OrderSnapshotDetail fetches account/orders/{orderId} and renders refreshed
     assert.match(pendingHtml, /#31/);
     assert.match(pendingHtml, /×10/);
     assert.match(pendingHtml, /4\.90 USDT/);
-    assert.match(pendingHtml, /수정하기/);
+    const amendDialog = pendingHtml.match(/<dialog\b[^>]*class="position-close-dialog pending-amend-dialog"[^>]*>[\s\S]*?<\/dialog>/)?.[0];
+    assert.ok(amendDialog, "amend modal dialog must be rendered like Stop Loss");
+    assert.doesNotMatch(amendDialog.split(">")[0], /\sopen(?:=|\s|$)/);
+    assert.match(amendDialog, /aria-modal="true"/);
+    assert.match(amendDialog, />주문 수정</);
+    assert.match(amendDialog, />닫기</);
+    const pendingOutsideDialog = pendingHtml.replace(/<dialog\b[\s\S]*?<\/dialog>/g, "");
+    assert.doesNotMatch(pendingOutsideDialog, /<form|<input/, "no inline inputs inside table row to prevent double-click cancel hazards");
+    assert.match(pendingOutsideDialog, /aria-haspopup="dialog"/);
+    assert.match(pendingOutsideDialog, /수정하기/);
     const historyHtml = renderToStaticMarkup(<OrderHistoryTable orders={[sampleOrder]} symbols={symbols} />);
     assert.doesNotMatch(historyHtml, /table-record-detail/);
     assert.match(historyHtml, /data-variant="orders"/);

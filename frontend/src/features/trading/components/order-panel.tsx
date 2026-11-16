@@ -29,8 +29,6 @@ import {
 import { balanceIssue, formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, minimumOpenIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
-import { orderReceiptLabel } from "../api/orders";
-import { orderReason } from "../api/order-reason";
 import { formatMarketPrice } from "../market/price-format";
 import { GuestStartPrompt, useGuestAccess } from "./guest-access";
 import { useMember } from "../../member/components/member-provider";
@@ -48,7 +46,7 @@ export function OrderPanel() {
   const member = useMember(), access = useGuestAccess();
   if (isAnonymousOrderEntry(member.snapshot, snapshot)) return <AnonymousOrderPanel onGuest={access.open} storageError={snapshot.phase === "error"} />;
   return <section className="order-panel trading-section" aria-labelledby="order-heading">
-    <header className="section-heading"><h2 id="order-heading" className="section-title">주문</h2><span className="preview-label">모의투자</span></header>
+    <h2 id="order-heading" className="sr-only">주문</h2>
     <TradingNavigation label="주문 목적" prefix="order" activeId={intent} onSelect={value=>{if(value==="open"||value==="close")setIntent(value);}} className="order-intent-tabs" tabs={[{id:"open",label:"진입 · Open",controls:"order-open-panel"},{id:"close",label:"청산 · Close",controls:"order-close-panel"}]}/>
     {snapshot.phase === "ready" && <RecoveryStatus />}
     <div id="order-open-panel" role="tabpanel" aria-labelledby="order-open-tab" hidden={intent!=="open"}><OpenOrderPanel active={intent==="open"}/></div>
@@ -73,13 +71,12 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const leverageState = stored.side === "LONG" ? longLeverage : shortLeverage;
   const leverage = leverageState.data?.leverage ?? 1;
   const [seenBookSelection, setSeenBookSelection] = useState(bookSelection);
-  const [result, setResult] = useState<{ order: TradingOrder; scope: number } | null>(null);
   const [serverWarning, setServerWarning] = useState<{ side: OpenForm["side"]; issue: OrderIssue } | null>(null);
   const switched = stored.symbolId !== (symbol?.id ?? null) || stored.identity !== identity;
   const scope = stored.scope + (switched ? 1 : 0);
   const form: Form = { ...formForSide(switched ? { ...formForSymbol(stored, symbol?.id ?? null), quantity: "", limitPrice: "", ratio: 0 } : stored, stored.side, leverage), identity, scope };
   // Commit the reset, so switching A -> B -> A cannot resurrect A's old inputs.
-  if (switched) { setForm(form); setResult(null); setServerWarning(null); }
+  if (switched) { setForm(form); setServerWarning(null); }
   useEffect(() => () => { sizingRequest.current?.abort(); preflightRequest.current?.abort(); }, [identity,symbol?.id]);
   const action = useTradingMutation(
     (issue, command, requestSession) => {
@@ -101,7 +98,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   if (bookSelection !== seenBookSelection) {
     setSeenBookSelection(bookSelection);
     const next = bookSelection && bookSelection.identity === identity && active && !locked ? formForBookPrice(form,bookSelection.symbolId,bookSelection.price) : null;
-    if (next) { setForm({...next,identity,scope}); setResult(null); setServerWarning(null); }
+    if (next) { setForm({...next,identity,scope}); setServerWarning(null); }
   }
   const availableBalance = account.data?.wallet.availableBalance;
   const price = form.type === "LIMIT" ? form.limitPrice.trim() : mark?.decimal ?? "";
@@ -123,7 +120,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const estimate = (quote.data?.leverage === leverage ? quote.data : undefined) ?? localEstimate ?? undefined;
   function update(values: Partial<OpenForm>, nextLeverageOverride?: number) {
     sizingRequest.current?.abort(); sizingRequest.current=null; sizingTicket.current++;
-    setForm({ ...formForSide({...form,...values},values.side??form.side,nextLeverageOverride ?? leverage), identity, scope }); setResult(null); setServerWarning(null); action.clearError();
+    setForm({ ...formForSide({...form,...values},values.side??form.side,nextLeverageOverride ?? leverage), identity, scope }); setServerWarning(null); action.clearError();
   }
   function applySuggestedLimitPrice() {
     if (locked || !suggestedPassive) return;
@@ -193,9 +190,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
     }
   }
   function complete(order: TradingOrder | null) {
-    if (!order) return;
-    setResult(current => current && current.scope > scope ? current : { order, scope });
-    if (order.status !== "FILLED" && order.status !== "PENDING") return;
+    if (!order || (order.status !== "FILLED" && order.status !== "PENDING")) return;
     setForm((current) => current.scope === scope && current.symbolId === order.tradingSymbolId ? { ...current, quantity: "", ratio: 0 } : current);
   }
   async function submit(side: "LONG" | "SHORT") {
@@ -285,11 +280,10 @@ function OpenOrderPanel({active}:{active:boolean}) {
     const check = valid ? preflightOrder(formForSide(form,side,target.data?.leverage ?? 1), side, ready && target.ready, mark?.decimal, availableBalance) : null;
     return check?.kind === "balance" && form.ratio === 0 ? check : null;
   }
-  return <div aria-describedby={snapshot.phase === "ready" ? "order-preview-note" : undefined}>
+  return <div>
     {snapshot.phase !== "ready" ? <div className="order-panel-body"><GuestStartPrompt /></div> : <form className="order-panel-body" onSubmit={(event) => { event.preventDefault(); void submit(form.side); }}>
       <AccountWallet />
-      <details className="order-settings" open>
-        <summary>주문 설정</summary>
+      <div className="order-settings">
         <div className="order-settings-fields" data-order-type={form.type}>
           <OrderChoices legend="주문 유형" name="order-type" selected={form.type} disabled={locked} onChange={(value) => {
             if (value !== "MARKET" && value !== "LIMIT") return;
@@ -315,11 +309,11 @@ function OpenOrderPanel({active}:{active:boolean}) {
             update({ quantity: resized }, value);
             void leverageState.change(value);
           }} />
-          {(longLeverage.pending || shortLeverage.pending) && <p role="status" className="order-input-hint">{[longLeverage.pending ? "Long" : null, shortLeverage.pending ? "Short" : null].filter(Boolean).join(" · ")} 레버리지 변경 및 계정 갱신 중…</p>}
-          {leverageState.error && <div><p role="alert" className="order-warning">{leverageState.error}</p><button type="button" className="account-refresh" disabled={leverageState.pending} onClick={()=>void leverageState.refresh()}>레버리지 다시 조회</button></div>}
+          {(longLeverage.pending || shortLeverage.pending) && <p role="status" className="order-input-hint">{[longLeverage.pending ? "Long" : null, shortLeverage.pending ? "Short" : null].filter(Boolean).join(" · ")} 레버리지 변경 중…</p>}
+          {leverageState.error && <div><p role="alert" className="order-warning">{leverageState.error}</p><button type="button" className="account-refresh" disabled={leverageState.pending} onClick={()=>void leverageState.refresh()}>다시 조회</button></div>}
           {form.type === "LIMIT" && (
-            <div className="flex flex-col gap-1.5">
-              <OrderInput id="limit-price" label="지정가" unit="USDT" placeholder="가격 입력" value={form.limitPrice} disabled={locked} onChange={(value) => update({ limitPrice: value, ratio: 0 })} hint="양수 · 소수점 최대 18자리" />
+            <div className="col-span-2 flex flex-col gap-1.5">
+              <OrderInput id="limit-price" label="지정가" unit="USDT" placeholder="가격 입력" value={form.limitPrice} disabled={locked} onChange={(value) => update({ limitPrice: value, ratio: 0 })} />
               {passiveRelation ? (
                 <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-2.5 text-xs leading-5 text-amber-200" role="status" data-limit-crossing-helper="true">
                   <p className="font-semibold text-amber-100">
@@ -333,7 +327,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
                         onClick={applySuggestedLimitPrice}
                         className="rounded-md border border-amber-400/50 bg-amber-500/20 px-2.5 py-1 text-[11px] font-semibold text-amber-100 transition-colors hover:bg-amber-500/30 cursor-pointer"
                       >
-                        {form.side === "LONG" ? "롱" : "숏"} 가능 지정가({formatMarketPrice(suggestedPassive, symbol?.priceTickSize)}) 맞춤
+                        {form.side === "LONG" ? "롱" : "숏"} 가능가({formatMarketPrice(suggestedPassive, symbol?.priceTickSize)}) 맞춤
                       </button>
                     ) : null}
                     <button
@@ -342,52 +336,49 @@ function OpenOrderPanel({active}:{active:boolean}) {
                       onClick={switchToMarketOrder}
                       className="rounded-md border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/20 cursor-pointer"
                     >
-                      시장가로 즉시 전환
+                      시장가 전환
                     </button>
                   </div>
                 </div>
               ) : suggestedPassive ? (
                 <div className="flex items-center justify-between gap-2 text-[11px] text-terminal-muted">
-                  <span>현재가 {formatMarketPrice(mark?.decimal, symbol?.priceTickSize)} USDT</span>
+                  <span>Mark {formatMarketPrice(mark?.decimal, symbol?.priceTickSize)}</span>
                   <button
                     type="button"
                     disabled={locked}
                     onClick={applySuggestedLimitPrice}
                     className="rounded border border-terminal-line bg-terminal-header px-2 py-0.5 font-medium text-terminal-secondary transition-colors hover:text-terminal-text cursor-pointer"
                   >
-                    {form.side === "LONG" ? "현재가 -1틱" : "현재가 +1틱"} ({formatMarketPrice(suggestedPassive, symbol?.priceTickSize)}) 입력
+                    {form.side === "LONG" ? "-1틱" : "+1틱"} ({formatMarketPrice(suggestedPassive, symbol?.priceTickSize)})
                   </button>
                 </div>
               ) : null}
             </div>
           )}
-          <OrderInput id="order-quantity" label="주문 수량" unit={symbol?.symbol ?? "—"} placeholder="0.000" value={form.quantity} disabled={locked || !symbol} onChange={(value) => update({ quantity: value, ratio: 0 })} hint="양수 · 소수점 최대 8자리" />
+          <OrderInput id="order-quantity" label="수량" unit={symbol?.symbol ?? "—"} placeholder="0.000" value={form.quantity} disabled={locked || !symbol} onChange={(value) => update({ quantity: value, ratio: 0 })} />
           <div className="order-ratio">
-            <label htmlFor="order-ratio" className="field-label">참고 자산 비율 <span className="float-right font-semibold tabular-nums text-brand-700">{form.ratio}%</span></label>
+            <label htmlFor="order-ratio" className="field-label">비율 <span className="float-right font-semibold tabular-nums text-brand-700">{form.ratio}%</span></label>
             <input id="order-ratio" type="range" min="0" max="100" step="1" value={form.ratio} disabled={ratioDisabled} onChange={(event) => void selectRatio(Number(event.target.value), true)} className="h-8 w-full accent-brand-600" />
             <OrderChoices legend="비율 선택" name="ratio-preset" selected={String(form.ratio)} disabled={ratioDisabled} onChange={(value) => void selectRatio(Number(value))} choices={[25, 50, 75, 100].map((value) => ({ value: String(value), label: `${value}%` }))} />
-            <p className="order-input-hint">선택 비율로 수수료 포함 최대 가능 수량을 즉시 채웁니다.</p>
             {!canSize && <p role="status" className="order-input-hint">{sizingUnavailable(form.type,price,ready,availableBalance)}</p>}
           </div>
-          <dl className="order-estimates"><div><dt>예상 주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>예상 필요 증거금 · <span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {leverageState.data ? `${form.leverage}×` : "—"}</span></dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>예상 수수료</dt><dd>{formatDecimal(estimate?.estimatedFee)} USDT</dd></div><div><dt>총 필요 자산 · 담보 + 수수료</dt><dd>{formatDecimal(estimate?.totalRequired)} USDT</dd></div></dl>
+          <dl className="order-estimates"><div><dt>주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>필요 증거금</dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>예상 수수료</dt><dd>{formatDecimal(estimate?.estimatedFee)} USDT</dd></div><div><dt>합계</dt><dd>{formatDecimal(estimate?.totalRequired)} USDT</dd></div></dl>
         </div>
-      </details>
+      </div>
       {quote.error && !passiveRelation && <p role="status" className="order-input-hint">서버 견적: {quote.error}</p>}
       {minimumIssue && <p role="status" className="order-warning">{minimumIssue.message}</p>}
       {form.quantity && !validQuantity(quantity) && !(form.type === "LIMIT" && quantity === "0" && !validLimitPrice(price)) && <p role="alert" className="order-input-hint">수량은 0보다 커야 하며 소수점은 8자리까지 지원합니다.</p>}
       {form.type === "LIMIT" && form.limitPrice && !validLimitPrice(price) && <p role="alert" className="order-input-hint">양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.</p>}
-      {account.data && !isolatedReady(account.data.wallet) && <p role="alert" className="order-warning">이전 담보 방식의 전환 확인이 필요합니다. 전환 완료 전에는 주문할 수 없습니다.</p>}
-      {!ready && (account.data?.status === "BANKRUPT" ? <p role="alert" className="order-warning">{snapshot.contestSeasonId ? "현재 대회 회차 잔고가 모두 소진되어 추가 진입할 수 없습니다." : "현재 회차 잔고가 소진되었습니다. 자산 · 종목 성과에서 새 회차 시작 가능 시각을 확인해 주세요."}</p> : <p role="status" className="order-input-hint">거래할 계정과 선택 종목의 최신 시세를 확인하는 중입니다.</p>)}
+      {account.data && !isolatedReady(account.data.wallet) && <p role="alert" className="order-warning">담보 방식 전환 완료 후 주문할 수 있습니다.</p>}
+      {!ready && (account.data?.status === "BANKRUPT" ? <p role="alert" className="order-warning">{snapshot.contestSeasonId ? "현재 대회 회차 잔고가 모두 소진되어 추가 진입할 수 없습니다." : "현재 회차 잔고가 소진되었습니다. 자산 · 종목 성과에서 새 회차를 시작할 수 있습니다."}</p> : <p role="status" className="order-input-hint">최신 시세 수신 대기 중…</p>)}
       <div className="order-actions" role="group" aria-label="포지션 진입">
         {(["LONG", "SHORT"] as const).map((side) => <div key={side}>
-          <button type="button" disabled={!ready || !valid || submitLocked || !(side === "LONG" ? longLeverage : shortLeverage).ready} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{(side === "LONG" ? longLeverage : shortLeverage).data ? `${(side === "LONG" ? longLeverage : shortLeverage).data!.leverage}×` : "설정 확인 중"} · {action.pending || preparing ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
+          <button type="button" disabled={!ready || !valid || submitLocked || !(side === "LONG" ? longLeverage : shortLeverage).ready} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{(side === "LONG" ? longLeverage : shortLeverage).data ? `${(side === "LONG" ? longLeverage : shortLeverage).data!.leverage}×` : "—"} · {action.pending || preparing ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
           {warning(side) && <p role="alert" className="order-warning" data-warning-side={side}>{warning(side)?.message}</p>}
         </div>)}
       </div>
       {action.error && !serverWarning && (action.command?.kind !== "open" || action.command.tradingSymbolId === symbol?.id) && <p role="alert" className="order-warning">{action.error}</p>}
       {action.unconfirmed && <button type="button" className="account-refresh" disabled={action.pending} onClick={() => void action.retry().then(complete)}>원래 주문 재전송</button>}
-      {result && result.scope === scope && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {orderReceiptLabel(result.order.status)}{result.order.status === "REJECTED" ? ` · ${orderReason(result.order.reason)}` : ""}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
-      <p id="order-preview-note" className="order-preview-note">레버리지는 방향별 담보·ROE를 바꾸며 같은 가격·수량의 절대 손익을 늘리지 않습니다. 금액은 체결 시 확정됩니다.</p>
     </form>}
   </div>;
 }
