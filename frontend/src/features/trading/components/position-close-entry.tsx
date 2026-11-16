@@ -71,7 +71,6 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
       <dl className="close-availability"><div><dt>보유 수량</dt><dd>{formatQuantity(position.quantity)}</dd></div><div><dt>청산 가능</dt><dd>{formatQuantity(position.freeCloseQuantity)}</dd></div><div><dt>예약 수량</dt><dd>{formatQuantity(position.reservedCloseQuantity)}</dd></div></dl>
       <CloseOrderFields prefix={prefix} type={type} quantity={quantity} limitPrice={limitPrice} ratio={ratio} partialOnly={layout==="row"} disabled={locked} unit={symbol.split(" /")[0]}
         onType={value=>{if(value==="MARKET"||value==="LIMIT"){setType(value);edit();}}} onQuantity={value=>{setQuantity(value);setRatio(0);edit();}} onPrice={value=>{setPrice(value);setRatio(0);edit();}} onRatio={preset} />
-      <p className="order-input-hint">청산 가능 수량 기준 · 기존 {position.leverage}× 유지 · {layout==="row" ? "전체 수량 미만만 주문합니다." : "100%는 예약되지 않은 수량 전부입니다."}</p>
       <p className="order-input-hint">Mark {formatMarketPrice(valuation.mark)} · 미실현 손익 {formatDecimal(valuation.pnl)} USDT</p>
       {(warning??action.error??issue) && <p role="alert" className="order-warning">{warning??action.error??issue}</p>}
       {layout==="row" ? <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>partialDialog.current?.close()}>취소</button>{submit}</div> : submit}
@@ -91,7 +90,7 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
     {result && <p role="status" className="order-input-hint">{result}</p>}
     <dialog ref={dialog} id={`${prefix}-full`} className="position-close-dialog" aria-modal="true" aria-labelledby={`${prefix}-full-title`} onCancel={event=>{if(action.pending)event.preventDefault();}} onClose={()=>fullTrigger.current?.focus({preventScroll:true})}>
       <h2 id={`${prefix}-full-title`}>{symbol} {position.side} 전체 청산</h2>
-      <p>보유 수량 {formatQuantity(position.quantity)}을 시장가로 청산합니다. 실제 체결 가격과 손익은 서버가 결정합니다.</p>
+      <p>보유 수량 {formatQuantity(position.quantity)} 시장가 전량 청산</p>
       <p>현재 Mark {formatMarketPrice(valuation.mark)} · 미실현 손익 {formatDecimal(valuation.pnl)} USDT</p>
       {(warning??action.error??fullIssue) && <p role="alert" className="order-warning">{warning??action.error??fullIssue}</p>}
       <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>dialog.current?.close()}>취소</button><button className="guest-start-button" type="button" disabled={action.pending||(!action.unconfirmed&&(action.blocked||!!fullIssue))} onClick={()=>void execute(true)}>{action.pending ? "처리 중…" : action.unconfirmed ? "원래 청산 요청 재전송" : "전체 청산 확인"}</button></div>

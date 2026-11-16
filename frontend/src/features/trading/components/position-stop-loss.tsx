@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useGuestSession } from "./trading-data-provider";
-import { formatDecimal, formatQuantity, type Position } from "../api/account";
+import { formatDecimal, type Position } from "../api/account";
 import { parseStopLoss, latestStopLoss, type StopLoss, type StopLossCommand } from "../api/stop-loss-contract";
 import { tradingKeys } from "../api/query-keys";
 import { retryTradingQuery, TradingApiError } from "../api/client";
@@ -61,8 +61,6 @@ export function PositionStopLoss({position,symbol,initialPrice=""}:{position:Pos
     <button ref={trigger} type="button" className="whitespace-nowrap shrink-0" aria-haspopup="dialog" aria-label={`${symbol} ${position.side} 손절 설정`} disabled={snapshot.phase!=="ready"} onClick={()=>{setOpen(true);dialog.current?.showModal();}}>{current?.status==="ACTIVE"?formatMarketPrice(current.stopPrice):"설정"}</button>
     <dialog ref={dialog} className="position-close-dialog" aria-modal="true" aria-labelledby={`stop-loss-${position.id}`} onCancel={event=>{if(pending)event.preventDefault();}} onClose={()=>{setOpen(false);trigger.current?.focus({preventScroll:true});}}>
       <h2 id={`stop-loss-${position.id}`}>{symbol} <span data-side={position.side}>{position.side}</span> Stop Loss</h2>
-      <p>서버 Mark 기준으로 잔여 포지션 전량을 시장가 청산합니다. 추가 진입·부분 청산에 따라 대상 수량이 조정됩니다. 지정 가격의 체결을 보장하지 않으며, 가격 급변 시 손절 전에 강제청산될 수 있습니다.</p>
-      <p>잔여 수량 {formatQuantity(position.quantity)} · 전량 손절 · Mark 기준</p>
       <dl className="close-availability">
         <div><dt>평균 진입가 (Entry Price)</dt><dd>{formatMarketPrice(position.entryPrice)}</dd></div>
         <div><dt>현재 Mark Price</dt><dd>{formatMarketPrice(liveMark)}</dd></div>

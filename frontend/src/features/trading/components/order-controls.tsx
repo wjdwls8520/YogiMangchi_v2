@@ -9,7 +9,6 @@ export function OrderLeverage({ side = "LONG", value, max = MAX_INPUT_LEVERAGE, 
       {value === undefined && <option value="">서버 설정 확인 중</option>}
       {Array.from({length:Math.min(max, SERVER_MAX_LEVERAGE)},(_,i)=>i+1).map(value=><option key={value} value={value}>{value}×</option>)}
     </select>
-    <p className="order-input-hint">선택 종목의 {side === "LONG" ? "Long" : "Short"}에만 적용됩니다. 반대 방향 설정은 유지됩니다.</p>
   </div>;
 }
 

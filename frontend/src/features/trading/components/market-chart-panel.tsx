@@ -139,7 +139,6 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
           <div className="market-list-note"><label className="field-label" htmlFor="market-search">종목 검색</label><input ref={searchInput} id="market-search" className="market-search" type="search" placeholder="BTC, ETH 또는 종목명" value={symbolSearch} onChange={event=>setSymbolSearch(event.target.value)}/></div>
           {catalog.state!=="ready"&&<p role="status" className="market-list-note">{catalogStateLabel(catalog.state)}{catalog.state==="unavailable"&&<button type="button" className="account-refresh" onClick={retryCatalog}>다시 조회</button>}</p>}
           {sheetOpen && <SymbolList symbols={catalog.symbols} search={symbolSearch} selectedId={selected?.id??null} onSelect={selectFromSheet} />}
-          <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준</p>
         </div>
       </dialog>
     </div></LiveMarketProvider>

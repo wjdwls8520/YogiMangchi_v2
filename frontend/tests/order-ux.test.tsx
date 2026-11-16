@@ -66,7 +66,7 @@ test("book renders ten asks above Mark, ten bids below, and no levels for anothe
   assert.ok(html.indexOf('class="order-book-mark"')<html.indexOf('>99<'));
   assert.equal((html.match(/<button/g)??[]).length,20);
   assert.match(html,/aria-label="101 USDT 지정가 입력"/);
-  assert.match(html,/Binance 참고 호가/);assert.match(html,/모의투자 체결은 서버 Mark Price 기준/);
+  assert.doesNotMatch(html,/Binance 참고 호가|모의투자 체결은 서버 Mark Price 기준/);
   const interactive=renderToStaticMarkup(createElement(OrderBookPanel,{...props,onSelectPrice:()=>{}}));
   assert.doesNotMatch(interactive,/disabled/);
   for(const other of [emptyOrderBook(1,"STALE"),{...book,symbolId:2}]) assert.doesNotMatch(renderToStaticMarkup(createElement(OrderBookPanel,{...props,book:other})),/data-book-side=/);
