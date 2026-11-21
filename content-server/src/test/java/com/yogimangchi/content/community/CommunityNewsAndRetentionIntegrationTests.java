@@ -156,7 +156,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
     @Test
     void communityPostCrudLikesCommentsAndWithdrawnAuthorTombstoneWorkEndToEnd() throws Exception {
         var authorProof = identity();
-        var author = auth.signup(authorProof, new SignupRequest(nickname(), true, true, "author", "ym-terms-v2", "ym-privacy-v2"));
+        var author = auth.signup(authorProof, new SignupRequest(nickname(), true, true, "author", "ym-terms-v3", "ym-privacy-v3"));
         var reader = signup();
 
         String authorBearer = "Bearer " + author.access().accessToken();
@@ -1534,7 +1534,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
     }
 
     private AuthService.Issued signup() {
-        return auth.signup(identity(), new SignupRequest(nickname(), true, true, "test", "ym-terms-v2", "ym-privacy-v2"));
+        return auth.signup(identity(), new SignupRequest(nickname(), true, true, "test", "ym-terms-v3", "ym-privacy-v3"));
     }
 
     private static VerifiedIdentity identity() {

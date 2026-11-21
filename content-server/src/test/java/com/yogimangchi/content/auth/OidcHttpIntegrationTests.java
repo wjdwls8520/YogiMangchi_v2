@@ -126,7 +126,7 @@ class OidcHttpIntegrationTests extends TestEnvironment {
     }
     @Test void signupRefreshLogoutAndReloginWorkOverRealHttpWithSessionCsrfAndCookies() throws Exception {
         var client=browserTransport();oauth(client);
-        String body="{\"nickname\":\"http회원\",\"termAgree\":true,\"privateAgree\":true,\"termsVersion\":\"ym-terms-v2\",\"privacyVersion\":\"ym-privacy-v2\"}";
+        String body="{\"nickname\":\"http회원\",\"termAgree\":true,\"privateAgree\":true,\"termsVersion\":\"ym-terms-v3\",\"privacyVersion\":\"ym-privacy-v3\"}";
         var signup=post(client,"/api/v1/auth/signup",body);assertThat(signup.statusCode()).isEqualTo(200);
         String cookie=refreshCookie(signup);
         assertThat(cookie).contains("CONTENT_REFRESH=","HttpOnly","SameSite=Lax","Path=/api/v1/auth").doesNotContain("Domain=");

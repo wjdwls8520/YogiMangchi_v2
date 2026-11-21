@@ -28,7 +28,7 @@ class NicknamePolicyTests {
     @ParameterizedTest(name="accepted {index}") @MethodSource("accepted")
     void allCreationAndEditBoundariesAcceptUnicodeLettersAndNumbers(String name) {
         assertThat(NicknamePolicy.isValid(name)).isTrue();
-        assertThat(validator.validate(new SignupRequest(name,true,true,"","ym-terms-v2","ym-privacy-v2"))).isEmpty();
+        assertThat(validator.validate(new SignupRequest(name,true,true,"","ym-terms-v3","ym-privacy-v3"))).isEmpty();
         assertThat(validator.validate(new UpdateProfileRequest(name,null))).isEmpty();
         var member=Member.signup(name,"",Instant.now());
         member.changeBasicProfile(name,"edited");
@@ -37,7 +37,7 @@ class NicknamePolicyTests {
     @ParameterizedTest(name="rejected {index}") @MethodSource("rejected")
     void allCreationAndEditBoundariesRejectInvalidNames(String name) {
         assertThat(NicknamePolicy.isValid(name)).isFalse();
-        assertThat(validator.validate(new SignupRequest(name,true,true,"","ym-terms-v2","ym-privacy-v2"))).isNotEmpty();
+        assertThat(validator.validate(new SignupRequest(name,true,true,"","ym-terms-v3","ym-privacy-v3"))).isNotEmpty();
         assertThat(validator.validate(new UpdateProfileRequest(name,null))).isNotEmpty();
         assertThatIllegalArgumentException().isThrownBy(() -> Member.signup(name,"",Instant.now()));
         var member=Member.signup("valid","",Instant.now());
@@ -46,7 +46,7 @@ class NicknamePolicyTests {
     }
     @Test void signupRequiresNameWhileProfileOmissionKeepsIt() {
         assertThat(NicknamePolicy.isValid(null)).isFalse();
-        assertThat(validator.validate(new SignupRequest(null,true,true,"","ym-terms-v2","ym-privacy-v2"))).isNotEmpty();
+        assertThat(validator.validate(new SignupRequest(null,true,true,"","ym-terms-v3","ym-privacy-v3"))).isNotEmpty();
         assertThat(validator.validate(new UpdateProfileRequest(null,"edited"))).isEmpty();
         var member=Member.signup("가","",Instant.now()); member.changeBasicProfile(null,"edited");
         assertThat(member.getNickname()).isEqualTo("가");

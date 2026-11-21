@@ -272,6 +272,6 @@ class ContentNotificationIntegrationTests extends TestEnvironment {
         String nick = prefix + suffix;
         return auth.signup(
                 new VerifiedIdentity(Provider.GOOGLE, UUID.randomUUID().toString(), nick + "@example.test", Instant.now().plusSeconds(300)),
-                new SignupRequest(nick, true, true, "test", "ym-terms-v2", "ym-privacy-v2"));
+                new SignupRequest(nick, true, true, "test", "ym-terms-v3", "ym-privacy-v3"));
     }
 }
