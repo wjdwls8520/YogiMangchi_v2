@@ -294,16 +294,9 @@ public class TradingNotificationService {
     @Transactional(timeout = 3)
     public void deleteReadNotifications(Long memberId) {
         requireActiveMember(memberId);
-        Long lastCheckedId = queryLastCheckedId(memberId);
-        if (lastCheckedId == null) {
-            jdbc.update(
-                    "delete from trading.notification where receiver_member_id = ? and is_read = true",
-                    memberId);
-        } else {
-            jdbc.update(
-                    "delete from trading.notification where receiver_member_id = ? and is_read = true and id <= ?",
-                    memberId, lastCheckedId);
-        }
+        jdbc.update(
+                "delete from trading.notification where receiver_member_id = ? and (is_read = true or read_at is not null)",
+                memberId);
         NotificationStatusResponse updatedStatus = queryStatusInternal(memberId);
         afterCommit(() -> sse.sendStatus(memberId, updatedStatus));
     }

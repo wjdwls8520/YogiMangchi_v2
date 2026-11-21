@@ -102,6 +102,50 @@ public class TakeProfitService {
         });
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void configureInTransaction(Position position, BigDecimal targetPrice, BigDecimal currentMark, Instant now) {
+        if (position == null || position.getId() == null || position.getStatus() != Position.Status.OPEN) {
+            throw new BusinessException(ErrorCode.POSITION_NOT_OPEN);
+        }
+        try {
+            TradingMath.validatePrice(targetPrice);
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.INVALID_TAKE_PROFIT);
+        }
+        if (position.getSide() == Position.Side.LONG
+                ? targetPrice.compareTo(currentMark) <= 0
+                : targetPrice.compareTo(currentMark) >= 0) {
+            throw new BusinessException(ErrorCode.TAKE_PROFIT_NOT_PROFITABLE);
+        }
+        PositionTakeProfit existing = takeProfits.findById(position.getId()).orElse(null);
+        PositionTakeProfit tp = existing != null ? existing : PositionTakeProfit.createFor(position);
+        tp.configure(position, targetPrice, now);
+        takeProfits.save(tp);
+        takeProfits.flush();
+        events.recordTakeProfit(tp);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void revalidateAfterPositionIncrease(Position position, BigDecimal currentMark, Instant now) {
+        if (position == null || position.getId() == null || position.getStatus() != Position.Status.OPEN) {
+            return;
+        }
+        takeProfits.findById(position.getId()).ifPresent(tp -> {
+            if (tp.getStatus() != PositionTakeProfit.Status.ACTIVE || tp.getTakeProfitPrice() == null) {
+                return;
+            }
+            BigDecimal target = tp.getTakeProfitPrice();
+            boolean invalid = position.getSide() == Position.Side.LONG
+                    ? (target.compareTo(currentMark) <= 0 || target.compareTo(position.getEntryPrice()) <= 0)
+                    : (target.compareTo(currentMark) >= 0 || target.compareTo(position.getEntryPrice()) >= 0);
+            if (invalid && tp.expire("POSITION_CHANGED", now)) {
+                takeProfits.save(tp);
+                takeProfits.flush();
+                events.recordTakeProfit(tp);
+            }
+        });
+    }
+
     private TakeProfitResponse change(Long accountId, Long positionId, String key, Long expected, BigDecimal targetPrice) {
         if (key == null || !key.matches("[A-Za-z0-9_-]{8,100}")) {
             throw new BusinessException(ErrorCode.INVALID_IDEMPOTENCY_KEY);

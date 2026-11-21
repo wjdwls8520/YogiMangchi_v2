@@ -52,6 +52,7 @@ public class RiskWorkRunner {
             if(!"PENDING".equals(job.get("status"))||!Boolean.TRUE.equals(job.get("due")))break;
             long id=((Number)job.get("event_id")).longValue();
             if(account.getStatus()==TradingAccount.Status.WITHDRAWN) {complete(accountId,id,"RETIRED","MEMBER_WITHDRAWAL");retired++;continue;}
+            if(account.getStatus()==TradingAccount.Status.EXPIRED) {complete(accountId,id,"RETIRED","GUEST_EXPIRED");retired++;continue;}
             if(!Objects.equals(activeRound,job.get("round_id"))||!Objects.equals(generation,job.get("guest_generation"))) {
                 complete(accountId,id,"RETIRED","LIFECYCLE_CHANGED");retired++;continue;
             }

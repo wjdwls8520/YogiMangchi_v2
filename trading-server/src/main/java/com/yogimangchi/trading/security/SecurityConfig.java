@@ -1,10 +1,13 @@
 package com.yogimangchi.trading.security;
 
+import com.yogimangchi.trading.ops.OpsAlertService;
+import com.yogimangchi.trading.ops.OpsErrorBuffer;
 import com.yogimangchi.trading.tradingaccount.security.TradingCredentials;
 import com.yogimangchi.trading.tradingaccount.security.TradingPrincipal;
 import com.yogimangchi.trading.tradingaccount.security.TradingTokenFilter;
 import java.util.Arrays;
 import java.util.List;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,6 +27,7 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, TradingCredentials credentials,
+            ObjectProvider<OpsErrorBuffer> errorBuffer, ObjectProvider<OpsAlertService> alerts,
             @Value("${springdoc.api-docs.enabled:true}") boolean docs) throws Exception {
         http.authorizeHttpRequests(authorize -> {
             authorize.requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness", "/actuator/health/readiness").permitAll();
@@ -39,6 +43,7 @@ public class SecurityConfig {
             authorize.requestMatchers("/api/v1/trading/notifications", "/api/v1/trading/notifications/**").hasRole("MEMBER");
             authorize.requestMatchers("/api/v1/trading/admin/contest/**").hasRole("ADMIN");
             authorize.requestMatchers("/api/v1/trading/admin/ops/**").hasRole("ADMIN");
+            authorize.requestMatchers("/api/v1/trading/admin/audit-logs", "/api/v1/trading/admin/audit-logs/**").hasRole("ADMIN");
             authorize.requestMatchers("/api/v1/trading/admin/symbols", "/api/v1/trading/admin/symbols/**").hasRole("ADMIN");
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
             // /ws/trading requires an authenticated first frame before any account data is read/sent.
@@ -85,7 +90,7 @@ public class SecurityConfig {
         http.cors(cors -> { })
                 .csrf(csrf -> csrf.ignoringRequestMatchers("/api/v1/trading/**"))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .addFilterBefore(new TradingTokenFilter(credentials), AnonymousAuthenticationFilter.class)
+                .addFilterBefore(new TradingTokenFilter(credentials, errorBuffer.getIfAvailable(), alerts.getIfAvailable()), AnonymousAuthenticationFilter.class)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)

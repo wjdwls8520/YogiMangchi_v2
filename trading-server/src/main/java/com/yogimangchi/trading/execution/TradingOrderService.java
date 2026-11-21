@@ -89,6 +89,17 @@ public class TradingOrderService {
             throw new BusinessException(ErrorCode.INVALID_ORDER);
         if (request.type() == TradingOrder.Type.MARKET && request.limitPrice() != null)
             throw new BusinessException(ErrorCode.INVALID_ORDER);
+        if (request.type() == TradingOrder.Type.LIMIT
+                && (request.stopLossPrice() != null || request.takeProfitPrice() != null))
+            throw new BusinessException(ErrorCode.INVALID_ORDER);
+        if (request.stopLossPrice() != null) {
+            try { TradingMath.validatePrice(request.stopLossPrice()); }
+            catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_STOP_LOSS); }
+        }
+        if (request.takeProfitPrice() != null) {
+            try { TradingMath.validatePrice(request.takeProfitPrice()); }
+            catch (IllegalArgumentException exception) { throw new BusinessException(ErrorCode.INVALID_TAKE_PROFIT); }
+        }
         try {
             if (request.type() == TradingOrder.Type.LIMIT) {
                 TradingMath.validateNewOrder(request.quantity(), request.leverage(), request.limitPrice());
@@ -147,11 +158,70 @@ public class TradingOrderService {
             logCommitted(pending, "pending");
             return OrderResponse.from(pending, null);
         }
+        boolean wasExistingPosition = target != null;
         Position position = hedge.apply(open, accountId, request.tradingSymbolId(), request.side(),
                 request.quantity(), price.domainMarkPrice(), request.leverage(), now);
+        positions.flush();
+        BigDecimal currentMark = price.domainMarkPrice();
+        if (request.stopLossPrice() != null) {
+            if (position.getSide() == Position.Side.LONG
+                    ? request.stopLossPrice().compareTo(currentMark) >= 0
+                    : request.stopLossPrice().compareTo(currentMark) <= 0) {
+                throw new BusinessException(ErrorCode.STOP_LOSS_NOT_PROTECTIVE);
+            }
+            try {
+                if (isolated.risk(position, request.stopLossPrice()).atRisk()) {
+                    throw new BusinessException(ErrorCode.STOP_LOSS_BEYOND_LIQUIDATION);
+                }
+            } catch (IllegalArgumentException | ArithmeticException invalidRange) {
+                throw new BusinessException(ErrorCode.INVALID_STOP_LOSS);
+            }
+        }
+        if (request.takeProfitPrice() != null) {
+            if (position.getSide() == Position.Side.LONG
+                    ? request.takeProfitPrice().compareTo(currentMark) <= 0
+                    : request.takeProfitPrice().compareTo(currentMark) >= 0) {
+                throw new BusinessException(ErrorCode.TAKE_PROFIT_NOT_PROFITABLE);
+            }
+        }
         wallet.openMargin(margin, fee);
         account.recordFinancialChange(now);
-        return record(position, TradingOrder.Action.OPEN, request.quantity(), price, key, hash, now, BigDecimal.ZERO, fee);
+        OrderResponse response = record(position, TradingOrder.Action.OPEN, request.quantity(), price, key, hash, now, BigDecimal.ZERO, fee);
+        if (request.stopLossPrice() != null) {
+            position.configureStopLoss(request.stopLossPrice(), now);
+            positions.flush();
+            events.recordStopLoss(position);
+        } else if (wasExistingPosition) {
+            revalidateStopLossAfterIncrease(position, currentMark, now);
+        }
+        if (request.takeProfitPrice() != null) {
+            if (takeProfits != null) {
+                takeProfits.configureInTransaction(position, request.takeProfitPrice(), currentMark, now);
+            }
+        } else if (wasExistingPosition && takeProfits != null) {
+            takeProfits.revalidateAfterPositionIncrease(position, currentMark, now);
+        }
+        return response;
+    }
+
+    private void revalidateStopLossAfterIncrease(Position position, BigDecimal currentMark, Instant now) {
+        if (position.getStopLossStatus() != Position.StopLossStatus.ACTIVE || position.getStopLossPrice() == null) {
+            return;
+        }
+        BigDecimal stopPrice = position.getStopLossPrice();
+        boolean notProtective = position.getSide() == Position.Side.LONG
+                ? stopPrice.compareTo(currentMark) >= 0
+                : stopPrice.compareTo(currentMark) <= 0;
+        boolean beyondLiquidation;
+        try {
+            beyondLiquidation = isolated.risk(position, stopPrice).atRisk();
+        } catch (IllegalArgumentException | ArithmeticException invalidRange) {
+            beyondLiquidation = true;
+        }
+        if ((notProtective || beyondLiquidation) && position.expireStopLossIfActive("POSITION_CHANGED", now)) {
+            positions.flush();
+            events.recordStopLoss(position);
+        }
     }
 
     @Transactional

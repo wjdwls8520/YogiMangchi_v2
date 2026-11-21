@@ -23,6 +23,7 @@ import com.yogimangchi.trading.order.service.OrderQuoteService;
 import com.yogimangchi.trading.performance.SymbolPerformanceResponse;
 import com.yogimangchi.trading.performance.SymbolPerformanceService;
 import com.yogimangchi.trading.position.entity.Position;
+import com.yogimangchi.trading.security.TradingEndpointRateLimiter;
 import com.yogimangchi.trading.stoploss.StopLossRequest;
 import com.yogimangchi.trading.stoploss.StopLossResponse;
 import com.yogimangchi.trading.stoploss.StopLossService;
@@ -44,6 +45,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -76,6 +79,7 @@ public class ContestTradingController {
     private final TradingEvents tradingEvents;
     private final RiskRecoveryController riskRecoveryController;
     private final SymbolPerformanceService symbolPerformanceService;
+    private final ObjectProvider<TradingEndpointRateLimiter> rateLimiter;
 
     public ContestTradingController(
             ContestService contestService,
@@ -90,6 +94,26 @@ public class ContestTradingController {
             TradingEvents tradingEvents,
             RiskRecoveryController riskRecoveryController,
             SymbolPerformanceService symbolPerformanceService) {
+        this(contestService, tradingAccountService, orderService, quoteService, leverageService,
+                historyService, stopLossService, takeProfitService, commandResultService,
+                tradingEvents, riskRecoveryController, symbolPerformanceService, null);
+    }
+
+    @Autowired
+    public ContestTradingController(
+            ContestService contestService,
+            TradingAccountService tradingAccountService,
+            TradingOrderService orderService,
+            OrderQuoteService quoteService,
+            SymbolLeverageService leverageService,
+            TradeHistoryService historyService,
+            StopLossService stopLossService,
+            TakeProfitService takeProfitService,
+            CommandResultQueryService commandResultService,
+            TradingEvents tradingEvents,
+            RiskRecoveryController riskRecoveryController,
+            SymbolPerformanceService symbolPerformanceService,
+            ObjectProvider<TradingEndpointRateLimiter> rateLimiter) {
         this.contestService = contestService;
         this.tradingAccountService = tradingAccountService;
         this.orderService = orderService;
@@ -102,6 +126,14 @@ public class ContestTradingController {
         this.tradingEvents = tradingEvents;
         this.riskRecoveryController = riskRecoveryController;
         this.symbolPerformanceService = symbolPerformanceService;
+        this.rateLimiter = rateLimiter;
+    }
+
+    private void checkOrderWriteRateLimit(Long accountId) {
+        TradingEndpointRateLimiter limiter = rateLimiter != null ? rateLimiter.getIfAvailable() : null;
+        if (limiter != null) {
+            limiter.checkOrderWrite(accountId);
+        }
     }
 
     @GetMapping("/summary")
@@ -180,6 +212,7 @@ public class ContestTradingController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateOrderRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        checkOrderWriteRateLimit(accountId);
         OrderResponse response = orderService.create(accountId, idempotencyKey, request);
         contestService.evictContestCache(seasonId);
         return response;
@@ -193,6 +226,7 @@ public class ContestTradingController {
             @PathVariable Long orderId,
             @Valid @RequestBody AmendOrderRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        checkOrderWriteRateLimit(accountId);
         OrderResponse response = orderService.amend(accountId, orderId, request);
         contestService.evictContestCache(seasonId);
         return response;
@@ -206,6 +240,7 @@ public class ContestTradingController {
             @PathVariable Long orderId,
             @Valid @RequestBody AmendOrderRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        checkOrderWriteRateLimit(accountId);
         OrderResponse response = orderService.amend(accountId, orderId, request);
         contestService.evictContestCache(seasonId);
         return response;
@@ -218,6 +253,7 @@ public class ContestTradingController {
             @PathVariable Long seasonId,
             @PathVariable Long orderId) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        checkOrderWriteRateLimit(accountId);
         OrderResponse response = orderService.cancel(accountId, orderId);
         contestService.evictContestCache(seasonId);
         return response;
@@ -231,6 +267,7 @@ public class ContestTradingController {
             @PathVariable Long seasonId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        checkOrderWriteRateLimit(accountId);
         CancelAllOrdersResponse response = orderService.cancelAll(accountId, idempotencyKey);
         contestService.evictContestCache(seasonId);
         return response;
@@ -244,6 +281,7 @@ public class ContestTradingController {
             @PathVariable Long seasonId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        checkOrderWriteRateLimit(accountId);
         CloseAllPositionsResponse response = orderService.closeAll(accountId, idempotencyKey);
         contestService.evictContestCache(seasonId);
         return response;
@@ -258,6 +296,7 @@ public class ContestTradingController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody(required = false) ClosePositionRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        checkOrderWriteRateLimit(accountId);
         OrderResponse response = orderService.close(accountId, positionId, idempotencyKey, request);
         contestService.evictContestCache(seasonId);
         return response;
@@ -272,6 +311,7 @@ public class ContestTradingController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody LimitCloseRequest request) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        checkOrderWriteRateLimit(accountId);
         OrderResponse response = orderService.createLimitClose(accountId, positionId, idempotencyKey, request);
         contestService.evictContestCache(seasonId);
         return response;

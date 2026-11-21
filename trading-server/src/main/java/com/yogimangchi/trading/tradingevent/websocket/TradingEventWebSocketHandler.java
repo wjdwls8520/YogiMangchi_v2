@@ -99,7 +99,8 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
                 events.watch(principal.accountId());
                 client.principal=principal;
             }
-        } catch(RuntimeException e) { disconnect(client,new CloseStatus(1011,"Authentication unavailable")); }
+        } catch(MemberSuspendedException suspended) { disconnect(client,new CloseStatus(1008,"Member suspended")); }
+        catch(RuntimeException e) { disconnect(client,new CloseStatus(1011,"Authentication unavailable")); }
     }
 
     private void sweep() {
@@ -187,10 +188,14 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
         return clients.size();
     }
     public void disconnectMember(Long memberId) {
+        disconnectMember(memberId, "Member withdrawn");
+    }
+    public void disconnectMember(Long memberId, String reason) {
         if(memberId==null || memberId<=0) return;
+        String safeReason = (reason == null || reason.isBlank()) ? "Member session terminated" : reason;
         List.copyOf(clients.values()).stream()
                 .filter(c -> c.principal!=null && memberId.equals(c.principal.memberId()))
-                .forEach(c -> disconnect(c,new CloseStatus(1008,"Member withdrawn")));
+                .forEach(c -> disconnect(c,new CloseStatus(1008,safeReason)));
     }
     @PreDestroy public void close() {
         clock.shutdownNow();

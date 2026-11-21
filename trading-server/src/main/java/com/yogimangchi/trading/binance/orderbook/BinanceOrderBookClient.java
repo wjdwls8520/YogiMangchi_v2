@@ -5,14 +5,17 @@ import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTarget;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTargetLoader;
 import com.yogimangchi.trading.marketdata.orderbook.OrderBookSnapshot;
 import com.yogimangchi.trading.marketdata.orderbook.RedisOrderBookStore;
+import com.yogimangchi.trading.ops.OpsAlertService;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
 import java.net.http.*;
 import java.time.*;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.function.*;
 import org.slf4j.*;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -31,21 +34,30 @@ public class BinanceOrderBookClient {
     private final ScheduledExecutorService executor;
     private final Clock clock;
     private final LongSupplier nanoTime;
+    private final ObjectProvider<OpsAlertService> alerts;
     private volatile boolean stopping;
     private volatile Session current;
     private boolean started;
     private int attempts;
+    private volatile long reconnectCount;
+    private volatile String lastDisconnectReason;
     private ScheduledFuture<?> retry, watchdog;
 
-    @Autowired public BinanceOrderBookClient(BinanceSubscriptionTargetLoader targets, ObjectMapper mapper, RedisOrderBookStore store) {
+    @Autowired public BinanceOrderBookClient(BinanceSubscriptionTargetLoader targets, ObjectMapper mapper, RedisOrderBookStore store,
+            ObjectProvider<OpsAlertService> alerts) {
         this(targets::loadActiveTargets, mapper, store::accept, connector(),
                 Executors.newSingleThreadScheduledExecutor(task -> { var thread = new Thread(task, "binance-orderbook"); thread.setDaemon(true); return thread; }),
-                Clock.systemUTC(), System::nanoTime);
+                Clock.systemUTC(), System::nanoTime, alerts);
     }
     BinanceOrderBookClient(Supplier<List<BinanceSubscriptionTarget>> targets, ObjectMapper mapper, Consumer<OrderBookSnapshot> sink,
             BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect, ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime) {
+        this(targets, mapper, sink, connect, executor, clock, nanoTime, null);
+    }
+    BinanceOrderBookClient(Supplier<List<BinanceSubscriptionTarget>> targets, ObjectMapper mapper, Consumer<OrderBookSnapshot> sink,
+            BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect, ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime,
+            ObjectProvider<OpsAlertService> alerts) {
         this.targets = targets; this.mapper = mapper; this.sink = sink; this.connect = connect;
-        this.executor = executor; this.clock = clock; this.nanoTime = nanoTime;
+        this.executor = executor; this.clock = clock; this.nanoTime = nanoTime; this.alerts = alerts;
     }
     private static BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connector() {
         var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
@@ -82,16 +94,32 @@ public class BinanceOrderBookClient {
         current = null;
         if (session != null) session.abort();
         attempts = Math.min(31, attempts + 1);
+        reconnectCount++;
         long ceiling = Math.min(30000L, 1000L << Math.min(5, attempts - 1));
         long delay = ThreadLocalRandom.current().nextLong(ceiling * 8 / 10, ceiling + 1);
         while (failure instanceof CompletionException && failure.getCause() != null) failure = failure.getCause();
-        if (failure instanceof WebSocketHandshakeException handshake && (handshake.getResponse().statusCode() == 429 || handshake.getResponse().statusCode() == 418)) {
-            long seconds = 60;
-            try { seconds = Long.parseLong(handshake.getResponse().headers().firstValue("Retry-After").orElse("60")); }
-            catch (NumberFormatException ignored) { }
-            delay = Math.max(60000, Math.min(604800000, TimeUnit.SECONDS.toMillis(Math.min(seconds, 604800))));
+        int httpStatus = 0;
+        if (failure instanceof WebSocketHandshakeException handshake) {
+            httpStatus = handshake.getResponse().statusCode();
+            lastDisconnectReason = "WebSocketHandshakeException httpStatus=" + httpStatus;
+            if (httpStatus == 429 || httpStatus == 418) {
+                long seconds = 60;
+                try { seconds = Long.parseLong(handshake.getResponse().headers().firstValue("Retry-After").orElse("60")); }
+                catch (NumberFormatException ignored) { }
+                delay = Math.max(60000, Math.min(604800000, TimeUnit.SECONDS.toMillis(Math.min(seconds, 604800))));
+                alertOps("binance-orderbook-ws:http-" + httpStatus, "CRITICAL",
+                        "Binance OrderBook WS rate-limited/banned (HTTP " + httpStatus + ")",
+                        Map.of("httpStatus", httpStatus, "retryMs", delay, "attempts", attempts));
+            }
+        } else {
+            lastDisconnectReason = failure == null ? "health/close" : failure.getClass().getSimpleName();
         }
-        log.warn("[Order book] disconnected reason={} retryMs={}", failure == null ? "health/close" : failure.getClass().getSimpleName(), delay);
+        if (attempts >= 3) {
+            alertOps("binance-orderbook-ws:reconnect", "WARN",
+                    "Binance OrderBook WS repeated disconnects",
+                    Map.of("attempts", attempts, "reconnectCount", reconnectCount, "reason", lastDisconnectReason));
+        }
+        log.warn("[Order book] disconnected reason={} retryMs={}", lastDisconnectReason, delay);
         retry = executor.schedule(this::attempt, delay, TimeUnit.MILLISECONDS);
     }
     private void checkHealth() {
@@ -131,6 +159,21 @@ public class BinanceOrderBookClient {
             return "DISCONNECTED";
         }
         return session.healthy ? "CONNECTED" : "CONNECTING";
+    }
+
+    public long reconnectCount() {
+        return reconnectCount;
+    }
+
+    public String lastDisconnectReason() {
+        return lastDisconnectReason;
+    }
+
+    private void alertOps(String key, String severity, String title, Map<String, Object> details) {
+        OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+        if (alertService != null) {
+            alertService.alert(key, severity, title, details);
+        }
     }
 
     private final class Session implements WebSocket.Listener {

@@ -138,9 +138,11 @@ public class TradingOrder {
     }
     public void cancelForWithdrawal(Instant now) { requirePending(); finish(Status.CANCELED,"MEMBER_WITHDRAWAL",now); }
     public void cancelForGuestRetry(Instant now) { requirePending(); finish(Status.CANCELED,"GUEST_RETRY",now); }
+    public void cancelForGuestExpiration(Instant now) { requirePending(); finish(Status.CANCELED,"GUEST_EXPIRED",now); }
     public void cancelForMemberRestart(Instant now) {requirePending();finish(Status.CANCELED,"MEMBER_RESTART",now);}
     public void cancelForContestSettlement(Instant now) { requirePending(); finish(Status.CANCELED, "CONTEST_SETTLEMENT", now); }
     public void cancelForContestCancellation(Instant now) { requirePending(); finish(Status.CANCELED, "CONTEST_CANCELED", now); }
+    public void cancelForContestDisqualification(Instant now) { requirePending(); finish(Status.CANCELED, "CONTEST_DISQUALIFIED", now); }
     public static TradingOrder contestLiquidation(Position position, BigDecimal quantity, BigDecimal price, Instant now) {
         TradingOrder order = market(position, Action.LIQUIDATE, quantity, price,
                 "contest-settlement:position:" + position.getId(), "0".repeat(64), now);

@@ -7,7 +7,7 @@ import java.util.Objects;
 @Entity
 @Table(name = "trading_account")
 public class TradingAccount {
-    public enum Status { ACTIVE, BANKRUPT, WITHDRAWN }
+    public enum Status { ACTIVE, BANKRUPT, WITHDRAWN, EXPIRED }
     public enum AccountType { MOCK, CONTEST }
     public enum MarginTransitionStatus { COMPLETE, PENDING, REVIEW_REQUIRED }
 
@@ -104,6 +104,13 @@ public class TradingAccount {
         if(status==Status.WITHDRAWN) return;
         status=Status.WITHDRAWN; withdrawnAt=Objects.requireNonNull(now);
         recordFinancialChange(now);
+    }
+    public void expireGuest(Instant now) {
+        if (!guestAccount || memberId != null) throw new IllegalStateException("Guest account required");
+        if (status == Status.EXPIRED) return;
+        status = Status.EXPIRED;
+        Instant effectiveNow = Objects.requireNonNull(now).isBefore(lastFinancialChangeAt) ? lastFinancialChangeAt : now;
+        recordFinancialChange(effectiveNow);
     }
     public boolean isIsolated() { return marginTransitionStatus == MarginTransitionStatus.COMPLETE; }
     public void requireMarginReview() {

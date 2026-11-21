@@ -32,10 +32,14 @@ public class TradingEvents {
 
     @Transactional(propagation=Propagation.MANDATORY)
     public void record(TradingOrder order,Fill fill) {
-        String type=order.getAction()==TradingOrder.Action.LIQUIDATE ? "POSITION_LIQUIDATED" : switch(order.getStatus()) {
-            case PENDING -> "ORDER_PENDING"; case FILLED -> "ORDER_FILLED";
-            case CANCELED -> "ORDER_CANCELED"; case REJECTED -> "ORDER_REJECTED";
-        };
+        String type = (order.getAction() == TradingOrder.Action.LIQUIDATE && order.getStatus() == TradingOrder.Status.FILLED)
+                ? "POSITION_LIQUIDATED"
+                : switch (order.getStatus()) {
+                    case PENDING -> "ORDER_PENDING";
+                    case FILLED -> "ORDER_FILLED";
+                    case CANCELED -> "ORDER_CANCELED";
+                    case REJECTED -> "ORDER_REJECTED";
+                };
         String payload;
         try { payload=mapper.writeValueAsString(OrderResponse.from(order,fill)); }
         catch(JsonProcessingException e) { throw new IllegalStateException("Cannot retain trading event snapshot",e); }
