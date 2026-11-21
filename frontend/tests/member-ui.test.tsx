@@ -66,9 +66,11 @@ import {
 import {
   CommunityBoard,
   SharedPositionCard,
+  filterIncomingLatestPosts,
   formatSidebarSeasonLabel,
+  shouldNotifyIncomingCommunityPost,
 } from "../src/features/member/components/community-board";
-import type { SharedPositionSnapshot } from "../src/features/member/api/community-news";
+import type { CommunityPost, SharedPositionSnapshot } from "../src/features/member/api/community-news";
 import {
   formatExchangeCompactPct,
   formatExchangeFeeUsdt,
@@ -4307,4 +4309,228 @@ test("커뮤니티 사이드바 대회 시즌 셀렉트는 긴 제목을 말줄�
     client.clear();
     recruitingClient.clear();
   }
+});
+
+function makeCommunityPostFixture(overrides: Partial<CommunityPost> & { id: number; memberId: number }): CommunityPost {
+  return {
+    authorNickname: `트레이더${overrides.memberId}`,
+    authorWithdrawn: false,
+    category: "FREE",
+    symbolTag: "BTC",
+    title: `게시글 #${overrides.id}`,
+    content: "본문 내용",
+    likeCount: 0,
+    commentCount: 0,
+    likedByMe: false,
+    mine: false,
+    createdAt: "2026-11-22T06:00:00Z",
+    updatedAt: "2026-11-22T06:00:00Z",
+    ...overrides,
+  };
+}
+
+test("shouldNotifyIncomingCommunityPost excludes own SSE posts even before HTTP onSuccess (race condition) and partial frames", () => {
+  const empty = new Set<number>();
+
+  // Race condition: SSE arrives before createPostMutation.onSuccess populates myCreatedPostIds
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 501, authorId: 7, category: "FREE", symbolTag: "BTC" },
+      {
+        currentMemberId: 7,
+        myCreatedPostIds: empty,
+        visiblePostIds: empty,
+        queuedPostIds: empty,
+        category: "",
+        symbolTag: "",
+      },
+    ),
+    false,
+  );
+
+  // Partial/malformed SSE frame omitting top-level authorId but carrying parsed memberId or mine flag
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 502, memberId: 7, category: "MARKET", symbolTag: "ETH" },
+      {
+        currentMemberId: 7,
+        myCreatedPostIds: empty,
+        visiblePostIds: empty,
+        queuedPostIds: empty,
+        category: "",
+        symbolTag: "",
+      },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 503, mine: true, category: "FREE", symbolTag: null },
+      {
+        currentMemberId: null,
+        myCreatedPostIds: empty,
+        visiblePostIds: empty,
+        queuedPostIds: empty,
+        category: "",
+        symbolTag: "",
+      },
+    ),
+    false,
+  );
+
+  // Post already tracked in myCreatedPostIds (even when authorId is omitted)
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 504, category: "FREE", symbolTag: "BTC" },
+      {
+        currentMemberId: 7,
+        myCreatedPostIds: new Set([504]),
+        visiblePostIds: empty,
+        queuedPostIds: empty,
+        category: "",
+        symbolTag: "",
+      },
+    ),
+    false,
+  );
+});
+
+test("shouldNotifyIncomingCommunityPost notifies for other users' new posts, respects category/symbol filters, and deduplicates visible/queued IDs", () => {
+  const baseContext = {
+    currentMemberId: 7,
+    myCreatedPostIds: new Set<number>([501]),
+    visiblePostIds: new Set<number>([499, 500]),
+    queuedPostIds: new Set<number>([510]),
+    category: "" as const,
+    symbolTag: "",
+  };
+
+  // Truly new post by another user
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 511, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      baseContext,
+    ),
+    true,
+  );
+
+  // Anonymous visitor (currentMemberId === null) still receives alerts for new posts
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 511, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      { ...baseContext, currentMemberId: null },
+    ),
+    true,
+  );
+
+  // Already visible in feed -> skip
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 500, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      baseContext,
+    ),
+    false,
+  );
+
+  // Already queued by earlier SSE delivery -> skip duplicate replay
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 510, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      baseContext,
+    ),
+    false,
+  );
+
+  // Active category & symbolTag filters
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 512, authorId: 42, category: "FREE", symbolTag: "BTC" },
+      { ...baseContext, category: "ANALYSIS", symbolTag: "BTC" },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 513, authorId: 42, category: "ANALYSIS", symbolTag: "ETH" },
+      { ...baseContext, category: "ANALYSIS", symbolTag: "BTC" },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 514, authorId: 42, category: "ANALYSIS", symbolTag: null },
+      { ...baseContext, category: "ANALYSIS", symbolTag: "BTC" },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 515, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      { ...baseContext, category: "ANALYSIS", symbolTag: "BTC" },
+    ),
+    true,
+  );
+});
+
+test("filterIncomingLatestPosts excludes own posts and visible posts while preserving other users' truly new posts", () => {
+  const posts: CommunityPost[] = [
+    makeCommunityPostFixture({ id: 605, memberId: 7, mine: true }),
+    makeCommunityPostFixture({ id: 604, memberId: 7, mine: false }),
+    makeCommunityPostFixture({ id: 603, memberId: 99, mine: false }),
+    makeCommunityPostFixture({ id: 602, memberId: 88, mine: false }),
+    makeCommunityPostFixture({ id: 601, memberId: 42, mine: false }),
+    makeCommunityPostFixture({ id: 601, memberId: 42, mine: false }),
+    makeCommunityPostFixture({ id: 600, memberId: 55, mine: false }),
+  ];
+
+  const filtered = filterIncomingLatestPosts(posts, {
+    currentMemberId: 7,
+    myCreatedPostIds: new Set([603]),
+    visiblePostIds: new Set([600]),
+  });
+
+  assert.deepEqual(
+    filtered.map(post => post.id),
+    [602, 601],
+  );
+
+  // When /latest-check returns only current user's own or already-visible posts, returns empty list
+  const ownOnly = filterIncomingLatestPosts(
+    [
+      makeCommunityPostFixture({ id: 610, memberId: 7, mine: true }),
+      makeCommunityPostFixture({ id: 609, memberId: 7, mine: false }),
+      makeCommunityPostFixture({ id: 600, memberId: 55, mine: false }),
+    ],
+    {
+      currentMemberId: 7,
+      myCreatedPostIds: new Set(),
+      visiblePostIds: new Set([600]),
+    },
+  );
+  assert.deepEqual(ownOnly, []);
+});
+
+test("CommunityBoard SSE and latest-check handlers ignore malformed SSE frames and scrub own created posts", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "src/features/member/components/community-board.tsx"),
+    "utf8",
+  );
+  assert.match(source, /shouldNotifyIncomingCommunityPost\(/);
+  assert.match(source, /filterIncomingLatestPosts\(checked\.items/);
+  assert.match(source, /latestPostIdRef\.current = Math\.max\(latestPostIdRef\.current, created\.id\)/);
+  assert.match(source, /queuedPostIdsRef\.current\.delete\(created\.id\)/);
+  // Ensure malformed SSE catch block does not blindly increment pendingNewPostsCount
+  const sseEffectMatch = source.match(
+    /es\.addEventListener\("UX_COMMUNITY_POST_CREATED"[\s\S]*?const timer = window\.setInterval/,
+  );
+  assert.ok(sseEffectMatch, "SSE handler block should exist");
+  const onPostCreatedBlock = source.match(
+    /const onPostCreated = \(event: MessageEvent\) => \{[\s\S]*?es\.addEventListener\("UX_COMMUNITY_POST_CREATED"/,
+  );
+  assert.ok(onPostCreatedBlock, "onPostCreated block should exist");
+  assert.equal(
+    /\}\s*catch\s*\{\s*setPendingNewPostsCount\(/.test(onPostCreatedBlock[0]),
+    false,
+    "malformed SSE catch block must not increment pendingNewPostsCount",
+  );
 });
