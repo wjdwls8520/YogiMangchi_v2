@@ -873,7 +873,9 @@ test("Support Center parsers, SSR views, and Admin Ops + Moderation contracts wo
     );
     assert.match(supportAnonHtml, /고객센터 · 1:1 문의/);
     assert.match(supportAnonHtml, /로그인 후 1:1 문의를 이용할 수 있습니다/);
-    assert.match(supportAnonHtml, /로그인하러 가기/);
+    assert.match(supportAnonHtml, /flex flex-wrap justify-center gap-2\.5 pt-2/);
+    assert.match(supportAnonHtml, /whitespace-nowrap[^>]*>로그인하러 가기<\/a>/);
+    assert.match(supportAnonHtml, /whitespace-nowrap[^>]*>홈으로 돌아가기<\/a>/);
 
     const supportLoggedInHtml = renderToStaticMarkup(
       <MemberProvider session={adminSession} client={client}>

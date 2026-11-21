@@ -155,6 +155,9 @@ test("Guest dialog explains virtual funds and retention, with disabled create/ca
   const html = renderToStaticMarkup(<GuestStartDialog dialogRef={createRef()} creating failed onStart={() => {}} onCancel={() => {}} onClose={() => {}} />);
   assert.match(html, /10,000 USDT/); assert.match(html, /실제 자금 없이/); assert.match(html, /최대 7일/); assert.match(html, /복구할 수 없습니다/);
   assert.equal((html.match(/disabled=""/g) ?? []).length, 2); assert.match(html, /role="alert"/); assert.match(html, /계정 생성 중/);
+  const readyHtml = renderToStaticMarkup(<GuestStartDialog dialogRef={createRef()} creating={false} failed={false} onStart={() => {}} onCancel={() => {}} onClose={() => {}} />);
+  assert.match(readyHtml, /ym-modal-btn-cancel[^>]*whitespace-nowrap[^>]*>취소<\/button>/);
+  assert.match(readyHtml, /ym-modal-btn-confirm[^>]*whitespace-nowrap[^>]*>10,000 USDT로 시작하기<\/button>/);
   const prompt = renderToStaticMarkup(<GuestEntryPrompt onStart={() => {}} busy={false} storageError={false} />);
   assert.match(prompt, /게스트로 모의투자 시작/); assert.doesNotMatch(prompt, /<input/);
 });
