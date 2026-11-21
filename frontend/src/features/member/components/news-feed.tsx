@@ -7,6 +7,8 @@ import { useMember } from "./member-provider";
 import { useOptionalNotificationCenter } from "../notifications/notification-context";
 import { MemberShell } from "./member-views";
 import { DimModal } from "./dim-modal";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
 import {
   V1IconBolt,
   V1IconNews,
@@ -38,7 +40,6 @@ import {
   type NewsSort,
 } from "../api/community-news";
 import {
-  FALLBACK_MARKET_OVERVIEW,
   fetchRedisMarketOverview,
   resolveTradingMarketBaseUrl,
   type MarketOverviewData,
@@ -448,8 +449,8 @@ export interface LiveNewsSentimentInput {
   incomingArticles?: NewsItem[];
   highlights?: NewsHighlights;
   liveReactions?: Record<number, { bullCount: number; bearCount: number }>;
-  userReactions?: Record<number, "bull" | "bear">;
-  marketOverview?: MarketOverviewData;
+  userReactions?: Record<number, "bull" | "bear" | null>;
+  marketOverview?: MarketOverviewData | null;
 }
 
 export interface LiveNewsSentimentResult {
@@ -505,14 +506,15 @@ export function computeLiveNewsSentiment({
     const baseBull = item.bullCount ?? 0;
     const baseBear = item.bearCount ?? 0;
     const liveOverride = liveReactions[item.id];
-    const userChoice = userReactions[item.id];
+    const hasClientChoice = item.id in userReactions;
+    const userChoice = hasClientChoice ? userReactions[item.id] : undefined;
 
     const effectiveBull = liveOverride
       ? liveOverride.bullCount
-      : baseBull + (userChoice === "bull" ? 1 : 0);
+      : baseBull + (userChoice === "bull" && item.userReaction !== "BULL" ? 1 : 0);
     const effectiveBear = liveOverride
       ? liveOverride.bearCount
-      : baseBear + (userChoice === "bear" ? 1 : 0);
+      : baseBear + (userChoice === "bear" && item.userReaction !== "BEAR" ? 1 : 0);
 
     articleBullVotes += effectiveBull;
     articleBearVotes += effectiveBear;
@@ -535,7 +537,7 @@ export function computeLiveNewsSentiment({
       if (choice === "bull") {
         articleBullVotes += 1;
         deltaBullVotes += 1;
-      } else {
+      } else if (choice === "bear") {
         articleBearVotes += 1;
         deltaBearVotes += 1;
       }
@@ -589,24 +591,39 @@ export function computeLiveNewsSentiment({
     }
   }
 
-  const effectiveMarket = marketOverview ?? FALLBACK_MARKET_OVERVIEW;
-  const btcMomentumPct = Math.max(20, Math.min(80, 50 + effectiveMarket.btcChange24h * 4));
-  const marketBullPct =
-    effectiveMarket.futuresBullPct * 0.5 +
-    effectiveMarket.fearGreedValue * 0.35 +
-    btcMomentumPct * 0.15;
+  const hasLiveMarketSentiment = Boolean(
+    marketOverview &&
+      marketOverview.futuresBullPct !== null &&
+      marketOverview.fearGreedValue !== null,
+  );
+  const marketBullPct = hasLiveMarketSentiment
+    ? (() => {
+        const btcDelta = marketOverview!.btcChange24h ?? 0;
+        const btcMomentumPct = Math.max(20, Math.min(80, 50 + btcDelta * 4));
+        return (
+          marketOverview!.futuresBullPct! * 0.5 +
+          marketOverview!.fearGreedValue! * 0.35 +
+          btcMomentumPct * 0.15
+        );
+      })()
+    : null;
 
   let combinedBull: number;
-  if (marketOverview) {
+  if (marketBullPct !== null) {
     combinedBull = hasNewsSignal ? newsBullPct * 0.65 + marketBullPct * 0.35 : marketBullPct;
   } else if (hasNewsSignal) {
     combinedBull = newsBullPct;
   } else {
-    combinedBull = marketBullPct;
+    combinedBull = 50;
   }
 
   const bullPct = Math.max(5, Math.min(95, Math.round(combinedBull)));
   const bearPct = 100 - bullPct;
+
+  const marketMetaSuffix =
+    hasLiveMarketSentiment && marketOverview
+      ? ` (공포·탐욕 ${marketOverview.fearGreedValue}${marketOverview.fearGreedLabelKr ? ` ${marketOverview.fearGreedLabelKr}` : ""} · 선물 매수수급 ${marketOverview.futuresBullPct}%)`
+      : "";
 
   const stanceText =
     bullPct >= 55
@@ -631,20 +648,29 @@ export function computeLiveNewsSentiment({
           : bearPct >= 55
             ? `최근 실시간 뉴스 ${analyzedCount}건(강세 ${bullArticleCount}·약세 ${bearArticleCount}·중립 ${neutralArticleCount}) 분석 결과, ${focusTopic} 이슈를 중심으로 단기 매도·경계 심리(${bearPct}%)가 우위를 보이고 있습니다.`
             : `최근 실시간 뉴스 ${analyzedCount}건(강세 ${bullArticleCount}·약세 ${bearArticleCount}·중립 ${neutralArticleCount}) 분석 결과, ${focusTopic} 이슈 속에서 강·약세 수급 공방 및 관망세(강세 ${bullPct}% · 약세 ${bearPct}%)가 이어지고 있습니다.`;
-      summaryText = `${dynamicBase} (공포·탐욕 ${effectiveMarket.fearGreedValue} ${effectiveMarket.fearGreedLabelKr} · 선물 매수수급 ${effectiveMarket.futuresBullPct}%)`;
+      summaryText = `${dynamicBase}${marketMetaSuffix}`;
     } else {
-      summaryText = rawSummaryText.includes("공포·탐욕")
-        ? rawSummaryText
-        : `${rawSummaryText} (공포·탐욕 ${effectiveMarket.fearGreedValue} ${effectiveMarket.fearGreedLabelKr} · 선물 매수수급 ${effectiveMarket.futuresBullPct}%)`;
+      summaryText =
+        rawSummaryText.includes("공포·탐욕") || !marketMetaSuffix
+          ? rawSummaryText
+          : `${rawSummaryText}${marketMetaSuffix}`;
     }
   } else if (bullArticleCount + bearArticleCount > 0 || totalBullVotes + totalBearVotes > 0) {
     const totalVotes = totalBullVotes + totalBearVotes;
+    const marketClause =
+      hasLiveMarketSentiment && marketOverview
+        ? `와 공포·탐욕 ${marketOverview.fearGreedValue}(${marketOverview.fearGreedLabelKr ?? ""})·선물 매수수급 ${marketOverview.futuresBullPct}%`
+        : "";
     summaryText = `실시간 뉴스(강세 ${bullArticleCount}건·약세 ${bearArticleCount}건${
       totalVotes > 0 ? `, 투표 ${totalVotes.toLocaleString("ko-KR")}표` : ""
-    })와 공포·탐욕 ${effectiveMarket.fearGreedValue}(${effectiveMarket.fearGreedLabelKr})·선물 매수수급 ${effectiveMarket.futuresBullPct}% 기준으로 ${stanceText}`;
+    })${marketClause} 기준으로 ${stanceText}`;
+  } else if (hasLiveMarketSentiment && marketOverview) {
+    const btcDelta = marketOverview.btcChange24h;
+    const btcClause =
+      btcDelta !== null ? `, BTC 24h(${btcDelta >= 0 ? "+" : ""}${btcDelta.toFixed(2)}%)` : "";
+    summaryText = `글로벌 공포·탐욕 지수 ${marketOverview.fearGreedValue}(${marketOverview.fearGreedLabelKr ?? ""}), 선물 매수수급 ${marketOverview.futuresBullPct}%${btcClause} 지표를 종합해 ${stanceText}`;
   } else {
-    const btcSign = effectiveMarket.btcChange24h >= 0 ? "+" : "";
-    summaryText = `글로벌 공포·탐욕 지수 ${effectiveMarket.fearGreedValue}(${effectiveMarket.fearGreedLabelKr}), 선물 매수수급 ${effectiveMarket.futuresBullPct}%, BTC 24h(${btcSign}${effectiveMarket.btcChange24h.toFixed(2)}%) 지표를 종합해 ${stanceText}`;
+    summaryText = "실시간 시세 및 뉴스 투자 심리 지표를 연동 대기 중입니다.";
   }
 
   return {
@@ -677,7 +703,7 @@ export function NewsFeed({
 }: {
   initialPage?: NewsPage;
   initialHighlights?: NewsHighlights;
-  initialMarketOverview?: MarketOverviewData;
+  initialMarketOverview?: MarketOverviewData | null;
   initialCategory?: "" | NewsCategory;
   initialSymbolTag?: string;
   initialSection?: "BREAKING" | "NEWSROOM";
@@ -747,32 +773,21 @@ export function NewsFeed({
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<NewsItem | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [reactions, setReactions] = useState<Record<number, "bull" | "bear">>({});
+  const [reactions, setReactions] = useState<Record<number, "bull" | "bear" | null>>({});
 
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.localStorage?.getItem !== "function") return;
-    try {
-      const raw = window.localStorage.getItem(USER_NEWS_REACTIONS_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (!parsed || typeof parsed !== "object") return;
-      const restored: Record<number, "bull" | "bear"> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        const idNum = Number(k);
-        if (Number.isFinite(idNum) && (v === "bull" || v === "bear")) {
-          restored[idNum] = v;
-        }
+  async function readNewsPath(path: string, signal?: AbortSignal): Promise<unknown> {
+    if (snapshot.phase === "ready") {
+      try {
+        return await session.request(path, { signal });
+      } catch {
+        // Fall back to public anonymous viewer read if access token fails transiently
       }
-      if (Object.keys(restored).length > 0 && typeof window.setTimeout === "function") {
-        const timer = window.setTimeout(() => {
-          setReactions(prev => ({ ...restored, ...prev }));
-        }, 0);
-        return () => window.clearTimeout(timer);
-      }
-    } catch {
-      // Ignore storage error
     }
-  }, []);
+    return contentJson(origin, path, {
+      signal,
+      anonViewerId: getOrCreateAnonNewsViewerId(),
+    });
+  }
   const [liveReactions, setLiveReactions] = useState<
     Record<number, { bullCount: number; bearCount: number }>
   >({});
@@ -971,7 +986,16 @@ export function NewsFeed({
   const effectiveSort: NewsSort | undefined = activeSort === "LATEST" ? undefined : activeSort;
 
   const query = useQuery({
-    queryKey: ["public-news", origin, category, symbolTag, submittedKeyword, effectiveSort],
+    queryKey: [
+      "public-news",
+      origin,
+      category,
+      symbolTag,
+      submittedKeyword,
+      effectiveSort,
+      snapshot.phase,
+      snapshot.generation,
+    ],
     initialData:
       initialPage &&
       category === initialCategory &&
@@ -982,8 +1006,7 @@ export function NewsFeed({
         : undefined,
     queryFn: async ({ signal }) =>
       parseNewsPage(
-        await contentJson(
-          origin,
+        await readNewsPath(
           newsPath({
             category,
             symbolTag,
@@ -991,7 +1014,7 @@ export function NewsFeed({
             sort: effectiveSort,
             size: 10,
           }),
-          { signal },
+          signal,
         ),
       ),
   });
@@ -1009,9 +1032,9 @@ export function NewsFeed({
   });
 
   const tradingBase = resolveTradingMarketBaseUrl();
-  const marketOverviewQuery = useQuery<MarketOverviewData>({
+  const marketOverviewQuery = useQuery<MarketOverviewData | null>({
     queryKey: ["portal-redis-market-overview", tradingBase],
-    initialData: initialMarketOverview,
+    initialData: initialMarketOverview ?? undefined,
     staleTime: 3_000,
     refetchInterval: selectedDetail !== null ? false : 5_000,
     queryFn: async ({ signal }) => fetchRedisMarketOverview(tradingBase, signal),
@@ -1030,6 +1053,8 @@ export function NewsFeed({
     symbolTag,
     submittedKeyword,
     undefined,
+    snapshot.phase,
+    snapshot.generation,
   ]);
   const baseItems =
     query.data?.items ??
@@ -1167,8 +1192,7 @@ export function NewsFeed({
     setLoadingMore(true);
     try {
       const page = parseNewsPage(
-        await contentJson(
-          origin,
+        await readNewsPath(
           newsPath({
             category,
             symbolTag,
@@ -1439,10 +1463,16 @@ export function NewsFeed({
     }
   }
 
-  function persistReactionsMap(next: Record<number, "bull" | "bear">) {
+  function persistReactionsMap(next: Record<number, "bull" | "bear" | null>) {
     if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
       try {
-        window.localStorage.setItem(USER_NEWS_REACTIONS_STORAGE_KEY, JSON.stringify(next));
+        const compact: Record<number, "bull" | "bear"> = {};
+        for (const [k, v] of Object.entries(next)) {
+          if (v === "bull" || v === "bear") {
+            compact[Number(k)] = v;
+          }
+        }
+        window.localStorage.setItem(USER_NEWS_REACTIONS_STORAGE_KEY, JSON.stringify(compact));
       } catch {
         // Ignore storage quota error
       }
@@ -1450,10 +1480,18 @@ export function NewsFeed({
   }
 
   function toggleReaction(id: number, kind: "bull" | "bear") {
+    const existingItem = allItems.find(item => item.id === id);
+    const serverCurrent: "bull" | "bear" | null =
+      existingItem?.userReaction === "BULL"
+        ? "bull"
+        : existingItem?.userReaction === "BEAR"
+          ? "bear"
+          : null;
     setReactions(current => {
+      const effectiveCurrent = id in current ? current[id] : serverCurrent;
       const next = { ...current };
-      if (next[id] === kind) {
-        delete next[id];
+      if (effectiveCurrent === kind) {
+        next[id] = null;
       } else {
         next[id] = kind;
       }
@@ -1496,7 +1534,7 @@ export function NewsFeed({
           } else if (res.userReaction === "BEAR") {
             next[id] = "bear";
           } else {
-            delete next[id];
+            next[id] = null;
           }
           persistReactionsMap(next);
           return next;
@@ -2236,16 +2274,21 @@ export function NewsFeed({
             </p>
           )}
           {query.isError && (
-            <p role="alert" className="member-message">
-              뉴스 피드를 조회하지 못했습니다. {contentMessage(query.error)}{" "}
-              <button
-                type="button"
-                className="account-refresh"
-                onClick={() => void query.refetch()}
-              >
-                다시 조회
-              </button>
-            </p>
+            <div role="alert" className="member-message flex flex-wrap items-center justify-between gap-2">
+              <span>
+                뉴스 피드를 조회하지 못했습니다. {contentMessage(query.error)}{" "}
+                <button
+                  type="button"
+                  className="account-refresh"
+                  onClick={() => void query.refetch()}
+                >
+                  다시 조회
+                </button>
+              </span>
+              {isUnexpectedApiError(query.error) && getErrorRequestId(query.error) && (
+                <RequestIdChip requestId={getErrorRequestId(query.error)} />
+              )}
+            </div>
           )}
           {detailError && (
             <p role="alert" className="member-message">

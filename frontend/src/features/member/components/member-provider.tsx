@@ -9,8 +9,9 @@ import { MemberRecoveryStatus } from "./member-recovery-status";
 import { MemberConsentGate } from "./member-consents";
 import { bindMemberActivity } from "../api/activity";
 import { NotificationCenterProvider } from "../notifications/notification-context";
+import { resolveContentOrigin } from "../../../lib/api-origins";
 
-const origin = () => contentOrigin(process.env.NEXT_PUBLIC_CONTENT_SERVER_URL || "http://localhost:8080");
+const origin = () => contentOrigin(resolveContentOrigin());
 let browserSession: MemberSession | undefined;
 const Context = createContext<{ session: MemberSession; origin: string; announce: (type: "changed" | "ended") => void; retryConsents: () => void } | null>(null);
 export function MemberProvider({ children, session: provided, client: providedClient }: { children: ReactNode; session?: MemberSession; client?: QueryClient }) {

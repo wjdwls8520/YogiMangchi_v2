@@ -232,7 +232,7 @@ export function ProfileImageUploadSlot({
           )}
         </div>
       </div>
-      <small className="ym-helper-violet">
+      <small className="ym-helper-primary">
         JPG, PNG, WEBP (최대 5MB) · GIF (최대 3MB)
       </small>
       {error && (

@@ -4,23 +4,14 @@ import {
   fetchRedisMarketOverview,
   type MarketOverviewData,
 } from "../../features/member/api/market-overview";
+import { resolveContentOrigin, resolveTradingOrigin } from "../../lib/api-origins";
 
 async function loadInitialNewsSidebarData(): Promise<{
   initialHighlights?: NewsHighlights;
   initialMarketOverview?: MarketOverviewData;
 }> {
-  const contentBase = (
-    process.env.CONTENT_API_BASE_URL ??
-    process.env.NEXT_PUBLIC_CONTENT_SERVER_URL ??
-    process.env.NEXT_PUBLIC_CONTENT_API_BASE_URL ??
-    "http://127.0.0.1:8080"
-  ).replace(/\/+$/, "");
-  const tradingBase = (
-    process.env.TRADING_API_BASE_URL ??
-    process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
-    process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ??
-    "http://127.0.0.1:8081"
-  ).replace(/\/+$/, "");
+  const contentBase = resolveContentOrigin();
+  const tradingBase = resolveTradingOrigin();
 
   const [highlightsRes, overviewRes] = await Promise.allSettled([
     fetch(`${contentBase}/api/v1/news/highlights`, {

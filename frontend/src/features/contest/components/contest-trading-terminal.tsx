@@ -204,96 +204,117 @@ export function ContestTradingSubheader({
       }
     : rawMeta;
   const isActive = meta.walletStatus === "ACTIVE";
+  const roiColorClass = meta.seasonRoi.startsWith("-")
+    ? "text-[#F6465D]"
+    : meta.seasonRoi.startsWith("+")
+      ? "text-[#0ECB81]"
+      : "text-gray-300";
 
   return (
     <div
       data-contest-trading-subheader={meta.seasonId}
-      className="flex min-h-[48px] w-full flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-[#161A1E] px-4 py-1.5 text-xs text-white"
+      className="flex min-h-[48px] w-full flex-col justify-center gap-2 border-b border-white/10 bg-[#161A1E] px-4 py-1.5 text-xs text-white"
     >
       {guestCtx ? <ContestLiveWalletSync onWalletUpdate={setLiveWallet} /> : null}
-      {/* 좌측: 대회 목록 돌아가기 + 시즌 컬러 도트 + 시즌 타이틀 + 대회 지갑 상태 배지 + 남은 시간 */}
-      <div className="flex flex-wrap items-center gap-3 min-w-0">
-        <Link
-          href="/contest"
-          className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] font-bold text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
-        >
-          <V1IconArrowLeft className="h-3.5 w-3.5 shrink-0" />
-          <span>대회 목록</span>
-        </Link>
-
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="h-2 w-2 shrink-0 rounded-full"
-            style={{ backgroundColor: meta.dotColor }}
-          />
-          <strong className="truncate text-xs sm:text-sm font-black tracking-tight text-white">
-            {meta.title}
-          </strong>
-          <span
-            className={cn(
-              "inline-flex shrink-0 items-center whitespace-nowrap rounded px-2 py-0.5 text-[10px] font-black",
-              isActive
-                ? "border border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
-                : "border border-gray-500/30 bg-gray-500/15 text-gray-300",
-            )}
+      <div className="flex w-full flex-wrap items-center justify-between gap-3">
+        {/* 좌측: 대회 목록 돌아가기 + 시즌 컬러 도트 + 시즌 타이틀 + 대회 지갑 상태 배지 + 남은 시간 */}
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
+          <Link
+            href="/contest"
+            className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] font-bold text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
           >
-            {isActive ? "ACTIVE" : "종료·정산완료"}
+            <V1IconArrowLeft className="h-3.5 w-3.5 shrink-0" />
+            <span>대회 목록</span>
+          </Link>
+
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ backgroundColor: meta.dotColor }}
+            />
+            <strong className="truncate text-xs sm:text-sm font-black tracking-tight text-white">
+              {meta.title}
+            </strong>
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center whitespace-nowrap rounded px-2 py-0.5 text-[10px] font-black",
+                isActive
+                  ? "border border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
+                  : "border border-gray-500/30 bg-gray-500/15 text-gray-300",
+              )}
+            >
+              {isActive ? "ACTIVE" : "종료·정산완료"}
+            </span>
+          </div>
+
+          <span className="hidden xl:inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 tabular-nums">
+            <V1IconClock className="h-3.5 w-3.5 text-gray-400" />
+            <span>
+              {meta.period} · {meta.remainingLabel}
+            </span>
           </span>
         </div>
 
-        <span className="hidden xl:inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 tabular-nums">
-          <V1IconClock className="h-3.5 w-3.5 text-gray-400" />
-          <span>
-            {meta.period} · {meta.remainingLabel}
+        {/* 중앙/우측: 시즌 전용 대회 지갑 실시간 요약 + CONTEST MODE 배지 */}
+        <div className="flex flex-wrap items-center gap-4 ml-auto">
+          <dl className="hidden md:flex items-center gap-4 text-[11px] tabular-nums whitespace-nowrap">
+            <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+              <dt className="font-bold text-gray-400 whitespace-nowrap">시즌 시드</dt>
+              <dd className="font-black text-gray-200 whitespace-nowrap">{meta.seedMoney}</dd>
+            </div>
+            <div className="h-3 w-[1px] shrink-0 bg-white/10" />
+            <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+              <dt className="font-bold text-gray-400 whitespace-nowrap">대회 평가자산</dt>
+              <dd className="font-black text-white whitespace-nowrap">{meta.contestEquity}</dd>
+            </div>
+            <div className="h-3 w-[1px] shrink-0 bg-white/10" />
+            <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+              <dt className="font-bold text-gray-400 whitespace-nowrap">대회 가용증거금</dt>
+              <dd className="font-black text-gray-200 whitespace-nowrap">{meta.availableMargin}</dd>
+            </div>
+            <div className="h-3 w-[1px] shrink-0 bg-white/10" />
+            <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+              <dt className="font-bold text-gray-400 whitespace-nowrap">시즌 수익률</dt>
+              <dd className={cn("font-black whitespace-nowrap", roiColorClass)}>
+                {meta.seasonRoi}
+              </dd>
+            </div>
+            <div className="h-3 w-[1px] shrink-0 bg-white/10" />
+            <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+              <dt className="font-bold text-gray-400 whitespace-nowrap">실시간 순위</dt>
+              <dd className="font-black text-amber-300 whitespace-nowrap">{meta.liveRank}</dd>
+            </div>
+          </dl>
+
+          <span className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-400/30 bg-blue-500/15 px-3 text-[11px] font-black text-blue-300">
+            <V1IconTrophy className="h-3.5 w-3.5 shrink-0 text-blue-300" />
+            <span>CONTEST MODE</span>
           </span>
-        </span>
+        </div>
       </div>
 
-      {/* 중앙/우측: 시즌 전용 대회 지갑 실시간 요약 + CONTEST MODE 배지 */}
-      <div className="flex flex-wrap items-center gap-4 ml-auto">
-        <dl className="hidden md:flex items-center gap-4 text-[11px] tabular-nums whitespace-nowrap">
-          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            <dt className="font-bold text-gray-400 whitespace-nowrap">시즌 시드</dt>
-            <dd className="font-black text-gray-200 whitespace-nowrap">{meta.seedMoney}</dd>
-          </div>
-          <div className="h-3 w-[1px] shrink-0 bg-white/10" />
-          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            <dt className="font-bold text-gray-400 whitespace-nowrap">대회 평가자산</dt>
-            <dd className="font-black text-white whitespace-nowrap">{meta.contestEquity}</dd>
-          </div>
-          <div className="h-3 w-[1px] shrink-0 bg-white/10" />
-          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            <dt className="font-bold text-gray-400 whitespace-nowrap">대회 가용증거금</dt>
-            <dd className="font-black text-gray-200 whitespace-nowrap">{meta.availableMargin}</dd>
-          </div>
-          <div className="h-3 w-[1px] shrink-0 bg-white/10" />
-          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            <dt className="font-bold text-gray-400 whitespace-nowrap">시즌 수익률</dt>
-            <dd
-              className={cn(
-                "font-black whitespace-nowrap",
-                meta.seasonRoi.startsWith("-")
-                  ? "text-[#F6465D]"
-                  : meta.seasonRoi.startsWith("+")
-                    ? "text-[#0ECB81]"
-                    : "text-gray-300",
-              )}
-            >
-              {meta.seasonRoi}
-            </dd>
-          </div>
-          <div className="h-3 w-[1px] shrink-0 bg-white/10" />
-          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            <dt className="font-bold text-gray-400 whitespace-nowrap">실시간 순위</dt>
-            <dd className="font-black text-amber-300 whitespace-nowrap">{meta.liveRank}</dd>
-          </div>
-        </dl>
-
-        <span className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-400/30 bg-blue-500/15 px-3 text-[11px] font-black text-blue-300">
-          <V1IconTrophy className="h-3.5 w-3.5 shrink-0 text-blue-300" />
-          <span>CONTEST MODE</span>
-        </span>
-      </div>
+      {/* 모바일 전용 컴팩트 KPI 스트립 (Rank · Season ROI · Contest Equity · Available Margin) */}
+      <dl
+        data-contest-mobile-kpi="true"
+        className="flex md:hidden w-full flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t border-white/10 pt-1.5 text-[11px] tabular-nums"
+      >
+        <div className="flex items-center gap-1 whitespace-nowrap">
+          <dt className="font-bold text-gray-400">순위</dt>
+          <dd className="font-black text-[#F0B90B]">{meta.liveRank}</dd>
+        </div>
+        <div className="flex items-center gap-1 whitespace-nowrap">
+          <dt className="font-bold text-gray-400">수익률</dt>
+          <dd className={cn("font-black", roiColorClass)}>{meta.seasonRoi}</dd>
+        </div>
+        <div className="flex items-center gap-1 whitespace-nowrap">
+          <dt className="font-bold text-gray-400">평가자산</dt>
+          <dd className="font-black text-white">{meta.contestEquity}</dd>
+        </div>
+        <div className="flex items-center gap-1 whitespace-nowrap">
+          <dt className="font-bold text-gray-400">가용증거금</dt>
+          <dd className="font-black text-gray-200">{meta.availableMargin}</dd>
+        </div>
+      </dl>
     </div>
   );
 }

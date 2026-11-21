@@ -37,7 +37,7 @@ export function SignupForm({
             </label>
             <NicknameCheck />
           </div>
-          <small className="ym-helper-violet">최대 8자 · 공백·특수문자 제외</small>
+          <small className="ym-helper-primary">최대 8자 · 공백·특수문자 제외</small>
         </div>
 
         <div className="ym-field-group">

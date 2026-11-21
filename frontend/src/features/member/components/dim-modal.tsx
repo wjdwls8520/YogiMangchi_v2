@@ -26,14 +26,57 @@ let activeLockCount = 0;
 let savedScrollY = 0;
 let compensatedPaddingRight = false;
 let previousPaddingRight = "";
-const activeModalStack: string[] = [];
+interface OverlayEscapeEntry {
+  id: string;
+  onClose: () => void;
+}
+
+const activeOverlayStack: OverlayEscapeEntry[] = [];
+let globalEscapeListenerBound = false;
+
+function handleGlobalOverlayKeyDown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  const top = activeOverlayStack[activeOverlayStack.length - 1];
+  if (!top) return;
+  event.preventDefault();
+  event.stopPropagation();
+  top.onClose();
+}
+
+function syncGlobalEscapeListener() {
+  if (typeof window === "undefined") return;
+  if (activeOverlayStack.length > 0 && !globalEscapeListenerBound) {
+    window.addEventListener("keydown", handleGlobalOverlayKeyDown);
+    globalEscapeListenerBound = true;
+  } else if (activeOverlayStack.length === 0 && globalEscapeListenerBound) {
+    window.removeEventListener("keydown", handleGlobalOverlayKeyDown);
+    globalEscapeListenerBound = false;
+  }
+}
+
+export function registerOverlayEscape(id: string, onClose: () => void): () => void {
+  const existingIdx = activeOverlayStack.findIndex(entry => entry.id === id);
+  if (existingIdx >= 0) {
+    activeOverlayStack.splice(existingIdx, 1);
+  }
+  activeOverlayStack.push({ id, onClose });
+  syncGlobalEscapeListener();
+  return () => {
+    const index = activeOverlayStack.findIndex(entry => entry.id === id);
+    if (index >= 0) {
+      activeOverlayStack.splice(index, 1);
+    }
+    syncGlobalEscapeListener();
+  };
+}
 
 export function getActiveDimModalStack(): readonly string[] {
-  return [...activeModalStack];
+  return activeOverlayStack.map(entry => entry.id);
 }
 
 export function resetDimModalStackForTest() {
-  activeModalStack.length = 0;
+  activeOverlayStack.length = 0;
+  syncGlobalEscapeListener();
 }
 
 export function lockBodyScroll(
@@ -171,20 +214,7 @@ export function DimModal({
 
   useEffect(() => {
     if (!open || typeof window === "undefined") return;
-    activeModalStack.push(modalId);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (activeModalStack[activeModalStack.length - 1] !== modalId) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onCloseRef.current();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      const index = activeModalStack.lastIndexOf(modalId);
-      if (index >= 0) activeModalStack.splice(index, 1);
-    };
+    return registerOverlayEscape(modalId, () => onCloseRef.current());
   }, [open, modalId]);
 
   if (!open) return null;

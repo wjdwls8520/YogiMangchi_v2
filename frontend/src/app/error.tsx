@@ -3,20 +3,24 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { V1Header, V1IconAlert, V1IconRefresh } from "@/features/member/components/v1-ui";
+import { RequestIdChip } from "@/components/request-id-copy";
+import { getErrorRequestId } from "@/lib/request-id";
 
 export default function AppError({
   error,
   reset,
 }: {
-  error: Error & { digest?: string };
+  error: Error & { digest?: string; requestId?: string };
   reset: () => void;
 }) {
+  const requestId = getErrorRequestId(error);
+
   useEffect(() => {
     // Log only sanitized error identifier without leaking credentials
-    if (error.digest) {
-      console.error("[YogiMangchi] Route error digest:", error.digest);
+    if (error.digest || requestId) {
+      console.error("[YogiMangchi] Route error:", { digest: error.digest, requestId });
     }
-  }, [error]);
+  }, [error.digest, requestId]);
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-gray-900">
@@ -32,10 +36,10 @@ export default function AppError({
           <p className="mt-2 text-sm leading-relaxed text-gray-500">
             요청을 처리하는 중 예기치 못한 문제가 발생했습니다. 잠시 후 다시 시도하거나 홈으로 이동해 주세요.
           </p>
-          {error.digest ? (
-            <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600">
-              <span className="font-semibold text-gray-400">오류 코드</span>
-              <code className="font-mono font-bold text-gray-800">{error.digest}</code>
+          {(requestId || error.digest) ? (
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              {requestId ? <RequestIdChip requestId={requestId} label="요청 ID" /> : null}
+              {error.digest ? <RequestIdChip requestId={error.digest} label="오류 코드" /> : null}
             </div>
           ) : null}
           <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:justify-center">

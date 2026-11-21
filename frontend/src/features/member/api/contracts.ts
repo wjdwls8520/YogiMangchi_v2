@@ -98,7 +98,25 @@ export type MemberProfile = ReturnType<typeof parseProfile>;
 export function parseOwnProfile(value: unknown, memberId: number) {
   const data = row(value), profile = parseProfile(value);
   if (profile.memberId !== memberId || !["MEMBER", "ADMIN"].includes(String(data.role))) return invalid();
-  return { ...profile, role: data.role as "MEMBER" | "ADMIN" };
+  const status =
+    typeof data.status === "string" && data.status.trim().length > 0 && data.status.length <= 32
+      ? data.status.trim().toUpperCase()
+      : undefined;
+  const suspendedAt =
+    typeof data.suspendedAt === "string" && Number.isFinite(Date.parse(data.suspendedAt))
+      ? data.suspendedAt
+      : null;
+  const suspendedReason =
+    typeof data.suspendedReason === "string" && data.suspendedReason.trim().length > 0
+      ? data.suspendedReason.trim().slice(0, 500)
+      : null;
+  return {
+    ...profile,
+    role: data.role as "MEMBER" | "ADMIN",
+    ...(status !== undefined ? { status } : {}),
+    ...(data.suspendedAt !== undefined ? { suspendedAt } : {}),
+    ...(data.suspendedReason !== undefined ? { suspendedReason } : {}),
+  };
 }
 function count(value: unknown) { return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : invalid(); }
 function boolean(value: unknown) { return typeof value === "boolean" ? value : invalid(); }

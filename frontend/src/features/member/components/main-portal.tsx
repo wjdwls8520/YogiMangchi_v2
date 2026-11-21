@@ -13,7 +13,6 @@ import {
   type NewsItem,
 } from "../api/community-news";
 import {
-  FALLBACK_MARKET_OVERVIEW,
   buildExchangeRateChartGeometry,
   fetchRedisMarketOverview,
   resolveTradingMarketBaseUrl,
@@ -35,101 +34,35 @@ import {
   V1IconComment,
 } from "./v1-ui";
 
-const POPULAR_COINS = [
-  {
-    symbol: "BTCUSDT",
-    base: "BTC" as const,
-    nameKr: "비트코인",
-    price: "$94,280.50",
-    changeRate: 2.84,
-    volume: "1,420.5M USDT",
-    sparkline: "M 0 38 L 20 34 L 40 36 L 60 28 L 80 24 L 100 18 L 120 10",
-  },
-  {
-    symbol: "ETHUSDT",
-    base: "ETH" as const,
-    nameKr: "이더리움",
-    price: "$3,142.10",
-    changeRate: 1.92,
-    volume: "840.2M USDT",
-    sparkline: "M 0 36 L 20 35 L 40 30 L 60 32 L 80 20 L 100 16 L 120 12",
-  },
-  {
-    symbol: "SOLUSDT",
-    base: "SOL" as const,
-    nameKr: "솔라나",
-    price: "$212.40",
-    changeRate: 4.65,
-    volume: "612.8M USDT",
-    sparkline: "M 0 40 L 20 32 L 40 28 L 60 22 L 80 25 L 100 14 L 120 6",
-  },
+const FEATURED_COINS = [
+  { symbol: "BTCUSDT", base: "BTC" as const, nameKr: "비트코인" },
+  { symbol: "ETHUSDT", base: "ETH" as const, nameKr: "이더리움" },
+  { symbol: "SOLUSDT", base: "SOL" as const, nameKr: "솔라나" },
 ] as const;
 
 export interface PopularCoinCardData {
   symbol: string;
   base: "BTC" | "ETH" | "SOL";
   nameKr: string;
-  price: string;
-  changeRate: number;
-  volume: string;
-  sparkline: string;
-  strokeColor: "#0ECB81" | "#F6465D";
+  available: boolean;
+  price: string | null;
+  changeRate: number | null;
+  volume: string | null;
+  high24h: string | null;
+  low24h: string | null;
+  trendColor: "#0ECB81" | "#F6465D" | "#6B7280";
 }
 
-function buildCoinSparkline(
-  changeRate: number,
-  markPrice: number,
-  lowPrice24h: number,
-  highPrice24h: number,
-  fallbackSparkline: string,
-): string {
-  if (!Number.isFinite(markPrice) || markPrice <= 0) {
-    return fallbackSparkline;
-  }
-  const hasRange =
-    Number.isFinite(lowPrice24h) &&
-    Number.isFinite(highPrice24h) &&
-    highPrice24h > lowPrice24h &&
-    lowPrice24h > 0;
-  const ratio = hasRange
-    ? Math.max(0.08, Math.min(0.92, (markPrice - lowPrice24h) / (highPrice24h - lowPrice24h)))
-    : changeRate >= 0
-      ? 0.82
-      : 0.18;
-
-  const yEnd = Math.round(38 - ratio * 28);
-  if (changeRate >= 0) {
-    const yStart = Math.min(40, Math.max(yEnd + 14, 36));
-    const span = yStart - yEnd;
-    const ys = [
-      yStart,
-      Math.round(yStart - span * 0.22),
-      Math.round(yStart - span * 0.14),
-      Math.round(yStart - span * 0.48),
-      Math.round(yStart - span * 0.42),
-      Math.round(yStart - span * 0.78),
-      yEnd,
-    ];
-    return ys.map((y, idx) => `${idx === 0 ? "M" : "L"} ${idx * 20} ${y}`).join(" ");
-  }
-
-  const yStart = Math.max(6, Math.min(yEnd - 14, 12));
-  const span = yEnd - yStart;
-  const ys = [
-    yStart,
-    Math.round(yStart + span * 0.24),
-    Math.round(yStart + span * 0.16),
-    Math.round(yStart + span * 0.52),
-    Math.round(yStart + span * 0.44),
-    Math.round(yStart + span * 0.8),
-    yEnd,
-  ];
-  return ys.map((y, idx) => `${idx === 0 ? "M" : "L"} ${idx * 20} ${y}`).join(" ");
+function formatUsdPrice(value: number): string {
+  return `$${value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 export function mapRedisTickersToPopularCoins(rawTickers: unknown): PopularCoinCardData[] {
   const list = Array.isArray(rawTickers) ? rawTickers : [];
-  return POPULAR_COINS.map(baseCoin => {
+  return FEATURED_COINS.map(baseCoin => {
     const matched = list.find(item => {
       if (!item || typeof item !== "object") return false;
       const row = item as Record<string, unknown>;
@@ -140,30 +73,43 @@ export function mapRedisTickersToPopularCoins(rawTickers: unknown): PopularCoinC
 
     if (!matched || matched.status === "UNAVAILABLE") {
       return {
-        ...baseCoin,
-        strokeColor: baseCoin.changeRate >= 0 ? "#0ECB81" : "#F6465D",
+        symbol: baseCoin.symbol,
+        base: baseCoin.base,
+        nameKr: baseCoin.nameKr,
+        available: false,
+        price: null,
+        changeRate: null,
+        volume: null,
+        high24h: null,
+        low24h: null,
+        trendColor: "#6B7280",
       };
     }
 
     const rawMark = matched.markPrice;
     const markNum =
       rawMark !== null && rawMark !== undefined && rawMark !== "" ? Number(rawMark) : Number.NaN;
-    const price =
-      Number.isFinite(markNum) && markNum > 0
-        ? `$${markNum.toLocaleString("en-US", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })}`
-        : baseCoin.price;
+    if (!Number.isFinite(markNum) || markNum <= 0) {
+      return {
+        symbol: baseCoin.symbol,
+        base: baseCoin.base,
+        nameKr: baseCoin.nameKr,
+        available: false,
+        price: null,
+        changeRate: null,
+        volume: null,
+        high24h: null,
+        low24h: null,
+        trendColor: "#6B7280",
+      };
+    }
 
     const rawChange = matched.changePercent24h;
     const changeNum =
       rawChange !== null && rawChange !== undefined && rawChange !== ""
         ? Number(rawChange)
         : Number.NaN;
-    const changeRate = Number.isFinite(changeNum)
-      ? Number(changeNum.toFixed(2))
-      : baseCoin.changeRate;
+    const changeRate = Number.isFinite(changeNum) ? Number(changeNum.toFixed(2)) : null;
 
     const rawVol = matched.quoteVolume24h;
     const volNum =
@@ -174,24 +120,33 @@ export function mapRedisTickersToPopularCoins(rawTickers: unknown): PopularCoinC
             minimumFractionDigits: 1,
             maximumFractionDigits: 1,
           })}M USDT`
-        : baseCoin.volume;
+        : null;
 
-    const lowNum = Number(matched.lowPrice24h);
     const highNum = Number(matched.highPrice24h);
-    const sparkline =
-      Number.isFinite(markNum) && markNum > 0
-        ? buildCoinSparkline(changeRate, markNum, lowNum, highNum, baseCoin.sparkline)
-        : baseCoin.sparkline;
+    const lowNum = Number(matched.lowPrice24h);
+    const high24h = Number.isFinite(highNum) && highNum > 0 ? formatUsdPrice(highNum) : null;
+    const low24h = Number.isFinite(lowNum) && lowNum > 0 ? formatUsdPrice(lowNum) : null;
+
+    const trendColor: "#0ECB81" | "#F6465D" | "#6B7280" =
+      changeRate === null
+        ? "#6B7280"
+        : changeRate > 0
+          ? "#0ECB81"
+          : changeRate < 0
+            ? "#F6465D"
+            : "#6B7280";
 
     return {
       symbol: baseCoin.symbol,
       base: baseCoin.base,
       nameKr: baseCoin.nameKr,
-      price,
+      available: true,
+      price: formatUsdPrice(markNum),
       changeRate,
       volume,
-      sparkline,
-      strokeColor: changeRate >= 0 ? "#0ECB81" : "#F6465D",
+      high24h,
+      low24h,
+      trendColor,
     };
   });
 }
@@ -200,7 +155,7 @@ export function MainPortal({
   initialMarketOverview,
   initialTickers,
 }: {
-  initialMarketOverview?: MarketOverviewData;
+  initialMarketOverview?: MarketOverviewData | null;
   initialTickers?: unknown;
 } = {}) {
   const { origin, session, snapshot } = useMember();
@@ -208,9 +163,7 @@ export function MainPortal({
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
 
   const [ydInput, setYdInput] = useState("100");
-  const [krwInput, setKrwInput] = useState(() =>
-    Math.round(100 * FALLBACK_MARKET_OVERVIEW.usdKrwRate).toLocaleString("ko-KR"),
-  );
+  const [krwInput, setKrwInput] = useState("");
   const [calcAnchor, setCalcAnchor] = useState<"YD" | "KRW">("YD");
 
   // 선물 모의투자 퀵 시뮬레이터 상태
@@ -220,9 +173,9 @@ export function MainPortal({
   const [simMarginInput, setSimMarginInput] = useState<string>("1000");
   const [simMovePercent, setSimMovePercent] = useState<number>(3.5);
 
-  const marketOverviewQuery = useQuery<MarketOverviewData>({
+  const marketOverviewQuery = useQuery<MarketOverviewData | null>({
     queryKey: ["portal-redis-market-overview", tradingBase],
-    initialData: initialMarketOverview,
+    initialData: initialMarketOverview ?? undefined,
     staleTime: 3_000,
     refetchInterval: selectedNews !== null ? false : 5_000,
     queryFn: async ({ signal }) => fetchRedisMarketOverview(tradingBase, signal),
@@ -257,21 +210,26 @@ export function MainPortal({
       ),
   });
 
-  const marketOverview = marketOverviewQuery.data ?? FALLBACK_MARKET_OVERVIEW;
-  const exchangeRate = marketOverview.usdKrwRate;
-  const exchangeChart = buildExchangeRateChartGeometry(marketOverview.usdKrwHistory);
+  const marketOverview = marketOverviewQuery.data ?? null;
+  const isOverviewLoading = marketOverviewQuery.isPending && !marketOverview;
+  const exchangeRate = marketOverview?.usdKrwRate ?? null;
+  const exchangeChart = marketOverview
+    ? buildExchangeRateChartGeometry(marketOverview.usdKrwHistory)
+    : null;
+  const isTickersLoading = tickersQuery.isPending && tickersQuery.data === undefined;
   const popularCoins = mapRedisTickersToPopularCoins(tickersQuery.data);
+  const hasAnyLivePopularCoin = popularCoins.some(coin => coin.available);
   const rawKrwDigits = krwInput.replace(/[^0-9]/g, "");
   const displayedYdInput =
     calcAnchor === "YD"
       ? ydInput
-      : rawKrwDigits && Number.isFinite(Number(rawKrwDigits))
+      : exchangeRate !== null && rawKrwDigits && Number.isFinite(Number(rawKrwDigits))
         ? (Number(rawKrwDigits) / exchangeRate).toFixed(2)
         : "";
   const displayedKrwInput =
     calcAnchor === "KRW"
       ? krwInput
-      : ydInput && Number.isFinite(Number(ydInput))
+      : exchangeRate !== null && ydInput && Number.isFinite(Number(ydInput))
         ? Math.round(Number(ydInput) * exchangeRate).toLocaleString("ko-KR")
         : "";
   const newsItems = newsQuery.data?.items ?? [];
@@ -311,6 +269,18 @@ export function MainPortal({
     return `${h}:${min}`;
   }
 
+  function formatPortalKstDateTime(value: string): string {
+    const parsed = Date.parse(value);
+    if (Number.isNaN(parsed)) return value;
+    const kst = new Date(parsed + 9 * 60 * 60 * 1000);
+    const y = kst.getUTCFullYear();
+    const m = String(kst.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(kst.getUTCDate()).padStart(2, "0");
+    const h = String(kst.getUTCHours()).padStart(2, "0");
+    const min = String(kst.getUTCMinutes()).padStart(2, "0");
+    return `${y}.${m}.${d} ${h}:${min} KST`;
+  }
+
   function handleYdChange(value: string) {
     setCalcAnchor("YD");
     const stripped = value.replace(/[^0-9.]/g, "");
@@ -321,7 +291,7 @@ export function MainPortal({
         : stripped;
     setYdInput(raw);
     const num = Number(raw);
-    if (!raw || Number.isNaN(num)) {
+    if (!raw || Number.isNaN(num) || exchangeRate === null) {
       setKrwInput("");
       return;
     }
@@ -338,13 +308,15 @@ export function MainPortal({
       return;
     }
     setKrwInput(num.toLocaleString("ko-KR"));
-    setYdInput((num / exchangeRate).toFixed(2));
+    if (exchangeRate !== null) {
+      setYdInput((num / exchangeRate).toFixed(2));
+    }
   }
 
   function handleResetCalculator() {
     setCalcAnchor("YD");
     setYdInput("1");
-    setKrwInput(Math.round(exchangeRate).toLocaleString("ko-KR"));
+    setKrwInput(exchangeRate !== null ? Math.round(exchangeRate).toLocaleString("ko-KR") : "");
   }
 
   return (
@@ -355,43 +327,71 @@ export function MainPortal({
       {/* 상단 마켓 지표 티커 바 */}
       <section className="border-b border-gray-200 bg-white py-2.5 text-xs" aria-label="글로벌 마켓 요약 지표">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-3 px-4 md:px-6">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] sm:gap-4 sm:text-xs">
-            <span className="whitespace-nowrap font-bold text-gray-500">
-              BTC 도미넌스{" "}
-              <strong className="text-gray-900">
-                {marketOverview.btcDominancePercent.toFixed(1)}%
-              </strong>{" "}
-              <em
-                className={
-                  marketOverview.btcDominanceChange24h >= 0
-                    ? "not-italic font-bold text-[#0ECB81]"
-                    : "not-italic font-bold text-[#F6465D]"
-                }
+          {isOverviewLoading ? (
+            <div className="flex flex-wrap items-center gap-3" aria-busy="true" aria-label="실시간 마켓 지표 불러오는 중">
+              {[0, 1, 2, 3].map(idx => (
+                <span key={idx} className="inline-block h-4 w-28 animate-pulse rounded bg-gray-100" />
+              ))}
+            </div>
+          ) : marketOverview ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] sm:gap-4 sm:text-xs tabular-nums">
+              <span className="whitespace-nowrap font-bold text-gray-500">
+                BTC 도미넌스{" "}
+                <strong className="text-gray-900">
+                  {marketOverview.btcDominancePercent !== null
+                    ? `${marketOverview.btcDominancePercent.toFixed(1)}%`
+                    : "—"}
+                </strong>{" "}
+                {marketOverview.btcDominanceChange24h !== null ? (
+                  <em
+                    className={
+                      marketOverview.btcDominanceChange24h >= 0
+                        ? "not-italic font-bold text-[#0ECB81]"
+                        : "not-italic font-bold text-[#F6465D]"
+                    }
+                  >
+                    {marketOverview.btcDominanceChange24h >= 0 ? "+" : ""}
+                    {marketOverview.btcDominanceChange24h.toFixed(2)}%
+                  </em>
+                ) : null}
+              </span>
+              <span className="whitespace-nowrap font-bold text-gray-500">
+                김치프리미엄{" "}
+                <strong className="text-gray-900">
+                  {marketOverview.kimchiPremiumPercent !== null
+                    ? `${marketOverview.kimchiPremiumPercent >= 0 ? "+" : ""}${marketOverview.kimchiPremiumPercent.toFixed(2)}%`
+                    : "—"}
+                </strong>
+              </span>
+              <span className="whitespace-nowrap font-bold text-gray-500">
+                24h 선물 미결제약정{" "}
+                <strong className="text-gray-900">
+                  {marketOverview.openInterestBillionsUsd !== null
+                    ? `$${marketOverview.openInterestBillionsUsd.toFixed(1)}B`
+                    : "—"}
+                </strong>
+              </span>
+              <span className="whitespace-nowrap font-bold text-gray-500">
+                공포·탐욕 지수{" "}
+                <strong className="text-[#0058FF]">
+                  {marketOverview.fearGreedValue !== null
+                    ? `${marketOverview.fearGreedValue}${marketOverview.fearGreedLabelKr ? ` (${marketOverview.fearGreedLabelKr})` : ""}`
+                    : "—"}
+                </strong>
+              </span>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs font-bold text-gray-500">
+              <span>실시간 시세 연동 대기 중 (—)</span>
+              <button
+                type="button"
+                onClick={() => void marketOverviewQuery.refetch()}
+                className="rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
               >
-                {marketOverview.btcDominanceChange24h >= 0 ? "+" : ""}
-                {marketOverview.btcDominanceChange24h.toFixed(2)}%
-              </em>
-            </span>
-            <span className="whitespace-nowrap font-bold text-gray-500">
-              김치프리미엄{" "}
-              <strong className="text-gray-900">
-                {marketOverview.kimchiPremiumPercent >= 0 ? "+" : ""}
-                {marketOverview.kimchiPremiumPercent.toFixed(2)}%
-              </strong>
-            </span>
-            <span className="whitespace-nowrap font-bold text-gray-500">
-              24h 선물 미결제약정{" "}
-              <strong className="text-gray-900">
-                ${marketOverview.openInterestBillionsUsd.toFixed(1)}B
-              </strong>
-            </span>
-            <span className="whitespace-nowrap font-bold text-gray-500">
-              공포·탐욕 지수{" "}
-              <strong className="text-[#0058FF]">
-                {marketOverview.fearGreedValue} ({marketOverview.fearGreedLabelKr})
-              </strong>
-            </span>
-          </div>
+                다시 조회
+              </button>
+            </div>
+          )}
           <Link href="/trading" className="whitespace-nowrap font-bold text-[#0058FF] hover:underline">
             모의투자 하러가기 →
           </Link>
@@ -453,26 +453,53 @@ export function MainPortal({
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <span className="text-xs font-bold text-gray-400">실시간 환율 변동 (USD/KRW)</span>
-                    <div className="mt-1 flex flex-wrap items-baseline gap-2">
-                      <strong className="whitespace-nowrap text-xl font-black text-gray-900 sm:text-3xl">
-                        1 YD ={" "}
-                        {exchangeRate.toLocaleString("ko-KR", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{" "}
-                        KRW
-                      </strong>
-                      <span
-                        className={
-                          marketOverview.usdKrwChangeAmount >= 0
-                            ? "shrink-0 whitespace-nowrap rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-bold text-[#0ECB81]"
-                            : "shrink-0 whitespace-nowrap rounded-md bg-rose-50 px-2 py-0.5 text-xs font-bold text-[#F6465D]"
-                        }
-                      >
-                        {marketOverview.usdKrwChangeAmount >= 0
-                          ? `▲ +${marketOverview.usdKrwChangeAmount.toFixed(2)} (+${marketOverview.usdKrwChangePct.toFixed(2)}%)`
-                          : `▼ ${marketOverview.usdKrwChangeAmount.toFixed(2)} (${marketOverview.usdKrwChangePct.toFixed(2)}%)`}
-                      </span>
+                    <div className="mt-1 flex flex-wrap items-baseline gap-2 tabular-nums">
+                      {isOverviewLoading ? (
+                        <div className="h-8 w-52 animate-pulse rounded-lg bg-gray-100" />
+                      ) : exchangeRate !== null ? (
+                        <>
+                          <strong className="whitespace-nowrap text-xl font-black text-gray-900 sm:text-3xl">
+                            1 YD ={" "}
+                            {exchangeRate.toLocaleString("ko-KR", {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}{" "}
+                            KRW
+                          </strong>
+                          {marketOverview?.usdKrwChangeAmount !== null &&
+                          marketOverview?.usdKrwChangeAmount !== undefined &&
+                          marketOverview?.usdKrwChangePct !== null &&
+                          marketOverview?.usdKrwChangePct !== undefined ? (
+                            <span
+                              className={
+                                marketOverview.usdKrwChangeAmount >= 0
+                                  ? "shrink-0 whitespace-nowrap rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-bold text-[#0ECB81]"
+                                  : "shrink-0 whitespace-nowrap rounded-md bg-rose-50 px-2 py-0.5 text-xs font-bold text-[#F6465D]"
+                              }
+                            >
+                              {marketOverview.usdKrwChangeAmount >= 0
+                                ? `▲ +${marketOverview.usdKrwChangeAmount.toFixed(2)} (+${marketOverview.usdKrwChangePct.toFixed(2)}%)`
+                                : `▼ ${marketOverview.usdKrwChangeAmount.toFixed(2)} (${marketOverview.usdKrwChangePct.toFixed(2)}%)`}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <strong className="whitespace-nowrap text-xl font-black text-gray-400 sm:text-2xl">
+                            1 YD = — KRW
+                          </strong>
+                          <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs font-bold text-gray-500">
+                            실시간 시세 연동 대기 중
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void marketOverviewQuery.refetch()}
+                            className="rounded-md border border-gray-200 bg-white px-2.5 py-0.5 text-xs font-bold text-[#0058FF] hover:bg-blue-50 cursor-pointer"
+                          >
+                            다시 조회
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <span className="shrink-0 whitespace-nowrap rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-600">
@@ -480,47 +507,73 @@ export function MainPortal({
                   </span>
                 </div>
 
-                {/* SVG 라인 차트 (No gradient) */}
+                {/* SVG 라인 차트 (실제 시계열이 있을 때만 렌더링, No gradient) */}
                 <div className="h-[200px] w-full rounded-2xl border border-gray-100 bg-[#F9FAFB] p-4 flex flex-col justify-between">
-                  <svg viewBox="0 0 420 130" className="h-36 w-full overflow-visible">
-                    <line x1="0" y1="25" x2="420" y2="25" stroke="#E5E7EB" strokeDasharray="3 3" />
-                    <line x1="0" y1="65" x2="420" y2="65" stroke="#E5E7EB" strokeDasharray="3 3" />
-                    <line x1="0" y1="105" x2="420" y2="105" stroke="#E5E7EB" strokeDasharray="3 3" />
-                    <polyline
-                      fill="none"
-                      stroke="#0058FF"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      points={exchangeChart.polylinePoints}
-                    />
-                  </svg>
-                  <div className="flex justify-between gap-1 text-[10px] font-bold whitespace-nowrap text-gray-400 sm:text-[11px]">
-                    <span>
-                      2주 전 (
-                      {exchangeChart.twoWeeksAgoRate.toLocaleString("ko-KR", {
-                        minimumFractionDigits: 1,
-                        maximumFractionDigits: 1,
-                      })}
-                      원)
-                    </span>
-                    <span>
-                      1주 전 (
-                      {exchangeChart.oneWeekAgoRate.toLocaleString("ko-KR", {
-                        minimumFractionDigits: 1,
-                        maximumFractionDigits: 1,
-                      })}
-                      원)
-                    </span>
-                    <span className="text-[#0058FF]">
-                      오늘 (
-                      {exchangeChart.todayRate.toLocaleString("ko-KR", {
-                        minimumFractionDigits: 1,
-                        maximumFractionDigits: 1,
-                      })}
-                      원)
-                    </span>
-                  </div>
+                  {isOverviewLoading ? (
+                    <div className="flex h-full flex-col justify-between animate-pulse">
+                      <div className="h-32 w-full rounded-xl bg-gray-200/70" />
+                      <div className="flex justify-between">
+                        <span className="h-3 w-20 rounded bg-gray-200" />
+                        <span className="h-3 w-20 rounded bg-gray-200" />
+                        <span className="h-3 w-20 rounded bg-gray-200" />
+                      </div>
+                    </div>
+                  ) : exchangeChart ? (
+                    <>
+                      <svg viewBox="0 0 420 130" className="h-36 w-full overflow-visible">
+                        <line x1="0" y1="25" x2="420" y2="25" stroke="#E5E7EB" strokeDasharray="3 3" />
+                        <line x1="0" y1="65" x2="420" y2="65" stroke="#E5E7EB" strokeDasharray="3 3" />
+                        <line x1="0" y1="105" x2="420" y2="105" stroke="#E5E7EB" strokeDasharray="3 3" />
+                        <polyline
+                          fill="none"
+                          stroke="#0058FF"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          points={exchangeChart.polylinePoints}
+                        />
+                      </svg>
+                      <div className="flex justify-between gap-1 text-[10px] font-bold whitespace-nowrap text-gray-400 sm:text-[11px] tabular-nums">
+                        <span>
+                          2주 전 (
+                          {exchangeChart.twoWeeksAgoRate.toLocaleString("ko-KR", {
+                            minimumFractionDigits: 1,
+                            maximumFractionDigits: 1,
+                          })}
+                          원)
+                        </span>
+                        <span>
+                          1주 전 (
+                          {exchangeChart.oneWeekAgoRate.toLocaleString("ko-KR", {
+                            minimumFractionDigits: 1,
+                            maximumFractionDigits: 1,
+                          })}
+                          원)
+                        </span>
+                        <span className="text-[#0058FF]">
+                          오늘 (
+                          {exchangeChart.todayRate.toLocaleString("ko-KR", {
+                            minimumFractionDigits: 1,
+                            maximumFractionDigits: 1,
+                          })}
+                          원)
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+                      <p className="text-xs font-bold text-gray-500">
+                        실시간 환율 시계열 연동 대기 중
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void marketOverviewQuery.refetch()}
+                        className="rounded-lg border border-gray-200 bg-white px-3 py-1 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                      >
+                        다시 조회
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -613,7 +666,12 @@ export function MainPortal({
             </Link>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:gap-6">
+          <div
+            data-popular-coins-state={
+              isTickersLoading ? "loading" : hasAnyLivePopularCoin ? "ready" : "unavailable"
+            }
+            className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:gap-6"
+          >
             {popularCoins.map(coin => (
               <Link
                 key={coin.symbol}
@@ -632,42 +690,80 @@ export function MainPortal({
                       <p className="text-xs font-bold text-gray-400">{coin.symbol} Perp</p>
                     </div>
                   </div>
-                  <span
-                    className={
-                      coin.changeRate >= 0
-                        ? "rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-black text-[#0ECB81]"
-                        : "rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-black text-[#F6465D]"
-                    }
-                  >
-                    {coin.changeRate >= 0 ? "+" : ""}
-                    {coin.changeRate.toFixed(2)}%
-                  </span>
+                  {isTickersLoading ? (
+                    <span className="h-6 w-16 animate-pulse rounded-lg bg-gray-100" />
+                  ) : coin.available && coin.changeRate !== null ? (
+                    <span
+                      className={
+                        coin.changeRate >= 0
+                          ? "rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-black tabular-nums text-[#0ECB81]"
+                          : "rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-black tabular-nums text-[#F6465D]"
+                      }
+                    >
+                      {coin.changeRate >= 0 ? "+" : ""}
+                      {coin.changeRate.toFixed(2)}%
+                    </span>
+                  ) : (
+                    <span className="rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-400">
+                      —
+                    </span>
+                  )}
                 </div>
 
-                <div className="my-5 flex items-end justify-between gap-4">
-                  <div>
-                    <p className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">{coin.price}</p>
-                    <p className="mt-1 text-xs font-medium text-gray-400">24h 거래대금 {coin.volume}</p>
-                  </div>
-                  <svg viewBox="0 0 120 44" className="h-11 w-24 shrink-0 sm:w-28">
-                    <path
-                      d={coin.sparkline}
-                      fill="none"
-                      stroke={coin.strokeColor}
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                <div className="my-5 space-y-2 tabular-nums">
+                  {isTickersLoading ? (
+                    <div className="space-y-2 animate-pulse" aria-busy="true">
+                      <div className="h-7 w-32 rounded bg-gray-200" />
+                      <div className="h-4 w-40 rounded bg-gray-100" />
+                    </div>
+                  ) : coin.available ? (
+                    <>
+                      <p className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">
+                        {coin.price}
+                      </p>
+                      <p className="text-xs font-medium text-gray-500">
+                        24h 거래대금 {coin.volume ?? "—"}
+                      </p>
+                      {(coin.high24h || coin.low24h) && (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-[#F9FAFB] px-3 py-2 text-[11px] font-semibold text-gray-500">
+                          <span>
+                            24h 고가 <strong className="text-gray-800">{coin.high24h ?? "—"}</strong>
+                          </span>
+                          <span>
+                            저가 <strong className="text-gray-800">{coin.low24h ?? "—"}</strong>
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="rounded-xl bg-[#F9FAFB] px-3 py-3 text-xs font-bold text-gray-500">
+                      <p className="text-lg font-black text-gray-400">—</p>
+                      <p className="mt-0.5 text-[11px] font-semibold text-gray-400">
+                        실시간 시세 연동 대기 중
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between border-t border-gray-100 pt-3 text-xs font-bold text-gray-500">
-                  <span>최대 50x 격리마진 지원</span>
+                  <span>최대 100x 격리마진 지원</span>
                   <span className="text-[#0058FF]">거래하기 →</span>
                 </div>
               </Link>
             ))}
           </div>
+          {!isTickersLoading && !hasAnyLivePopularCoin && (
+            <div className="mt-3 flex items-center justify-end gap-2 text-xs font-bold text-gray-500">
+              <span>실시간 시세 연동 대기 중</span>
+              <button
+                type="button"
+                onClick={() => void tickersQuery.refetch()}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1 text-xs font-bold text-[#0058FF] hover:bg-blue-50 cursor-pointer"
+              >
+                시세 다시 조회
+              </button>
+            </div>
+          )}
         </section>
 
         {/* 섹션 3: V1 다크 4단계 이용 플로우 배너 (#0F172A, V2 모의투자/대회 전용) */}
@@ -714,7 +810,7 @@ export function MainPortal({
                 </div>
                 <h3 className="mb-2 text-lg font-bold text-white">실시간 선물 모의투자</h3>
                 <p className="text-sm leading-relaxed text-gray-400">
-                  실시간 Mark Price와 1~50배 격리마진(Isolated) 환경에서 롱/숏 양방향 주문을 연습하세요.
+                  실시간 Mark Price와 1~100배 격리마진(Isolated) 환경에서 롱/숏 양방향 주문을 연습하세요.
                 </p>
               </div>
               <div className="mt-6 border-t border-white/10 pt-3 text-xs font-semibold text-emerald-300">
@@ -1003,8 +1099,8 @@ export function MainPortal({
                   <span className="text-gray-600">레버리지 배율</span>
                   <span className="text-[#0058FF]">{simLeverage}x</span>
                 </div>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {[1, 5, 10, 20, 50].map(lev => (
+                <div className="grid grid-cols-6 gap-1.5">
+                  {[1, 5, 10, 20, 50, 100].map(lev => (
                     <button
                       key={lev}
                       type="button"
@@ -1099,7 +1195,11 @@ export function MainPortal({
         open={selectedNews !== null}
         onClose={() => setSelectedNews(null)}
         title={selectedNews?.title ?? "속보 상세"}
-        subtitle={selectedNews ? `${selectedNews.sourceName} · ${selectedNews.publishedAt}` : undefined}
+        subtitle={
+          selectedNews
+            ? `${selectedNews.sourceName} · ${formatPortalKstDateTime(selectedNews.publishedAt)}`
+            : undefined
+        }
         footer={
           <div className="flex justify-end gap-2">
             <Link

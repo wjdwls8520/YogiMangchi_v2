@@ -59,21 +59,25 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
     if((!action.unconfirmed&&action.blocked)||action.pending||snapshot.phase!=="ready")return;
     if(action.unconfirmed) {complete(await action.retry());return;}
     const command=positionCloseCommand(position,full ? "MARKET" : type,full ? position.quantity : quantity.trim(),limitPrice.trim(),mark,ready,full ? "full" : scope);
-    if(command.command===null) {setWarning(command.issue);notices.push({kind:"error",title:"청산을 제출할 수 없습니다",message:command.issue});return;}
+    if(command.command===null) {
+      setWarning(command.issue);
+      if(layout!=="row"&&!full) notices.push({kind:"error",title:"청산을 제출할 수 없습니다",message:command.issue});
+      return;
+    }
     complete(await action.submit(command.command));
   }
   const issue=quantity ? positionCloseCommand(position,type,quantity.trim(),limitPrice.trim(),mark,ready,scope).issue : null;
   const fullIssue=positionCloseCommand(position,"MARKET",position.quantity,"",mark,ready,"full").issue;
-  const confirmation=action.unconfirmed && <div><p role="alert" className="order-warning">{action.error}</p><button type="button" className="account-refresh" disabled={action.pending} onClick={()=>void execute()}>원래 청산 요청 재전송</button></div>;
-  const submit=<button className="close-submit" disabled={locked||action.blocked||!ready||!validQuantity(quantity.trim())} type="submit">{action.pending ? "처리 중…" : type==="MARKET" ? "시장가 청산" : "지정가 청산 예약"}</button>;
+  const confirmation=action.unconfirmed && <div className="mt-2 space-y-2"><p role="alert" className="ym-modal-alert">{action.error}</p><button type="button" className="account-refresh" disabled={action.pending} onClick={()=>void execute()}>원래 청산 요청 재전송</button></div>;
+  const submit=<button className={layout==="row" ? "close-submit ym-modal-btn-confirm" : "close-submit"} disabled={locked||action.blocked||!ready||!validQuantity(quantity.trim())} type="submit">{action.pending ? "처리 중…" : type==="MARKET" ? "시장가 청산" : "지정가 청산 예약"}</button>;
   const editor=<form id={`${prefix}-editor`} aria-label={`${symbol} ${position.side} 청산 주문`} onSubmit={event=>{event.preventDefault();void execute();}}>
       {layout==="panel" && <p className="close-position-label"><strong>{symbol}</strong> <span data-side={position.side}>{position.side} {position.leverage}×</span></p>}
       <dl className="close-availability"><div><dt>보유 수량</dt><dd>{formatQuantity(position.quantity)}</dd></div><div><dt>청산 가능</dt><dd>{formatQuantity(position.freeCloseQuantity)}</dd></div><div><dt>예약 수량</dt><dd>{formatQuantity(position.reservedCloseQuantity)}</dd></div></dl>
       <CloseOrderFields prefix={prefix} type={type} quantity={quantity} limitPrice={limitPrice} ratio={ratio} partialOnly={layout==="row"} disabled={locked} unit={symbol.split(" /")[0]}
         onType={value=>{if(value==="MARKET"||value==="LIMIT"){setType(value);edit();}}} onQuantity={value=>{setQuantity(value);setRatio(0);edit();}} onPrice={value=>{setPrice(value);setRatio(0);edit();}} onRatio={preset} />
       <p className="order-input-hint">Mark {formatMarketPrice(valuation.mark)} · 미실현 손익 {formatDecimal(valuation.pnl)} USDT</p>
-      {(warning??action.error??issue) && <p role="alert" className="order-warning">{warning??action.error??issue}</p>}
-      {layout==="row" ? <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>partialDialog.current?.close()}>취소</button>{submit}</div> : submit}
+      {(warning??(!action.unconfirmed ? action.error : null)??issue) && <p role="alert" className={layout==="row" ? "ym-modal-alert" : "order-warning"}>{warning??(!action.unconfirmed ? action.error : null)??issue}</p>}
+      {layout==="row" ? <div className="ym-modal-footer"><button type="button" className="guest-cancel ym-modal-btn-cancel" disabled={action.pending} onClick={()=>partialDialog.current?.close()}>취소</button>{submit}</div> : submit}
     </form>;
   return <div className="position-close-entry" data-layout={layout}>
     {layout==="row" && <div className="position-close-actions">
@@ -81,7 +85,8 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
       <button ref={fullTrigger} type="button" className="whitespace-nowrap shrink-0" disabled={locked||!fullAvailable} aria-label={`${symbol} ${position.side} 전체 청산`} aria-haspopup="dialog" aria-controls={`${prefix}-full`} title={!fullAvailable ? "예약된 청산 주문을 먼저 취소해 주세요." : undefined} onClick={()=>{edit();dialog.current?.showModal();}}>전체 청산</button>
     </div>}
     {layout==="row"&&!fullAvailable && <p className="order-input-hint">청산 예약 중 · 전체 청산은 예약 취소 후 가능합니다.</p>}
-    {layout==="row" ? <dialog ref={partialDialog} id={`${prefix}-partial`} className="position-close-dialog position-partial-dialog" aria-modal="true" aria-labelledby={`${prefix}-partial-title`}
+    {layout==="row" ? <dialog ref={partialDialog} id={`${prefix}-partial`} className="position-close-dialog position-partial-dialog" data-exchange-modal="true" aria-modal="true" aria-labelledby={`${prefix}-partial-title`}
+      onClick={event=>{if(event.target===event.currentTarget&&event.detail<2&&!action.pending)partialDialog.current?.close();}}
       onCancel={event=>{if(action.pending)event.preventDefault();}} onClose={()=>{setPartialOpen(false);partialTrigger.current?.focus({preventScroll:true});}}>
       <header className="ym-modal-header">
         <h2 id={`${prefix}-partial-title`}>{symbol} <span data-side={position.side}>{position.side}</span> 부분 청산</h2>
@@ -95,7 +100,9 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
     </dialog> : editor}
     {!partialOpen && confirmation}
     {result && <p role="status" className="order-input-hint">{result}</p>}
-    <dialog ref={dialog} id={`${prefix}-full`} className="position-close-dialog ym-exchange-modal" aria-modal="true" aria-labelledby={`${prefix}-full-title`} onCancel={event=>{if(action.pending)event.preventDefault();}} onClose={()=>fullTrigger.current?.focus({preventScroll:true})}>
+    <dialog ref={dialog} id={`${prefix}-full`} className="position-close-dialog ym-exchange-modal" aria-modal="true" aria-labelledby={`${prefix}-full-title`}
+      onClick={event=>{if(event.target===event.currentTarget&&event.detail<2&&!action.pending)dialog.current?.close();}}
+      onCancel={event=>{if(action.pending)event.preventDefault();}} onClose={()=>fullTrigger.current?.focus({preventScroll:true})}>
       <header className="ym-modal-header">
         <h2 id={`${prefix}-full-title`}>{symbol} {position.side} 전체 청산</h2>
         <button type="button" className="ym-modal-close" aria-label="닫기" disabled={action.pending} onClick={()=>dialog.current?.close()}>
@@ -106,8 +113,8 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
       </header>
       <p className="ym-modal-subtle">보유 수량 {formatQuantity(position.quantity)} 시장가 전량 청산</p>
       <p className="ym-modal-subtle mt-1">현재 Mark {formatMarketPrice(valuation.mark)} · 미실현 손익 {formatDecimal(valuation.pnl)} USDT</p>
-      {(warning??action.error??fullIssue) && <p role="alert" className="order-warning">{warning??action.error??fullIssue}</p>}
-      <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>dialog.current?.close()}>취소</button><button className="guest-start-button" type="button" disabled={action.pending||(!action.unconfirmed&&(action.blocked||!!fullIssue))} onClick={()=>void execute(true)}>{action.pending ? "처리 중…" : action.unconfirmed ? "원래 청산 요청 재전송" : "전체 청산 확인"}</button></div>
+      {(warning??action.error??fullIssue) && <p role="alert" className="ym-modal-alert mt-3">{warning??action.error??fullIssue}</p>}
+      <div className="ym-modal-footer mt-4"><button type="button" className="guest-cancel ym-modal-btn-cancel" disabled={action.pending} onClick={()=>dialog.current?.close()}>취소</button><button className="guest-start-button ym-modal-btn-confirm" type="button" disabled={action.pending||(!action.unconfirmed&&(action.blocked||!!fullIssue))} onClick={()=>void execute(true)}>{action.pending ? "처리 중…" : action.unconfirmed ? "원래 청산 요청 재전송" : "전체 청산 확인"}</button></div>
     </dialog>
   </div>;
 }

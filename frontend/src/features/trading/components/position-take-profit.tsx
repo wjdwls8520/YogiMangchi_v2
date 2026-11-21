@@ -16,6 +16,7 @@ import { retryTradingQuery, TradingApiError } from "../api/client";
 import { mutationMessage, mutationStillUnconfirmed } from "../api/mutation-request";
 import { formatEditableDecimal, stepDecimalPrice, validLimitPrice } from "../api/order-input";
 import { useTradingAdmission } from "../api/recovery";
+import { useJournalResolution } from "../api/journal-resolution";
 import { formatMarketPrice } from "../market/price-format";
 import { usePositionMarkets } from "./selected-market-provider";
 import { positionValuation, takeProfitEstimate, takeProfitRoePreset } from "../api/position-display";
@@ -54,6 +55,11 @@ export function PositionTakeProfit({
     accountId: number | null;
     generation: number;
   } | null>(null);
+  const [journalRequest, setJournalRequest] = useState<{
+    accountId: number | null;
+    key: string;
+    command: { kind: "takeProfit" } & TakeProfitCommand;
+  } | null>(null);
   const [open, setOpen] = useState(false);
   const [price, setPrice] = useState(initialPrice);
   const [pending, setPending] = useState(false);
@@ -84,6 +90,14 @@ export function PositionTakeProfit({
     ?? position.markPrice;
   const estimate = takeProfitEstimate(position, price, liveMark);
   const baseSymbol = symbol.split(" /")[0]?.trim() || symbol;
+
+  useJournalResolution(journalRequest, () => {
+    unresolved.current = null;
+    setJournalRequest(null);
+    setUnknown(false);
+    setMessage("");
+    void query.refetch();
+  });
 
   function openModal() {
     if (snapshot.phase !== "ready" || dialog.current?.open) return;
@@ -150,6 +164,7 @@ export function PositionTakeProfit({
       );
       if (!same()) return;
       unresolved.current = null;
+      setJournalRequest(null);
       setUnknown(false);
       setPrice("");
       client.setQueryData(
@@ -167,6 +182,15 @@ export function PositionTakeProfit({
     } catch (error) {
       if (!same()) return;
       unresolved.current = mutationStillUnconfirmed(error, wasUnconfirmed) ? request : null;
+      setJournalRequest(
+        unresolved.current
+          ? {
+              accountId: unresolved.current.accountId,
+              key: unresolved.current.key,
+              command: { kind: "takeProfit", ...unresolved.current.command },
+            }
+          : null,
+      );
       setUnknown(!!unresolved.current);
       setMessage(errorMessage(error));
     } finally {
@@ -344,17 +368,15 @@ export function PositionTakeProfit({
               </div>
             )}
 
-            {(message || estimate?.warning) && (
+            {unknown ? (
+              <p role="alert" className="ym-modal-alert">
+                {message || "결과가 미확정입니다. 재전송 시 이전 요청이 반영될 수 있습니다."}
+              </p>
+            ) : (message || estimate?.warning) ? (
               <p role="alert" className="ym-modal-alert">
                 {message || estimate?.warning}
               </p>
-            )}
-
-            {unknown && (
-              <p className="ym-modal-alert">
-                결과가 미확정입니다. 재전송 시 이전 요청이 반영될 수 있습니다.
-              </p>
-            )}
+            ) : null}
 
             <div className="ym-modal-footer">
               {unknown ? (

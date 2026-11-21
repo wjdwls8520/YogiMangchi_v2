@@ -51,6 +51,8 @@ import {
   type PublicSeasonsOverviewResponse,
 } from "../../contest/api/contest-client";
 import { DimModal } from "./dim-modal";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
 import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
 import {
   V1Tabs,
@@ -151,81 +153,6 @@ function formatSnapshotPrice(raw: string | null | undefined, tickSize?: string |
   return formatted === "-" ? "-" : formatted;
 }
 
-export const SHAREABLE_POSITIONS: readonly SharedPositionSnapshot[] = [
-  {
-    id: "POS_BTC_LONG_10X",
-    marketLabel: "모의투자 선물",
-    symbol: "BTC",
-    pair: "BTCUSDT",
-    side: "LONG",
-    leverage: 10,
-    entryPrice: "68,420.00",
-    markPrice: "69,680.50",
-    liquidationPrice: "61,890.00",
-    roePct: "+18.42%",
-    pnlUsdt: "+184.20 USDT",
-    positive: true,
-    showPnlAmount: true,
-    verified: true,
-  },
-  {
-    id: "POS_ETH_SHORT_5X",
-    marketLabel: "모의투자 선물",
-    symbol: "ETH",
-    pair: "ETHUSDT",
-    side: "SHORT",
-    leverage: 5,
-    entryPrice: "2,540.00",
-    markPrice: "2,485.00",
-    liquidationPrice: "3,012.00",
-    roePct: "+10.83%",
-    pnlUsdt: "+54.15 USDT",
-    positive: true,
-    showPnlAmount: true,
-    verified: true,
-  },
-  {
-    id: "POS_SOL_LONG_20X",
-    marketLabel: "시즌 1 대회",
-    symbol: "SOL",
-    pair: "SOLUSDT",
-    side: "LONG",
-    leverage: 20,
-    entryPrice: "176.20",
-    markPrice: "184.50",
-    liquidationPrice: "168.10",
-    roePct: "+94.21%",
-    pnlUsdt: "+471.05 USDT",
-    positive: true,
-    showPnlAmount: true,
-    verified: true,
-  },
-  {
-    id: "POS_XRP_SHORT_10X",
-    marketLabel: "모의투자 선물",
-    symbol: "XRP",
-    pair: "XRPUSDT",
-    side: "SHORT",
-    leverage: 10,
-    entryPrice: "0.5820",
-    markPrice: "0.5844",
-    liquidationPrice: "0.6380",
-    roePct: "-4.15%",
-    pnlUsdt: "-20.75 USDT",
-    positive: false,
-    showPnlAmount: true,
-    verified: true,
-  },
-] as const;
-
-export function resolveDefaultPositionForPost(symbolTag?: string | null): SharedPositionSnapshot {
-  if (symbolTag) {
-    const matched = SHAREABLE_POSITIONS.find(pos => pos.symbol === symbolTag);
-    if (matched) return matched;
-  }
-  return SHAREABLE_POSITIONS[0];
-}
-
 export function SharedPositionCard({
   snapshot,
   showPnlAmount = true,
@@ -270,10 +197,22 @@ export function SharedPositionCard({
           >
             {snapshot.side} {snapshot.leverage}x
           </span>
-          <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-bold text-gray-500">
-            <span>원장 스냅샷 검증됨</span>
-            <V1IconCheck className="h-3 w-3" />
-          </span>
+          {snapshot.verified === true ? (
+            <span
+              data-position-verified="true"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-[#0ECB81]"
+            >
+              <span>원장 스냅샷 검증됨</span>
+              <V1IconCheck className="h-3 w-3" />
+            </span>
+          ) : (
+            <span
+              data-position-verified="false"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-bold text-gray-500"
+            >
+              <span>작성자 첨부 포지션 스냅샷</span>
+            </span>
+          )}
         </div>
 
         <div className="flex items-baseline gap-1.5 whitespace-nowrap">
@@ -385,7 +324,27 @@ export function CommunityBoard({
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<number | null>(null);
   const [replyTargetMemberId, setReplyTargetMemberId] = useState<number | null>(null);
   const [replyTargetNickname, setReplyTargetNickname] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{
+    kind: "success" | "error";
+    text: string;
+    requestId?: string;
+  } | null>(null);
+  const [highlightedCommentId, setHighlightedCommentId] = useState<number | null>(null);
+
+  function showSuccessFeedback(text: string) {
+    setFeedback({ kind: "success", text });
+  }
+
+  function showErrorFeedback(error: unknown) {
+    setFeedback({
+      kind: "error",
+      text: typeof error === "string" ? error : contentMessage(error),
+      requestId:
+        typeof error !== "string" && isUnexpectedApiError(error)
+          ? getErrorRequestId(error)
+          : undefined,
+    });
+  }
 
   const [extraComments, setExtraComments] = useState<CommunityComment[]>([]);
   const [commentsNextCursorOverride, setCommentsNextCursorOverride] = useState<
@@ -403,13 +362,20 @@ export function CommunityBoard({
 
   const tradingBase = resolveTradingContestBaseUrl();
   const [writeModalOpen, setWriteModalOpen] = useState(false);
+  const [writeModalError, setWriteModalError] = useState<{
+    text: string;
+    requestId?: string;
+  } | null>(null);
   const [reportTarget, setReportTarget] = useState<{
     type: "POST" | "REPLY";
     id: number;
     postId?: number;
     title: string;
   } | null>(null);
-  const [reportModalError, setReportModalError] = useState<string | null>(null);
+  const [reportModalError, setReportModalError] = useState<{
+    text: string;
+    requestId?: string;
+  } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<
     | { kind: "POST"; postId: number; title: string }
     | { kind: "COMMENT"; postId: number; commentId: number }
@@ -432,6 +398,7 @@ export function CommunityBoard({
 
   function closeAndResetWriteModal() {
     setWriteModalOpen(false);
+    setWriteModalError(null);
     setModalPositionId("");
     setModalCategory("FREE");
     setModalSymbolTag("");
@@ -477,7 +444,7 @@ export function CommunityBoard({
               pnlUsdt,
               positive: !roePct.startsWith("-") && !pnlUsdt.startsWith("-"),
               showPnlAmount: true,
-              verified: true,
+              verified: false,
             });
           }
         }
@@ -528,7 +495,7 @@ export function CommunityBoard({
                   pnlUsdt,
                   positive: !roePct.startsWith("-") && !pnlUsdt.startsWith("-"),
                   showPnlAmount: true,
-                  verified: true,
+                  verified: false,
                 });
               }
             } catch {
@@ -779,15 +746,25 @@ export function CommunityBoard({
       return;
     }
     const hash = window.location.hash;
-    if (!hash || !hash.startsWith("#comment-")) return;
-    const targetId = hash.slice(1);
+    const match = /^#comment-(\d+)$/.exec(hash);
+    if (!match) return;
+    const commentId = Number(match[1]);
+    const targetId = `comment-${commentId}`;
+    let clearTimer: number | null = null;
     const frame = window.requestAnimationFrame(() => {
       const el = document.getElementById(targetId);
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightedCommentId(commentId);
+        clearTimer = window.setTimeout(() => {
+          setHighlightedCommentId(prev => (prev === commentId ? null : prev));
+        }, 3500);
       }
     });
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (clearTimer !== null) window.clearTimeout(clearTimer);
+    };
   }, [activePostId, commentsQuery.data?.items]);
 
   const reportReasonsQuery = useQuery({
@@ -821,7 +798,7 @@ export function CommunityBoard({
 
   function requireReadyMember(): boolean {
     if (snapshot.phase !== "ready") {
-      setFeedback("로그인 이후 사용할 수 있습니다.");
+      showErrorFeedback("로그인 이후 사용할 수 있습니다.");
       return false;
     }
     return true;
@@ -870,12 +847,21 @@ export function CommunityBoard({
     },
     onSuccess: created => {
       myCreatedPostIdsRef.current.add(created.id);
-      setFeedback("게시글이 등록되었습니다.");
+      setWriteModalError(null);
+      showSuccessFeedback("게시글이 등록되었습니다.");
       setWriteModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => {
+      const msg = contentMessage(error);
+      const reqId = isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined;
+      if (writeModalOpen) {
+        setWriteModalError({ text: msg, requestId: reqId });
+      } else {
+        showErrorFeedback(error);
+      }
+    },
   });
 
   const updatePostMutation = useMutation({
@@ -949,11 +935,11 @@ export function CommunityBoard({
       setEditDeleteFileIds([]);
       setEditNewImages([]);
 
-      setFeedback("게시글이 수정되었습니다.");
+      showSuccessFeedback("게시글이 수정되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => showErrorFeedback(error),
   });
 
   const deletePostMutation = useMutation({
@@ -962,14 +948,14 @@ export function CommunityBoard({
     onSuccess: (_data, postId) => {
       setPrependedPosts(prev => prev.filter(p => p.id !== postId));
       setExtraPosts(prev => prev.filter(p => p.id !== postId));
-      setFeedback("게시글이 삭제되었습니다.");
+      showSuccessFeedback("게시글이 삭제되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
       if (isDetailView && typeof window !== "undefined") {
         window.location.href = new URL(`/community/${v1Tab}`, window.location.origin).href;
       }
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => showErrorFeedback(error),
   });
 
   const likeMutation = useMutation({
@@ -1006,7 +992,7 @@ export function CommunityBoard({
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => showErrorFeedback(error),
     onSettled: (_data, _error, post) => {
       likingPostIdsRef.current.delete(post.id);
     },
@@ -1033,7 +1019,7 @@ export function CommunityBoard({
         queryKey: ["community-comments", origin, variables.postId],
       });
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => showErrorFeedback(error),
     onSettled: (_data, _error, variables) => {
       likingCommentIdsRef.current.delete(variables.comment.id);
     },
@@ -1060,7 +1046,7 @@ export function CommunityBoard({
     },
     onSuccess: (_data, variables) => {
       setReportModalError(null);
-      setFeedback(
+      showSuccessFeedback(
         `신고가 접수되었습니다 (${variables.type === "POST" ? "게시글" : "댓글"} #${variables.id}: ${variables.reason})`,
       );
       setReportTarget(null);
@@ -1078,8 +1064,12 @@ export function CommunityBoard({
     },
     onError: error => {
       const msg = contentMessage(error);
-      setReportModalError(msg);
-      setFeedback(msg);
+      const reqId = isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined;
+      if (reportTarget !== null) {
+        setReportModalError({ text: msg, requestId: reqId });
+      } else {
+        showErrorFeedback(error);
+      }
     },
   });
 
@@ -1094,7 +1084,7 @@ export function CommunityBoard({
       );
     },
     onSuccess: (_data, variables) => {
-      setFeedback(
+      showSuccessFeedback(
         `${variables.type === "POST" ? "게시글" : "댓글"} #${variables.id} 신고가 취소되었습니다.`,
       );
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
@@ -1109,7 +1099,7 @@ export function CommunityBoard({
         });
       }
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => showErrorFeedback(error),
   });
 
   const createCommentMutation = useMutation({
@@ -1136,14 +1126,14 @@ export function CommunityBoard({
       setReplyTargetCommentId(null);
       setReplyTargetMemberId(null);
       setReplyTargetNickname(null);
-      setFeedback("댓글이 등록되었습니다.");
+      showSuccessFeedback("댓글이 등록되었습니다.");
       void queryClient.invalidateQueries({
         queryKey: ["community-comments", origin, variables.postId],
       });
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => showErrorFeedback(error),
   });
 
   const updateCommentMutation = useMutation({
@@ -1160,12 +1150,12 @@ export function CommunityBoard({
     onSuccess: (updated, variables) => {
       setExtraComments(prev => prev.map(c => (c.id === updated.id ? updated : c)));
       setEditingComment(null);
-      setFeedback("댓글이 수정되었습니다.");
+      showSuccessFeedback("댓글이 수정되었습니다.");
       void queryClient.invalidateQueries({
         queryKey: ["community-comments", origin, variables.postId],
       });
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => showErrorFeedback(error),
   });
 
   const deleteCommentMutation = useMutation({
@@ -1187,14 +1177,14 @@ export function CommunityBoard({
             )
           : prev.filter(c => c.id !== variables.commentId);
       });
-      setFeedback("댓글이 삭제되었습니다.");
+      showSuccessFeedback("댓글이 삭제되었습니다.");
       void queryClient.invalidateQueries({
         queryKey: ["community-comments", origin, variables.postId],
       });
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
       void queryClient.invalidateQueries({ queryKey: ["community-post-detail", origin] });
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => showErrorFeedback(error),
   });
 
   function resetFeedPagination() {
@@ -1222,7 +1212,11 @@ export function CommunityBoard({
 
   function handleCreatePost(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!requireReadyMember()) return;
+    if (snapshot.phase !== "ready") {
+      setWriteModalError({ text: "로그인 이후 사용할 수 있습니다." });
+      return;
+    }
+    setWriteModalError(null);
     const form = event.currentTarget;
     const data = new FormData(form);
     const sharedPositionId = String(data.get("sharedPositionId") ?? "");
@@ -1245,7 +1239,7 @@ export function CommunityBoard({
       ? {
           ...matchedPosition,
           showPnlAmount,
-          verified: true,
+          verified: false,
         }
       : null;
 
@@ -1260,11 +1254,11 @@ export function CommunityBoard({
       },
       {
         onSuccess: created => {
-          if (matchedPosition) {
+          if (sharedPositionPayload) {
             setSharedPositionsByPostId(prev => ({
               ...prev,
               [created.id]: {
-                snapshot: matchedPosition,
+                snapshot: created.sharedPosition ?? sharedPositionPayload,
                 showPnlAmount,
               },
             }));
@@ -1319,7 +1313,12 @@ export function CommunityBoard({
 
   function handleReportSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!reportTarget || !requireReadyMember()) return;
+    if (!reportTarget) return;
+    if (snapshot.phase !== "ready") {
+      setReportModalError({ text: "로그인 이후 사용할 수 있습니다." });
+      return;
+    }
+    setReportModalError(null);
     reportMutation.mutate({
       type: reportTarget.type,
       id: reportTarget.id,
@@ -1372,7 +1371,7 @@ export function CommunityBoard({
       setNextCursorOverride(nextPage.nextCursorId);
       setHasNextOverride(nextPage.hasNext);
     } catch (error) {
-      setFeedback(contentMessage(error));
+      showErrorFeedback(error);
     } finally {
       setLoadingMore(false);
     }
@@ -1561,7 +1560,7 @@ export function CommunityBoard({
       setCommentsNextCursorOverride(nextList.nextCursorId);
       setCommentsHasNextOverride(nextList.hasNext);
     } catch (error) {
-      setFeedback(contentMessage(error));
+      showErrorFeedback(error);
     } finally {
       setLoadingMoreComments(false);
     }
@@ -1802,10 +1801,17 @@ export function CommunityBoard({
 
             {feedback && (
               <div
-                className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-bold text-[#0058FF]"
-                role="status"
+                className={
+                  feedback.kind === "error"
+                    ? "rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-[#F6465D]"
+                    : "rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-bold text-[#0058FF]"
+                }
+                role={feedback.kind === "error" ? "alert" : "status"}
               >
-                {feedback}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{feedback.text}</span>
+                  {feedback.requestId && <RequestIdChip requestId={feedback.requestId} />}
+                </div>
               </div>
             )}
 
@@ -1816,8 +1822,13 @@ export function CommunityBoard({
             )}
 
             {loadError && (
-              <div className="card rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-600" role="alert">
+              <div className="card rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-[#F6465D]" role="alert">
                 <p>게시글을 불러오지 못했습니다. ({contentMessage(loadError)})</p>
+                {isUnexpectedApiError(loadError) && getErrorRequestId(loadError) && (
+                  <div className="mt-2">
+                    <RequestIdChip requestId={getErrorRequestId(loadError)} />
+                  </div>
+                )}
                 <V1Button
                   variant="white"
                   size="sm"
@@ -2257,7 +2268,12 @@ export function CommunityBoard({
                               <li
                                 key={comment.id}
                                 id={`comment-${comment.id}`}
-                                className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-3.5 text-xs scroll-mt-24"
+                                data-highlighted-comment={highlightedCommentId === comment.id ? "true" : undefined}
+                                className={`rounded-xl border border-gray-100 bg-[#F9FAFB] p-3.5 text-xs scroll-mt-24 transition-shadow ${
+                                  highlightedCommentId === comment.id
+                                    ? "ring-2 ring-[#0058FF] bg-blue-50/60"
+                                    : ""
+                                }`}
                               >
                                 <div className="flex flex-wrap items-center justify-between gap-1.5">
                                   <div className="flex items-center gap-2 font-bold text-gray-900">
@@ -2450,7 +2466,12 @@ export function CommunityBoard({
                                         <li
                                           key={reply.id}
                                           id={`comment-${reply.id}`}
-                                          className="text-xs text-gray-700 scroll-mt-24"
+                                          data-highlighted-comment={highlightedCommentId === reply.id ? "true" : undefined}
+                                          className={`text-xs text-gray-700 scroll-mt-24 transition-shadow ${
+                                            highlightedCommentId === reply.id
+                                              ? "rounded-lg bg-blue-50/60 px-2 py-1 ring-2 ring-[#0058FF]"
+                                              : ""
+                                          }`}
                                         >
                                           <div className="flex flex-wrap items-center justify-between gap-2">
                                             <span>
@@ -3060,12 +3081,17 @@ export function CommunityBoard({
         subtitle="타인을 비방하거나 불쾌감을 주는 글은 제재될 수 있습니다."
       >
         <form data-form-source="modal" className="space-y-4" onSubmit={handleCreatePost}>
-          {(createPostMutation.isError || (feedback && snapshot.phase !== "ready")) && feedback && (
+          {writeModalError && (
             <div
               role="alert"
-              className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-600"
+              className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
             >
-              {feedback}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{writeModalError.text}</span>
+                {writeModalError.requestId && (
+                  <RequestIdChip requestId={writeModalError.requestId} />
+                )}
+              </div>
             </div>
           )}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -3208,9 +3234,14 @@ export function CommunityBoard({
           {reportModalError && (
             <div
               role="alert"
-              className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-600"
+              className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
             >
-              {reportModalError}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{reportModalError.text}</span>
+                {reportModalError.requestId && (
+                  <RequestIdChip requestId={reportModalError.requestId} />
+                )}
+              </div>
             </div>
           )}
           <div className="space-y-2">

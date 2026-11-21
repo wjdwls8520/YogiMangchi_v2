@@ -1,11 +1,13 @@
+import { extractRequestId } from "../../../lib/request-id";
+
 export class ContentApiError extends Error {
-  constructor(readonly status: number, readonly code?: string) {
+  constructor(readonly status: number, readonly code?: string, readonly requestId?: string) {
     super("회원 요청을 처리하지 못했습니다."); this.name = "ContentApiError";
   }
 }
 const codes = new Set([
   "SERVICE_TEMPORARILY_UNAVAILABLE", "NICKNAME_ALREADY_EXISTS", "NICKNAME_UNAVAILABLE", "MEMBER_BUSY", "INVALID_REQUEST", "INVALID_PROFILE", "INVALID_NICKNAME",
-  "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "MEMBER_NOT_ACTIVE", "MEMBER_SUSPENDED", "MEMBER_NOT_FOUND", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS",
+  "AUTHENTICATION_REQUIRED", "INVALID_ACCESS_TOKEN", "ACCESS_DENIED", "MEMBER_NOT_ACTIVE", "MEMBER_SUSPENDED", "MEMBER_BANNED", "MEMBER_NOT_FOUND", "WITHDRAWAL_CONFIRMATION_REQUIRED", "MEMBER_ALREADY_EXISTS",
   "POLICY_VERSION_OR_CONSENT_INVALID", "POLICY_VERSION_CHANGED", "REQUIRED_CONSENT_MISSING", "POLICY_VERSION_REQUIRED",
   "LOGIN_PROOF_REQUIRED", "LOGIN_PROOF_EXPIRED", "CSRF_INVALID", "CSRF_REQUIRED", "PROFILE_MESSAGE_UPDATE_REQUIRED", "RESOURCE_ALREADY_EXISTS", "RESOURCE_NOT_FOUND", "INQUIRY_NOT_FOUND",
   "FILE_VIDEO_NOT_ALLOWED", "FILE_TYPE_NOT_ALLOWED", "GIF_FILE_TOO_LARGE", "IMAGE_FILE_TOO_LARGE", "FILE_TOTAL_SIZE_EXCEEDED", "FILE_COUNT_EXCEEDED",
@@ -51,12 +53,14 @@ export async function contentJson(origin: string, path: string, options: {
     });
     if (!response.ok) {
       let code: string | undefined;
+      let body: unknown;
       try {
-        const body: unknown = await response.json();
+        body = await response.json();
         const value = body && typeof body === "object" ? (body as Record<string, unknown>).code : undefined;
         if (typeof value === "string" && codes.has(value)) code = value;
       } catch { /* Preserve the HTTP status when an error body is unreadable. */ }
-      throw new ContentApiError(response.status, code);
+      const requestId = extractRequestId(body, response);
+      throw new ContentApiError(response.status, code, requestId);
     }
     if (response.status === 204) return null;
     try { return await response.json(); } catch { throw new ContentApiError(422); }
@@ -79,7 +83,8 @@ export function contentMessage(error: unknown) {
   if (error.code === "PROFILE_MESSAGE_UPDATE_REQUIRED") return "기존 소개가 현재 입력 한도를 초과합니다. 소개를 255자 이내로 수정해 주세요.";
   if (error.code === "MEMBER_ALREADY_EXISTS") return "이미 가입된 소셜 계정입니다. 현재 로그인 상태를 확인해 주세요.";
   if (error.code === "RESOURCE_ALREADY_EXISTS") return "이미 처리된 정보와 요청이 충돌했습니다. 현재 상태를 먼저 확인해 주세요.";
-  if (error.code === "MEMBER_SUSPENDED") return "계정이 이용 정지되었습니다. 고객센터 또는 운영팀에 문의해 주세요.";
+  if (error.code === "MEMBER_SUSPENDED") return "계정이 일시 정지되었습니다. 고객센터(/support)에서 1:1 이의제기를 접수하실 수 있습니다.";
+  if (error.code === "MEMBER_BANNED") return "운영 정책 위반으로 계정이 영구 정지되었습니다. 고객센터 또는 운영팀에 문의해 주세요.";
   if (error.code === "MEMBER_NOT_FOUND") return "탈퇴했거나 존재하지 않는 회원입니다.";
   if (error.code === "INQUIRY_NOT_FOUND") return "요청한 고객 문의를 찾을 수 없습니다.";
   if (error.code === "RESOURCE_NOT_FOUND") return "요청한 게시글·댓글·뉴스 또는 회원을 찾을 수 없습니다.";

@@ -75,7 +75,7 @@ export function MemberAccount() {
         ["member", "portfolio-visibility", snapshot.memberId, snapshot.generation],
         updated,
       );
-      await client.invalidateQueries({ queryKey: ["public-member-portfolio"] });
+      await client.invalidateQueries({ queryKey: ["member", "public-portfolio"] });
       setVisibilityFeedback({
         kind: "ok",
         text: updated.portfolioPublic

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import {
-  FALLBACK_MARKET_OVERVIEW,
   fetchRedisMarketOverview,
   resolveTradingMarketBaseUrl,
 } from "@/features/member/api/market-overview";
@@ -14,10 +13,14 @@ export async function GET() {
       },
     });
   } catch {
-    return NextResponse.json(FALLBACK_MARKET_OVERVIEW, {
-      headers: {
-        "Cache-Control": "no-store, max-age=0",
+    return NextResponse.json(
+      { status: "UNAVAILABLE" },
+      {
+        status: 503,
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
       },
-    });
+    );
   }
 }

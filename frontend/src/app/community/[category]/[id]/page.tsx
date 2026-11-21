@@ -1,5 +1,10 @@
+import type { Metadata } from "next";
 import { loadInitialContestSidebarSnapshot } from "../../../../features/contest/api/contest-client";
 import { CommunityBoard } from "../../../../features/member/components/community-board";
+
+export const metadata: Metadata = {
+  title: "커뮤니티 게시글",
+};
 
 export const dynamic = "force-dynamic";
 

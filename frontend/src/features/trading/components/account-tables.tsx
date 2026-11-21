@@ -922,9 +922,11 @@ export function FillHistoryTable({ fills, symbols }: { fills: readonly FillHisto
                 {fill.action === "LIQUIDATE"
                   ? "강제청산"
                   : fill.action === "CLOSE"
-                    ? fill.reason === "STOP_LOSS"
-                      ? "손절 청산"
-                      : "청산"
+                    ? fill.reason === "TAKE_PROFIT"
+                      ? "익절 청산"
+                      : fill.reason === "STOP_LOSS"
+                        ? "손절 청산"
+                        : "청산"
                     : "진입"}
               </small>
             </span>

@@ -178,6 +178,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const isOwner =
     snapshot.phase === "ready" && Boolean(summary.data?.mine || snapshot.memberId === memberId);
+  const isAdmin = snapshot.phase === "ready" && snapshot.role === "ADMIN";
 
   const publicContestSeasonsQuery = useQuery({
     queryKey: ["member", "public-contest-seasons", memberId, isOwner, tradingBase, snapshot.generation],
@@ -420,7 +421,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
 
   const portfolioResolved = publicPortfolioQuery.isSuccess;
   const isPortfolioPrivate = Boolean(
-    publicPortfolioQuery.data && !publicPortfolioQuery.data.portfolioPublic && !isOwner,
+    publicPortfolioQuery.data && !publicPortfolioQuery.data.portfolioPublic && !isOwner && !isAdmin,
   );
   const livePortfolio =
     publicPortfolioQuery.data &&
@@ -1108,7 +1109,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                 className="rounded-xl border border-gray-200 p-4 text-xs"
                               >
                                 <Link
-                                  href={`/community/all/${comment.postId}`}
+                                  href={`/community/all/${comment.postId}#comment-${comment.id}`}
                                   className="font-bold text-gray-900 hover:text-[#0058FF]"
                                 >
                                   “{comment.content}”
@@ -1169,7 +1170,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                   <span>좋아요 표시한 댓글</span>
                                 </span>
                                 <Link
-                                  href={`/community/all/${comment.postId}`}
+                                  href={`/community/all/${comment.postId}#comment-${comment.id}`}
                                   className="mt-1 block font-bold text-gray-900 hover:text-[#0058FF]"
                                 >
                                   “{comment.content}”
@@ -1190,35 +1191,48 @@ export function PublicMember({ memberId }: { memberId: number }) {
                       {isOwner && communityTab === "reports" && (
                         <div className="space-y-3">
                           {liveReports && liveReports.length > 0 ? (
-                            liveReports.map(item => (
-                              <div
-                                key={item.id}
-                                className="flex items-center justify-between rounded-xl border border-gray-200 p-4 text-xs"
-                              >
-                                <div>
-                                  <span className="rounded bg-red-50 px-2 py-0.5 font-bold text-red-600">
-                                    {item.targetType === "POST" ? "게시글" : "댓글"} 신고 · 접수완료
-                                  </span>
-                                  <p className="mt-1.5 font-bold text-gray-900">{item.title}</p>
-                                  <p className="mt-0.5 text-gray-500">
-                                    사유: {item.reasonDescription}
-                                  </p>
-                                </div>
-                                <V1Button
-                                  variant="white"
-                                  size="xs"
-                                  disabled={cancelReportMutation.isPending}
-                                  onClick={() =>
-                                    cancelReportMutation.mutate({
-                                      targetType: item.targetType,
-                                      targetId: item.targetId,
-                                    })
-                                  }
+                            liveReports.map(item => {
+                              const statusMeta =
+                                item.reportStatus === "RESOLVED"
+                                  ? { label: "조치완료", cls: "bg-emerald-50 text-[#0ECB81]" }
+                                  : item.reportStatus === "DISMISSED"
+                                    ? { label: "반려됨", cls: "bg-gray-100 text-gray-600" }
+                                    : { label: "접수완료", cls: "bg-rose-50 text-[#F6465D]" };
+                              return (
+                                <div
+                                  key={item.id}
+                                  className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 p-4 text-xs"
                                 >
-                                  신고 취소
-                                </V1Button>
-                              </div>
-                            ))
+                                  <div>
+                                    <span
+                                      data-report-status={item.reportStatus}
+                                      className={`rounded px-2 py-0.5 font-bold ${statusMeta.cls}`}
+                                    >
+                                      {item.targetType === "POST" ? "게시글" : "댓글"} 신고 · {statusMeta.label}
+                                    </span>
+                                    <p className="mt-1.5 font-bold text-gray-900">{item.title}</p>
+                                    <p className="mt-0.5 text-gray-500">
+                                      사유: {item.reasonDescription}
+                                    </p>
+                                  </div>
+                                  {item.reportStatus === "PENDING" && (
+                                    <V1Button
+                                      variant="white"
+                                      size="xs"
+                                      disabled={cancelReportMutation.isPending}
+                                      onClick={() =>
+                                        cancelReportMutation.mutate({
+                                          targetType: item.targetType,
+                                          targetId: item.targetId,
+                                        })
+                                      }
+                                    >
+                                      신고 취소
+                                    </V1Button>
+                                  )}
+                                </div>
+                              );
+                            })
                           ) : (
                             <div className="py-8 text-center text-xs font-medium text-gray-500">
                               내가 접수한 신고 내역이 없습니다.

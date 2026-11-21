@@ -1,14 +1,25 @@
 import { TradingApiError, tradingOrigin } from "../../trading/api/client";
 import { ContentApiError, contentJson, contentOrigin } from "../../member/api/client";
 import { parseProfile } from "../../member/api/contracts";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
+import { extractRequestId } from "../../../lib/request-id";
 
-export const DEFAULT_TRADING_API_BASE_URL =
-  process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
-  process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ??
-  "http://localhost:8081";
+export class ContestApiError extends TradingApiError {
+  constructor(
+    status: number,
+    message = "대회 데이터를 불러올 수 없습니다.",
+    code?: string,
+    requestId?: string,
+  ) {
+    super(status, message, code, undefined, undefined, undefined, requestId);
+    this.name = "ContestApiError";
+  }
+}
+
+export const DEFAULT_TRADING_API_BASE_URL = resolveTradingOrigin();
 
 export function resolveTradingContestBaseUrl(): string {
-  return tradingOrigin(DEFAULT_TRADING_API_BASE_URL);
+  return tradingOrigin(resolveTradingOrigin());
 }
 
 export interface ContestSeasonView {
@@ -281,8 +292,9 @@ async function contestApiJson<T>(
 
     if (!response.ok) {
       let code: string | undefined;
+      let problem: unknown;
       try {
-        const problem: unknown = await response.json();
+        problem = await response.json();
         if (
           problem &&
           typeof problem === "object" &&
@@ -294,6 +306,7 @@ async function contestApiJson<T>(
       } catch {
         // Ignore unreadable problem body
       }
+      const requestId = extractRequestId(problem, response);
       const contestErrorMessages: Record<string, string> = {
         CONTEST_APPLICATION_NOT_PENDING: "심사 대기 중인 신청 건만 취소할 수 있습니다.",
         CONTEST_RECRUITMENT_CLOSED: "현재 대회 참가 신청 기간이 아닙니다.",
@@ -302,7 +315,12 @@ async function contestApiJson<T>(
         CONTEST_PARTICIPATION_REQUIRED: "승인된 대회 참가자만 거래할 수 있습니다.",
         CONTEST_SEASON_NOT_FOUND: "대회 시즌 정보를 찾을 수 없습니다.",
       };
-      throw new TradingApiError(response.status, code ? contestErrorMessages[code] : undefined, code);
+      throw new ContestApiError(
+        response.status,
+        code ? contestErrorMessages[code] : undefined,
+        code,
+        requestId,
+      );
     }
 
     const text = await response.text();
@@ -313,7 +331,7 @@ async function contestApiJson<T>(
       throw new DOMException("Request cancelled", "AbortError");
     }
     if (error instanceof TradingApiError) throw error;
-    throw new TradingApiError(0, "서버 연결을 확인한 뒤 다시 시도해 주세요.");
+    throw new ContestApiError(0, "서버 연결을 확인한 뒤 다시 시도해 주세요.");
   }
 }
 

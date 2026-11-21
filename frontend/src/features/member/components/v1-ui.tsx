@@ -4,13 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   useEffect,
+  useId,
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
   type SVGProps,
 } from "react";
-import { useDimScrollLock } from "./dim-modal";
+import { createPortal } from "react-dom";
+import { registerOverlayEscape, useDimScrollLock } from "./dim-modal";
 import { useOptionalMember } from "./member-provider";
 import { useOptionalNotificationCenter } from "../notifications/notification-context";
 import { formatNotificationCount } from "../notifications/notification-utils";
@@ -1086,18 +1088,21 @@ export function V1Header({
         ? (verifiedSessionRole ?? memberCtx?.snapshot.role ?? "MEMBER") === "ADMIN"
         : false;
 
+  const mobileDrawerId = useId();
   useDimScrollLock(isMenuOpen);
 
   useEffect(() => {
     if (!isMenuOpen || typeof window === "undefined") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsMenuOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isMenuOpen]);
+    return registerOverlayEscape(mobileDrawerId, () => setIsMenuOpen(false));
+  }, [isMenuOpen, mobileDrawerId]);
+
+  function isNavRouteActive(href: string): boolean {
+    if (!pathname) return false;
+    if (href === "/") return pathname === "/";
+    if (href === "/admin/contest") return pathname.startsWith("/admin");
+    if (href === "/me") return pathname === "/me";
+    return pathname === href || pathname.startsWith(`${href}/`);
+  }
 
   function rememberCurrentPageForLogin() {
     if (typeof window === "undefined") return;
@@ -1153,20 +1158,28 @@ export function V1Header({
               { href: "/trading", label: "모의투자" },
               { href: "/contest", label: "대회" },
               { href: "/community", label: "커뮤니티" },
-            ].map(item => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "inline-flex h-9 items-center px-2 text-[15px] font-bold leading-none whitespace-nowrap transition-colors",
-                  isDark
-                    ? "text-gray-200 hover:text-white"
-                    : "text-gray-700 hover:text-gray-950",
-                )}
-              >
-                {item.label}
-              </Link>
-            ))}
+            ].map(item => {
+              const active = isNavRouteActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "relative inline-flex h-9 items-center px-2 text-[15px] font-bold leading-none whitespace-nowrap transition-colors",
+                    active
+                      ? isDark
+                        ? "text-[#F0B90B] after:absolute after:bottom-0 after:left-1 after:right-1 after:h-[2px] after:rounded-full after:bg-[#F0B90B]"
+                        : "text-[#0058FF] after:absolute after:bottom-0 after:left-1 after:right-1 after:h-[2px] after:rounded-full after:bg-[#0058FF]"
+                      : isDark
+                        ? "text-gray-200 hover:text-white"
+                        : "text-gray-700 hover:text-gray-950",
+                  )}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
           </nav>
 
           {/* 3. 오른쪽 액션 영역 (알림벨 + 관리자 배지 + 마이페이지 또는 로그인 버튼: 고정 슬롯 및 동일 버튼 규격 유지) */}
@@ -1176,7 +1189,7 @@ export function V1Header({
                 <Link
                   href="/admin/contest"
                   className={cn(
-                    "ym-auth-slot-admin h-9 w-[72px] shrink-0 items-center justify-center rounded-full border px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    "ym-auth-slot-admin hidden sm:inline-flex h-9 w-[72px] shrink-0 items-center justify-center rounded-full border px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                     isDark
                       ? "border-blue-400/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
                       : "border-blue-200 bg-blue-50 text-[#0058FF] hover:bg-blue-100",
@@ -1187,7 +1200,7 @@ export function V1Header({
                 <Link
                   href="/me"
                   className={cn(
-                    "ym-auth-slot-member h-9 min-w-[96px] w-[104px] shrink-0 items-center justify-center rounded-full px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    "ym-auth-slot-member hidden sm:inline-flex h-9 min-w-[96px] w-[104px] shrink-0 items-center justify-center rounded-full px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                     isDark
                       ? "bg-white text-gray-900 hover:bg-gray-200"
                       : "bg-gray-900 text-white hover:bg-gray-800",
@@ -1239,7 +1252,7 @@ export function V1Header({
                   <Link
                     href="/admin/contest"
                     className={cn(
-                      "inline-flex h-9 w-[72px] shrink-0 items-center justify-center rounded-full border px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                      "hidden sm:inline-flex h-9 w-[72px] shrink-0 items-center justify-center rounded-full border px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                       isDark
                         ? "border-blue-400/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
                         : "border-blue-200 bg-blue-50 text-[#0058FF] hover:bg-blue-100",
@@ -1255,7 +1268,8 @@ export function V1Header({
                     if (!isLoggedIn) rememberCurrentPageForLogin();
                   }}
                   className={cn(
-                    "inline-flex h-9 min-w-[96px] w-[104px] shrink-0 items-center justify-center rounded-full px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
+                    isLoggedIn ? "hidden sm:inline-flex" : "inline-flex",
+                    "h-9 min-w-[96px] w-[104px] shrink-0 items-center justify-center rounded-full px-3 text-[13px] font-bold leading-none whitespace-nowrap transition-colors",
                     isDark
                       ? "bg-white text-gray-900 hover:bg-gray-200"
                       : "bg-gray-900 text-white hover:bg-gray-800",
@@ -1285,167 +1299,220 @@ export function V1Header({
         </div>
       </header>
 
-      {/* V1 모바일 사이드 드로어 (MenuLayer + Dim) */}
-      {isMenuOpen ? (
-        <div className="fixed inset-0 z-50 md:hidden" data-dim-modal="open">
-          <div
-            className="fixed inset-0 z-40 cursor-pointer bg-black/55 backdrop-blur-xs transition-opacity"
-            onClick={() => setIsMenuOpen(false)}
-          />
-          <aside
-            className={cn(
-              "fixed right-0 top-0 z-50 h-screen w-[min(18rem,85vw)] overflow-y-auto p-6 border-l",
-              isDark
-                ? "bg-[#161A1E] text-gray-100 border-[#2B3139]"
-                : "bg-white text-gray-900 border-gray-200",
-            )}
-          >
-            <div
-              className={cn(
-                "flex items-center justify-between border-b pb-4",
-                isDark ? "border-white/10" : "border-gray-100",
-              )}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={isDark ? "/logo_dark.png" : "/images/logo.webp"}
-                alt="YogiMangchi"
-                className="h-7 w-auto object-contain"
-              />
-              <button
-                type="button"
-                onClick={() => setIsMenuOpen(false)}
-                className={cn(
-                  "rounded-lg p-1 cursor-pointer",
-                  isDark ? "text-gray-400 hover:bg-white/10 hover:text-white" : "text-gray-500 hover:bg-gray-100",
-                )}
-                aria-label="메뉴 닫기"
-              >
-                <V1IconClose className="h-4 w-4" />
-              </button>
-            </div>
-            <nav aria-label="모바일 전체 메뉴" className="mt-6 flex flex-col gap-3 text-sm font-bold">
-              {[
-                { href: "/", label: "홈 · 메인 대시보드" },
-                { href: "/news", label: "실시간 뉴스 · 시황/속보" },
-                { href: "/trading", label: "모의투자 하러가기" },
-                { href: "/contest", label: "대회 · 시즌 랭킹" },
-                { href: "/community", label: "커뮤니티 · 전체/인기/최신글" },
-              ].map(item => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "rounded-xl px-3 py-2.5 transition-colors",
-                    isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
-                  )}
+      {/* V1 모바일 사이드 드로어 (MenuLayer + Dim, body 포털 마운트) */}
+      {isMenuOpen
+        ? (() => {
+            const mobileDrawerNode = (
+              <div className="fixed inset-0 z-[75] md:hidden" data-dim-modal="open">
+                <div
+                  className="fixed inset-0 z-[75] cursor-pointer bg-black/55 backdrop-blur-xs transition-opacity"
                   onClick={() => setIsMenuOpen(false)}
-                >
-                  {item.label}
-                </Link>
-              ))}
-              {isLoggedIn ? (
-                <Link
-                  href="/notifications"
+                />
+                <aside
                   className={cn(
-                    "flex items-center justify-between rounded-xl px-3 py-2.5 transition-colors",
-                    isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
-                  )}
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  <span>알림 내역</span>
-                  {newNotificationCount > 0 ? (
-                    <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-extrabold text-white">
-                      {formatNotificationCount(newNotificationCount)}
-                    </span>
-                  ) : null}
-                </Link>
-              ) : null}
-              <Link
-                href="/me"
-                className={cn(
-                  "rounded-xl px-3 py-2.5 transition-colors",
-                  isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
-                )}
-                onClick={() => setIsMenuOpen(false)}
-              >
-                마이페이지 · 자산/포트폴리오
-              </Link>
-              <Link
-                href="/me/settings"
-                className={cn(
-                  "rounded-xl px-3 py-2.5 transition-colors",
-                  isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
-                )}
-                onClick={() => setIsMenuOpen(false)}
-              >
-                회원정보 수정
-              </Link>
-              <Link
-                href="/support"
-                className={cn(
-                  "rounded-xl px-3 py-2.5 transition-colors",
-                  isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
-                )}
-                onClick={() => setIsMenuOpen(false)}
-              >
-                고객센터 · 1:1 문의
-              </Link>
-              {isLoggedIn && isAdmin ? (
-                <Link
-                  href="/admin/contest"
-                  className={cn(
-                    "rounded-xl px-3 py-2.5 transition-colors",
+                    "fixed right-0 top-0 z-[76] h-dvh w-[min(18rem,85vw)] overflow-y-auto p-6 border-l",
                     isDark
-                      ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
-                      : "bg-blue-50 text-[#0058FF] hover:bg-blue-100",
+                      ? "bg-[#161A1E] text-gray-100 border-[#2B3139]"
+                      : "bg-white text-gray-900 border-gray-200",
                   )}
-                  onClick={() => setIsMenuOpen(false)}
                 >
-                  관리자 · 운영 콘솔
-                </Link>
-              ) : null}
-            </nav>
-            <div
-              className={cn(
-                "mt-6 flex flex-col gap-2 border-t pt-4",
-                isDark ? "border-white/10" : "border-gray-100",
-              )}
-            >
-              {isLoggedIn ? (
-                <Link
-                  href="/me"
-                  className={cn(
-                    "inline-flex h-9 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
-                    isDark
-                      ? "bg-white text-gray-900 hover:bg-gray-200"
-                      : "bg-gray-900 text-white hover:bg-gray-800",
-                  )}
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  마이페이지
-                </Link>
-              ) : (
-                <Link
-                  href="/login"
-                  className={cn(
-                    "inline-flex h-9 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
-                    isDark
-                      ? "bg-white text-gray-900 hover:bg-gray-200"
-                      : "bg-gray-900 text-white hover:bg-gray-800",
-                  )}
-                  onClick={() => {
-                    rememberCurrentPageForLogin();
-                    setIsMenuOpen(false);
-                  }}
-                >
-                  로그인
-                </Link>
-              )}
-            </div>
-          </aside>
-        </div>
-      ) : null}
+                  <div
+                    className={cn(
+                      "flex items-center justify-between border-b pb-4",
+                      isDark ? "border-white/10" : "border-gray-100",
+                    )}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={isDark ? "/logo_dark.png" : "/images/logo.webp"}
+                      alt="YogiMangchi"
+                      className="h-7 w-auto object-contain"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsMenuOpen(false)}
+                      className={cn(
+                        "rounded-lg p-1 cursor-pointer",
+                        isDark
+                          ? "text-gray-400 hover:bg-white/10 hover:text-white"
+                          : "text-gray-500 hover:bg-gray-100",
+                      )}
+                      aria-label="메뉴 닫기"
+                    >
+                      <V1IconClose className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <nav aria-label="모바일 전체 메뉴" className="mt-6 flex flex-col gap-2 text-sm font-bold">
+                    {[
+                      { href: "/", label: "홈 · 메인 대시보드" },
+                      { href: "/news", label: "실시간 뉴스 · 시황/속보" },
+                      { href: "/trading", label: "모의투자 하러가기" },
+                      { href: "/contest", label: "대회 · 시즌 랭킹" },
+                      { href: "/community", label: "커뮤니티 · 전체/인기/최신글" },
+                    ].map(item => {
+                      const active = isNavRouteActive(item.href);
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          aria-current={active ? "page" : undefined}
+                          className={cn(
+                            "rounded-xl px-3 py-2.5 transition-colors",
+                            active
+                              ? isDark
+                                ? "bg-[#F0B90B]/15 text-[#F0B90B]"
+                                : "bg-blue-50 text-[#0058FF]"
+                              : isDark
+                                ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                                : "hover:bg-gray-50",
+                          )}
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          {item.label}
+                        </Link>
+                      );
+                    })}
+                    {isLoggedIn ? (
+                      <Link
+                        href="/notifications"
+                        aria-current={isNavRouteActive("/notifications") ? "page" : undefined}
+                        className={cn(
+                          "flex items-center justify-between rounded-xl px-3 py-2.5 transition-colors",
+                          isNavRouteActive("/notifications")
+                            ? isDark
+                              ? "bg-[#F0B90B]/15 text-[#F0B90B]"
+                              : "bg-blue-50 text-[#0058FF]"
+                            : isDark
+                              ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                              : "hover:bg-gray-50",
+                        )}
+                        onClick={() => setIsMenuOpen(false)}
+                      >
+                        <span>알림 내역</span>
+                        {newNotificationCount > 0 ? (
+                          <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-extrabold text-white">
+                            {formatNotificationCount(newNotificationCount)}
+                          </span>
+                        ) : null}
+                      </Link>
+                    ) : null}
+                    <Link
+                      href="/me"
+                      aria-current={isNavRouteActive("/me") ? "page" : undefined}
+                      className={cn(
+                        "rounded-xl px-3 py-2.5 transition-colors",
+                        isNavRouteActive("/me")
+                          ? isDark
+                            ? "bg-[#F0B90B]/15 text-[#F0B90B]"
+                            : "bg-blue-50 text-[#0058FF]"
+                          : isDark
+                            ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                            : "hover:bg-gray-50",
+                      )}
+                      onClick={() => setIsMenuOpen(false)}
+                    >
+                      마이페이지 · 자산/포트폴리오
+                    </Link>
+                    <Link
+                      href="/me/settings"
+                      aria-current={isNavRouteActive("/me/settings") ? "page" : undefined}
+                      className={cn(
+                        "rounded-xl px-3 py-2.5 transition-colors",
+                        isNavRouteActive("/me/settings")
+                          ? isDark
+                            ? "bg-[#F0B90B]/15 text-[#F0B90B]"
+                            : "bg-blue-50 text-[#0058FF]"
+                          : isDark
+                            ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                            : "hover:bg-gray-50",
+                      )}
+                      onClick={() => setIsMenuOpen(false)}
+                    >
+                      회원정보 수정
+                    </Link>
+                    <Link
+                      href="/support"
+                      aria-current={isNavRouteActive("/support") ? "page" : undefined}
+                      className={cn(
+                        "rounded-xl px-3 py-2.5 transition-colors",
+                        isNavRouteActive("/support")
+                          ? isDark
+                            ? "bg-[#F0B90B]/15 text-[#F0B90B]"
+                            : "bg-blue-50 text-[#0058FF]"
+                          : isDark
+                            ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                            : "hover:bg-gray-50",
+                      )}
+                      onClick={() => setIsMenuOpen(false)}
+                    >
+                      고객센터 · 1:1 문의
+                    </Link>
+                    {isLoggedIn && isAdmin ? (
+                      <Link
+                        href="/admin/contest"
+                        aria-current={isNavRouteActive("/admin/contest") ? "page" : undefined}
+                        className={cn(
+                          "rounded-xl px-3 py-2.5 transition-colors",
+                          isNavRouteActive("/admin/contest")
+                            ? isDark
+                              ? "bg-[#F0B90B]/20 text-[#F0B90B]"
+                              : "bg-blue-100 text-[#0058FF]"
+                            : isDark
+                              ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
+                              : "bg-blue-50 text-[#0058FF] hover:bg-blue-100",
+                        )}
+                        onClick={() => setIsMenuOpen(false)}
+                      >
+                        관리자 · 운영 콘솔
+                      </Link>
+                    ) : null}
+                  </nav>
+                  <div
+                    className={cn(
+                      "mt-6 flex flex-col gap-2 border-t pt-4",
+                      isDark ? "border-white/10" : "border-gray-100",
+                    )}
+                  >
+                    {isLoggedIn ? (
+                      <Link
+                        href="/me"
+                        className={cn(
+                          "inline-flex h-9 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
+                          isDark
+                            ? "bg-white text-gray-900 hover:bg-gray-200"
+                            : "bg-gray-900 text-white hover:bg-gray-800",
+                        )}
+                        onClick={() => setIsMenuOpen(false)}
+                      >
+                        마이페이지
+                      </Link>
+                    ) : (
+                      <Link
+                        href="/login"
+                        className={cn(
+                          "inline-flex h-9 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
+                          isDark
+                            ? "bg-white text-gray-900 hover:bg-gray-200"
+                            : "bg-gray-900 text-white hover:bg-gray-800",
+                        )}
+                        onClick={() => {
+                          rememberCurrentPageForLogin();
+                          setIsMenuOpen(false);
+                        }}
+                      >
+                        로그인
+                      </Link>
+                    )}
+                  </div>
+                </aside>
+              </div>
+            );
+            if (typeof document !== "undefined" && document.body) {
+              return createPortal(mobileDrawerNode, document.body);
+            }
+            return mobileDrawerNode;
+          })()
+        : null}
     </>
   );
 }

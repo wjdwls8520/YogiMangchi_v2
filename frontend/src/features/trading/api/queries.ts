@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { marketTickersJson } from "./client";
 import { nextTickerExpiryDelay, parseTickers, visibleTicker } from "../market/tickers";
 import { HISTORY_LIMIT, historyPath, parseClosedPositions, parseFills, parseOrderHistory, validHistoryDates, type HistoryFilters, type HistoryKind } from "./history";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
 
 export function useTradingSummary() {
   const { session, snapshot } = useGuestSession();
@@ -83,7 +84,7 @@ export function useClosedHistory(filters: HistoryFilters, active: boolean) {
 }
 
 export function useMarketTickers() {
-  const origin = process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081";
+  const origin = resolveTradingOrigin();
   const query = useQuery<ReturnType<typeof parseTickers>>({ queryKey: ["market", origin, "tickers"],
     queryFn: async ({ signal }) => parseTickers(await marketTickersJson(origin, signal)),
     staleTime: 1000, refetchInterval: (query) => query.state.status === "error" ? false : 2000,
