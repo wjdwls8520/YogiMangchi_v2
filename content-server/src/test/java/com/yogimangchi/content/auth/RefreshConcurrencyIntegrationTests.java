@@ -226,7 +226,7 @@ class RefreshConcurrencyIntegrationTests extends TestEnvironment {
         return mvc.perform(request).andReturn();
     }
     private AuthService.Issued signup(VerifiedIdentity proof) {
-        return auth.signup(proof,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v2","ym-privacy-v2"));
+        return auth.signup(proof,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v3","ym-privacy-v3"));
     }
     private static VerifiedIdentity identity() {
         return new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"refresh-test@example.test",Instant.now().plusSeconds(300));

@@ -37,20 +37,20 @@ class AuthContractIntegrationTests extends TestEnvironment {
     }
     @Test void validationCodesDistinguishNicknameConsentAndPolicyWithProofRetainedOnFailure() throws Exception {
         var session=session(identity());
-        signup(session,body("bad name","ym-terms-v2","ym-privacy-v2",true)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_NICKNAME"));
-        signup(session,body("회원가입","ym-terms-v2","ym-privacy-v2",false)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("REQUIRED_CONSENT_MISSING"));
-        signup(session,body("회원가입","","ym-privacy-v2",true)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("POLICY_VERSION_REQUIRED"));
-        signup(session,body("회원가입","stale","ym-privacy-v2",true)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("POLICY_VERSION_CHANGED"));
+        signup(session,body("bad name","ym-terms-v3","ym-privacy-v3",true)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_NICKNAME"));
+        signup(session,body("회원가입","ym-terms-v3","ym-privacy-v3",false)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("REQUIRED_CONSENT_MISSING"));
+        signup(session,body("회원가입","","ym-privacy-v3",true)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("POLICY_VERSION_REQUIRED"));
+        signup(session,body("회원가입","stale","ym-privacy-v3",true)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("POLICY_VERSION_CHANGED"));
         mvc.perform(get("/api/v1/auth/flow").session(session)).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("SIGNUP_REQUIRED"));
     }
     @Test void nicknameAndIdentityConflictsHaveDifferentSafeCodes() throws Exception {
         var proof=identity();String nickname=UUID.randomUUID().toString().substring(0,8);
-        auth.signup(proof,new SignupRequest(nickname,true,true,"","ym-terms-v2","ym-privacy-v2"));
-        signup(session(identity()),body(nickname,"ym-terms-v2","ym-privacy-v2",true)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("NICKNAME_UNAVAILABLE"));
-        signup(session(proof),body("새가입","ym-terms-v2","ym-privacy-v2",true)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"));
+        auth.signup(proof,new SignupRequest(nickname,true,true,"","ym-terms-v3","ym-privacy-v3"));
+        signup(session(identity()),body(nickname,"ym-terms-v3","ym-privacy-v3",true)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("NICKNAME_UNAVAILABLE"));
+        signup(session(proof),body("새가입","ym-terms-v3","ym-privacy-v3",true)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("MEMBER_ALREADY_EXISTS"));
     }
     @Test void proofExpiryAndConsumptionAreExplicitAndConcurrentCompletionIssuesOnlyOnce() throws Exception {
-        var proof=identity();var own=auth.signup(proof,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v2","ym-privacy-v2"));
+        var proof=identity();var own=auth.signup(proof,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v3","ym-privacy-v3"));
         mvc.perform(get("/api/v1/auth/flow").session(session(new VerifiedIdentity(proof.provider(),proof.subject(),proof.email(),Instant.now().minusSeconds(1)))))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("LOGIN_PROOF_EXPIRED"));
         var session=session(proof);var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);
@@ -65,8 +65,8 @@ class AuthContractIntegrationTests extends TestEnvironment {
     }
     @Test void lostSignupResponseCanRecoverThroughFreshOAuthProofWithoutRepeatingProvisioning() throws Exception {
         var proof=identity();var session=session(proof);String nickname=UUID.randomUUID().toString().substring(0,8);
-        signup(session,body(nickname,"ym-terms-v2","ym-privacy-v2",true)).andExpect(status().isOk()); // Discard response.
-        signup(session,body(nickname,"ym-terms-v2","ym-privacy-v2",true)).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("LOGIN_PROOF_REQUIRED"));
+        signup(session,body(nickname,"ym-terms-v3","ym-privacy-v3",true)).andExpect(status().isOk()); // Discard response.
+        signup(session,body(nickname,"ym-terms-v3","ym-privacy-v3",true)).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("LOGIN_PROOF_REQUIRED"));
         mvc.perform(get("/api/v1/auth/flow").session(session(proof))).andExpect(jsonPath("$.status").value("LOGIN_READY"));
         var issued=auth.completeLogin(proof);Long id=issued.access().memberId();
         assertThat(jdbc.queryForObject("select count(*) from content.member_trading_provision where member_id=?",Long.class,id)).isEqualTo(1);
@@ -81,7 +81,7 @@ class AuthContractIntegrationTests extends TestEnvironment {
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("CSRF_INVALID"));
     }
     @Test void addingBearerCannotExemptCookieAuthOperationsFromCsrf() throws Exception {
-        var own=auth.signup(identity(),new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v2","ym-privacy-v2"));
+        var own=auth.signup(identity(),new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v3","ym-privacy-v3"));
         for(String path:List.of("signup","login/complete","refresh","logout")) {
             mvc.perform(post("/api/v1/auth/"+path).header("Authorization","Bearer "+own.access().accessToken())
                     .cookie(new jakarta.servlet.http.Cookie("CONTENT_REFRESH",own.refresh())))
@@ -91,7 +91,7 @@ class AuthContractIntegrationTests extends TestEnvironment {
     @Test void concurrentSignupOfSameNicknameReturnsStableConflictWithoutOrphanRows() throws Exception {
         String nickname=UUID.randomUUID().toString().substring(0,8);var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);
         try {
-            Callable<MvcResult> task=()->{var proof=session(identity());start.await();return signup(proof,body(nickname,"ym-terms-v2","ym-privacy-v2",true)).andReturn();};
+            Callable<MvcResult> task=()->{var proof=session(identity());start.await();return signup(proof,body(nickname,"ym-terms-v3","ym-privacy-v3",true)).andReturn();};
             var a=pool.submit(task);var b=pool.submit(task);start.countDown();var results=List.of(a.get(10,TimeUnit.SECONDS),b.get(10,TimeUnit.SECONDS));
             assertThat(results.stream().map(r->r.getResponse().getStatus())).containsExactlyInAnyOrder(200,409);
             assertThat(results.stream().filter(r->r.getResponse().getStatus()==409).findFirst().orElseThrow().getResponse().getContentAsString()).contains("NICKNAME_UNAVAILABLE");
@@ -112,18 +112,18 @@ class AuthContractIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.paths['"+path+"'].post.security[0].memberBearer").isArray())
                 .andExpect(jsonPath("$.paths['"+path+"'].post.description").value(org.hamcrest.Matchers.containsString("Missing consent400")));
         mvc.perform(get(path)).andExpect(status().isUnauthorized());
-        var own=auth.signup(identity(),new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v2","ym-privacy-v2"));
-        for(var entry:Map.of(body("unused","ym-terms-v2","ym-privacy-v2",false),"REQUIRED_CONSENT_MISSING",
-                body("unused","","ym-privacy-v2",true),"POLICY_VERSION_REQUIRED").entrySet()) {
+        var own=auth.signup(identity(),new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v3","ym-privacy-v3"));
+        for(var entry:Map.of(body("unused","ym-terms-v3","ym-privacy-v3",false),"REQUIRED_CONSENT_MISSING",
+                body("unused","","ym-privacy-v3",true),"POLICY_VERSION_REQUIRED").entrySet()) {
             mvc.perform(post(path).header("Authorization","Bearer "+own.access().accessToken()).contentType("application/json").content(entry.getKey()))
                     .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value(entry.getValue()));
         }
-        mvc.perform(post(path).header("Authorization","Bearer "+own.access().accessToken()).contentType("application/json").content(body("unused","stale","ym-privacy-v2",true)))
+        mvc.perform(post(path).header("Authorization","Bearer "+own.access().accessToken()).contentType("application/json").content(body("unused","stale","ym-privacy-v3",true)))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("POLICY_VERSION_CHANGED"));
     }
 
     @Test void authenticatedMemberReconsentAndProvisioningWaitAreSeparateStates() throws Exception {
-        var proof=identity();var own=auth.signup(proof,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v2","ym-privacy-v2"));
+        var proof=identity();var own=auth.signup(proof,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v3","ym-privacy-v3"));
         Long id=own.access().memberId();
         // Use a dedicated database transaction to model an existing member with unversioned consent.
         new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(tx->{

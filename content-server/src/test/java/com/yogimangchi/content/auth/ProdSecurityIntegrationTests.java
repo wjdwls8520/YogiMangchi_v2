@@ -39,8 +39,17 @@ class ProdSecurityIntegrationTests extends TestEnvironment {
         assertThat(s3.isRealS3Configured()).isFalse();
         assertThat(s3.sanitizePostFileUrl("https://example-bucket.s3.ap-northeast-2.amazonaws.com/legacy.png"))
                 .doesNotContain("localhost");
+        var placeholder = s3.readLocalMedia("placeholder.svg");
+        assertThat(placeholder).isNotNull();
+        String placeholderSvg = new String(placeholder.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(placeholderSvg)
+                .contains("첨부 이미지 미리보기")
+                .contains("이미지 저장소 준비 중")
+                .doesNotContain("로컬 안전 미리보기")
+                .doesNotContain("S3")
+                .doesNotContain("무과금");
         var id=new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"prod-test@example.test",Instant.now().plusSeconds(300));
-        var login=auth.signup(id,new SignupRequest("prodtest",true,true,"","ym-terms-v2","ym-privacy-v2"));
+        var login=auth.signup(id,new SignupRequest("prodtest",true,true,"","ym-terms-v3","ym-privacy-v3"));
         mvc.perform(post("/api/v1/auth/refresh").with(csrf()).cookie(new Cookie("CONTENT_REFRESH",login.refresh())))
                 .andExpect(status().isOk()).andExpect(header().string("Set-Cookie",org.hamcrest.Matchers.containsString("Secure")))
                 .andExpect(header().string("Set-Cookie",org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Domain="))));

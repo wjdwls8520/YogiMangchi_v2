@@ -75,8 +75,8 @@ public class CommunityS3Service {
                     + "<rect x=\"16\" y=\"16\" width=\"608\" height=\"328\" rx=\"14\" fill=\"#FFFFFF\" stroke=\"#E2E8F0\" stroke-width=\"2\"/>"
                     + "<circle cx=\"320\" cy=\"150\" r=\"28\" fill=\"#EFF6FF\"/>"
                     + "<path d=\"M308 156l8-10 7 8 10-13 11 15H308z\" fill=\"#2563EB\"/>"
-                    + "<text x=\"320\" y=\"212\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"15\" font-weight=\"700\" fill=\"#1E293B\">로컬 안전 미리보기 이미지</text>"
-                    + "<text x=\"320\" y=\"238\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"12\" fill=\"#64748B\">외부 클라우드(S3) 호출 차단 · 로컬 무과금 실행 모드</text>"
+                    + "<text x=\"320\" y=\"212\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"15\" font-weight=\"700\" fill=\"#1E293B\">첨부 이미지 미리보기</text>"
+                    + "<text x=\"320\" y=\"238\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"12\" fill=\"#64748B\">이미지 저장소 준비 중</text>"
                     + "</svg>"
     ).getBytes(StandardCharsets.UTF_8);
 

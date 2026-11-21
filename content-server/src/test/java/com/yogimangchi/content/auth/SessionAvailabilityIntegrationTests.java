@@ -30,7 +30,7 @@ class SessionAvailabilityIntegrationTests extends TestEnvironment {
 
     @Test void poolExhaustionReturns503BeforeClientTimeoutWithoutConsumingRefresh() throws Exception {
         var proof=new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"pool-test@example.test",Instant.now().plusSeconds(300));
-        var own=auth.signup(proof,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v2","ym-privacy-v2"));
+        var own=auth.signup(proof,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v3","ym-privacy-v3"));
         var pool=Executors.newSingleThreadExecutor();
         try {
             // Occupy the only connection without changing any member or token state.

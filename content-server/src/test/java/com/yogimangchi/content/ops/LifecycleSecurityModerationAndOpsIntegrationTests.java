@@ -135,7 +135,7 @@ class LifecycleSecurityModerationAndOpsIntegrationTests extends TestEnvironment 
                         .session(retrySession)
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"nickname\":\"재가입시도\",\"termAgree\":true,\"privateAgree\":true,\"termsVersion\":\"ym-terms-v2\",\"privacyVersion\":\"ym-privacy-v2\"}"))
+                        .content("{\"nickname\":\"재가입시도\",\"termAgree\":true,\"privateAgree\":true,\"termsVersion\":\"ym-terms-v3\",\"privacyVersion\":\"ym-privacy-v3\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("MEMBER_BANNED"));
 
@@ -383,19 +383,61 @@ class LifecycleSecurityModerationAndOpsIntegrationTests extends TestEnvironment 
     }
 
     @Test
-    void publishedV2PoliciesAndSupportInquiryLoopWithAdminReplyAndNotificationWorkEndToEnd() throws Exception {
-        // 1. Finalized V2 policies are current & PUBLISHED without contradictory draft sentences
+    void publishedV3PoliciesAndSupportInquiryLoopWithAdminReplyAndNotificationWorkEndToEnd() throws Exception {
+        // 1. Finalized user-friendly V3 policies are current & PUBLISHED without draft sentences or internal tech jargon
         mvc.perform(get("/api/v1/policies/current"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.policies.length()").value(2));
+                .andExpect(jsonPath("$.policies.length()").value(2))
+                .andExpect(jsonPath("$.policies[0].type").value("PRIVACY"))
+                .andExpect(jsonPath("$.policies[0].version").value("ym-privacy-v3"))
+                .andExpect(jsonPath("$.policies[1].type").value("TERMS"))
+                .andExpect(jsonPath("$.policies[1].version").value("ym-terms-v3"));
+        JsonNode termsDoc = json.readTree(mvc.perform(get("/api/v1/policies/TERMS/ym-terms-v3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.documentStatus").value("PUBLISHED"))
+                .andExpect(jsonPath("$.text", not(containsString("커뮤니티를 구현하지 않는다"))))
+                .andReturn().getResponse().getContentAsString());
+        JsonNode privacyDoc = json.readTree(mvc.perform(get("/api/v1/policies/PRIVACY/ym-privacy-v3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.documentStatus").value("PUBLISHED"))
+                .andExpect(jsonPath("$.text", not(containsString("개발 단계 초안"))))
+                .andReturn().getResponse().getContentAsString());
+        List<String> forbiddenInternalTerms = List.of(
+                "RS256", "Access JWT", "JWT", "15분", "PostgreSQL", "HttpOnly",
+                "Refresh Cookie", "Refresh 세션", "고정 7일", "CSRF",
+                "OAuth 증명", "OAuth 토큰", "S3", "객체 스토리지", "로컬 안전 저장소",
+                "Content 서버", "Trading 서버", "스키마", "memberId", "서명된 내부 API",
+                "X-Request-Id", "프로비저닝", "SUSPENDED", "원자적으로"
+        );
+        for (JsonNode doc : List.of(termsDoc, privacyDoc)) {
+            String text = doc.path("text").asText();
+            String expectedSha = java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256")
+                            .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            assertThat(doc.path("sha256").asText()).isEqualTo(expectedSha);
+            for (String forbidden : forbiddenInternalTerms) {
+                assertThat(text).doesNotContainIgnoringCase(forbidden);
+            }
+        }
+        // Historical V2 policies remain PUBLISHED and immutable, with current = false
         mvc.perform(get("/api/v1/policies/TERMS/ym-terms-v2"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.documentStatus").value("PUBLISHED"))
-                .andExpect(jsonPath("$.text", not(containsString("커뮤니티를 구현하지 않는다"))));
+                .andExpect(jsonPath("$.documentStatus").value("PUBLISHED"));
         mvc.perform(get("/api/v1/policies/PRIVACY/ym-privacy-v2"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.documentStatus").value("PUBLISHED"))
-                .andExpect(jsonPath("$.text", not(containsString("개발 단계 초안"))));
+                .andExpect(jsonPath("$.documentStatus").value("PUBLISHED"));
+
+        // Placeholder preview SVG exposes clean user-friendly copy without internal storage jargon
+        String placeholderSvg = new String(mvc.perform(get("/api/v1/community/local-media/placeholder.svg"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", containsString("image/svg+xml")))
+                .andReturn().getResponse().getContentAsByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(placeholderSvg)
+                .contains("첨부 이미지 미리보기")
+                .contains("이미지 저장소 준비 중")
+                .doesNotContain("로컬 안전 미리보기")
+                .doesNotContain("외부 클라우드(S3)")
+                .doesNotContain("무과금");
 
         // 2. Support inquiry submit -> list me -> admin list -> admin reply -> member notification
         var member = signup(identity(Provider.GOOGLE));
@@ -534,7 +576,7 @@ class LifecycleSecurityModerationAndOpsIntegrationTests extends TestEnvironment 
 
     private AuthService.Issued signup(VerifiedIdentity identity) {
         String nick = "u" + UUID.randomUUID().toString().replace("-", "").substring(0, 7);
-        return auth.signup(identity, new SignupRequest(nick, true, true, "test", "ym-terms-v2", "ym-privacy-v2"));
+        return auth.signup(identity, new SignupRequest(nick, true, true, "test", "ym-terms-v3", "ym-privacy-v3"));
     }
 
     private static VerifiedIdentity identity(Provider provider) {
