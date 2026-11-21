@@ -14,7 +14,7 @@ public class MemberRoundController {
     private final MemberRounds rounds;
     public MemberRoundController(MemberRounds rounds){this.rounds=rounds;}
     @PostMapping("/restart")
-    @Operation(summary="Restart own member simulation",description="Member JWT and Idempotency-Key8-100 required. AccountLock serializes trading/restart/withdrawal. Administrative closure creates no Fill/PnL/fee. New round10000USDT; Guest403. Same successful key returns original result; different key within24h429 with nextAvailableAt. No body balances/memberId/roundId trusted. Atomic rollback; account contention409.")
+    @Operation(summary="Restart own member simulation",description="Member JWT and Idempotency-Key 8-100 required. AccountLock serializes trading/restart/withdrawal. Administrative closure creates no Fill/PnL/fee. New round 10000 USDT; Guest 403. Same successful key returns original result; different key within cooldown returns 429 with nextAvailableAt (24h for ACTIVE accounts; 5m floor and max 3 bankrupt restarts per 24h for BANKRUPT accounts). No body balances/memberId/roundId trusted. Atomic rollback; account contention 409.")
     public ResponseEntity<MemberRounds.Restart> restart(@AuthenticationPrincipal TradingPrincipal p,@RequestHeader(value="Idempotency-Key",required=false) String key){return ok(rounds.restart(account(p),key));}
     @GetMapping("/rounds/current")
     @Operation(summary="Own current round and restart availability",description="Current account valuation uses server prices/freshness; lifetime Wallet totals are separate from round realizedPnl/feesPaid/settlementAdjustment deltas. Legacy initialBalance is null, never inferred from balance.")

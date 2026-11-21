@@ -22,6 +22,10 @@ import org.springframework.transaction.annotation.*;
 
 @Service
 public class MemberRounds {
+    public static final long NORMAL_RESTART_COOLDOWN_SECONDS = 86_400L;
+    public static final long BANKRUPT_RESTART_COOLDOWN_SECONDS = 300L;
+    public static final int BANKRUPT_MAX_RESTARTS_PER_24H = 3;
+
     public record Round(Long roundId,int roundNumber,String status,String funding,String initialBalance,Instant startedAt,Instant endedAt,String endReason,JsonNode finalWallet,boolean currentRound) { }
     public record Page(List<Round> content,Long nextCursorId) { }
     public record Summary(Round round,AccountSummaryResponse currentAccount,boolean restartAvailable,Instant nextAvailableAt,String realizedPnl,String feesPaid,String settlementAdjustment) { }
@@ -71,7 +75,7 @@ public class MemberRounds {
         var previous=jdbc.query("select s.*,r.round_number from trading.member_restart s join trading.member_trading_round r on r.id=s.new_round_id where s.account_id=? and s.request_key=?",(r,n)->new Restart(r.getLong("new_round_id"),r.getInt("round_number"),"10000.000000000000000000",r.getTimestamp("restarted_at").toInstant(),r.getTimestamp("restarted_at").toInstant().plusSeconds(86400),r.getInt("canceled_order_count"),r.getInt("closed_position_count")),accountId,key);
         if(!previous.isEmpty()) return previous.get(0);
         risk.requireClear(accountId);
-        Instant now=dbNow(),next=next(accountId);
+        Instant now=dbNow(),next=nextAvailableAt(account,now);
         if(next!=null&&now.isBefore(next)) throw new RestartLimited(next);
         var old=currentRow(accountId);
         var wallet=wallets.findById(accountId).orElseThrow();
@@ -95,14 +99,15 @@ public class MemberRounds {
         return new Restart(id,old.roundNumber()+1,wallet.getBalance().toPlainString(),now,now.plusSeconds(86400),pending.size(),open.size());
     }
     @Transactional(timeout=5)
-    public Summary current(Long accountId) {member(accountId);return summaryLocked(accountId,currentRow(accountId));}
+    public Summary current(Long accountId) {var account=member(accountId);return summaryLocked(account,currentRow(accountId));}
     @Transactional(timeout=5)
-    public Summary summary(Long accountId,Long roundId) {member(accountId);return summaryLocked(accountId,owned(accountId,roundId));}
-    private Summary summaryLocked(Long accountId,Round round) {
-        Instant next=next(accountId);boolean active=round.currentRound();
+    public Summary summary(Long accountId,Long roundId) {var account=member(accountId);return summaryLocked(account,owned(accountId,roundId));}
+    private Summary summaryLocked(TradingAccount account,Round round) {
+        Long accountId=account.getId();
+        Instant now=dbNow(),next=nextAvailableAt(account,now);boolean active=round.currentRound();
         var wallet=wallets.findById(accountId).orElseThrow();
         var baseline=jdbc.queryForMap("select start_realized_pnl,start_fees_paid,start_adjustment from trading.member_trading_round where id=?",round.roundId());
-        return new Summary(round,active?summaries.summary(accountId):null,next==null||!dbNow().isBefore(next),next,
+        return new Summary(round,active?summaries.summary(accountId):null,next==null||!now.isBefore(next),next,
             active?wallet.getRealizedPnl().subtract((BigDecimal)baseline.get("start_realized_pnl")).toPlainString():round.finalWallet().path("realizedPnl").asText(),
             active?wallet.getFeesPaid().subtract((BigDecimal)baseline.get("start_fees_paid")).toPlainString():round.finalWallet().path("feesPaid").asText(),
             active?wallet.getSettlementAdjustment().subtract((BigDecimal)baseline.get("start_adjustment")).toPlainString():round.finalWallet().path("settlementAdjustment").asText());
@@ -161,7 +166,31 @@ public class MemberRounds {
     private List<Round> rows(String sql,Object... args) {
         return jdbc.query(sql,(r,n)->{try{return new Round(r.getLong("id"),r.getInt("round_number"),r.getString("status"),r.getString("funding"),r.getString("initial_balance"),r.getTimestamp("started_at").toInstant(),r.getTimestamp("ended_at")==null?null:r.getTimestamp("ended_at").toInstant(),r.getString("end_reason"),r.getString("final_wallet")==null?null:mapper.readTree(r.getString("final_wallet")),r.getString("status").equals("ACTIVE"));}catch(com.fasterxml.jackson.core.JsonProcessingException e){throw new IllegalStateException("Invalid round snapshot",e);}},args);
     }
-    private Instant next(Long id) {var time=jdbc.queryForObject("select max(restarted_at)+interval '24 hours' from trading.member_restart where account_id=?",java.sql.Timestamp.class,id);return time==null?null:time.toInstant();}
+    private Instant nextAvailableAt(TradingAccount account, Instant now) {
+        java.sql.Timestamp lastTs = jdbc.queryForObject(
+                "select max(restarted_at) from trading.member_restart where account_id=?",
+                java.sql.Timestamp.class, account.getId());
+        if (lastTs == null) {
+            return null;
+        }
+        Instant lastRestartedAt = lastTs.toInstant();
+        if (account.getStatus() != TradingAccount.Status.BANKRUPT) {
+            return lastRestartedAt.plusSeconds(NORMAL_RESTART_COOLDOWN_SECONDS);
+        }
+        Instant floor = lastRestartedAt.plusSeconds(BANKRUPT_RESTART_COOLDOWN_SECONDS);
+        List<Instant> recentBankrupt = jdbc.query(
+                "select restarted_at from trading.member_restart where account_id=? and balance_before<=0 and restarted_at>? order by restarted_at desc limit ?",
+                (r, n) -> r.getTimestamp("restarted_at").toInstant(),
+                account.getId(),
+                at(now.minusSeconds(NORMAL_RESTART_COOLDOWN_SECONDS)),
+                BANKRUPT_MAX_RESTARTS_PER_24H);
+        if (recentBankrupt.size() >= BANKRUPT_MAX_RESTARTS_PER_24H) {
+            Instant quotaAvailableAt = recentBankrupt.get(BANKRUPT_MAX_RESTARTS_PER_24H - 1)
+                    .plusSeconds(NORMAL_RESTART_COOLDOWN_SECONDS);
+            return quotaAvailableAt.isAfter(floor) ? quotaAvailableAt : floor;
+        }
+        return floor;
+    }
     private Instant dbNow() {return jdbc.queryForObject("select clock_timestamp()",java.sql.Timestamp.class).toInstant();}
     private static OffsetDateTime at(Instant value) {return value.atOffset(ZoneOffset.UTC);}
     private static void validate(Long before,int limit) {if(before!=null&&before<=0||limit<1||limit>100)throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);}

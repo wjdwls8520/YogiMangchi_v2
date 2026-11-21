@@ -82,14 +82,18 @@ public class OrderController {
     }
     @PostMapping("/orders/cancel-all")
     @Operation(summary="Atomically cancel all PENDING orders for the authenticated account",
-            description="Executes under TradingEngineGate and AccountLock, releasing all OPEN margin reservations and CLOSE quantity reservations. Available during price outages.")
-    public CancelAllOrdersResponse cancelAll(@AuthenticationPrincipal TradingPrincipal principal) {
-        return engine.cancelAll(principal.accountId());
+            description="Executes under TradingEngineGate and AccountLock, releasing all OPEN margin reservations and CLOSE quantity reservations. Available during price outages. Optional Idempotency-Key (8-100 chars) enables safe replay without double-canceling newly placed orders.")
+    public CancelAllOrdersResponse cancelAll(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        return engine.cancelAll(principal.accountId(), idempotencyKey);
     }
     @PostMapping("/positions/close-all")
     @Operation(summary="Atomically cancel pending CLOSE reservations and market-close all OPEN positions at fresh Mark Price",
-            description="Executes under TradingEngineGate and AccountLock. Requires fresh Mark Prices and safe isolated risk across all open positions.")
-    public CloseAllPositionsResponse closeAll(@AuthenticationPrincipal TradingPrincipal principal) {
-        return engine.closeAll(principal.accountId());
+            description="Executes under TradingEngineGate and AccountLock. Requires fresh Mark Prices and safe isolated risk across all open positions. Optional Idempotency-Key (8-100 chars) enables safe replay without double-closing newly opened positions.")
+    public CloseAllPositionsResponse closeAll(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        return engine.closeAll(principal.accountId(), idempotencyKey);
     }
 }

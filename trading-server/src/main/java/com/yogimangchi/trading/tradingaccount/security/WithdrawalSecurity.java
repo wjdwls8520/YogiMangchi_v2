@@ -35,9 +35,9 @@ public class WithdrawalSecurity {
                     .requestMatchers(HttpMethod.POST,"/internal/v1/members/{memberId:[0-9]+}/trading-account").access((auth,context)->new org.springframework.security.authorization.AuthorizationDecision(auth.get().getPrincipal() instanceof Jwt jwt && "member_provisioning".equals(jwt.getClaimAsString("token_use"))))
                     .anyRequest().denyAll())
                 .oauth2ResourceServer(o -> o.jwt(j -> j.decoder(decoder))
-                        .authenticationEntryPoint((request,response,error) -> TradingTokenFilter.problem(response,401,"INVALID_WITHDRAWAL_CREDENTIAL","A dedicated Content withdrawal credential is required")))
-                .exceptionHandling(e -> e.authenticationEntryPoint((request,response,error) -> TradingTokenFilter.problem(response,401,"INVALID_WITHDRAWAL_CREDENTIAL","A dedicated Content withdrawal credential is required"))
-                        .accessDeniedHandler((request,response,error) -> TradingTokenFilter.problem(response,403,"ACCESS_DENIED","Access is denied")))
+                        .authenticationEntryPoint((request,response,error) -> TradingTokenFilter.problem(request,response,401,"INVALID_WITHDRAWAL_CREDENTIAL","A dedicated Content withdrawal credential is required")))
+                .exceptionHandling(e -> e.authenticationEntryPoint((request,response,error) -> TradingTokenFilter.problem(request,response,401,"INVALID_WITHDRAWAL_CREDENTIAL","A dedicated Content withdrawal credential is required"))
+                        .accessDeniedHandler((request,response,error) -> TradingTokenFilter.problem(request,response,403,"ACCESS_DENIED","Access is denied")))
                 .csrf(c -> c.disable()).cors(c -> c.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .requestCache(c -> c.disable()).formLogin(c -> c.disable()).httpBasic(c -> c.disable()).logout(c -> c.disable());

@@ -79,6 +79,10 @@ public class TradingSymbol {
         this.status = TradingSymbolStatus.INACTIVE;
     }
 
+    public void halt() {
+        this.status = TradingSymbolStatus.HALTED;
+    }
+
     public void changeProviderMapping(String providerSymbol, long providerUnitMultiplier) {
         requireSymbol(providerSymbol, 40, "providerSymbol");
         requireProviderUnitMultiplier(providerUnitMultiplier);

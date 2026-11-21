@@ -199,6 +199,10 @@ public class AccountTriggerService {
             open.remove(position); byId.remove(position.getId()); activeTakeProfits.remove(position.getId());
             account.recordFinancialChange(now);
         }
+        if (wallet.getBalance().signum() <= 0 && open.isEmpty() && account.getStatus() == TradingAccount.Status.ACTIVE) {
+            account.declareBankrupt();
+        }
+        if (account.getStatus() != TradingAccount.Status.ACTIVE) return;
         for (TradingOrder order : pending) {
             if (order.getStatus() != TradingOrder.Status.PENDING
                     || !order.getTradingSymbolId().equals(tick.tradingSymbolId()) || !order.crosses(tick.domainMarkPrice())
@@ -242,6 +246,9 @@ public class AccountTriggerService {
                 committed("limit-filled", order, fill);
             }
             account.recordFinancialChange(now);
+        }
+        if (wallet.getBalance().signum() <= 0 && open.isEmpty() && account.getStatus() == TradingAccount.Status.ACTIVE) {
+            account.declareBankrupt();
         }
     }
 

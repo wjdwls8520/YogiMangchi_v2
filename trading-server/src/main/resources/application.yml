@@ -53,6 +53,7 @@ management:
         include: health,info,metrics
   endpoint:
     health:
+      show-details: never
       probes:
         enabled: true
 
@@ -91,3 +92,10 @@ trading:
       initial-delay-ms: ${TRADING_RISK_RETENTION_INITIAL_DELAY_MS:120000}
   http:
     allowed-origins: ${TRADING_HTTP_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  guest-creation:
+    rate-limit-enabled: ${TRADING_GUEST_RATE_LIMIT_ENABLED:true}
+    max-per-window: ${TRADING_GUEST_RATE_LIMIT_MAX:10}
+    window-seconds: ${TRADING_GUEST_RATE_LIMIT_WINDOW_SECONDS:600}
+  ops:
+    alert-webhook-url: ${OPS_ALERT_WEBHOOK_URL:}
+    alert-cooldown-seconds: ${OPS_ALERT_COOLDOWN_SECONDS:300}

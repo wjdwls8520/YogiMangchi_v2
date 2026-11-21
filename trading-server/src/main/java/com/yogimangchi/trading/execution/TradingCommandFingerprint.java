@@ -25,6 +25,9 @@ public final class TradingCommandFingerprint {
     public static String takeProfit(Long position,Long expectedVersion,BigDecimal target) {
         return hash("TP|"+position+"|"+expectedVersion+"|"+(target==null?"DELETE":decimal(target)));
     }
+    public static String batchOperation(String operation) {
+        return hash("BATCH|"+operation);
+    }
     private static String decimal(BigDecimal value){return value.stripTrailingZeros().toPlainString();}
     private static String hash(String value){
         try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));}

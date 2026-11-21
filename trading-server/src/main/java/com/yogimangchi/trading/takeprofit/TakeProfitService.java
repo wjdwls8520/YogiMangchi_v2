@@ -166,10 +166,13 @@ public class TakeProfitService {
         TakeProfitResponse response;
         if (targetPrice == null) {
             if (existing != null) {
+                boolean wasActive = existing.getStatus() == PositionTakeProfit.Status.ACTIVE;
                 existing.cancel(now);
-                takeProfits.save(existing);
-                takeProfits.flush();
-                events.recordTakeProfit(existing);
+                if (wasActive) {
+                    takeProfits.save(existing);
+                    takeProfits.flush();
+                    events.recordTakeProfit(existing);
+                }
                 response = TakeProfitResponse.from(existing);
             } else {
                 response = TakeProfitResponse.none(position);

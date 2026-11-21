@@ -701,10 +701,18 @@ public class ContestService {
         var seasonRow = lockedRows.get(0);
         boolean wasPublic = Boolean.TRUE.equals(seasonRow.get("is_public"));
         boolean wasCanceled = Boolean.TRUE.equals(seasonRow.get("is_canceled"));
+        Object settledAt = seasonRow.get("settled_at");
         String seasonTitle = (String) seasonRow.get("title");
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
         boolean nextPublic = req.isPublic() != null ? req.isPublic() : wasPublic;
         boolean nextCanceled = req.isCanceled() != null ? req.isCanceled() : wasCanceled;
+
+        if (wasCanceled && !nextCanceled) {
+            throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
+        }
+        if (!wasCanceled && nextCanceled && settledAt != null) {
+            throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
+        }
 
         jdbc.update("""
                 UPDATE trading.contest_season
