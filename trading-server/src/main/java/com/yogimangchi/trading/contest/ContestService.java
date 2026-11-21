@@ -1,6 +1,8 @@
 package com.yogimangchi.trading.contest;
 
+import com.yogimangchi.trading.contest.ContestDtos.AdminDisqualifyParticipantResponse;
 import com.yogimangchi.trading.contest.ContestDtos.AdminParticipantView;
+import com.yogimangchi.trading.contest.ContestDtos.AdminSeasonDeleteResponse;
 import com.yogimangchi.trading.contest.ContestDtos.AdminSeasonDetailResponse;
 import com.yogimangchi.trading.contest.ContestDtos.AdminSeasonListResponse;
 import com.yogimangchi.trading.contest.ContestDtos.AdminSeasonStatusPatchRequest;
@@ -22,6 +24,7 @@ import com.yogimangchi.trading.contest.ContestDtos.SyncContestNicknameResponse;
 import com.yogimangchi.trading.error.BusinessException;
 import com.yogimangchi.trading.error.ErrorCode;
 import com.yogimangchi.trading.execution.TradingMath;
+import com.yogimangchi.trading.ops.AdminAuditLogService;
 import com.yogimangchi.trading.order.entity.TradingOrder;
 import com.yogimangchi.trading.order.repository.TradingOrderRepository;
 import com.yogimangchi.trading.position.entity.Position;
@@ -54,15 +57,20 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class ContestService {
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
     private static final BigDecimal DEFAULT_SEED = new BigDecimal("10000");
+    public static final int CANCEL_CLEANUP_BATCH_SIZE = 100;
 
     private final JdbcTemplate jdbc;
     private final EntityManager entities;
@@ -72,11 +80,13 @@ public class ContestService {
     private final AccountValuation valuation;
     private final TradingAccountService tradingAccountService;
     private final RedisContestLeaderboardStore leaderboardStore;
-    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications;
+    private final ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications;
     private final AccountLock locks;
     private final TradingOrderRepository orders;
     private final TradingEvents events;
-    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits;
+    private final ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits;
+    private final TransactionTemplate requiresNewTx;
+    private final ObjectProvider<AdminAuditLogService> auditLogs;
 
     public ContestService(
             JdbcTemplate jdbc,
@@ -87,7 +97,8 @@ public class ContestService {
             AccountValuation valuation,
             TradingAccountService tradingAccountService,
             RedisContestLeaderboardStore leaderboardStore) {
-        this(jdbc, entities, accounts, wallets, positions, valuation, tradingAccountService, leaderboardStore, null, null, null, null, null);
+        this(jdbc, entities, accounts, wallets, positions, valuation, tradingAccountService, leaderboardStore,
+                null, null, null, null, null, null, null);
     }
 
     @Autowired
@@ -100,11 +111,13 @@ public class ContestService {
             AccountValuation valuation,
             TradingAccountService tradingAccountService,
             RedisContestLeaderboardStore leaderboardStore,
-            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications,
+            ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications,
             AccountLock locks,
             TradingOrderRepository orders,
             TradingEvents events,
-            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits) {
+            ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits,
+            PlatformTransactionManager txManager,
+            ObjectProvider<AdminAuditLogService> auditLogs) {
         this.jdbc = jdbc;
         this.entities = entities;
         this.accounts = accounts;
@@ -118,13 +131,23 @@ public class ContestService {
         this.orders = orders;
         this.events = events;
         this.takeProfits = takeProfits;
+        if (txManager != null) {
+            this.requiresNewTx = new TransactionTemplate(txManager);
+            this.requiresNewTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            this.requiresNewTx.setTimeout(15);
+        } else {
+            this.requiresNewTx = null;
+        }
+        this.auditLogs = auditLogs;
     }
 
     private static final String SEASON_SELECT = """
             SELECT s.*,
                    (SELECT COUNT(*) FROM trading.contest_participant cp
                     JOIN trading.trading_account a ON a.id = cp.account_id
-                    WHERE cp.contest_season_id = s.id AND a.status <> 'WITHDRAWN') AS participant_count,
+                    WHERE cp.contest_season_id = s.id
+                      AND cp.status = 'ACTIVE'
+                      AND (a.status <> 'WITHDRAWN' OR (s.settled_at IS NOT NULL AND cp.final_rank IS NOT NULL))) AS participant_count,
                    (SELECT COUNT(*) FROM trading.contest_application ca WHERE ca.contest_season_id = s.id AND ca.status = 'PENDING') AS applicant_count,
                    (SELECT COUNT(*) FROM trading.trading_order o JOIN trading.trading_account a ON a.id = o.account_id
                     WHERE a.contest_season_id = s.id AND a.account_type = 'CONTEST' AND o.status = 'PENDING') AS pending_order_count,
@@ -472,7 +495,13 @@ public class ContestService {
                 || now.isBefore(season.contestStartAt()) || now.isAfter(season.contestEndAt())) {
             throw new BusinessException(ErrorCode.CONTEST_NOT_RUNNING);
         }
-        return requireContestAccountForRead(memberId, seasonId);
+        var rows = jdbc.queryForList(
+                "SELECT account_id FROM trading.contest_participant WHERE contest_season_id = ? AND member_id = ? AND status = 'ACTIVE'",
+                Long.class, seasonId, memberId);
+        if (rows.isEmpty()) {
+            throw new BusinessException(ErrorCode.CONTEST_PARTICIPATION_REQUIRED);
+        }
+        return rows.get(0);
     }
 
     @Transactional(readOnly = true, timeout = 5)
@@ -632,20 +661,30 @@ public class ContestService {
                 tsNow,
                 tsNow);
 
+        recordAudit(adminMemberId, "CONTEST_SEASON_CREATE", "CONTEST_SEASON", Long.toString(seasonId),
+                "title=" + req.title().strip() + " seedMoney=" + plain(seed));
         evictContestCache(seasonId);
         return requireSeasonView(seasonId, now);
     }
 
     @Transactional(timeout = 5)
     public SeasonView updateSeason(Long seasonId, AdminSeasonUpsertRequest req) {
+        return updateSeason(null, seasonId, req);
+    }
+
+    @Transactional(timeout = 5)
+    public SeasonView updateSeason(Long adminMemberId, Long seasonId, AdminSeasonUpsertRequest req) {
         if (seasonId == null || seasonId <= 0) {
             throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
         }
         validateSeasonUpsert(req);
         Instant now = Instant.now();
         SeasonView existing = requireSeasonView(seasonId, now);
+        if (existing.isCanceled()) {
+            throw new BusinessException(ErrorCode.CONTEST_ALREADY_CANCELED);
+        }
         if (existing.settledAt() != null) {
-            throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
+            throw new BusinessException(ErrorCode.CONTEST_ALREADY_SETTLED);
         }
 
         BigDecimal seed = parseSeedMoney(req.seedMoney());
@@ -683,15 +722,37 @@ public class ContestService {
                 at(now),
                 seasonId);
 
+        recordAudit(adminMemberId, "CONTEST_SEASON_UPDATE", "CONTEST_SEASON", Long.toString(seasonId),
+                "title=" + req.title().strip() + " isPublic=" + isPublic);
         evictContestCache(seasonId);
         return requireSeasonView(seasonId, now);
     }
 
-    @Transactional(timeout = 30)
     public SeasonView patchSeasonStatus(Long seasonId, AdminSeasonStatusPatchRequest req) {
+        return patchSeasonStatus(null, seasonId, req);
+    }
+
+    private record StatusPatchOutcome(
+            String seasonTitle,
+            boolean transitionedToCanceled,
+            boolean nextPublic,
+            boolean nextCanceled,
+            List<Long> pendingApplicantMemberIds,
+            Instant now) { }
+
+    public SeasonView patchSeasonStatus(Long adminMemberId, Long seasonId, AdminSeasonStatusPatchRequest req) {
         if (seasonId == null || seasonId <= 0 || req == null) {
             throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
         }
+        StatusPatchOutcome outcome = executeInRequiresNew(() -> applySeasonStatusPatchTx(adminMemberId, seasonId, req));
+        if (outcome.transitionedToCanceled()) {
+            cleanupCanceledSeasonChunked(seasonId, outcome.seasonTitle(), outcome.pendingApplicantMemberIds(), outcome.now());
+        }
+        evictContestCache(seasonId);
+        return executeInRequiresNew(() -> requireSeasonView(seasonId, outcome.now()));
+    }
+
+    private StatusPatchOutcome applySeasonStatusPatchTx(Long adminMemberId, Long seasonId, AdminSeasonStatusPatchRequest req) {
         var lockedRows = jdbc.queryForList(
                 "SELECT id, title, is_public, is_canceled, settled_at FROM trading.contest_season WHERE id = ? FOR UPDATE",
                 seasonId);
@@ -722,49 +783,79 @@ public class ContestService {
                 WHERE id = ?
                 """, nextPublic, nextCanceled, at(now), seasonId);
 
-        if (!wasCanceled && nextCanceled) {
-            cleanupCanceledSeason(seasonId, seasonTitle, now);
+        List<Long> pendingApplicantMembers = List.of();
+        boolean transitionedToCanceled = !wasCanceled && nextCanceled;
+        if (transitionedToCanceled) {
+            pendingApplicantMembers = jdbc.queryForList("""
+                    SELECT member_id
+                    FROM trading.contest_application
+                    WHERE contest_season_id = ? AND status = 'PENDING'
+                    FOR UPDATE
+                    """, Long.class, seasonId);
+            jdbc.update("""
+                    UPDATE trading.contest_application
+                    SET status = 'CANCELED',
+                        reject_reason = '대회 시즌이 취소되어 신청이 자동 취소되었습니다.',
+                        processed_at = ?
+                    WHERE contest_season_id = ? AND status = 'PENDING'
+                    """, at(now), seasonId);
         }
-        evictContestCache(seasonId);
 
-        return requireSeasonView(seasonId, now);
+        recordAudit(adminMemberId,
+                transitionedToCanceled ? "CONTEST_SEASON_CANCEL" : "CONTEST_SEASON_STATUS_UPDATE",
+                "CONTEST_SEASON",
+                Long.toString(seasonId),
+                "isPublic=" + nextPublic + " isCanceled=" + nextCanceled);
+        return new StatusPatchOutcome(seasonTitle, transitionedToCanceled, nextPublic, nextCanceled,
+                List.copyOf(pendingApplicantMembers), now);
     }
 
-    private void cleanupCanceledSeason(Long seasonId, String seasonTitle, Instant now) {
-        OffsetDateTime tsNow = at(now);
-        Set<Long> affectedMemberIds = new LinkedHashSet<>();
-
-        List<Long> pendingApplicantMembers = jdbc.queryForList("""
-                SELECT member_id
-                FROM trading.contest_application
-                WHERE contest_season_id = ? AND status = 'PENDING'
-                FOR UPDATE
-                """, Long.class, seasonId);
-        affectedMemberIds.addAll(pendingApplicantMembers);
-
-        jdbc.update("""
-                UPDATE trading.contest_application
-                SET status = 'CANCELED',
-                    reject_reason = '대회 시즌이 취소되어 신청이 자동 취소되었습니다.',
-                    processed_at = ?
-                WHERE contest_season_id = ? AND status = 'PENDING'
-                """, tsNow, seasonId);
-
-        var contestAccountRows = jdbc.queryForList("""
-                SELECT a.id, a.member_id
-                FROM trading.trading_account a
-                WHERE a.contest_season_id = ?
-                  AND a.account_type = 'CONTEST'
-                  AND a.status <> 'WITHDRAWN'
-                ORDER BY a.id ASC
-                """, seasonId);
-
-        var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
-        for (var row : contestAccountRows) {
-            long accountId = ((Number) row.get("id")).longValue();
-            if (row.get("member_id") != null) {
-                affectedMemberIds.add(((Number) row.get("member_id")).longValue());
+    private void cleanupCanceledSeasonChunked(
+            Long seasonId,
+            String seasonTitle,
+            List<Long> pendingApplicantMembers,
+            Instant now) {
+        Set<Long> affectedMemberIds = new LinkedHashSet<>(pendingApplicantMembers);
+        long lastAccountId = 0L;
+        while (true) {
+            final long cursor = lastAccountId;
+            List<Map<String, Object>> batch = jdbc.queryForList("""
+                    SELECT a.id, a.member_id
+                    FROM trading.trading_account a
+                    WHERE a.contest_season_id = ?
+                      AND a.account_type = 'CONTEST'
+                      AND a.status <> 'WITHDRAWN'
+                      AND a.id > ?
+                    ORDER BY a.id ASC
+                    LIMIT ?
+                    """, seasonId, cursor, CANCEL_CLEANUP_BATCH_SIZE);
+            if (batch.isEmpty()) {
+                break;
             }
+            for (var row : batch) {
+                if (row.get("member_id") != null) {
+                    affectedMemberIds.add(((Number) row.get("member_id")).longValue());
+                }
+            }
+            List<Long> batchAccountIds = batch.stream()
+                    .map(row -> ((Number) row.get("id")).longValue())
+                    .toList();
+            executeInRequiresNew(() -> {
+                cleanupCanceledAccountChunk(batchAccountIds);
+                return null;
+            });
+            lastAccountId = batchAccountIds.get(batchAccountIds.size() - 1);
+        }
+
+        var notifier = notifications != null ? notifications.getIfAvailable() : null;
+        if (notifier != null && !affectedMemberIds.isEmpty()) {
+            notifier.notifyContestSeasonCanceledAfterCommit(seasonId, seasonTitle, affectedMemberIds, now);
+        }
+    }
+
+    private void cleanupCanceledAccountChunk(List<Long> accountIds) {
+        var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
+        for (Long accountId : accountIds) {
             if (locks == null || orders == null || events == null) {
                 continue;
             }
@@ -819,20 +910,30 @@ public class ContestService {
                     SET status = 'RETIRED',
                         completed_at = clock_timestamp(),
                         completion_reason = 'CONTEST_CANCELED'
-                    WHERE account_id = ? AND status = 'PENDING'
+                    WHERE account_id = ? AND status IN ('PENDING', 'HELD')
+                    """, accountId);
+            jdbc.update("""
+                    UPDATE trading.risk_hold
+                    SET resolved_at = clock_timestamp(),
+                        resolution_reference = 'CONTEST_CANCELED: administrative season cancellation'
+                    WHERE account_id = ? AND resolved_at IS NULL
                     """, accountId);
         }
         entities.flush();
+    }
 
-        var notifier = notifications != null ? notifications.getIfAvailable() : null;
-        if (notifier != null && !affectedMemberIds.isEmpty()) {
-            notifier.notifyContestSeasonCanceledAfterCommit(seasonId, seasonTitle, affectedMemberIds, now);
+    private <T> T executeInRequiresNew(java.util.function.Supplier<T> action) {
+        if (requiresNewTx != null) {
+            return requiresNewTx.execute(status -> action.get());
         }
+        return action.get();
     }
 
     @Transactional(timeout = 10)
     public AdminParticipantView approveApplication(Long adminMemberId, Long seasonId, Long applicationId) {
         long applicantMemberId = approveSingleApplicationInternal(adminMemberId, seasonId, applicationId);
+        recordAudit(adminMemberId, "CONTEST_APPLICATION_APPROVE", "CONTEST_APPLICATION",
+                Long.toString(applicationId), "seasonId=" + seasonId + " memberId=" + applicantMemberId);
         evictContestCache(seasonId);
         return buildAdminParticipantViews(seasonId).stream()
                 .filter(p -> applicantMemberId == p.memberId())
@@ -951,6 +1052,8 @@ public class ContestService {
         for (Long appId : targetIds) {
             approvedMemberIds.add(approveSingleApplicationInternal(adminMemberId, seasonId, appId));
         }
+        recordAudit(adminMemberId, "CONTEST_APPLICATION_BULK_APPROVE", "CONTEST_SEASON",
+                Long.toString(seasonId), "approvedCount=" + approvedMemberIds.size());
         evictContestCache(seasonId);
         Map<Long, AdminParticipantView> viewsByMember = new HashMap<>();
         for (AdminParticipantView view : buildAdminParticipantViews(seasonId)) {
@@ -1005,6 +1108,8 @@ public class ContestService {
                 JOIN trading.contest_season s ON s.id = a.contest_season_id
                 WHERE a.id = ?
                 """, applicationId);
+        recordAudit(adminMemberId, "CONTEST_APPLICATION_REJECT", "CONTEST_APPLICATION",
+                Long.toString(applicationId), "seasonId=" + seasonId + " reason=" + safeReason);
         evictContestCache(seasonId);
         if (!"REJECTED".equals(appRows.get(0).get("status"))) {
             long applicantMemberId = ((Number) appRows.get(0).get("member_id")).longValue();
@@ -1014,6 +1119,232 @@ public class ContestService {
             }
         }
         return mapApplicationRow(updated, now);
+    }
+
+    @Transactional(timeout = 15)
+    public AdminDisqualifyParticipantResponse disqualifyParticipant(
+            Long adminMemberId,
+            Long seasonId,
+            Long memberId,
+            String reason) {
+        if (seasonId == null || seasonId <= 0 || memberId == null || memberId <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
+        }
+        var seasonRows = jdbc.queryForList(
+                "SELECT id, is_canceled, settled_at FROM trading.contest_season WHERE id = ? FOR UPDATE",
+                seasonId);
+        if (seasonRows.isEmpty()) {
+            throw new BusinessException(ErrorCode.CONTEST_SEASON_NOT_FOUND);
+        }
+        if (Boolean.TRUE.equals(seasonRows.get(0).get("is_canceled"))) {
+            throw new BusinessException(ErrorCode.CONTEST_ALREADY_CANCELED);
+        }
+        if (seasonRows.get(0).get("settled_at") != null) {
+            throw new BusinessException(ErrorCode.CONTEST_ALREADY_SETTLED);
+        }
+
+        var participantRows = jdbc.queryForList("""
+                SELECT id, account_id, status, disqualified_at, disqualify_reason
+                FROM trading.contest_participant
+                WHERE contest_season_id = ? AND member_id = ?
+                FOR UPDATE
+                """, seasonId, memberId);
+        if (participantRows.isEmpty()) {
+            throw new BusinessException(ErrorCode.CONTEST_PARTICIPANT_NOT_FOUND);
+        }
+        var row = participantRows.get(0);
+        long participantId = ((Number) row.get("id")).longValue();
+        long accountId = ((Number) row.get("account_id")).longValue();
+        String currentStatus = (String) row.get("status");
+
+        String safeReason = (reason == null || reason.isBlank()) ? "운영진 대회 실격 처리" : reason.strip();
+        if (safeReason.length() > 500) {
+            safeReason = safeReason.substring(0, 500);
+        }
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+
+        if ("DISQUALIFIED".equals(currentStatus)) {
+            Instant existingTs = row.get("disqualified_at") != null
+                    ? ((Timestamp) row.get("disqualified_at")).toInstant() : now;
+            String existingReason = (String) row.get("disqualify_reason");
+            return new AdminDisqualifyParticipantResponse(
+                    seasonId, memberId, participantId, accountId, "DISQUALIFIED",
+                    existingReason != null ? existingReason : safeReason, 0, 0, existingTs);
+        }
+
+        int canceledOrders = 0;
+        int closedPositions = 0;
+        if (locks != null && orders != null && events != null) {
+            TradingAccount account = locks.lockIncludingWithdrawn(accountId);
+            if (account.getStatus() != TradingAccount.Status.WITHDRAWN) {
+                Wallet wallet = wallets.findById(accountId).orElseThrow();
+                List<Position> openPositions = positions.findByAccountIdAndStatusOrderByIdAsc(accountId, Position.Status.OPEN);
+                Map<Long, Position> openById = openPositions.stream()
+                        .collect(Collectors.toMap(Position::getId, Function.identity()));
+                List<TradingOrder> pendingOrders = orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING);
+
+                BigDecimal released = BigDecimal.ZERO;
+                BigDecimal reserved = BigDecimal.ZERO;
+                for (TradingOrder pending : pendingOrders) {
+                    Instant orderNow = now.isBefore(pending.getCreatedAt()) ? pending.getCreatedAt() : now;
+                    if (pending.getAction() == TradingOrder.Action.OPEN) {
+                        reserved = reserved.add(pending.getReservedMargin());
+                    } else if (pending.getPositionId() != null) {
+                        Position target = openById.get(pending.getPositionId());
+                        if (target != null && target.getReservedCloseQuantity().compareTo(pending.getQuantity()) >= 0) {
+                            target.releaseCloseReservation(pending.getQuantity());
+                        }
+                    }
+                    pending.cancelForContestDisqualification(orderNow);
+                    events.record(pending, null);
+                    canceledOrders++;
+                }
+
+                var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
+                for (Position position : openPositions) {
+                    Instant posNow = now.isBefore(position.getOpenedAt()) ? position.getOpenedAt() : now;
+                    if (position.getReservedCloseQuantity().signum() > 0) {
+                        position.releaseCloseReservation(position.getReservedCloseQuantity());
+                    }
+                    released = released.add(position.closeForContestDisqualification(posNow));
+                    events.recordStopLoss(position);
+                    if (tpService != null) {
+                        tpService.expireIfActive(position, "CONTEST_DISQUALIFIED", posNow);
+                    }
+                    closedPositions++;
+                }
+
+                if (released.signum() > 0 || reserved.signum() > 0) {
+                    wallet.releaseExposure(released, reserved);
+                }
+                if (wallet.getUsedMargin().signum() != 0 || wallet.getReservedMargin().signum() != 0) {
+                    throw new IllegalStateException("Contest disqualification found inconsistent reservations for accountId=" + accountId);
+                }
+                Instant changeAt = now.isBefore(account.getLastFinancialChangeAt()) ? account.getLastFinancialChangeAt() : now;
+                account.recordFinancialChange(changeAt);
+            }
+            jdbc.update("""
+                    UPDATE trading.risk_account_work
+                    SET status = 'RETIRED',
+                        completed_at = clock_timestamp(),
+                        completion_reason = 'CONTEST_DISQUALIFIED'
+                    WHERE account_id = ? AND status IN ('PENDING', 'HELD')
+                    """, accountId);
+            jdbc.update("""
+                    UPDATE trading.risk_hold
+                    SET resolved_at = clock_timestamp(),
+                        resolution_reference = 'CONTEST_DISQUALIFIED: administrative participant disqualification'
+                    WHERE account_id = ? AND resolved_at IS NULL
+                    """, accountId);
+            entities.flush();
+        }
+
+        OffsetDateTime tsNow = at(now);
+        jdbc.update("""
+                UPDATE trading.contest_participant
+                SET status = 'DISQUALIFIED',
+                    disqualified_at = ?,
+                    disqualify_reason = ?,
+                    disqualified_by_member_id = ?,
+                    final_rank = NULL
+                WHERE id = ?
+                """, tsNow, safeReason, adminMemberId, participantId);
+
+        jdbc.update("""
+                UPDATE trading.contest_application
+                SET status = 'REJECTED',
+                    reject_reason = ?,
+                    processed_at = ?,
+                    processed_by_member_id = ?
+                WHERE contest_season_id = ? AND member_id = ?
+                """, safeReason, tsNow, adminMemberId, seasonId, memberId);
+
+        recordAudit(adminMemberId, "CONTEST_PARTICIPANT_DISQUALIFY", "CONTEST_PARTICIPANT",
+                seasonId + ":" + memberId,
+                "participantId=" + participantId + " accountId=" + accountId
+                        + " canceledOrders=" + canceledOrders + " closedPositions=" + closedPositions
+                        + " reason=" + safeReason);
+        evictContestCache(seasonId);
+
+        return new AdminDisqualifyParticipantResponse(
+                seasonId, memberId, participantId, accountId, "DISQUALIFIED",
+                safeReason, canceledOrders, closedPositions, now);
+    }
+
+    @Transactional(timeout = 10)
+    public AdminSeasonDeleteResponse deleteSeason(Long adminMemberId, Long seasonId) {
+        if (seasonId == null || seasonId <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
+        }
+        var rows = jdbc.queryForList(
+                "SELECT id, title, is_canceled, settled_at FROM trading.contest_season WHERE id = ? FOR UPDATE",
+                seasonId);
+        if (rows.isEmpty()) {
+            throw new BusinessException(ErrorCode.CONTEST_SEASON_NOT_FOUND);
+        }
+        var row = rows.get(0);
+        boolean isCanceled = Boolean.TRUE.equals(row.get("is_canceled"));
+        boolean isSettled = row.get("settled_at") != null;
+        String title = (String) row.get("title");
+
+        long participantCount = zeroIfNull(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM trading.contest_participant WHERE contest_season_id = ?",
+                Long.class, seasonId));
+        long contestAccountCount = zeroIfNull(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM trading.trading_account WHERE contest_season_id = ? AND account_type = 'CONTEST'",
+                Long.class, seasonId));
+        long pendingOrders = zeroIfNull(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM trading.trading_order o
+                JOIN trading.trading_account a ON a.id = o.account_id
+                WHERE a.contest_season_id = ? AND a.account_type = 'CONTEST' AND o.status = 'PENDING'
+                """, Long.class, seasonId));
+        long openPositions = zeroIfNull(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM trading.position p
+                JOIN trading.trading_account a ON a.id = p.account_id
+                WHERE a.contest_season_id = ? AND a.account_type = 'CONTEST' AND p.status = 'OPEN'
+                """, Long.class, seasonId));
+
+        boolean deletableDraftOrRecruiting = !isCanceled && !isSettled
+                && participantCount == 0 && contestAccountCount == 0
+                && pendingOrders == 0 && openPositions == 0;
+        boolean deletableCanceled = isCanceled && pendingOrders == 0 && openPositions == 0;
+
+        if (!deletableDraftOrRecruiting && !deletableCanceled) {
+            throw new BusinessException(ErrorCode.CONTEST_DELETE_NOT_ALLOWED);
+        }
+
+        if (contestAccountCount == 0 && participantCount == 0) {
+            jdbc.update("DELETE FROM trading.contest_application WHERE contest_season_id = ?", seasonId);
+            jdbc.update("DELETE FROM trading.contest_settlement_price_snapshot WHERE contest_season_id = ?", seasonId);
+            jdbc.update("DELETE FROM trading.contest_settlement_run WHERE contest_season_id = ?", seasonId);
+            jdbc.update("DELETE FROM trading.contest_season WHERE id = ?", seasonId);
+            recordAudit(adminMemberId, "CONTEST_SEASON_DELETE", "CONTEST_SEASON", Long.toString(seasonId),
+                    "mode=HARD_DELETED title=" + title);
+            evictContestCache(seasonId);
+            return new AdminSeasonDeleteResponse(seasonId, true, true, false);
+        }
+
+        // Historical financial accounts exist on this canceled season: never destroy financial ledger; archive privately.
+        jdbc.update("""
+                UPDATE trading.contest_season
+                SET is_public = false, updated_at = ?
+                WHERE id = ?
+                """, at(Instant.now()), seasonId);
+        recordAudit(adminMemberId, "CONTEST_SEASON_DELETE", "CONTEST_SEASON", Long.toString(seasonId),
+                "mode=ARCHIVED_LEDGER_PRESERVED title=" + title + " accounts=" + contestAccountCount);
+        evictContestCache(seasonId);
+        return new AdminSeasonDeleteResponse(seasonId, true, false, true);
+    }
+
+    private void recordAudit(Long adminMemberId, String action, String targetType, String targetId, String detail) {
+        AdminAuditLogService audit = auditLogs != null ? auditLogs.getIfAvailable() : null;
+        if (audit != null) {
+            audit.record(adminMemberId, action, targetType, targetId, detail);
+        }
+    }
+
+    private static long zeroIfNull(Long value) {
+        return value == null ? 0L : value;
     }
 
     private static String formatWinRate(long winningCount, long closedCount) {
@@ -1027,17 +1358,29 @@ public class ContestService {
     }
 
     private List<LeaderboardEntry> buildRankedLeaderboard(Long seasonId) {
+        Boolean seasonSettledFlag = jdbc.query(
+                "SELECT settled_at IS NOT NULL FROM trading.contest_season WHERE id = ?",
+                (rs, n) -> rs.getBoolean(1),
+                seasonId).stream().findFirst().orElse(Boolean.FALSE);
+        boolean seasonSettled = Boolean.TRUE.equals(seasonSettledFlag);
+        // Once settled, retain historical withdrawn ('탈퇴한회원') winners who received a final_rank so there are ZERO rank holes.
+        // On unsettled live seasons (or participants who withdrew before settlement with final_rank IS NULL), exclude WITHDRAWN.
+        String withdrawnClause = seasonSettled
+                ? " AND (a.status <> 'WITHDRAWN' OR cp.final_rank IS NOT NULL) "
+                : " AND a.status <> 'WITHDRAWN' ";
+
         var rows = jdbc.queryForList("""
                 SELECT cp.*, w.balance, w.used_margin, w.reserved_margin, w.realized_pnl,
                        (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status = 'OPEN') AS open_position_count,
-                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED'))) AS total_position_count,
-                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED'))) AS closed_position_count,
-                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED')) AND p.realized_pnl > 0) AS winning_position_count
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED', 'CONTEST_DISQUALIFIED'))) AS total_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED', 'CONTEST_DISQUALIFIED'))) AS closed_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED', 'CONTEST_DISQUALIFIED')) AND p.realized_pnl > 0) AS winning_position_count
                 FROM trading.contest_participant cp
                 JOIN trading.trading_account a ON a.id = cp.account_id
                 JOIN trading.wallet w ON w.account_id = cp.account_id
                 WHERE cp.contest_season_id = ?
-                  AND a.status <> 'WITHDRAWN'
+                  AND cp.status = 'ACTIVE'
+                """ + withdrawnClause + """
                 ORDER BY cp.id ASC
                 """, seasonId);
 
@@ -1126,10 +1469,18 @@ public class ContestService {
             }
         }
 
-        raws.sort(Comparator
-                .comparing(RawEntry::roiPct, Comparator.reverseOrder())
-                .thenComparing(RawEntry::realizedPnl, Comparator.reverseOrder())
-                .thenComparingLong(RawEntry::participantId));
+        if (seasonSettled) {
+            raws.sort(Comparator
+                    .comparing((RawEntry e) -> e.fixedRank() == null ? Integer.MAX_VALUE : e.fixedRank())
+                    .thenComparing(RawEntry::roiPct, Comparator.reverseOrder())
+                    .thenComparing(RawEntry::realizedPnl, Comparator.reverseOrder())
+                    .thenComparingLong(RawEntry::participantId));
+        } else {
+            raws.sort(Comparator
+                    .comparing(RawEntry::roiPct, Comparator.reverseOrder())
+                    .thenComparing(RawEntry::realizedPnl, Comparator.reverseOrder())
+                    .thenComparingLong(RawEntry::participantId));
+        }
 
         List<LeaderboardEntry> result = new ArrayList<>(raws.size());
         int currentRank = 1;
@@ -1172,17 +1523,20 @@ public class ContestService {
                        w.balance, w.used_margin, w.reserved_margin, w.realized_pnl,
                        (SELECT COUNT(*) FROM trading.contest_participant cp2
                         JOIN trading.trading_account a2 ON a2.id = cp2.account_id
-                        WHERE cp2.contest_season_id = s.id AND a2.status <> 'WITHDRAWN') AS total_participants,
+                        WHERE cp2.contest_season_id = s.id
+                          AND cp2.status = 'ACTIVE'
+                          AND (a2.status <> 'WITHDRAWN' OR (s.settled_at IS NOT NULL AND cp2.final_rank IS NOT NULL))) AS total_participants,
                        (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status = 'OPEN') AS open_position_count,
                        (SELECT COUNT(*) FROM trading.trading_order o WHERE o.account_id = cp.account_id AND o.status = 'PENDING') AS pending_order_count,
-                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED'))) AS total_position_count,
-                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED'))) AS closed_position_count,
-                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED')) AND p.realized_pnl > 0) AS winning_position_count
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED', 'CONTEST_DISQUALIFIED'))) AS total_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED', 'CONTEST_DISQUALIFIED'))) AS closed_position_count,
+                       (SELECT COUNT(*) FROM trading.position p WHERE p.account_id = cp.account_id AND p.status IN ('CLOSED', 'LIQUIDATED') AND (p.close_reason IS NULL OR p.close_reason NOT IN ('MEMBER_WITHDRAWAL', 'CONTEST_CANCELED', 'CONTEST_DISQUALIFIED')) AND p.realized_pnl > 0) AS winning_position_count
                 FROM trading.contest_participant cp
                 JOIN trading.trading_account a ON a.id = cp.account_id
                 JOIN trading.contest_season s ON s.id = cp.contest_season_id
                 JOIN trading.wallet w ON w.account_id = cp.account_id
                 WHERE cp.member_id = ?
+                  AND cp.status = 'ACTIVE'
                   AND a.status <> 'WITHDRAWN'
                 """ + filter + " ORDER BY s.contest_start_at DESC, s.id DESC", memberId);
 

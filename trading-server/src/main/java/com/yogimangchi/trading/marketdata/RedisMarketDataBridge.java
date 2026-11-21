@@ -2,12 +2,14 @@ package com.yogimangchi.trading.marketdata;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yogimangchi.trading.ops.OpsAlertService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executors;
@@ -17,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
@@ -70,6 +73,7 @@ public class RedisMarketDataBridge {
     private final ObjectMapper mapper;
     private final MarketDataFanout fanout;
     private final MarkPriceTimePolicy.Policy policy;
+    private final ObjectProvider<OpsAlertService> alerts;
     private final ArrayBlockingQueue<MarketDataEvent> pending = new ArrayBlockingQueue<>(1024);
     private final ScheduledExecutorService publisher = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "market-data-redis");
@@ -90,17 +94,23 @@ public class RedisMarketDataBridge {
     private volatile boolean closed;
 
     public RedisMarketDataBridge(RedisConnectionFactory connectionFactory, ObjectMapper mapper, MarketDataFanout fanout) {
-        this(connectionFactory, mapper, fanout, MarkPriceTimePolicy.STRICT);
+        this(connectionFactory, mapper, fanout, MarkPriceTimePolicy.STRICT, null);
+    }
+
+    public RedisMarketDataBridge(RedisConnectionFactory connectionFactory, ObjectMapper mapper,
+            MarketDataFanout fanout, MarkPriceTimePolicy.Policy policy) {
+        this(connectionFactory, mapper, fanout, policy, null);
     }
 
     @Autowired
     public RedisMarketDataBridge(RedisConnectionFactory connectionFactory, ObjectMapper mapper,
-            MarketDataFanout fanout, MarkPriceTimePolicy.Policy policy) {
+            MarketDataFanout fanout, MarkPriceTimePolicy.Policy policy, ObjectProvider<OpsAlertService> alerts) {
         this.connectionFactory = connectionFactory;
         this.redis = new StringRedisTemplate(connectionFactory);
         this.mapper = mapper;
         this.fanout = fanout;
         this.policy = policy;
+        this.alerts = alerts;
     }
 
     @PostConstruct
@@ -134,6 +144,16 @@ public class RedisMarketDataBridge {
 
     public Health health() {
         return new Health(state, gapSequence.get());
+    }
+
+    public Long pingLatencyMs() {
+        long start = System.nanoTime();
+        try (var connection = connectionFactory.getConnection()) {
+            connection.ping();
+            return TimeUnit.NANOSECONDS.toMillis(Math.max(0L, System.nanoTime() - start));
+        } catch (RuntimeException ex) {
+            return null;
+        }
     }
 
     /** A cache miss or failure is never a usable execution price. Prefer the local store on this single node. */
@@ -241,9 +261,17 @@ public class RedisMarketDataBridge {
             return;
         }
         if (state != State.UNAVAILABLE) {
-            gapSequence.incrementAndGet();
+            long seq = gapSequence.incrementAndGet();
             retryAfter = System.nanoTime() + RETRY_DELAY.toNanos();
             log.warn("[Redis market data] UNAVAILABLE reason={} localFallback=true replayContinuity=false", reason);
+            OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+            if (alertService != null) {
+                alertService.alert(
+                        "redis-market-bridge:unavailable",
+                        "CRITICAL",
+                        "Redis Market Data Bridge transitioned to UNAVAILABLE",
+                        Map.of("reason", reason == null ? "unknown" : reason, "gapSequence", seq));
+            }
         }
         state = State.UNAVAILABLE;
     }

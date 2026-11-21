@@ -13,6 +13,7 @@ public enum ErrorCode {
     INVALID_PORTFOLIO_PREFERENCE(HttpStatus.BAD_REQUEST,"portfolioPublic boolean value is required"),
     TRADING_ACCOUNT_REQUIRED(HttpStatus.CONFLICT,"Explicit member Trading account opening required"),
     MEMBER_ACCOUNT_REQUIRED(HttpStatus.FORBIDDEN,"Member simulation account required"),
+    MEMBER_SUSPENDED(HttpStatus.FORBIDDEN,"Member account is suspended from trading"),
     ROUND_NOT_FOUND(HttpStatus.NOT_FOUND,"Own trading round not found"),
     MEMBER_RESTART_LIMITED(HttpStatus.TOO_MANY_REQUESTS,"Restart cooldown active; retry after nextAvailableAt"),
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "Too many requests. Please try again later."),
@@ -61,6 +62,10 @@ public enum ErrorCode {
     CONTEST_PARTICIPATION_REQUIRED(HttpStatus.FORBIDDEN, "Approved contest season participation is required"),
     CONTEST_APPLICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "Contest application was not found"),
     CONTEST_APPLICATION_ALREADY_PROCESSED(HttpStatus.CONFLICT, "Contest application has already been processed"),
+    CONTEST_PARTICIPANT_NOT_FOUND(HttpStatus.NOT_FOUND, "Contest participant was not found"),
+    CONTEST_ALREADY_CANCELED(HttpStatus.CONFLICT, "Canceled contest season cannot be edited or settled"),
+    CONTEST_ALREADY_SETTLED(HttpStatus.CONFLICT, "Contest season has already been settled"),
+    CONTEST_DELETE_NOT_ALLOWED(HttpStatus.CONFLICT, "Contest season cannot be deleted with active participants or open exposure"),
     INVALID_CONTEST_REQUEST(HttpStatus.BAD_REQUEST, "Invalid contest season or settlement request");
 
     private final HttpStatus status;

@@ -53,17 +53,26 @@ public class ContestSettlementService {
     }
 
     public ContestSettlementResultResponse settleSeason(Long seasonId, String triggeredBy, boolean earlyTerminate) {
-        return executePipeline(seasonId, triggeredBy, earlyTerminate, CHUNK_SIZE);
+        return executePipeline(seasonId, triggeredBy, earlyTerminate, false, CHUNK_SIZE);
     }
 
     public ContestSettlementResultResponse cleanupRemainingExposure(Long seasonId, String triggeredBy) {
-        return executePipeline(seasonId, triggeredBy, true, CHUNK_SIZE);
+        return executePipeline(seasonId, triggeredBy, true, true, CHUNK_SIZE);
     }
 
     public ContestSettlementResultResponse executePipeline(
             Long seasonId,
             String triggeredBy,
             boolean earlyTerminate,
+            int chunkSize) {
+        return executePipeline(seasonId, triggeredBy, earlyTerminate, false, chunkSize);
+    }
+
+    public ContestSettlementResultResponse executePipeline(
+            Long seasonId,
+            String triggeredBy,
+            boolean earlyTerminate,
+            boolean allowSettledCleanup,
             int chunkSize) {
         if (seasonId == null || seasonId <= 0) {
             throw new BusinessException(ErrorCode.INVALID_CONTEST_REQUEST);
@@ -77,7 +86,7 @@ public class ContestSettlementService {
         ContestSettlementChunkExecutor.RunContext run = null;
         try {
             Instant startNow = Instant.now();
-            run = chunkExecutor.beginSettlementRun(seasonId, triggeredBy, earlyTerminate, startNow);
+            run = chunkExecutor.beginSettlementRun(seasonId, triggeredBy, earlyTerminate, allowSettledCleanup, startNow);
 
             Map<Long, BigDecimal> snapshotPrices = chunkExecutor.captureSnapshotPrices(
                     seasonId, run.runId(), Instant.now());

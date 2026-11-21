@@ -4,10 +4,13 @@ import com.yogimangchi.trading.order.dto.*;
 import com.yogimangchi.trading.order.service.OrderQuoteService;
 import com.yogimangchi.trading.order.entity.TradingOrder;
 import com.yogimangchi.trading.position.entity.Position;
+import com.yogimangchi.trading.security.TradingEndpointRateLimiter;
 import com.yogimangchi.trading.tradingaccount.security.TradingPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import java.util.List;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,7 +21,26 @@ import org.springframework.web.bind.annotation.*;
 public class OrderController {
     private final TradingOrderService engine;
     private final OrderQuoteService quotes;
-    public OrderController(TradingOrderService engine, OrderQuoteService quotes) { this.engine = engine; this.quotes=quotes; }
+    private final ObjectProvider<TradingEndpointRateLimiter> rateLimiter;
+
+    public OrderController(TradingOrderService engine, OrderQuoteService quotes) {
+        this(engine, quotes, null);
+    }
+
+    @Autowired
+    public OrderController(TradingOrderService engine, OrderQuoteService quotes,
+            ObjectProvider<TradingEndpointRateLimiter> rateLimiter) {
+        this.engine = engine;
+        this.quotes = quotes;
+        this.rateLimiter = rateLimiter;
+    }
+
+    private void checkOrderWriteRateLimit(Long accountId) {
+        TradingEndpointRateLimiter limiter = rateLimiter != null ? rateLimiter.getIfAvailable() : null;
+        if (limiter != null) {
+            limiter.checkOrderWrite(accountId);
+        }
+    }
     @PostMapping("/orders/quote")
     @Operation(summary="Calculate OPEN cost or a fee-inclusive percentage quantity without creating an order",
             description="Guest Bearer required. Exactly one of quantity or balancePercentage (1-100); leverage comes from the server account/symbol/side setting. MARKET 0.05%, LIMIT 0.03%. Uses fresh server Mark and same passive LIMIT rule. A quote is not a reservation or execution promise. Submit its quantity/leverage through POST orders; a later price/state change can reject it. 400 invalid, 401 credential, 409 cash/risk/mode conflict, 503 freshness/recovery.")
@@ -29,12 +51,16 @@ public class OrderController {
     @Operation(summary="OPEN/add to an integrated Hedge position with MARKET or reserve a LIMIT OPEN",
             description="Same account/symbol/side fills share one Position ID; LONG and SHORT coexist. New OPEN notional 10-1000000 USDT. Leverage 1-100 must match direction-specific symbol setting. MARKET fee 0.05%, LIMIT fee 0.03%, CEILING18 on actual Mark notional. LIMIT reserves margin plus fee at limitPrice without charging it; actual Mark costs are rechecked at execution. Idempotency-Key: 8-100 letters, digits, underscore or hyphen; replay retains original policy/result. LIMIT OPEN LONG must be strictly below fresh Mark; SHORT strictly above; otherwise 409 MARKETABLE_LIMIT_NOT_ALLOWED. LIMIT collateral is CEILING18(limitPrice * quantity / leverage), with additional fee reservation. 400 invalid; 401 credential; 409 ORDER_SIZE_LIMIT_EXCEEDED/margin/risk/idempotency; 503 PRICE_NOT_FRESH/ENGINE_RECOVERING/ACCOUNT_RISK_PENDING/ACCOUNT_RECOVERY_HELD. Confirmed business rejection outcome is NOT_ACCEPTED. Admission TRADING_BUSY/ENGINE_RECOVERING (attemptOutcome NOT_ACCEPTED confirms only this attempt made no commit) and unexpected500 outcome UNKNOWN require keeping the same key, payload and operation until resolved; absence of a result is not proof of nonacceptance. Order book is reference only.")
     public OrderResponse create(@AuthenticationPrincipal TradingPrincipal principal, @RequestHeader("Idempotency-Key") String key,
-            @RequestBody CreateOrderRequest request) { return engine.create(principal.accountId(), key, request); }
+            @RequestBody CreateOrderRequest request) {
+        checkOrderWriteRateLimit(principal.accountId());
+        return engine.create(principal.accountId(), key, request);
+    }
     @PostMapping("/positions/{positionId}/close")
     @Operation(summary="Close all or part of an owned position at the fresh server mark price",
             description="Omit body/quantity for entire remaining position. Quantity positive, at most 8 decimals; no minimum exit notional. Only unreserved quantity may close; excess 409 CLOSE_QUANTITY_EXCEEDED. Cancel pending CLOSE first to use their quantity. Target symbol fresh Mark and isolated safety required; unrelated symbols need not be fresh. MARKET fee 0.05% of actual notional, charged from released collateral/PnL. Gross PnL and fee remain separate. Same key/different quantity 409; another account's target 404. Admission TRADING_BUSY/ENGINE_RECOVERING (attemptOutcome NOT_ACCEPTED confirms only this attempt made no commit) outcome UNKNOWN: retain the original key/payload until confirmed, since this can precede lookup of an already committed result.")
     public OrderResponse close(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long positionId,
             @RequestHeader("Idempotency-Key") String key, @RequestBody(required=false) ClosePositionRequest request) {
+        checkOrderWriteRateLimit(principal.accountId());
         return engine.close(principal.accountId(), positionId, key, request);
     }
     @PostMapping("/positions/{positionId}/close-orders")
@@ -42,6 +68,7 @@ public class OrderController {
             description="PENDING CLOSE reserves quantity, not wallet margin. Side/leverage/symbol come from target. LONG CLOSE (SELL) limit strictly above fresh Mark; SHORT CLOSE (BUY) strictly below; otherwise 409 MARKETABLE_LIMIT_NOT_ALLOWED. Trigger Mark is actual execution price; fee is 0.03% of actual notional at execution. Omit quantity for entire remaining position; reservations cannot be exceeded (409). Only target symbol needs fresh Mark; engine must be caught up (503). Same key/payload replays, different payload 409; another account's target 404. Admission TRADING_BUSY/ENGINE_RECOVERING (attemptOutcome NOT_ACCEPTED confirms only this attempt made no commit) outcome UNKNOWN requires retaining the same key/payload until resolved; a retry can execute if no prior result exists.")
     public OrderResponse limitClose(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long positionId,
             @RequestHeader("Idempotency-Key") String key, @RequestBody LimitCloseRequest request) {
+        checkOrderWriteRateLimit(principal.accountId());
         return engine.createLimitClose(principal.accountId(), positionId, key, request);
     }
     @GetMapping("/orders")
@@ -65,6 +92,7 @@ public class OrderController {
             description="Atomically re-checks order PENDING state, fresh Mark Price, passive limit direction, OPEN margin+fee capacity or CLOSE unreserved position quantity, and isolated liquidation risk. If filled or canceled concurrently, returns 409 ORDER_NOT_PENDING without modifying exposures.")
     public OrderResponse amendPost(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long orderId,
             @RequestBody AmendOrderRequest request) {
+        checkOrderWriteRateLimit(principal.accountId());
         return engine.amend(principal.accountId(), orderId, request);
     }
     @PatchMapping("/orders/{orderId}")
@@ -72,12 +100,14 @@ public class OrderController {
             description="RESTful PATCH alias for pending order modification with identical pessimistic locking and financial validation.")
     public OrderResponse amendPatch(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long orderId,
             @RequestBody AmendOrderRequest request) {
+        checkOrderWriteRateLimit(principal.accountId());
         return engine.amend(principal.accountId(), orderId, request);
     }
     @PostMapping("/orders/{orderId}/cancel")
     @Operation(summary="Cancel an owned pending order and release its margin or close quantity",
             description="Repeated cancel is idempotent. A fill that wins the race returns 409. Cancellation remains available during price/Redis outages.")
     public OrderResponse cancel(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long orderId) {
+        checkOrderWriteRateLimit(principal.accountId());
         return engine.cancel(principal.accountId(), orderId);
     }
     @PostMapping("/orders/cancel-all")
@@ -86,6 +116,7 @@ public class OrderController {
     public CancelAllOrdersResponse cancelAll(
             @AuthenticationPrincipal TradingPrincipal principal,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        checkOrderWriteRateLimit(principal.accountId());
         return engine.cancelAll(principal.accountId(), idempotencyKey);
     }
     @PostMapping("/positions/close-all")
@@ -94,6 +125,7 @@ public class OrderController {
     public CloseAllPositionsResponse closeAll(
             @AuthenticationPrincipal TradingPrincipal principal,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        checkOrderWriteRateLimit(principal.accountId());
         return engine.closeAll(principal.accountId(), idempotencyKey);
     }
 }

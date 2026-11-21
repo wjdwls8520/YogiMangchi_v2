@@ -96,6 +96,13 @@ trading:
     rate-limit-enabled: ${TRADING_GUEST_RATE_LIMIT_ENABLED:true}
     max-per-window: ${TRADING_GUEST_RATE_LIMIT_MAX:10}
     window-seconds: ${TRADING_GUEST_RATE_LIMIT_WINDOW_SECONDS:600}
+  rate-limit:
+    enabled: ${TRADING_RATE_LIMIT_ENABLED:true}
+    candles-per-minute: ${TRADING_RATE_LIMIT_CANDLES_PER_MINUTE:60}
+    orders-per-minute: ${TRADING_RATE_LIMIT_ORDERS_PER_MINUTE:120}
   ops:
     alert-webhook-url: ${OPS_ALERT_WEBHOOK_URL:}
     alert-cooldown-seconds: ${OPS_ALERT_COOLDOWN_SECONDS:300}
+    alert-telegram-chat-id: ${OPS_ALERT_TELEGRAM_CHAT_ID:}
+    resource-watchdog-enabled: ${TRADING_OPS_RESOURCE_WATCHDOG_ENABLED:true}
+    resource-watchdog-interval-ms: ${TRADING_OPS_RESOURCE_WATCHDOG_INTERVAL_MS:60000}

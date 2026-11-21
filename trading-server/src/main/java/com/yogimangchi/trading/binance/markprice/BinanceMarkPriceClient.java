@@ -8,6 +8,9 @@ import com.yogimangchi.trading.marketdata.ticker.MarketTicker;
 import com.yogimangchi.trading.marketdata.ticker.RedisTickerStore;
 import com.yogimangchi.trading.marketdata.LatestMarkPrice;
 import com.yogimangchi.trading.marketdata.LatestPriceStore;
+import com.yogimangchi.trading.ops.OpsAlertService;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
@@ -34,6 +37,7 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -47,6 +51,7 @@ public class BinanceMarkPriceClient {
 
     private static final Logger log = LoggerFactory.getLogger(BinanceMarkPriceClient.class);
     private static final long STALE_NANOS = Duration.ofSeconds(15).toNanos();
+    private static final long DISCONNECT_ALERT_NANOS = Duration.ofSeconds(30).toNanos();
     private static final long ROTATE_NANOS = Duration.ofMinutes(1430).toNanos();
     private static final int MAX_MESSAGE_CHARS = 16_384;
 
@@ -62,6 +67,7 @@ public class BinanceMarkPriceClient {
     private final boolean logPrices;
     private final LatestPriceStore latestPrices;
     private final Consumer<MarketTicker> tickers;
+    private final ObjectProvider<OpsAlertService> alerts;
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean stopping = new AtomicBoolean();
 
@@ -73,6 +79,10 @@ public class BinanceMarkPriceClient {
     private int retryAttempt;
     private Long disconnectedAt;
     private Instant lastReceivedAt;
+    private volatile long lastValidTickNano;
+    private volatile boolean receivedAnyTick;
+    private volatile long reconnectCount;
+    private volatile String lastDisconnectReason;
     private long receivedEvents;
     private long rejectedEvents;
     private long previousEvents;
@@ -81,20 +91,29 @@ public class BinanceMarkPriceClient {
     @Autowired
     public BinanceMarkPriceClient(BinanceSubscriptionTargetLoader loader, ObjectMapper mapper,
             LatestPriceStore latestPrices, RedisTickerStore tickers,
-            @Value("${binance.mark-price.log-prices:false}") boolean logPrices) {
+            @Value("${binance.mark-price.log-prices:false}") boolean logPrices,
+            ObjectProvider<OpsAlertService> alerts) {
         this(loader::loadActiveTargets, mapper, connector(),
                 Executors.newSingleThreadScheduledExecutor(task -> {
                     Thread thread = new Thread(task, "binance-mark-price");
                     thread.setDaemon(true);
                     return thread;
                 }), Clock.systemUTC(), System::nanoTime,
-                new ReconnectBackoff(() -> ThreadLocalRandom.current().nextDouble()), logPrices, latestPrices, tickers::accept);
+                new ReconnectBackoff(() -> ThreadLocalRandom.current().nextDouble()), logPrices, latestPrices, tickers::accept, alerts);
     }
 
     BinanceMarkPriceClient(Supplier<List<BinanceSubscriptionTarget>> loadTargets, ObjectMapper mapper,
             BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect,
             ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime,
             ReconnectBackoff backoff, boolean logPrices, LatestPriceStore latestPrices, Consumer<MarketTicker> tickers) {
+        this(loadTargets, mapper, connect, executor, clock, nanoTime, backoff, logPrices, latestPrices, tickers, null);
+    }
+
+    BinanceMarkPriceClient(Supplier<List<BinanceSubscriptionTarget>> loadTargets, ObjectMapper mapper,
+            BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect,
+            ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime,
+            ReconnectBackoff backoff, boolean logPrices, LatestPriceStore latestPrices, Consumer<MarketTicker> tickers,
+            ObjectProvider<OpsAlertService> alerts) {
         this.loadTargets = loadTargets;
         this.mapper = mapper;
         this.connect = connect;
@@ -105,6 +124,7 @@ public class BinanceMarkPriceClient {
         this.logPrices = logPrices;
         this.latestPrices = latestPrices;
         this.tickers = tickers;
+        this.alerts = alerts;
     }
 
     private static BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connector() {
@@ -189,10 +209,17 @@ public class BinanceMarkPriceClient {
         if (disconnectedAt == null) {
             disconnectedAt = nanoTime.getAsLong();
         }
+        reconnectCount++;
+        lastDisconnectReason = reason;
         retryAttempt = Math.min(retryAttempt + 1, 31);
         long delay = backoff.delayMillis(retryAttempt);
         log.warn("[Binance WS] DISCONNECTED reason={} reconnectAttempt={} nextRetryMs={}",
                 reason, retryAttempt, delay);
+        if (retryAttempt >= 3) {
+            alertOps("binance-mark-ws:reconnect", "CRITICAL", "Binance Mark Price WS repeated disconnects",
+                    Map.of("reconnectAttempt", retryAttempt, "reconnectCount", reconnectCount,
+                            "reason", reason == null ? "unknown" : reason));
+        }
         state = State.RECONNECTING;
         retry = executor.schedule(this::attemptConnection, delay, TimeUnit.MILLISECONDS);
     }
@@ -219,6 +246,18 @@ public class BinanceMarkPriceClient {
                 failed(session, "planned rotation before 24h connection lifetime");
             }
         }
+        if (disconnectedAt != null && (now - disconnectedAt) >= DISCONNECT_ALERT_NANOS) {
+            long disconnectedSec = TimeUnit.NANOSECONDS.toSeconds(now - disconnectedAt);
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("disconnectedSeconds", disconnectedSec);
+            details.put("reconnectAttempt", retryAttempt);
+            details.put("reconnectCount", reconnectCount);
+            if (lastDisconnectReason != null) {
+                details.put("lastDisconnectReason", lastDisconnectReason);
+            }
+            alertOps("binance-mark-ws:disconnected-30s", "CRITICAL",
+                    "Binance Mark Price WS disconnected > 30s", details);
+        }
         long elapsed = now - previousStatsAt;
         if (elapsed >= Duration.ofSeconds(60).toNanos()) {
             log.info("[Binance WS] stats state={} subscribedSymbols={} receivedEvents={} eventsPerSecond={}"
@@ -240,6 +279,28 @@ public class BinanceMarkPriceClient {
         return currentState.name();
     }
 
+    public long reconnectCount() {
+        return reconnectCount;
+    }
+
+    public Long lastTickAgeMs() {
+        if (!receivedAnyTick) {
+            return null;
+        }
+        return TimeUnit.NANOSECONDS.toMillis(Math.max(0L, nanoTime.getAsLong() - lastValidTickNano));
+    }
+
+    public String lastDisconnectReason() {
+        return lastDisconnectReason;
+    }
+
+    private void alertOps(String key, String severity, String title, Map<String, Object> details) {
+        OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+        if (alertService != null) {
+            alertService.alert(key, severity, title, details);
+        }
+    }
+
     private void received(Session session, String text) {
         var event = session.protocol.parse(text, clock.instant());
         if (event.isEmpty()) {
@@ -259,6 +320,8 @@ public class BinanceMarkPriceClient {
             return;
         }
         session.lastDataAt = nanoTime.getAsLong();
+        lastValidTickNano = session.lastDataAt;
+        receivedAnyTick = true;
         if (!session.healthy) {
             long disconnectedMillis = disconnectedAt == null ? 0
                     : TimeUnit.NANOSECONDS.toMillis(session.lastDataAt - disconnectedAt);

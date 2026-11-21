@@ -97,14 +97,27 @@ public class ContestSettlementChunkExecutor {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 15)
     public RunContext beginSettlementRun(Long seasonId, String triggeredBy, boolean earlyTerminate, Instant now) {
+        return beginSettlementRun(seasonId, triggeredBy, earlyTerminate, false, now);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 15)
+    public RunContext beginSettlementRun(
+            Long seasonId,
+            String triggeredBy,
+            boolean earlyTerminate,
+            boolean allowSettledCleanup,
+            Instant now) {
         var rows = jdbc.queryForList(
-                "SELECT id, contest_end_at, settled_at FROM trading.contest_season WHERE id = ? FOR UPDATE",
+                "SELECT id, is_canceled, contest_end_at, settled_at FROM trading.contest_season WHERE id = ? FOR UPDATE",
                 seasonId);
         if (rows.isEmpty()) {
             throw new BusinessException(ErrorCode.CONTEST_SEASON_NOT_FOUND);
         }
-        if (!earlyTerminate && rows.get(0).get("settled_at") != null) {
-            throw new BusinessException(ErrorCode.TRADING_BUSY);
+        if (Boolean.TRUE.equals(rows.get(0).get("is_canceled"))) {
+            throw new BusinessException(ErrorCode.CONTEST_ALREADY_CANCELED);
+        }
+        if (!allowSettledCleanup && rows.get(0).get("settled_at") != null) {
+            throw new BusinessException(earlyTerminate ? ErrorCode.CONTEST_ALREADY_SETTLED : ErrorCode.TRADING_BUSY);
         }
         OffsetDateTime tsNow = at(now);
         OffsetDateTime staleThreshold = at(now.minus(STALE_RUN_TIMEOUT));
@@ -354,12 +367,18 @@ public class ContestSettlementChunkExecutor {
             Instant now) {
         OffsetDateTime tsNow = at(now);
 
+        Timestamp existingSeasonSettled = jdbc.queryForObject(
+                "SELECT settled_at FROM trading.contest_season WHERE id = ?",
+                Timestamp.class, seasonId);
+        boolean alreadySettled = existingSeasonSettled != null;
+
         var rows = jdbc.queryForList("""
                 SELECT cp.id, cp.account_id, cp.seed_money, w.balance, w.realized_pnl
                 FROM trading.contest_participant cp
                 JOIN trading.trading_account a ON a.id = cp.account_id
                 JOIN trading.wallet w ON w.account_id = cp.account_id
                 WHERE cp.contest_season_id = ?
+                  AND cp.status = 'ACTIVE'
                   AND a.status <> 'WITHDRAWN'
                 ORDER BY cp.id ASC
                 """, seasonId);
@@ -382,31 +401,33 @@ public class ContestSettlementChunkExecutor {
                 .thenComparing(ParticipantScore::finalRealizedPnl, Comparator.reverseOrder())
                 .thenComparingLong(ParticipantScore::participantId));
 
-        int currentRank = 1;
-        for (int i = 0; i < scores.size(); i++) {
-            ParticipantScore cur = scores.get(i);
-            if (i > 0) {
-                ParticipantScore prev = scores.get(i - 1);
-                if (cur.finalRoiPct().compareTo(prev.finalRoiPct()) != 0
-                        || cur.finalRealizedPnl().compareTo(prev.finalRealizedPnl()) != 0) {
-                    currentRank = i + 1;
+        if (!alreadySettled) {
+            int currentRank = 1;
+            for (int i = 0; i < scores.size(); i++) {
+                ParticipantScore cur = scores.get(i);
+                if (i > 0) {
+                    ParticipantScore prev = scores.get(i - 1);
+                    if (cur.finalRoiPct().compareTo(prev.finalRoiPct()) != 0
+                            || cur.finalRealizedPnl().compareTo(prev.finalRealizedPnl()) != 0) {
+                        currentRank = i + 1;
+                    }
                 }
+                jdbc.update("""
+                        UPDATE trading.contest_participant
+                        SET final_balance = ?,
+                            final_realized_pnl = ?,
+                            final_roi_pct = ?,
+                            final_rank = ?,
+                            settled_at = COALESCE(settled_at, ?)
+                        WHERE id = ?
+                        """,
+                        cur.finalBalance(),
+                        cur.finalRealizedPnl(),
+                        cur.finalRoiPct(),
+                        currentRank,
+                        tsNow,
+                        cur.participantId());
             }
-            jdbc.update("""
-                    UPDATE trading.contest_participant
-                    SET final_balance = ?,
-                        final_realized_pnl = ?,
-                        final_roi_pct = ?,
-                        final_rank = ?,
-                        settled_at = COALESCE(settled_at, ?)
-                    WHERE id = ?
-                    """,
-                    cur.finalBalance(),
-                    cur.finalRealizedPnl(),
-                    cur.finalRoiPct(),
-                    currentRank,
-                    tsNow,
-                    cur.participantId());
         }
 
         int participantCount = scores.size();

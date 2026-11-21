@@ -33,8 +33,16 @@ public class RiskJournalRetentionService {
     private static final Logger log = LoggerFactory.getLogger(RiskJournalRetentionService.class);
     private static final int MIN_BATCH_SIZE = 1;
     private static final int MAX_BATCH_SIZE = 5000;
+    public static final Duration NOTIFICATION_RETENTION = Duration.ofDays(90);
+    public static final Duration IDEMPOTENCY_COMMAND_RETENTION = Duration.ofDays(30);
 
     public record RetentionPurgeResult(int purgedAttempts, int purgedWorks, int purgedEvents) { }
+
+    public record AuxiliaryPurgeResult(
+            int purgedNotifications,
+            int purgedIdempotentCommands,
+            int purgedStopLossCommands,
+            int purgedTakeProfitCommands) { }
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
@@ -93,10 +101,18 @@ public class RiskJournalRetentionService {
     public void runScheduledPurge() {
         if (!enabled || closed) return;
         try {
-            RetentionPurgeResult result = purgeExpired(Instant.now());
+            Instant now = Instant.now();
+            RetentionPurgeResult result = purgeExpired(now);
             if (result.purgedWorks() > 0 || result.purgedEvents() > 0 || result.purgedAttempts() > 0) {
                 log.info("[Risk retention] purgedWorks={} purgedAttempts={} purgedEvents={}",
                         result.purgedWorks(), result.purgedAttempts(), result.purgedEvents());
+            }
+            AuxiliaryPurgeResult aux = purgeAuxiliaryExpired(now);
+            if (aux.purgedNotifications() > 0 || aux.purgedIdempotentCommands() > 0
+                    || aux.purgedStopLossCommands() > 0 || aux.purgedTakeProfitCommands() > 0) {
+                log.info("[Risk retention] auxiliary purgedNotifications={} purgedIdempotent={} purgedSlCmd={} purgedTpCmd={}",
+                        aux.purgedNotifications(), aux.purgedIdempotentCommands(),
+                        aux.purgedStopLossCommands(), aux.purgedTakeProfitCommands());
             }
         } catch (RuntimeException failure) {
             log.warn("[Risk retention] purge batch deferred cause={}", failure.getClass().getSimpleName());
@@ -186,6 +202,70 @@ public class RiskJournalRetentionService {
             return new RetentionPurgeResult(purgedAttempts, purgedWorks, purgedEvents);
         });
         return Objects.requireNonNullElse(result, new RetentionPurgeResult(0, 0, 0));
+    }
+
+    /**
+     * Bounded periodic purge for expired non-ledger operational tables:
+     * - trading.notification (>90d)
+     * - trading.idempotent_command (>30d)
+     * - trading.position_stop_loss_command (>30d)
+     * - trading.position_take_profit_command (>30d)
+     * Core financial ledger tables (trading_order, fill, position, member_trading_round) are never touched.
+     */
+    public synchronized AuxiliaryPurgeResult purgeAuxiliaryExpired(Instant now) {
+        if (closed) {
+            return new AuxiliaryPurgeResult(0, 0, 0, 0);
+        }
+        Instant ref = Objects.requireNonNull(now, "now");
+        OffsetDateTime notificationCutoff = ref.minus(NOTIFICATION_RETENTION).atOffset(ZoneOffset.UTC);
+        OffsetDateTime commandCutoff = ref.minus(IDEMPOTENCY_COMMAND_RETENTION).atOffset(ZoneOffset.UTC);
+        AuxiliaryPurgeResult result = tx.execute(status -> {
+            jdbc.execute("SET LOCAL lock_timeout='500ms'");
+            jdbc.execute("SET LOCAL statement_timeout='5s'");
+
+            int purgedNotifs = jdbc.update("""
+                    DELETE FROM trading.notification n
+                    WHERE n.id IN (
+                        SELECT id FROM trading.notification
+                        WHERE created_at < ?
+                        ORDER BY created_at, id
+                        LIMIT ?
+                    )
+                    """, notificationCutoff, batchSize);
+
+            int purgedIdemp = jdbc.update("""
+                    DELETE FROM trading.idempotent_command ic
+                    WHERE (ic.account_id, ic.request_key) IN (
+                        SELECT account_id, request_key FROM trading.idempotent_command
+                        WHERE created_at < ?
+                        ORDER BY created_at
+                        LIMIT ?
+                    )
+                    """, commandCutoff, batchSize);
+
+            int purgedSlCmd = jdbc.update("""
+                    DELETE FROM trading.position_stop_loss_command sc
+                    WHERE (sc.account_id, sc.request_key) IN (
+                        SELECT account_id, request_key FROM trading.position_stop_loss_command
+                        WHERE created_at < ?
+                        ORDER BY created_at
+                        LIMIT ?
+                    )
+                    """, commandCutoff, batchSize);
+
+            int purgedTpCmd = jdbc.update("""
+                    DELETE FROM trading.position_take_profit_command tc
+                    WHERE (tc.account_id, tc.request_key) IN (
+                        SELECT account_id, request_key FROM trading.position_take_profit_command
+                        WHERE created_at < ?
+                        ORDER BY created_at
+                        LIMIT ?
+                    )
+                    """, commandCutoff, batchSize);
+
+            return new AuxiliaryPurgeResult(purgedNotifs, purgedIdemp, purgedSlCmd, purgedTpCmd);
+        });
+        return Objects.requireNonNullElse(result, new AuxiliaryPurgeResult(0, 0, 0, 0));
     }
 
     @PreDestroy

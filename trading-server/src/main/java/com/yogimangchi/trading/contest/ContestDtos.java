@@ -155,6 +155,25 @@ public final class ContestDtos {
 
     public record AdminRejectRequest(String reason) { }
 
+    public record AdminDisqualifyRequest(String reason) { }
+
+    public record AdminDisqualifyParticipantResponse(
+            Long seasonId,
+            Long memberId,
+            Long participantId,
+            Long accountId,
+            String status,
+            String reason,
+            int canceledOrderCount,
+            int closedPositionCount,
+            Instant disqualifiedAt) { }
+
+    public record AdminSeasonDeleteResponse(
+            Long seasonId,
+            boolean deleted,
+            boolean hardDeleted,
+            boolean archived) { }
+
     public record AdminBulkApproveRequest(List<Long> applicationIds) { }
 
     public record AdminSeasonListResponse(

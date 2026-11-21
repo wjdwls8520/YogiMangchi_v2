@@ -85,6 +85,18 @@ public class SymbolLeverageService {
             if (affected.stream().anyMatch(p -> isolated.risk(p, mark).atRisk()
                     || isolated.risk(p.getSide(), p.getQuantity(), p.getEntryNotional(), p.marginAtLeverage(leverage), mark).atRisk()))
                 throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+            for (Position p : affected) {
+                if (p.getStopLossStatus() == Position.StopLossStatus.ACTIVE && p.getStopLossPrice() != null) {
+                    BigDecimal newMargin = p.marginAtLeverage(leverage);
+                    try {
+                        if (isolated.risk(p.getSide(), p.getQuantity(), p.getEntryNotional(), newMargin, p.getStopLossPrice()).atRisk()) {
+                            throw new BusinessException(ErrorCode.STOP_LOSS_BEYOND_LIQUIDATION);
+                        }
+                    } catch (IllegalArgumentException | ArithmeticException invalidRange) {
+                        throw new BusinessException(ErrorCode.STOP_LOSS_BEYOND_LIQUIDATION);
+                    }
+                }
+            }
             BigDecimal capacity = wallet.getBalance();
             if (wallet.getUsedMargin().add(usedDelta).add(wallet.getReservedMargin()).add(reservedDelta).compareTo(capacity) > 0)
                 throw new BusinessException(ErrorCode.INSUFFICIENT_MARGIN);

@@ -10,8 +10,14 @@ import java.util.HexFormat;
 public final class TradingCommandFingerprint {
     private TradingCommandFingerprint() { }
     public static String open(CreateOrderRequest request) {
-        return hash("OPEN|"+request.type()+"|"+request.tradingSymbolId()+"|"+request.side()+"|"+decimal(request.quantity())+"|"+request.leverage()
-                +(request.limitPrice()==null?"":"|"+decimal(request.limitPrice())));
+        String base = "OPEN|"+request.type()+"|"+request.tradingSymbolId()+"|"+request.side()+"|"+decimal(request.quantity())+"|"+request.leverage()
+                +(request.limitPrice()==null?"":"|"+decimal(request.limitPrice()));
+        if (request.stopLossPrice() != null || request.takeProfitPrice() != null) {
+            base = base
+                    + "|SL:" + (request.stopLossPrice() == null ? "" : decimal(request.stopLossPrice()))
+                    + "|TP:" + (request.takeProfitPrice() == null ? "" : decimal(request.takeProfitPrice()));
+        }
+        return hash(base);
     }
     public static String close(Long position,BigDecimal quantity) {
         return hash("CLOSE|"+position+(quantity==null?"":"|"+decimal(quantity)));

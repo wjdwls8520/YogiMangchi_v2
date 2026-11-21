@@ -37,7 +37,12 @@ class ProdProfileSecurityTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"))
                 .andExpect(jsonPath("$.components").doesNotExist());
-        assertThat(environment.getProperty("server.forward-headers-strategy")).isEqualTo("framework");
+        assertThat(environment.getProperty("server.forward-headers-strategy")).isEqualTo("native");
+        assertThat(environment.getProperty("server.tomcat.remoteip.internal-proxies")).isNotBlank();
+        assertThat(environment.getProperty("spring.datasource.hikari.maximum-pool-size")).isEqualTo("10");
+        assertThat(environment.getProperty("spring.datasource.hikari.minimum-idle")).isEqualTo("2");
+        assertThat(environment.getProperty("spring.datasource.hikari.connection-timeout")).isEqualTo("3000");
+        assertThat(environment.getProperty("spring.datasource.hikari.leak-detection-threshold")).isEqualTo("10000");
         assertThat(environment.getProperty("management.endpoint.health.show-details")).isEqualTo("never");
         assertThat(environment.getProperty("trading.ops.alert-cooldown-seconds")).isEqualTo("300");
     }

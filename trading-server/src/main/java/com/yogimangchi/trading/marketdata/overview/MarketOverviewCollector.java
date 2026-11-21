@@ -89,7 +89,12 @@ public class MarketOverviewCollector {
     private final AtomicLong tickCounter = new AtomicLong(0);
     private final AtomicInteger consecutiveUpstreamFailures = new AtomicInteger(0);
 
+    public record OverviewHealth(boolean healthy, int staleGroupCount, String lastError) { }
+
     private volatile MarketOverviewSnapshot lastSnapshot;
+    private volatile int lastStaleGroupCount;
+    private volatile String lastError;
+    private volatile Instant lastCollectedAt;
 
     @Autowired
     public MarketOverviewCollector(
@@ -185,9 +190,18 @@ public class MarketOverviewCollector {
         }
         try {
             collectOnce();
+            lastError = null;
         } catch (RuntimeException exception) {
-            log.warn("[Market overview] collection cycle failed: {}", exception.getClass().getSimpleName());
+            lastError = exception.getClass().getSimpleName();
+            log.warn("[Market overview] collection cycle failed: {}", lastError);
         }
+    }
+
+    public OverviewHealth health() {
+        Instant collected = lastCollectedAt;
+        boolean fresh = collected != null && Duration.between(collected, clock.instant()).compareTo(Duration.ofSeconds(60)) <= 0;
+        boolean healthy = lastSnapshot != null && fresh && consecutiveUpstreamFailures.get() < 3 && lastError == null;
+        return new OverviewHealth(healthy, lastStaleGroupCount, lastError);
     }
 
     public MarketOverviewSnapshot collectOnce() {
@@ -197,15 +211,23 @@ public class MarketOverviewCollector {
 
         boolean refreshDerivativesRatio = (tick % 3 == 0);
         boolean refreshMacro = (tick % 12 == 0);
+        int staleGroups = 0;
 
         // 1. Live BTC price & 24h change from shared Redis (fallback: Binance public 24hr ticker)
         BtcQuote btcQuote = resolveBtcQuote(now, prev.btcChange24h());
+        if (btcQuote.priceUsd() == null) {
+            staleGroups++;
+        }
 
         // 2. Real-time USD/KRW exchange rate + 14-day history (Yahoo KRW=X -> Naver FX_USDKRW -> OpenER/Frankfurter)
         FxQuote fxQuote = resolveUsdKrwQuote(now, prev);
 
         // 3. Real-time Upbit KRW-BTC ticker
-        BigDecimal upbitBtcKrw = fetchUpbitBtcKrw().orElse(prev.upbitBtcKrw());
+        Optional<BigDecimal> fetchedUpbit = fetchUpbitBtcKrw();
+        if (fetchedUpbit.isEmpty()) {
+            staleGroups++;
+        }
+        BigDecimal upbitBtcKrw = fetchedUpbit.orElse(prev.upbitBtcKrw());
         BigDecimal kimchiPremium = (upbitBtcKrw != null && btcQuote.priceUsd() != null)
                 ? MarketOverviewMath.computeKimchiPremiumPercent(upbitBtcKrw, btcQuote.priceUsd(), fxQuote.rate())
                 : prev.kimchiPremiumPercent();
@@ -218,6 +240,8 @@ public class MarketOverviewCollector {
             if (dom != null) {
                 btcDominance = dom.dominancePercent();
                 totalMcapChange24h = dom.totalMarketCapChange24hPct();
+            } else {
+                staleGroups++;
             }
         }
         BigDecimal btcDominanceChange24h = totalMcapChange24h != null
@@ -232,6 +256,8 @@ public class MarketOverviewCollector {
             if (oi != null) {
                 openInterestBtc = oi.openInterestBtc();
                 openInterestBillions = oi.openInterestBillionsUsd();
+            } else {
+                staleGroups++;
             }
         } else if (openInterestBtc != null && btcQuote.priceUsd() != null) {
             openInterestBillions = MarketOverviewMath.computeOpenInterestBillionsUsd(openInterestBtc, btcQuote.priceUsd());
@@ -245,6 +271,8 @@ public class MarketOverviewCollector {
             if (fng != null) {
                 fearGreedValue = fng.value();
                 fearGreedLabelKr = fng.labelKr();
+            } else {
+                staleGroups++;
             }
         }
 
@@ -254,6 +282,8 @@ public class MarketOverviewCollector {
             Integer bull = fetchFuturesBullPct().orElse(null);
             if (bull != null) {
                 futuresBullPct = bull;
+            } else {
+                staleGroups++;
             }
         }
 
@@ -277,6 +307,8 @@ public class MarketOverviewCollector {
                 now
         );
         this.lastSnapshot = next;
+        this.lastStaleGroupCount = staleGroups;
+        this.lastCollectedAt = now;
         store.write(next);
         return next;
     }
@@ -593,6 +625,7 @@ public class MarketOverviewCollector {
         Optional<String> raw = httpGet.apply(uri);
         if (raw.isEmpty()) {
             int failures = consecutiveUpstreamFailures.incrementAndGet();
+            lastError = "upstream_empty:" + uri.getHost();
             if (failures == 3 || (failures > 3 && failures % 10 == 0)) {
                 log.warn("[Market overview] consecutive upstream fetch failures count={} host={}", failures, uri.getHost());
             }
@@ -605,12 +638,14 @@ public class MarketOverviewCollector {
                 return Optional.of(parsed);
             }
             int failures = consecutiveUpstreamFailures.incrementAndGet();
+            lastError = "upstream_null_json:" + uri.getHost();
             if (failures == 3 || (failures > 3 && failures % 10 == 0)) {
                 log.warn("[Market overview] consecutive upstream empty JSON responses count={} host={}", failures, uri.getHost());
             }
             return Optional.empty();
         } catch (IOException exception) {
             int failures = consecutiveUpstreamFailures.incrementAndGet();
+            lastError = "upstream_parse:" + uri.getHost() + ":" + exception.getClass().getSimpleName();
             if (failures == 3 || (failures > 3 && failures % 10 == 0)) {
                 log.warn("[Market overview] consecutive upstream parse failures count={} host={} cause={}",
                         failures, uri.getHost(), exception.getClass().getSimpleName());

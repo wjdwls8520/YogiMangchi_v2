@@ -23,4 +23,12 @@ public class TradingCredentials {
         MemberCredentials member=members.getIfAvailable();
         return member!=null && token.contains(".") ? member.authenticate(token, contestSeasonId) : Optional.empty();
     }
+
+    public Optional<TradingPrincipal> authenticateDegradedAdmin(String token) {
+        if (token == null || token.length() > 8192 || !token.contains(".")) {
+            return Optional.empty();
+        }
+        MemberCredentials member = members.getIfAvailable();
+        return member != null ? member.authenticateDegradedAdmin(token) : Optional.empty();
+    }
 }

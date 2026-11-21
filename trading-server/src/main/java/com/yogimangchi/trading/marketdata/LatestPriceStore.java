@@ -1,5 +1,6 @@
 package com.yogimangchi.trading.marketdata;
 
+import com.yogimangchi.trading.ops.OpsAlertService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -11,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
@@ -25,6 +27,7 @@ public class LatestPriceStore {
     private final Clock clock;
     private final ApplicationEventPublisher events;
     private final MarkPriceTimePolicy.Policy policy;
+    private final ObjectProvider<OpsAlertService> alerts;
     private final Map<Long, LatestMarkPrice> prices = new HashMap<>();
     private final Set<Long> available = new HashSet<>();
     private final Set<Long> clockRejected = new HashSet<>();
@@ -45,26 +48,37 @@ public class LatestPriceStore {
     }
 
     @Autowired
+    public LatestPriceStore(ApplicationEventPublisher events, MarkPriceTimePolicy.Policy policy,
+            ObjectProvider<OpsAlertService> alerts) {
+        this(Clock.systemUTC(), events, policy, alerts);
+    }
+
     public LatestPriceStore(ApplicationEventPublisher events, MarkPriceTimePolicy.Policy policy) {
-        this(Clock.systemUTC(), events, policy);
+        this(Clock.systemUTC(), events, policy, null);
     }
 
     public LatestPriceStore(ApplicationEventPublisher events) {
-        this(Clock.systemUTC(), events, MarkPriceTimePolicy.STRICT);
+        this(Clock.systemUTC(), events, MarkPriceTimePolicy.STRICT, null);
     }
 
     public LatestPriceStore(Clock clock) {
-        this(clock, event -> { }, MarkPriceTimePolicy.STRICT);
+        this(clock, event -> { }, MarkPriceTimePolicy.STRICT, null);
     }
 
     public LatestPriceStore(Clock clock, ApplicationEventPublisher events) {
-        this(clock, events, MarkPriceTimePolicy.STRICT);
+        this(clock, events, MarkPriceTimePolicy.STRICT, null);
     }
 
     public LatestPriceStore(Clock clock, ApplicationEventPublisher events, MarkPriceTimePolicy.Policy policy) {
+        this(clock, events, policy, null);
+    }
+
+    public LatestPriceStore(Clock clock, ApplicationEventPublisher events, MarkPriceTimePolicy.Policy policy,
+            ObjectProvider<OpsAlertService> alerts) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.events = Objects.requireNonNull(events, "events");
         this.policy = Objects.requireNonNull(policy, "policy");
+        this.alerts = alerts;
     }
 
     public void beginSubscription(Set<Long> tradingSymbolIds) {
@@ -165,6 +179,18 @@ public class LatestPriceStore {
             else if (status == MarkPriceTimePolicy.ClockStatus.WARNING) log.warn(format, fields);
             else log.info(format, fields);
             clockLoggedAt.put(price.tradingSymbolId(), now);
+        }
+        boolean transitionedToBad = (previous == null || previous.status() != status)
+                && (status == MarkPriceTimePolicy.ClockStatus.REJECTED || status == MarkPriceTimePolicy.ClockStatus.DEGRADED);
+        if (transitionedToBad) {
+            OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+            if (alertService != null) {
+                alertService.alert(
+                        "market-clock:" + status.name() + ":" + price.tradingSymbolId(),
+                        status == MarkPriceTimePolicy.ClockStatus.REJECTED ? "CRITICAL" : "WARN",
+                        "Market clock transitioned to " + status.name(),
+                        Map.of("tradingSymbolId", price.tradingSymbolId(), "status", status.name(), "skewMs", skewMs));
+            }
         }
         return status;
     }

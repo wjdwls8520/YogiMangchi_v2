@@ -160,8 +160,12 @@ public class Position {
     public BigDecimal closeForGuestRetry(Instant now) {
         return closeAdministratively(now,"GUEST_RETRY");
     }
+    public BigDecimal closeForGuestExpiration(Instant now) {
+        return closeAdministratively(now, "GUEST_EXPIRED");
+    }
     public BigDecimal closeForMemberRestart(Instant now) {return closeAdministratively(now,"MEMBER_RESTART");}
     public BigDecimal closeForContestCancellation(Instant now) { return closeAdministratively(now, "CONTEST_CANCELED"); }
+    public BigDecimal closeForContestDisqualification(Instant now) { return closeAdministratively(now, "CONTEST_DISQUALIFIED"); }
     public Settlement closeForContestSettlement(BigDecimal price, Instant now) {
         Settlement settlement = close(quantity, price, now, true);
         closeReason = "CONTEST_SETTLEMENT";
@@ -206,6 +210,11 @@ public class Position {
         if(stopLossStatus!=StopLossStatus.ACTIVE) return;
         stopLossStatus=StopLossStatus.CANCELED; stopLossReason="CLIENT_CANCEL";
         stopLossVersion=Math.incrementExact(stopLossVersion); stopLossUpdatedAt=Objects.requireNonNull(now);
+    }
+    public boolean expireStopLossIfActive(String reason, Instant now) {
+        if (stopLossStatus != StopLossStatus.ACTIVE) return false;
+        expireStopLoss(Objects.requireNonNull(reason), Objects.requireNonNull(now));
+        return true;
     }
     private void expireStopLoss(String reason,Instant now) {
         if(stopLossStatus!=StopLossStatus.ACTIVE) return;

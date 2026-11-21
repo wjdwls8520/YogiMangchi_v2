@@ -141,6 +141,14 @@ public class TradingNotificationSseService {
         }
     }
 
+    public int activeConnectionCount() {
+        int total = 0;
+        for (Set<SseEmitter> set : emittersByMember.values()) {
+            total += set.size();
+        }
+        return total;
+    }
+
     public void disconnectMember(Long memberId) {
         if (memberId == null) {
             return;

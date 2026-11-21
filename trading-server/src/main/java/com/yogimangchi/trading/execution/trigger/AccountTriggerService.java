@@ -236,6 +236,7 @@ public class AccountTriggerService {
                 order.reject(rejection, now);
                 committed("rejected", order, null);
             } else {
+                boolean wasExistingPosition = hedge.existing(open, order.getTradingSymbolId(), order.getSide()) != null;
                 Position position = hedge.apply(open, accountId, order.getTradingSymbolId(), order.getSide(),
                         order.getQuantity(), tick.domainMarkPrice(), effectiveLeverage, now);
                 wallet.openMargin(margin, fee);
@@ -244,6 +245,9 @@ public class AccountTriggerService {
                         BigDecimal.ZERO, fee, BigDecimal.ZERO));
                 byId.put(position.getId(), position);
                 committed("limit-filled", order, fill);
+                if (wasExistingPosition) {
+                    revalidateProtectionAfterIncrease(position, activeTakeProfits, tick.domainMarkPrice(), now);
+                }
             }
             account.recordFinancialChange(now);
         }
@@ -314,6 +318,39 @@ public class AccountTriggerService {
         events.recordStopLoss(position);
         expireTakeProfit(activeTakeProfits, position.getId(), "POSITION_LIQUIDATED", now);
         account.recordFinancialChange(now);
+    }
+
+    private void revalidateProtectionAfterIncrease(
+            Position position,
+            Map<Long, PositionTakeProfit> activeTakeProfits,
+            BigDecimal currentMark,
+            Instant now) {
+        if (position.getStopLossStatus() == Position.StopLossStatus.ACTIVE && position.getStopLossPrice() != null) {
+            BigDecimal stopPrice = position.getStopLossPrice();
+            boolean notProtective = position.getSide() == Position.Side.LONG
+                    ? stopPrice.compareTo(currentMark) >= 0
+                    : stopPrice.compareTo(currentMark) <= 0;
+            boolean beyondLiquidation;
+            try {
+                beyondLiquidation = isolated.risk(position, stopPrice).atRisk();
+            } catch (IllegalArgumentException | ArithmeticException invalidRange) {
+                beyondLiquidation = true;
+            }
+            if ((notProtective || beyondLiquidation) && position.expireStopLossIfActive("POSITION_CHANGED", now)) {
+                positions.flush();
+                events.recordStopLoss(position);
+            }
+        }
+        PositionTakeProfit tp = activeTakeProfits.get(position.getId());
+        if (tp != null && tp.getStatus() == PositionTakeProfit.Status.ACTIVE && tp.getTakeProfitPrice() != null) {
+            BigDecimal target = tp.getTakeProfitPrice();
+            boolean invalidTp = position.getSide() == Position.Side.LONG
+                    ? (target.compareTo(currentMark) <= 0 || target.compareTo(position.getEntryPrice()) <= 0)
+                    : (target.compareTo(currentMark) >= 0 || target.compareTo(position.getEntryPrice()) >= 0);
+            if (invalidTp) {
+                expireTakeProfit(activeTakeProfits, position.getId(), "POSITION_CHANGED", now);
+            }
+        }
     }
 
     private void expireTakeProfit(Map<Long, PositionTakeProfit> activeTakeProfits, Long positionId, String reason, Instant now) {

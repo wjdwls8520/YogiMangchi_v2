@@ -23,7 +23,8 @@ public class AccountLock {
     @Transactional(propagation = Propagation.MANDATORY)
     public TradingAccount lock(Long accountId) {
         var account=lockIncludingWithdrawn(accountId);
-        if(account.getStatus()==TradingAccount.Status.WITHDRAWN) throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
+        if(account.getStatus()==TradingAccount.Status.WITHDRAWN || account.getStatus()==TradingAccount.Status.EXPIRED)
+            throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
         return account;
     }
 

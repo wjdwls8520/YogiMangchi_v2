@@ -4,10 +4,13 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.execution.trigger.TradingEngineGate;
 import com.yogimangchi.trading.marketdata.*;
+import com.yogimangchi.trading.ops.OpsAlertService;
 import jakarta.annotation.PreDestroy;
 import java.util.*;
 import java.util.concurrent.*;
 import org.slf4j.*;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -38,16 +41,21 @@ public class DurableRiskWorker {
     private static final Logger log=LoggerFactory.getLogger(DurableRiskWorker.class);
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final RiskWorkRunner runner;
     private final TradingEngineGate gate;private final RedisMarketDataBridge bridge;private final boolean enabled;
+    private final ObjectProvider<OpsAlertService> alerts;
     private final ScheduledExecutorService executor=Executors.newSingleThreadScheduledExecutor(r -> {var t=new Thread(r,"durable-risk-worker");t.setDaemon(true);return t;});
     private final java.util.concurrent.atomic.AtomicBoolean nudgePending=new java.util.concurrent.atomic.AtomicBoolean();
     private volatile boolean closed;
-    private volatile int failures;private volatile long retryAfter;
+    private volatile int failures;private volatile int consecutiveFailures;private volatile long retryAfter;
     private long committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts;
     private long readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork,admissionDeferrals;
     public record Measurements(long committedWork,long maxReceiveCommitMs,long maxWorkDelayMs,long failedWork,long lockTimeouts,long readyQueries,long readyQueryNanos,long maxReadyQueryNanos,long selectedWork,long admissionDeferrals) { }
     public synchronized Measurements measurements(){return new Measurements(committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts,readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork,admissionDeferrals);}
     public DurableRiskWorker(JdbcTemplate jdbc,ObjectMapper json,RiskWorkRunner runner,TradingEngineGate gate,RedisMarketDataBridge bridge,@Value("${trading.trigger.enabled:true}")boolean enabled) {
-        this.jdbc=jdbc;this.json=json;this.runner=runner;this.gate=gate;this.bridge=bridge;this.enabled=enabled;
+        this(jdbc,json,runner,gate,bridge,enabled,null);
+    }
+    @Autowired
+    public DurableRiskWorker(JdbcTemplate jdbc,ObjectMapper json,RiskWorkRunner runner,TradingEngineGate gate,RedisMarketDataBridge bridge,@Value("${trading.trigger.enabled:true}")boolean enabled,ObjectProvider<OpsAlertService> alerts) {
+        this.jdbc=jdbc;this.json=json;this.runner=runner;this.gate=gate;this.bridge=bridge;this.enabled=enabled;this.alerts=alerts;
     }
     @EventListener(ApplicationReadyEvent.class) public void start(){if(enabled)executor.scheduleWithFixedDelay(this::pump,0,50,TimeUnit.MILLISECONDS);}
     public boolean isEnabled(){return enabled&&!closed;}
@@ -61,11 +69,19 @@ public class DurableRiskWorker {
     }
     private void pump() {
         if(backingOff())return;
-        try{runOnce();failures=0;}
+        try{runOnce();failures=0;consecutiveFailures=0;}
         catch(Exception failure) {
-            gate.recovering();failures=Math.min(6,failures+1);int seconds=Math.min(30,1<<(failures-1));
+            gate.recovering();failures=Math.min(6,failures+1);consecutiveFailures++;int seconds=Math.min(30,1<<(failures-1));
             retryAfter=System.nanoTime()+TimeUnit.SECONDS.toNanos(seconds);
-            log.warn("[Risk worker] journal unavailable retrySeconds={} cause={}",seconds,failure.getClass().getSimpleName());
+            log.warn("[Risk worker] journal unavailable consecutiveFailures={} retrySeconds={} cause={}",consecutiveFailures,seconds,failure.getClass().getSimpleName());
+            if(consecutiveFailures>=3) {
+                OpsAlertService alertService=alerts!=null?alerts.getIfAvailable():null;
+                if(alertService!=null) {
+                    alertService.alert("durable-risk-worker:journal-failure","CRITICAL",
+                            "DurableRiskWorker consecutive journal failures",
+                            Map.of("consecutiveFailures",consecutiveFailures,"retrySeconds",seconds,"cause",failure.getClass().getSimpleName()));
+                }
+            }
         }
     }
     public synchronized void runOnce() throws Exception {

@@ -53,7 +53,9 @@ public class RiskPriceJournal {
                         insert into trading.risk_account_work(event_id,account_id,round_id,guest_generation)
                         select ?,a.id,r.id,(select max(g.id) from trading.guest_retry g where g.account_id=a.id)
                         from trading.trading_account a left join trading.member_trading_round r on r.account_id=a.id and r.status='ACTIVE'
-                        where a.status in ('ACTIVE','BANKRUPT') and a.id in (
+                        where a.status='ACTIVE'
+                          and (not a.guest_account or a.credential_expires_at > clock_timestamp())
+                          and a.id in (
                           select account_id from trading.position where status='OPEN' and trading_symbol_id=?
                           union select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?
                           union select account_id from trading.risk_hold h where resolved_at is null and trading_symbol_id=? and (%s))
@@ -73,7 +75,9 @@ public class RiskPriceJournal {
         for(long symbol:event.tradingSymbolIds())jdbc.update("""
             insert into trading.risk_hold(account_id,trading_symbol_id,event_id,reason,evidence)
             select a.id,?,?,?,jsonb_build_object('eventId',?,'occurredAt',?::text,'policy','OBSERVED_MARK_ONLY_V1','latestGapEventId',?::bigint)
-            from trading.trading_account a where a.status='ACTIVE' and a.id in (
+            from trading.trading_account a where a.status='ACTIVE'
+              and (not a.guest_account or a.credential_expires_at > clock_timestamp())
+              and a.id in (
               select account_id from trading.position where status='OPEN' and trading_symbol_id=?
               union select account_id from trading.trading_order where status='PENDING' and trading_symbol_id=?)
             on conflict(account_id,(coalesce(trading_symbol_id,0)),reason) where resolved_at is null

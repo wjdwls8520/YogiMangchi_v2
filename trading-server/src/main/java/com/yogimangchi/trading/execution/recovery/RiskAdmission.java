@@ -59,6 +59,12 @@ public class RiskAdmission {
         jdbc.update("update trading.risk_account_work set status='RETIRED',completed_at=clock_timestamp(),completion_reason='MEMBER_WITHDRAWAL' where account_id=? and status in ('PENDING','HELD')",accountId);
         jdbc.update("update trading.risk_hold set resolved_at=clock_timestamp(),resolution_reference='MEMBER_WITHDRAWAL: administrative retirement, not reconstructed execution' where account_id=? and resolved_at is null",accountId);
     }
+    /** Administrative retirement for expired guest accounts; terminates pending risk work without fake fills. */
+    public void retireGuestExpired(Long accountId) {
+        if(!enabled)return;
+        jdbc.update("update trading.risk_account_work set status='RETIRED',completed_at=clock_timestamp(),completion_reason='GUEST_EXPIRED' where account_id=? and status in ('PENDING','HELD')",accountId);
+        jdbc.update("update trading.risk_hold set resolved_at=clock_timestamp(),resolution_reference='GUEST_EXPIRED: administrative retirement of expired guest' where account_id=? and resolved_at is null",accountId);
+    }
     public void failedIngress(){ingressHealthy=false;}
     public void recordedIngress(){ingressHealthy=true;}
     public boolean healthy(){return !enabled||ingressHealthy;}
