@@ -5,10 +5,26 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMember } from "./member-provider";
 import { usePolicies, PolicyConsentControl } from "./policy-controls";
+import { sanitizePolicyDisplayText } from "./policy-content";
 import { acceptance, parsePolicyState, type ConsentSelection } from "../api/policies";
 import { ContentApiError, contentMessage, contentRecovery } from "../api/client";
 import { MemberErrorActions } from "./member-error-actions";
 import { V1IconCheck } from "./v1-ui";
+
+function formatAgreedAtKst(agreedAt: string | null | undefined): string {
+  if (!agreedAt) return "기록 없음";
+  const parsed = new Date(agreedAt);
+  if (Number.isNaN(parsed.getTime())) return "기록 없음";
+  return `${parsed.toLocaleString("sv-SE", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  })} KST`;
+}
 
 function useOwnConsents() {
   const { session, snapshot } = useMember();
@@ -50,7 +66,7 @@ export function MemberConsentGate({ children }: { children: ReactNode }) {
           <span>
             {query.isError
               ? "정책 동의 상태를 확인하지 못했습니다. 회원 모의투자를 사용하기 전에 다시 확인해 주세요."
-              : "새로운 필수 동의가 필요합니다. 원문과 이전 동의 버전을 확인해 주세요."}
+              : "약관이 개정되었습니다. 최신 약관을 확인하고 동의해 주세요."}
           </span>
           <Link
             href="/account#policy-consents"
@@ -165,13 +181,19 @@ export function MemberConsents() {
           {mine.data.reconsentRequired ? (
             <div className="space-y-4">
               <ul className="member-note grid gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
-                {mine.data.policies.map(p => (
-                  <li key={p.type}>
-                    {p.type === "TERMS" ? "이용약관" : "개인정보 동의"} · 이전 동의{" "}
-                    {p.lastAcceptedVersion ?? "버전 기록 없음"} · 현재 {p.version}{" "}
-                    {p.accepted ? "동의됨" : "동의 필요"}
-                  </li>
-                ))}
+                {mine.data.policies.map(p => {
+                  const label = p.type === "TERMS" ? "이용약관" : "개인정보처리방침";
+                  const statusText = p.accepted
+                    ? "최신 약관 동의 완료"
+                    : p.lastAcceptedVersion
+                      ? "약관이 개정되어 다시 동의가 필요합니다"
+                      : "필수 동의가 필요합니다";
+                  return (
+                    <li key={p.type}>
+                      <strong>{label}</strong> · {statusText}
+                    </li>
+                  );
+                })}
               </ul>
               <PolicyConsentControl
                 bundle={policies.data}
@@ -200,7 +222,6 @@ export function MemberConsents() {
               <ul className="member-note grid gap-3 list-none p-0">
                 {mine.data.policies.map(p => {
                   const label = p.type === "TERMS" ? "이용약관" : "개인정보처리방침";
-                  const agreedVersion = p.lastAcceptedVersion ?? p.version;
                   const agreedAt = p.lastAcceptedAt ?? p.lastAgreedAt;
                   const document = policies.data?.documents[p.type];
                   return (
@@ -208,14 +229,13 @@ export function MemberConsents() {
                       key={`summary-${p.type}`}
                       className="rounded-xl border border-gray-200 bg-[#F9FAFB] p-4 text-xs leading-relaxed text-gray-700"
                     >
-                      <strong>{label}</strong> · 동의 버전 {agreedVersion} · 동의 시각{" "}
-                      {agreedAt ?? "기록 없음"}
+                      <strong>{label}</strong> · 동의 완료 · {formatAgreedAtKst(agreedAt)}
                       {document && (
                         <details>
-                          <summary>
-                            {label} 원문 보기 ({document.version})
-                          </summary>
-                          <pre className="policy-original">{document.text}</pre>
+                          <summary>{label} 전문 보기</summary>
+                          <pre className="policy-original">
+                            {sanitizePolicyDisplayText(document.text)}
+                          </pre>
                         </details>
                       )}
                     </li>

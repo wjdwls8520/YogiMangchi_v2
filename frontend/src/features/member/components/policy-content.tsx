@@ -5,10 +5,16 @@ export type { PolicyType, PolicyDocument } from "../api/policies";
 export const policyTitle = (type: PolicyType) =>
   type === "TERMS" ? "이용약관" : "개인정보처리방침 및 필수 수집·이용 동의";
 
+export function sanitizePolicyDisplayText(text: string): string {
+  return text
+    .replace(/[ \t]*\(ym-[a-z0-9-]+\)/gi, "")
+    .replace(/[ \t]*·[ \t]*문서[ \t]*상태:[ \t]*[^\r\n]+/g, "");
+}
+
 function OriginalText({ text }: { text: string }) {
   return (
     <div className="policy-original">
-      {text.split(/\n\s*\n/).map((block, index) => {
+      {sanitizePolicyDisplayText(text).split(/\n\s*\n/).map((block, index) => {
         const heading = block.trim().match(/^(?:#{1,4}\s+|\*\*)([^\n]+?)(?:\*\*)?$/);
         if (heading) return <h3 key={index}>{heading[1]}</h3>;
         if (block.split("\n").every(line => line.startsWith("- "))) {
@@ -37,11 +43,7 @@ export function PolicyContent({ type, document }: { type: PolicyType; document?:
             <span className="inline-flex items-center rounded-md bg-[#0058FF] px-2 py-0.5 text-[10px] font-extrabold text-white">
               {isPublished ? "확정" : "안내"}
             </span>
-            <span>
-              {isPublished
-                ? `시행 중인 공식 약관 · ${document.version}`
-                : `${label} · ${document.version}`}
-            </span>
+            <span>{isPublished ? `시행 중인 공식 ${label}` : label}</span>
           </div>
           <Link
             href="/support"
@@ -51,11 +53,11 @@ export function PolicyContent({ type, document }: { type: PolicyType; document?:
           </Link>
         </div>
         <section>
-          <h2>동의 대상 원문 · {document.version}</h2>
+          <h2>{label} 전문</h2>
           <p className="member-note">
             {isPublished
-              ? "현재 서비스에 적용 중인 확정 원문입니다. 이 버전에 동의합니다."
-              : "현재 동의 대상 원문입니다. 이 버전에 동의합니다."}
+              ? "현재 서비스에 적용 중인 공식 약관입니다."
+              : "현재 동의 대상 약관입니다."}
           </p>
           <OriginalText text={document.text} />
         </section>

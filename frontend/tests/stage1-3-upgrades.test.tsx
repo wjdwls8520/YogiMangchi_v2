@@ -632,8 +632,10 @@ test("Policies accept PUBLISHED documentStatus and PolicyContent renders publish
   const html = renderToStaticMarkup(
     <PolicyContent type="TERMS" document={bundle.documents.TERMS} />,
   );
-  assert.match(html, /시행 중인 공식 약관 · ym-terms-v2/);
+  assert.match(html, /시행 중인 공식 이용약관/);
+  assert.match(html, /<h2>이용약관 전문<\/h2>/);
   assert.match(html, /제1조 \(목적\) 요기망치 이용약관입니다\./);
+  assert.equal(html.includes("ym-terms-"), false);
   assert.equal(html.includes("[추후"), false);
 });
 
