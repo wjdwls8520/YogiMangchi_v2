@@ -25,6 +25,7 @@ type MemberStatusFilter = "ALL" | "ACTIVE" | "SUSPENDED" | "WITHDRAWN";
 export function AdminUsers() {
   const memberCtx = useOptionalMember();
   const phase = memberCtx?.snapshot.phase;
+  const role = memberCtx?.snapshot.role;
   const generation = memberCtx?.snapshot.generation;
   const session = memberCtx?.session;
   const currentMemberId = memberCtx?.snapshot.memberId ?? null;
@@ -66,7 +67,7 @@ export function AdminUsers() {
   const [moderatingMemberId, setModeratingMemberId] = useState<number | null>(null);
 
   useEffect(() => {
-    if (phase !== "ready" || !session) return;
+    if (phase !== "ready" || role !== "ADMIN" || !session) return;
     const controller = new AbortController();
     void session
       .authorized(cred =>
@@ -97,7 +98,7 @@ export function AdminUsers() {
         setLoadError("회원 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
       });
     return () => controller.abort();
-  }, [appliedFilters, reloadTick, phase, generation, session]);
+  }, [appliedFilters, reloadTick, phase, role, generation, session]);
 
   const handleApplyFilters = () => {
     const parsedId = Number(memberIdInput.trim());

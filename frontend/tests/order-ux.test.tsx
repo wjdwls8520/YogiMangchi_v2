@@ -196,12 +196,12 @@ test("backend margin/marketable rejections report controlled warnings and invali
   const effects=tradingMutationEffects(client,{getSnapshot:()=>snapshot},issue=>alerts.push(issue.message));
   for(const code of ["INSUFFICIENT_MARGIN","MARKETABLE_LIMIT_NOT_ALLOWED"]) {
     const command={kind:"open" as const,type:"LIMIT" as const,tradingSymbolId:1,side:"LONG" as const,quantity:"1",leverage:10,limitPrice:"99"};
-    for(const key of [tradingKeys.summary(snapshot),tradingKeys.pending(snapshot),tradingKeys.history(snapshot),["market","http://127.0.0.1:8081","tickers"]]) client.setQueryData(key,[]);
+    for(const key of [tradingKeys.summary(snapshot),tradingKeys.pending(snapshot),tradingKeys.history(snapshot),["market","http://localhost:8081","tickers"]]) client.setQueryData(key,[]);
     const error=new TradingApiError(409,"do not display server details",code);
     effects.onError(error,{command,session:snapshot});await effects.onSettled(undefined,error,{command,session:snapshot});
     assert.equal(alerts.at(-1),orderRejection(code,command)?.message);
     for(const key of [tradingKeys.summary(snapshot),tradingKeys.pending(snapshot),tradingKeys.history(snapshot)]) assert.equal(client.getQueryState(key)?.isInvalidated,true);
-    assert.equal(client.getQueryState(["market","http://127.0.0.1:8081","tickers"])?.isInvalidated,code==="MARKETABLE_LIMIT_NOT_ALLOWED");
+    assert.equal(client.getQueryState(["market","http://localhost:8081","tickers"])?.isInvalidated,code==="MARKETABLE_LIMIT_NOT_ALLOWED");
   }
   const old={...snapshot,generation:0};effects.onError(new TradingApiError(409,undefined,"INSUFFICIENT_MARGIN"),{command:{kind:"cancel",orderId:1},session:old});assert.equal(alerts.length,2);client.clear();
 });

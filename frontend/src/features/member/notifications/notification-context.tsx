@@ -5,14 +5,17 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import { DEFAULT_TRADING_API_BASE_URL } from "../../contest/api/contest-client";
-import { useDimScrollLock } from "../components/dim-modal";
+import { resolveContentOrigin } from "../../../lib/api-origins";
+import { registerOverlayEscape, useDimScrollLock } from "../components/dim-modal";
 import { useOptionalMember } from "../components/member-provider";
 import {
   checkUnifiedNotifications,
@@ -98,10 +101,7 @@ export function NotificationCenterProvider({
   const memberId = memberCtx?.snapshot.memberId ?? null;
   const generation = memberCtx?.snapshot.generation ?? 0;
   const session = memberCtx?.session ?? null;
-  const contentBaseUrl =
-    memberCtx?.origin ??
-    process.env.NEXT_PUBLIC_CONTENT_SERVER_URL ??
-    "http://localhost:8080";
+  const contentBaseUrl = memberCtx?.origin ?? resolveContentOrigin();
   const tradingBaseUrl = DEFAULT_TRADING_API_BASE_URL;
 
   const [items, setItems] = useState<NotificationItem[]>(
@@ -320,19 +320,14 @@ export function NotificationCenterProvider({
     pushToastForNotification,
   ]);
 
+  const drawerEscapeId = useId();
   const effectiveDrawerOpen = isSessionActive && isDrawerOpen;
 
-  // Escape key closes drawer
+  // Escape key closes ONLY the topmost active overlay (shared stack with DimModal & Mobile Drawer)
   useEffect(() => {
     if (!effectiveDrawerOpen || typeof window === "undefined") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsDrawerOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [effectiveDrawerOpen]);
+    return registerOverlayEscape(drawerEscapeId, () => setIsDrawerOpen(false));
+  }, [effectiveDrawerOpen, drawerEscapeId]);
 
   const effectiveItems = useMemo(
     () => (isSessionActive ? items : []),
@@ -618,35 +613,43 @@ export function NotificationCenterProvider({
         onSelectToast={handleSelectToast}
       />
 
-      {effectiveDrawerOpen ? (
-        <div className="fixed inset-0 z-[70]" data-dim-modal="open">
-          <div
-            className="fixed inset-0 z-[70] bg-black/35 backdrop-blur-[1px] transition-opacity cursor-pointer"
-            onClick={closeDrawer}
-          />
-          <div
-            className={
-              isDarkDrawer
-                ? "fixed bottom-0 right-0 top-0 z-[71] w-full max-w-sm border-l border-[#2B3139] bg-[#161A1E]"
-                : "fixed bottom-0 right-0 top-0 z-[71] w-full max-w-sm border-l border-gray-200 bg-white"
+      {effectiveDrawerOpen
+        ? (() => {
+            const drawerNode = (
+              <div className="fixed inset-0 z-[80]" data-dim-modal="open">
+                <div
+                  className="fixed inset-0 z-[80] bg-black/35 backdrop-blur-[1px] transition-opacity cursor-pointer"
+                  onClick={closeDrawer}
+                />
+                <div
+                  className={
+                    isDarkDrawer
+                      ? "fixed bottom-0 right-0 top-0 z-[81] h-dvh w-full max-w-sm border-l border-[#2B3139] bg-[#161A1E]"
+                      : "fixed bottom-0 right-0 top-0 z-[81] h-dvh w-full max-w-sm border-l border-gray-200 bg-white"
+                  }
+                >
+                  <NotificationDrawer
+                    notifications={effectiveItems}
+                    isLoading={isLoading}
+                    isReadingAll={isReadingAll}
+                    isLoadingMore={isLoadingMore}
+                    hasNext={hasNext}
+                    isDark={isDarkDrawer}
+                    onClose={closeDrawer}
+                    onSelectNotification={handleSelectDrawerNotification}
+                    onAcknowledgeNewNotifications={() => void acknowledgeNew()}
+                    onReadAll={() => void markAllAsRead()}
+                    onLoadMore={() => void loadMoreDrawer()}
+                  />
+                </div>
+              </div>
+            );
+            if (typeof document !== "undefined" && document.body) {
+              return createPortal(drawerNode, document.body);
             }
-          >
-            <NotificationDrawer
-              notifications={effectiveItems}
-              isLoading={isLoading}
-              isReadingAll={isReadingAll}
-              isLoadingMore={isLoadingMore}
-              hasNext={hasNext}
-              isDark={isDarkDrawer}
-              onClose={closeDrawer}
-              onSelectNotification={handleSelectDrawerNotification}
-              onAcknowledgeNewNotifications={() => void acknowledgeNew()}
-              onReadAll={() => void markAllAsRead()}
-              onLoadMore={() => void loadMoreDrawer()}
-            />
-          </div>
-        </div>
-      ) : null}
+            return drawerNode;
+          })()
+        : null}
     </NotificationCenterContext.Provider>
   );
 }

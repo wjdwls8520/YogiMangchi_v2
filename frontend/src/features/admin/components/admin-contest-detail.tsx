@@ -147,6 +147,8 @@ export function AdminContestDetail({
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [earlySettleModalOpen, setEarlySettleModalOpen] = useState(false);
   const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
+  const [cancelSeasonModalOpen, setCancelSeasonModalOpen] = useState(false);
+  const [cancelingSeason, setCancelingSeason] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<AdminContestApplicantItem | null>(
     null,
   );
@@ -299,8 +301,13 @@ export function AdminContestDetail({
 
   async function handleToggleStatus(field: "isPublic" | "isCancel") {
     if (!session) return;
+    if (field === "isCancel") {
+      if (season.isCancel || Boolean(season.settledAt)) return;
+      setCancelSeasonModalOpen(true);
+      return;
+    }
     const nextValue = !season[field];
-    const patchBody = field === "isPublic" ? { isPublic: nextValue } : { isCanceled: nextValue };
+    const patchBody = { isPublic: nextValue };
 
     try {
       const updatedView = await session.authorized(cred =>
@@ -309,14 +316,7 @@ export function AdminContestDetail({
       if (updatedView) {
         const mapped = mapSeasonViewToAdminRecord(updatedView);
         setSeason(prev => ({ ...prev, ...mapped }));
-        const label =
-          field === "isPublic"
-            ? mapped.isPublic
-              ? "공개중"
-              : "비공개"
-            : mapped.isCancel
-              ? "취소됨"
-              : "정상 운영";
+        const label = mapped.isPublic ? "공개중" : "비공개";
         setOperationBanner({
           kind: "success",
           text: `시즌 #${mapped.id} "${mapped.title}" 상태가 [${label}](으)로 반영되었습니다.`,
@@ -330,6 +330,40 @@ export function AdminContestDetail({
             ? error.message
             : "시즌 상태 변경에 실패했습니다.",
       });
+    }
+  }
+
+  async function handleConfirmCancelSeason() {
+    if (!session || cancelingSeason || season.isCancel || Boolean(season.settledAt)) return;
+    setCancelingSeason(true);
+    try {
+      const updatedView = await session.authorized(cred =>
+        patchAdminContestSeasonStatus(
+          season.id,
+          { isCanceled: true },
+          { token: cred.accessToken },
+        ),
+      );
+      if (updatedView) {
+        const mapped = mapSeasonViewToAdminRecord(updatedView);
+        setSeason(prev => ({ ...prev, ...mapped }));
+        setOperationBanner({
+          kind: "success",
+          text: `시즌 #${mapped.id} "${mapped.title}"이(가) 영구 취소 처리되었습니다.`,
+        });
+      }
+      setCancelSeasonModalOpen(false);
+      reloadDetailFromServer(season.id);
+    } catch (error) {
+      setOperationBanner({
+        kind: "error",
+        text:
+          error instanceof Error && error.message
+            ? error.message
+            : "시즌 취소 처리에 실패했습니다.",
+      });
+    } finally {
+      setCancelingSeason(false);
     }
   }
 
@@ -682,7 +716,8 @@ export function AdminContestDetail({
                 <AdminToggleSwitch
                   checked={season.isCancel}
                   tone="rose"
-                  onChange={() => handleToggleStatus("isCancel")}
+                  disabled={season.isCancel || Boolean(season.settledAt)}
+                  onChange={() => void handleToggleStatus("isCancel")}
                   label="시즌 취소 여부"
                 />
               </div>
@@ -1261,6 +1296,46 @@ export function AdminContestDetail({
           onSave={handleSaveSeasonEdit}
         />
       ) : null}
+
+      {/* 5. 시즌 영구 취소 확인 모달 */}
+      <DimModal
+        open={cancelSeasonModalOpen}
+        onClose={() => {
+          if (!cancelingSeason) setCancelSeasonModalOpen(false);
+        }}
+        title="대회 시즌 영구 취소 확인"
+        subtitle={`시즌 #${season.id} · ${season.title}`}
+        footer={
+          <div className="flex justify-end gap-2">
+            <V1Button
+              variant="white"
+              size="sm"
+              disabled={cancelingSeason}
+              onClick={() => setCancelSeasonModalOpen(false)}
+            >
+              돌아가기
+            </V1Button>
+            <V1Button
+              variant="red"
+              size="sm"
+              data-admin-confirm="cancel-season"
+              disabled={cancelingSeason}
+              onClick={() => void handleConfirmCancelSeason()}
+            >
+              {cancelingSeason ? "취소 처리 중…" : "시즌 영구 취소 실행"}
+            </V1Button>
+          </div>
+        }
+      >
+        <div className="space-y-4 text-xs sm:text-sm leading-relaxed text-gray-800">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 font-bold text-rose-800">
+            이 작업은 되돌릴 수 없습니다. 시즌을 취소하면 참가 신청 및 신규 주문이 즉시 차단되고, 열려 있는 포지션({season.openPositionCount}건) 종료·미체결 주문({season.pendingOrderCount}건) 취소 및 대기 중인 참가 신청이 취소 처리됩니다.
+          </div>
+          <p className="text-xs font-medium text-gray-600">
+            취소가 완료된 시즌은 다시 정상 운영 상태로 되돌릴 수 없습니다.
+          </p>
+        </div>
+      </DimModal>
     </AdminShell>
   );
 }

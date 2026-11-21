@@ -82,7 +82,9 @@ export function TradingEventStatus({ initialEvents, defaultOpen = false }: { ini
     <span>체결 알림 · {state === "live" ? "실시간" : state === "syncing" ? "이력 동기화 중" : state === "reconnecting" ? "재연결 중" : "연결 확인 필요"}</span>
     <button ref={trigger} type="button" className="account-refresh" aria-haspopup="dialog" disabled={snapshot.phase !== "ready"} onClick={() => { setOpen(true); dialog.current?.showModal(); }}>최근 알림 내역</button>
     {state === "unavailable" && <button type="button" className="account-refresh" onClick={() => setAttempt(value => value + 1)}>알림 다시 연결</button>}
-    <dialog ref={dialog} open={defaultOpen || undefined} className="position-close-dialog ym-exchange-modal" aria-modal="true" aria-labelledby="trading-events-dialog-title" onClose={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); }}>
+    <dialog ref={dialog} open={defaultOpen || undefined} className="position-close-dialog ym-exchange-modal" aria-modal="true" aria-labelledby="trading-events-dialog-title"
+      onClick={event => { if (event.target === event.currentTarget && event.detail < 2) dialog.current?.close(); }}
+      onClose={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); }}>
       <header className="ym-modal-header">
         <h2 id="trading-events-dialog-title">최근 알림 내역</h2>
         <button type="button" className="ym-modal-close" aria-label="닫기" onClick={() => dialog.current?.close()}>
@@ -99,8 +101,8 @@ export function TradingEventStatus({ initialEvents, defaultOpen = false }: { ini
           <strong>{title}</strong> <span className="text-[#848E9C]">({event.type})</span> · {detail} · <time className="text-[#848E9C]" dateTime={event.occurredAt}>{kstTime(event.occurredAt)} KST</time>
         </li>)}
       </ul>}
-      <div className="guest-dialog-actions">
-        <button type="button" className="guest-cancel" onClick={() => dialog.current?.close()}>닫기</button>
+      <div className="ym-modal-footer mt-4" style={{ gridTemplateColumns: "1fr" }}>
+        <button type="button" className="guest-cancel ym-modal-btn-cancel" onClick={() => dialog.current?.close()}>닫기</button>
       </div>
     </dialog>
   </div>;

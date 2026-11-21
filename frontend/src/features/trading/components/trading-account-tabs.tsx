@@ -80,7 +80,17 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
       </section>
     </>}
     </div>
-    <dialog ref={extraDialog} id="activity-extra-dialog" className="activity-extra-dialog position-close-dialog" aria-modal="true" aria-label="자산 및 추가 내역" onClose={()=>{setAuxiliary(null);extraTrigger.current?.focus({preventScroll:true});}}><button type="button" className="account-refresh" onClick={()=>extraDialog.current?.close()}>닫기</button>
+    <dialog ref={extraDialog} id="activity-extra-dialog" className="activity-extra-dialog position-close-dialog ym-exchange-modal" aria-modal="true" aria-label="자산 및 추가 내역"
+      onClick={event=>{if(event.target===event.currentTarget&&event.detail<2)extraDialog.current?.close();}}
+      onClose={()=>{setAuxiliary(null);extraTrigger.current?.focus({preventScroll:true});}}>
+      <header className="ym-modal-header">
+        <h2>{auxiliary === "closed" ? "종료 포지션 내역" : "자산 · 종목 성과"}</h2>
+        <button type="button" className="ym-modal-close" aria-label="닫기" onClick={()=>extraDialog.current?.close()}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+      </header>
       {snapshot.phase === "ready" && <>
       <section hidden={auxiliary !== "closed"} id="closed-positions" className="activity-panel" role="region" aria-labelledby="activity-closed-tab">
         <h3 className="account-records-heading">종료 포지션 내역</h3>
@@ -97,6 +107,9 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
         {snapshot.mode === "member" && !snapshot.contestSeasonId && auxiliary === "portfolio" && <MemberSimulation />}
       </section>
       </>}
+      <div className="ym-modal-footer mt-4" style={{ gridTemplateColumns: "1fr" }}>
+        <button type="button" className="guest-cancel ym-modal-btn-cancel" onClick={()=>extraDialog.current?.close()}>닫기</button>
+      </div>
     </dialog>
   </section>;
 }

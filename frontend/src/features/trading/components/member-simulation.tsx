@@ -10,7 +10,7 @@ import { formatDecimal } from "../api/account";
 import { formatExchangePrice, formatExchangeQuantity } from "../../member/api/exchange-format";
 import { useDialogScrollLock } from "../../member/components/dim-modal";
 import { TradingApiError } from "../api/client";
-import { mutationMessage, mutationStillUnconfirmed, unconfirmedMutationMessage } from "../api/mutation-request";
+import { mutationMessage, mutationStillUnconfirmed } from "../api/mutation-request";
 import { MemberAccountPreparation, RestartConfirmation, SimulationSection } from "./member-simulation-views";
 import { reportAdmissionRejection } from "../api/admission-rejection";
 import { useTradingAdmission } from "../api/recovery";
@@ -87,7 +87,7 @@ function MemberSimulationContent() {
       const uncertain = mutationStillUnconfirmed(error,!!intent);
       setIntent(uncertain ? request : null);
       if (error instanceof TradingApiError && error.nextAvailableAt) setLimitedAt(error.nextAvailableAt);
-      setError(uncertain ? unconfirmedMutationMessage : error instanceof TradingApiError && error.status === 429 ? "직전 성공한 다시시작부터 24시간이 지나야 합니다. 서버가 제공한 가능 시각을 확인해 주세요." : mutationMessage(error));
+      setError(uncertain ? null : error instanceof TradingApiError && error.status === 429 ? "직전 성공한 다시시작부터 24시간이 지나야 합니다. 서버가 제공한 가능 시각을 확인해 주세요." : mutationMessage(error));
     } finally { active.current = false; setPending(false); }
   }
   const summary = !detail.isError && enabled ? detail.data : undefined;
@@ -114,7 +114,7 @@ function MemberSimulationContent() {
     </>}
     {snapshot.mode === "member" && <><p className="member-note">다음 다시시작 가능 시각: {nextAt ? new Date(nextAt).toLocaleString("ko-KR") : !current.isError && current.data ? "서버에서 제한 없음으로 확인" : "서버 확인 필요"}. 최종 허용 여부는 서버가 판단합니다.</p><button className="member-primary" disabled={pending || snapshot.retrying || !intent && !canRestart} onClick={() => { setAcknowledged(false); setDialogOpen(true); dialog.current?.showModal(); }}>모의투자 다시시작하기</button><p className="member-note"><Link href="/trading">모의투자 하러가기 →</Link></p></>}
     {message && <p role="status" className="member-message">{message}</p>}
-    <dialog ref={dialog} className="position-close-dialog member-withdrawal-dialog" aria-labelledby="member-restart-title" onCancel={event => { if (pending) event.preventDefault(); }} onClose={() => setDialogOpen(false)}>
+    <dialog ref={dialog} className="position-close-dialog member-withdrawal-dialog" aria-labelledby="member-restart-title" onClick={event => { if (event.target === event.currentTarget && event.detail < 2 && !pending) dialog.current?.close(); }} onCancel={event => { if (pending) event.preventDefault(); }} onClose={() => setDialogOpen(false)}>
       <RestartConfirmation acknowledged={acknowledged} pending={pending} uncertain={!!intent} error={error} blocked={!canRestart ? "서버가 다시시작 가능 여부를 확인하기 전에는 새로운 요청을 보낼 수 없습니다." : undefined} onAcknowledge={setAcknowledged} onExecute={() => void restart()} onClose={() => dialog.current?.close()} />
     </dialog>
   </SimulationSection>;

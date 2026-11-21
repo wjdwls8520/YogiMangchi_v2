@@ -1,9 +1,10 @@
 import { tradingOrigin } from "./client";
 import { mutationRequest, type TradingCommand } from "./mutation-request";
 import { stopLossRequest, type StopLossCommand } from "./stop-loss-contract";
+import { takeProfitRequest, type TakeProfitCommand } from "./take-profit-contract";
 
 export type JournalOwner = { origin: string; mode: "guest" | "member"; accountId: number };
-export type JournalCommand = TradingCommand | ({kind:"stopLoss"} & StopLossCommand) | {kind:"guestRetry"} | {kind:"memberRestart"};
+export type JournalCommand = TradingCommand | ({kind:"stopLoss"} & StopLossCommand) | ({kind:"takeProfit"} & TakeProfitCommand) | {kind:"guestRetry"} | {kind:"memberRestart"};
 export type JournalEntry = { owner:JournalOwner; key:string; createdAt:number; command:JournalCommand };
 type JournalStorage = Pick<Storage,"getItem"|"setItem"|"removeItem"|"key"|"length">;
 type JournalLock = <T>(name:string, operation:()=>Promise<T>)=>Promise<T>;
@@ -35,6 +36,7 @@ export function canonicalJournalCommand(value:unknown):JournalCommand {
       case "amend": result={kind:"amend",orderId:positiveId(v.orderId),quantity:text(v.quantity),limitPrice:text(v.limitPrice)};break;
       case "cancel": result={kind:"cancel",orderId:positiveId(v.orderId)};break;
       case "stopLoss": result={kind:"stopLoss",positionId:positiveId(v.positionId),expectedVersion:typeof v.expectedVersion==="number"?v.expectedVersion:fail(),...(v.stopPrice===undefined?{}:{stopPrice:text(v.stopPrice)})};stopLossRequest(result);return result;
+      case "takeProfit": result={kind:"takeProfit",positionId:positiveId(v.positionId),expectedVersion:typeof v.expectedVersion==="number"?v.expectedVersion:fail(),...(v.takeProfitPrice===undefined?{}:{takeProfitPrice:text(v.takeProfitPrice)})};takeProfitRequest(result);return result;
       case "guestRetry": return {kind:"guestRetry"};
       case "memberRestart": return {kind:"memberRestart"};
       default:return fail();

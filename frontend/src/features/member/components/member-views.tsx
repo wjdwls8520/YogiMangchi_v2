@@ -157,7 +157,7 @@ export function ProfileEditForm({
             </label>
             <NicknameCheck />
           </div>
-          <small className="ym-helper-violet mt-1.5 block text-xs font-medium text-gray-500">
+          <small className="ym-helper-primary mt-1.5 block text-xs font-medium">
             최대 8자 · 공백·특수문자 제외
           </small>
         </div>

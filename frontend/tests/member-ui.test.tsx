@@ -63,7 +63,8 @@ import {
   markMemberViewedNews,
   sortNewsItems,
 } from "../src/features/member/components/news-feed";
-import { CommunityBoard, SHAREABLE_POSITIONS, SharedPositionCard } from "../src/features/member/components/community-board";
+import { CommunityBoard, SharedPositionCard } from "../src/features/member/components/community-board";
+import type { SharedPositionSnapshot } from "../src/features/member/api/community-news";
 import {
   formatExchangeCompactPct,
   formatExchangeFeeUsdt,
@@ -89,8 +90,6 @@ import { PublicMember } from "../src/features/member/components/public-member";
 import { V1Header } from "../src/features/member/components/v1-ui";
 import { SiteFooter } from "../src/components/site-footer";
 import {
-  FALLBACK_MARKET_OVERVIEW,
-  buildDeterministicUsdKrwHistory,
   buildExchangeRateChartGeometry,
   classifyFearGreedLabelKr,
   computeBtcDominanceChange24h,
@@ -99,6 +98,23 @@ import {
   fetchRedisMarketOverview,
   parseMarketOverviewPayload,
 } from "../src/features/member/api/market-overview";
+
+const SAMPLE_TEST_POSITION: SharedPositionSnapshot = {
+  id: "POS_BTC_LONG_10X",
+  marketLabel: "모의투자 선물",
+  symbol: "BTC",
+  pair: "BTCUSDT",
+  side: "LONG",
+  leverage: 10,
+  entryPrice: "68,420.00",
+  markPrice: "69,680.50",
+  liquidationPrice: "61,890.00",
+  roePct: "+18.42%",
+  pnlUsdt: "+184.20 USDT",
+  positive: true,
+  showPnlAmount: true,
+  verified: true,
+};
 import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
 import { ContestHub, ContestListCard } from "../src/features/contest/components/contest-hub";
 import { ContestTradingSubheader } from "../src/features/contest/components/contest-trading-terminal";
@@ -580,7 +596,7 @@ test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments
         commentCount: 2,
         likedByMe: true,
         mine: true,
-        sharedPosition: SHAREABLE_POSITIONS[0],
+        sharedPosition: SAMPLE_TEST_POSITION,
         createdAt: "2026-11-01T10:00:00Z",
         updatedAt: "2026-11-01T10:00:00Z",
       },
@@ -1103,7 +1119,9 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     assert.match(portalHtml, /실시간 인기 종목 TOP 3/);
     assert.match(portalHtml, /YOGIMANGCHI PLAYBOOK/);
     assert.match(portalHtml, /24시 실시간 속보/);
-    assert.match(portalHtml, /BTC 도미넌스/);
+    assert.match(portalHtml, /aria-label="실시간 마켓 지표 불러오는 중"/);
+    assert.equal(portalHtml.includes("$94,280.50"), false);
+    assert.equal(portalHtml.includes("56.4%"), false);
     assert.match(portalHtml, /선물 모의투자 퀵 시뮬레이터/);
     assert.match(portalHtml, /선물 모의투자 시작하기/);
     assert.match(portalHtml, /실시간 커뮤니티 HOT/);
@@ -1388,7 +1406,7 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
 
   assert.equal(computeKimchiPremiumPercent(135_000_000, 96_500, 1_385), 1.01);
   const domDelta = computeBtcDominanceChange24h(58.2, 1.8, 4.2);
-  assert.equal(domDelta > 0, true);
+  assert.ok(domDelta !== null && domDelta > 0);
 
   const liveOverview = await fetchLiveMarketOverview(async url => {
     const target = String(url);
@@ -1430,8 +1448,9 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
     return new Response("not found", { status: 404 });
   });
 
+  assert.ok(liveOverview !== null);
   assert.equal(liveOverview.btcDominancePercent, 58.3);
-  assert.equal(liveOverview.btcDominanceChange24h > 0, true);
+  assert.ok(liveOverview.btcDominanceChange24h !== null && liveOverview.btcDominanceChange24h > 0);
   assert.equal(liveOverview.kimchiPremiumPercent, 1.03);
   assert.equal(liveOverview.openInterestBillionsUsd, 41.3);
   assert.equal(liveOverview.fearGreedValue, 74);
@@ -1440,14 +1459,11 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
   assert.equal(liveOverview.futuresBearPct, 38);
   assert.equal(liveOverview.btcChange24h, 3.1);
 
-  const fallbackOverview = await fetchLiveMarketOverview(async () => {
+  // When upstream market APIs are completely unreachable, NEVER fabricate fake fallback numbers
+  const unavailableOverview = await fetchLiveMarketOverview(async () => {
     throw new Error("network down");
   });
-  assert.equal(fallbackOverview.btcDominancePercent, FALLBACK_MARKET_OVERVIEW.btcDominancePercent);
-  assert.equal(fallbackOverview.kimchiPremiumPercent, FALLBACK_MARKET_OVERVIEW.kimchiPremiumPercent);
-  assert.equal(fallbackOverview.openInterestBillionsUsd, FALLBACK_MARKET_OVERVIEW.openInterestBillionsUsd);
-  assert.equal(fallbackOverview.fearGreedValue, FALLBACK_MARKET_OVERVIEW.fearGreedValue);
-  assert.equal(fallbackOverview.fearGreedLabelKr, FALLBACK_MARKET_OVERVIEW.fearGreedLabelKr);
+  assert.equal(unavailableOverview, null);
 
   const parsed = parseMarketOverviewPayload({
     btcDominancePercent: 59.1,
@@ -1604,14 +1620,15 @@ test("NewsFeed 실시간 뉴스 투자 심리 card dynamically binds real news s
 });
 
 test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-server Redis Top 3 popular coins", async () => {
-  const detHistory = buildDeterministicUsdKrwHistory(1405.2);
-  assert.equal(detHistory.length, 14);
-  assert.equal(detHistory[13], 1405.2);
+  // No synthetic history fabrication: insufficient history returns null cleanly
+  assert.equal(buildExchangeRateChartGeometry([]), null);
+  assert.equal(buildExchangeRateChartGeometry([1405.2]), null);
 
   const chartGeo = buildExchangeRateChartGeometry([
     1390.0, 1392.0, 1391.5, 1394.0, 1395.5, 1396.0, 1397.2, 1398.4, 1400.1, 1401.5,
     1403.0, 1404.2, 1408.6, 1405.2,
   ]);
+  assert.ok(chartGeo !== null);
   assert.equal(chartGeo.twoWeeksAgoRate, 1390.0);
   assert.equal(chartGeo.oneWeekAgoRate, 1398.4);
   assert.equal(chartGeo.todayRate, 1405.2);
@@ -1654,20 +1671,25 @@ test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-ser
   ]);
 
   assert.equal(mappedCoins.length, 3);
+  assert.equal(mappedCoins[0].available, true);
   assert.equal(mappedCoins[0].price, "$96,840.25");
   assert.equal(mappedCoins[0].changeRate, 3.42);
   assert.equal(mappedCoins[0].volume, "2,450.8M USDT");
-  assert.equal(mappedCoins[0].strokeColor, "#0ECB81");
+  assert.equal(mappedCoins[0].trendColor, "#0ECB81");
+  assert.equal(mappedCoins[0].high24h, "$97,500.00");
 
+  assert.equal(mappedCoins[1].available, true);
   assert.equal(mappedCoins[1].price, "$3,085.50");
   assert.equal(mappedCoins[1].changeRate, -1.75);
   assert.equal(mappedCoins[1].volume, "980.4M USDT");
-  assert.equal(mappedCoins[1].strokeColor, "#F6465D");
+  assert.equal(mappedCoins[1].trendColor, "#F6465D");
+  assert.equal(mappedCoins[1].low24h, "$3,050.00");
 
+  assert.equal(mappedCoins[2].available, true);
   assert.equal(mappedCoins[2].price, "$228.90");
   assert.equal(mappedCoins[2].changeRate, 6.15);
   assert.equal(mappedCoins[2].volume, "745.2M USDT");
-  assert.equal(mappedCoins[2].strokeColor, "#0ECB81");
+  assert.equal(mappedCoins[2].trendColor, "#0ECB81");
 
   const customOverview = parseMarketOverviewPayload({
     btcDominancePercent: 58.1,
@@ -1748,7 +1770,8 @@ test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-ser
     assert.match(html, /\$3,085\.50/);
     assert.match(html, /text-\[#F6465D\]">-1\.75%<\/span>/);
     assert.match(html, /24h 거래대금 980\.4M USDT/);
-    assert.match(html, /stroke="#F6465D"/);
+    assert.match(html, /24h 고가/);
+    assert.match(html, /\$3,180\.00/);
   } finally {
     client.clear();
   }
@@ -1767,15 +1790,31 @@ test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커�
       /ym-gnb-inner mx-auto flex h-16 w-full max-w-\[1280px\] items-center justify-between px-4 sm:px-6/,
     );
 
+    const mainOverviewFixture = parseMarketOverviewPayload({
+      btcDominancePercent: 58.1,
+      btcDominanceChange24h: 0.41,
+      kimchiPremiumPercent: 1.12,
+      openInterestBillionsUsd: 40.5,
+      fearGreedValue: 71,
+      fearGreedLabelKr: "탐욕",
+      futuresBullPct: 58,
+      futuresBearPct: 42,
+      btcChange24h: 3.42,
+      usdKrwRate: 1405.2,
+      usdKrwChangeAmount: -3.4,
+      usdKrwChangePct: -0.24,
+      usdKrwHistory: [1395, 1400, 1405.2],
+      updatedAt: "2026-11-10T10:00:00Z",
+    });
     const mainHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
-        <MainPortal />
+        <MainPortal initialMarketOverview={mainOverviewFixture} />
       </MemberProvider>,
     );
-    // 메인 시장 요약·환율·인기종목 반응형 클래스
+    // 메인 시장 요약·환율·인기종목 반응형 클래스 (가짜 가격·스파크라인 없이 정직한 연동 대기 상태)
     assert.match(mainHtml, /gap-x-3 gap-y-1\.5 text-\[11px\] sm:gap-4 sm:text-xs/);
     assert.match(mainHtml, /whitespace-nowrap text-xl font-black text-gray-900 sm:text-3xl/);
-    assert.match(mainHtml, /h-11 w-24 shrink-0 sm:w-28/);
+    assert.match(mainHtml, /data-popular-coins-state=/);
 
     const newsHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
@@ -1807,7 +1846,7 @@ test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커�
                 likedByMe: false,
                 reportedByMe: false,
                 mine: false,
-                sharedPosition: SHAREABLE_POSITIONS[0],
+                sharedPosition: SAMPLE_TEST_POSITION,
                 files: [],
                 createdAt: "2026-11-10 10:00",
                 updatedAt: "2026-11-10 10:00",

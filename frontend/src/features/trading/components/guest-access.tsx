@@ -100,6 +100,7 @@ export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCance
   onStart: () => void; onCancel: () => void; onClose: () => void; member?: boolean;
 }) {
   return <dialog ref={dialogRef} className="guest-start-dialog ym-exchange-modal" aria-modal="true" aria-labelledby="guest-start-heading" aria-describedby="guest-start-description"
+    onClick={event => { if (event.target === event.currentTarget && event.detail < 2 && !creating) onCancel(); }}
     onCancel={(event) => { if (creating) event.preventDefault(); }} onClose={onClose}>
     <header className="ym-modal-header">
       <h2 id="guest-start-heading">{member ? "회원 선물 계정 열기" : "게스트 모의투자 시작"}</h2>
@@ -116,10 +117,10 @@ export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCance
       <p>브라우저 데이터를 삭제하거나 기간이 만료되면 복구할 수 없습니다.</p>
       </>}
     </div>
-    {failed && <p role="alert" className="order-warning">{member ? "회원 계정 준비 결과를 확인하지 못했습니다. 창을 닫고 계정을 다시 조회해 주세요." : "계정을 생성하지 못했습니다. 연결과 브라우저 저장소 설정을 확인한 뒤 다시 시도해 주세요."}</p>}
-    <div className="guest-dialog-actions">
-      <button type="button" className="guest-cancel" disabled={creating} onClick={onCancel}>취소</button>
-      <button type="button" className="guest-start-button" disabled={creating || (member && failed)} onClick={onStart}>{creating ? member ? "계정 확인 중…" : "계정 생성 중…" : "10,000 USDT로 시작하기"}</button>
+    {failed && <p role="alert" className="ym-modal-alert mt-3">{member ? "회원 계정 준비 결과를 확인하지 못했습니다. 창을 닫고 계정을 다시 조회해 주세요." : "계정을 생성하지 못했습니다. 연결과 브라우저 저장소 설정을 확인한 뒤 다시 시도해 주세요."}</p>}
+    <div className="ym-modal-footer mt-4">
+      <button type="button" className="guest-cancel ym-modal-btn-cancel" disabled={creating} onClick={onCancel}>취소</button>
+      <button type="button" className="guest-start-button ym-modal-btn-confirm" disabled={creating || (member && failed)} onClick={onStart}>{creating ? member ? "계정 확인 중…" : "계정 생성 중…" : "10,000 USDT로 시작하기"}</button>
     </div>
   </dialog>;
 }

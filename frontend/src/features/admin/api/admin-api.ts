@@ -1,5 +1,7 @@
 import { ContentApiError, contentOrigin } from "../../member/api/client";
 import { TradingApiError, tradingOrigin } from "../../trading/api/client";
+import { resolveContentOrigin, resolveTradingOrigin } from "../../../lib/api-origins";
+import { extractRequestId } from "../../../lib/request-id";
 import {
   parseAdminSupportInquiryPage,
   parseSupportInquiry,
@@ -8,15 +10,16 @@ import {
   type SupportInquiryFilterStatus,
 } from "../../member/api/support";
 
-export const DEFAULT_CONTENT_API_BASE_URL =
-  process.env.NEXT_PUBLIC_CONTENT_API_BASE_URL ??
-  process.env.NEXT_PUBLIC_CONTENT_SERVER_URL ??
-  "http://localhost:8080";
+export class AdminApiError extends ContentApiError {
+  constructor(status: number, code?: string, requestId?: string) {
+    super(status, code, requestId);
+    this.name = "AdminApiError";
+  }
+}
 
-export const DEFAULT_ADMIN_TRADING_API_BASE_URL =
-  process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ??
-  process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
-  "http://localhost:8081";
+export const DEFAULT_CONTENT_API_BASE_URL = resolveContentOrigin();
+
+export const DEFAULT_ADMIN_TRADING_API_BASE_URL = resolveTradingOrigin();
 
 export interface AdminRequestOptions {
   origin?: string;
@@ -64,6 +67,7 @@ export interface AdminPostDto {
   updatedAt: string | null;
   authorId: number;
   authorNickname: string | null;
+  authorStatus?: string | null;
 }
 
 export interface AdminPostsPageResponse {
@@ -84,6 +88,7 @@ export interface AdminReplyDto {
   postTitle: string | null;
   authorId: number;
   authorNickname: string | null;
+  authorStatus?: string | null;
 }
 
 export interface AdminRepliesPageResponse {
@@ -116,6 +121,7 @@ export interface AdminReportDto {
   targetContent: string;
   targetAuthorId: number;
   targetAuthorNickname: string | null;
+  targetAuthorStatus?: string | null;
   targetDeleteYn: string;
   targetReportCount: number;
   reporterId: number;
@@ -239,6 +245,18 @@ export interface TradingHoldReleaseResult {
   released: boolean;
 }
 
+export interface AdminTradingSymbolDto {
+  id: number;
+  symbol: string;
+  name: string;
+  quoteAsset: string;
+  displaySymbol: string;
+  provider: string;
+  providerSymbol: string;
+  providerUnitMultiplier: number;
+  status: "ACTIVE" | "HALTED" | "INACTIVE" | string;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -292,10 +310,10 @@ async function requestAdminJson(
     body?: object;
   } & AdminRequestOptions,
 ): Promise<unknown> {
-  const base = contentOrigin(options.origin ?? DEFAULT_CONTENT_API_BASE_URL);
+  const base = contentOrigin(options.origin ?? resolveContentOrigin());
   const transport = options.transport ?? fetch;
   if (!path.startsWith("/api/v1/admin/") || path.includes("..") || path.includes("\\")) {
-    throw new ContentApiError(400);
+    throw new AdminApiError(400);
   }
   try {
     const response = await transport(`${base}${path}`, {
@@ -316,13 +334,16 @@ async function requestAdminJson(
 
     if (!response.ok) {
       let code: string | undefined;
+      let errBody: unknown;
       try {
-        const errBody = asRecord(await response.json());
-        if (typeof errBody.code === "string") code = errBody.code;
+        errBody = await response.json();
+        const rec = asRecord(errBody);
+        if (typeof rec.code === "string") code = rec.code;
       } catch {
         // Ignore non-JSON body on error
       }
-      throw new ContentApiError(response.status, code);
+      const requestId = extractRequestId(errBody, response);
+      throw new AdminApiError(response.status, code, requestId);
     }
 
     if (response.status === 204) return null;
@@ -331,12 +352,12 @@ async function requestAdminJson(
     try {
       return JSON.parse(text);
     } catch {
-      throw new ContentApiError(422);
+      throw new AdminApiError(422);
     }
   } catch (error) {
     if (options.signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
     if (error instanceof ContentApiError) throw error;
-    throw new ContentApiError(0);
+    throw new AdminApiError(0);
   }
 }
 
@@ -375,6 +396,7 @@ function parseAdminPost(raw: unknown): AdminPostDto {
     updatedAt: asNullableString(r.updatedAt),
     authorId: asNumber(r.authorId),
     authorNickname: asNullableString(r.authorNickname),
+    authorStatus: asNullableString(r.authorStatus),
   };
 }
 
@@ -392,6 +414,7 @@ function parseAdminReply(raw: unknown): AdminReplyDto {
     postTitle: asNullableString(r.postTitle),
     authorId: asNumber(r.authorId),
     authorNickname: asNullableString(r.authorNickname),
+    authorStatus: asNullableString(r.authorStatus),
   };
 }
 
@@ -410,6 +433,7 @@ function parseAdminReport(raw: unknown): AdminReportDto {
     targetContent: asString(r.targetContent),
     targetAuthorId: asNumber(r.targetAuthorId),
     targetAuthorNickname: asNullableString(r.targetAuthorNickname),
+    targetAuthorStatus: asNullableString(r.targetAuthorStatus),
     targetDeleteYn: asString(r.targetDeleteYn, "N"),
     targetReportCount: asNumber(r.targetReportCount),
     reporterId,
@@ -635,6 +659,18 @@ export async function deleteAdminCommunityReply(
 ): Promise<void> {
   await requestAdminJson(`/api/v1/admin/community/replies/${replyId}`, {
     method: "DELETE",
+    token,
+    ...options,
+  });
+}
+
+export async function restoreAdminCommunityReply(
+  token: string,
+  replyId: number,
+  options?: AdminRequestOptions,
+): Promise<void> {
+  await requestAdminJson(`/api/v1/admin/community/replies/${replyId}/restore`, {
+    method: "POST",
     token,
     ...options,
   });
@@ -880,11 +916,126 @@ export async function retryFailedS3Cleanup(
   return { retriedCount: asNumber(r.retriedCount) };
 }
 
+export function parseAdminTradingSymbol(raw: unknown): AdminTradingSymbolDto {
+  const r = asRecord(raw);
+  const symbol = asString(r.symbol, "-");
+  const quoteAsset = asString(r.quoteAsset, "USDT");
+  return {
+    id: asNumber(r.id),
+    symbol,
+    name: asString(r.name, symbol),
+    quoteAsset,
+    displaySymbol: asString(r.displaySymbol, `${symbol} / ${quoteAsset}`),
+    provider: asString(r.provider, "BINANCE"),
+    providerSymbol: asString(r.providerSymbol, `${symbol}${quoteAsset}`),
+    providerUnitMultiplier: asNumber(r.providerUnitMultiplier, 1),
+    status: asString(r.status, "INACTIVE").toUpperCase(),
+  };
+}
+
+export async function fetchAdminTradingSymbols(
+  token: string,
+  options?: AdminRequestOptions,
+): Promise<AdminTradingSymbolDto[]> {
+  const base = tradingOrigin(options?.origin ?? resolveTradingOrigin());
+  const transport = options?.transport ?? fetch;
+  try {
+    const response = await transport(`${base}/api/v1/trading/admin/symbols`, {
+      method: "GET",
+      credentials: "omit",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.any([
+        AbortSignal.timeout(10_000),
+        ...(options?.signal ? [options.signal] : []),
+      ]),
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      let body: unknown;
+      let code: string | undefined;
+      try {
+        body = await response.json();
+        const rec = asRecord(body);
+        if (typeof rec.code === "string") code = rec.code;
+      } catch {
+        // Ignore unreadable body
+      }
+      throw new TradingApiError(
+        response.status,
+        undefined,
+        code,
+        undefined,
+        undefined,
+        undefined,
+        extractRequestId(body, response),
+      );
+    }
+    return asArray(await response.json(), parseAdminTradingSymbol);
+  } catch (error) {
+    if (options?.signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
+    if (error instanceof TradingApiError) throw error;
+    throw new TradingApiError(0);
+  }
+}
+
+export async function updateAdminTradingSymbolStatus(
+  token: string,
+  symbolId: number,
+  status: "ACTIVE" | "HALTED",
+  options?: AdminRequestOptions,
+): Promise<AdminTradingSymbolDto> {
+  const base = tradingOrigin(options?.origin ?? resolveTradingOrigin());
+  const transport = options?.transport ?? fetch;
+  try {
+    const response = await transport(`${base}/api/v1/trading/admin/symbols/${symbolId}/status`, {
+      method: "PATCH",
+      credentials: "omit",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.any([
+        AbortSignal.timeout(10_000),
+        ...(options?.signal ? [options.signal] : []),
+      ]),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) {
+      let body: unknown;
+      let code: string | undefined;
+      try {
+        body = await response.json();
+        const rec = asRecord(body);
+        if (typeof rec.code === "string") code = rec.code;
+      } catch {
+        // Ignore unreadable body
+      }
+      throw new TradingApiError(
+        response.status,
+        undefined,
+        code,
+        undefined,
+        undefined,
+        undefined,
+        extractRequestId(body, response),
+      );
+    }
+    return parseAdminTradingSymbol(await response.json());
+  } catch (error) {
+    if (options?.signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
+    if (error instanceof TradingApiError) throw error;
+    throw new TradingApiError(0);
+  }
+}
+
 export async function fetchTradingOpsSummary(
   token: string,
   options?: AdminRequestOptions,
 ): Promise<TradingOpsSummary> {
-  const base = tradingOrigin(options?.origin ?? DEFAULT_ADMIN_TRADING_API_BASE_URL);
+  const base = tradingOrigin(options?.origin ?? resolveTradingOrigin());
   const transport = options?.transport ?? fetch;
   try {
     const response = await transport(`${base}/api/v1/trading/admin/ops/summary`, {
@@ -899,7 +1050,24 @@ export async function fetchTradingOpsSummary(
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
-      throw new TradingApiError(response.status);
+      let body: unknown;
+      let code: string | undefined;
+      try {
+        body = await response.json();
+        const rec = asRecord(body);
+        if (typeof rec.code === "string") code = rec.code;
+      } catch {
+        // Ignore unreadable body
+      }
+      throw new TradingApiError(
+        response.status,
+        undefined,
+        code,
+        undefined,
+        undefined,
+        undefined,
+        extractRequestId(body, response),
+      );
     }
     return parseTradingOpsSummary(await response.json());
   } catch (error) {
@@ -915,7 +1083,7 @@ export async function releaseTradingRiskHold(
   reference?: string,
   options?: AdminRequestOptions,
 ): Promise<TradingHoldReleaseResult> {
-  const base = tradingOrigin(options?.origin ?? DEFAULT_ADMIN_TRADING_API_BASE_URL);
+  const base = tradingOrigin(options?.origin ?? resolveTradingOrigin());
   const transport = options?.transport ?? fetch;
   try {
     const body = reference?.trim() ? { reference: reference.trim() } : {};
@@ -941,7 +1109,24 @@ export async function releaseTradingRiskHold(
     if (response.ok || response.status === 409) {
       return parseTradingHoldReleaseResult(await response.json());
     }
-    throw new TradingApiError(response.status);
+    let errBody: unknown;
+    let code: string | undefined;
+    try {
+      errBody = await response.json();
+      const rec = asRecord(errBody);
+      if (typeof rec.code === "string") code = rec.code;
+    } catch {
+      // Ignore unreadable body
+    }
+    throw new TradingApiError(
+      response.status,
+      undefined,
+      code,
+      undefined,
+      undefined,
+      undefined,
+      extractRequestId(errBody, response),
+    );
   } catch (error) {
     if (options?.signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
     if (error instanceof TradingApiError) throw error;

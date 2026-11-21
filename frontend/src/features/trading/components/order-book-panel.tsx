@@ -4,8 +4,8 @@ import { freshOrderBook, type OrderBook } from "../market/order-book";
 import { formatMarketPrice } from "../market/price-format";
 import { formatQuantity } from "../api/account";
 
-export function OrderBookPanel({ symbol, book, mark, onSelectPrice }: {
-  symbol: TradingSymbol | null; book: OrderBook; mark?: string; onSelectPrice?: (price: string) => void;
+export function OrderBookPanel({ symbol, book, mark, trend = "flat", onSelectPrice }: {
+  symbol: TradingSymbol | null; book: OrderBook; mark?: string; trend?: "up" | "down" | "flat"; onSelectPrice?: (price: string) => void;
 }) {
   const container = useRef<HTMLElement>(null);
   const [visibleRows, setVisibleRows] = useState(10);
@@ -39,7 +39,7 @@ export function OrderBookPanel({ symbol, book, mark, onSelectPrice }: {
     <header className="section-heading"><h3 id="order-book-heading" className="section-title">Order Book</h3></header>
     <div className="order-book-columns"><span>가격(USDT)</span><span>수량({symbol?.symbol ?? "—"})</span></div>
     {levels("ask")}
-    <div className="order-book-mark"><span>Mark Price</span><strong>{formatMarketPrice(mark, symbol?.priceTickSize)}</strong></div>
+    <div className="order-book-mark"><span>Mark Price</span><strong data-trend={trend}>{formatMarketPrice(mark, symbol?.priceTickSize)}</strong></div>
     {levels("bid")}
     {!fresh && <p role="status" className="order-book-note">{book.status === "STALE" ? "호가 갱신 대기 중…" : "호가 수신 대기 중…"}</p>}
   </aside>;

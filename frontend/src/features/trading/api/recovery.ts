@@ -5,10 +5,11 @@ import { useGuestSession } from "../components/trading-data-provider";
 import { tradingJson } from "./client";
 import { tradingKeys } from "./query-keys";
 import { parseEngine, parseRecovery, recoveryAdmission } from "./recovery-contract";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
 
 export function useTradingAdmission() {
   const { session, snapshot } = useGuestSession();
-  const origin = process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081";
+  const origin = resolveTradingOrigin();
   const enabled = snapshot.phase === "ready" && !snapshot.retrying;
   const engine = useQuery({ queryKey: ["trading-engine", origin], enabled, staleTime: 1000, refetchInterval: 3000,
     queryFn: async ({ signal }) => parseEngine(await tradingJson(origin, "status", { signal })) });

@@ -14,6 +14,7 @@ import type { CandleInterval } from "../market/candles";
 import { OrderBookPanel } from "./order-book-panel";
 import { freshMarkPrice } from "../market/selected-market";
 import { useGuestSession } from "./trading-data-provider";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
 
 export function MarketChartPanel({ children }: { children: ReactNode }) {
   const account = useTradingSummary();
@@ -60,7 +61,7 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
       controller = new AbortController();
       timeout = setTimeout(() => controller.abort(), 10_000);
       try {
-        const endpoints = marketEndpoints(process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081");
+        const endpoints = marketEndpoints(resolveTradingOrigin());
         const response = await fetch(endpoints.symbols, { signal: controller.signal, credentials: "omit", cache: "no-store" });
         if (!response.ok) throw new Error("Symbol catalog unavailable");
         // A refreshed catalog can briefly still advertise the rejected ID.
@@ -167,8 +168,11 @@ function LiveChart(props: Omit<Parameters<typeof TradingChart>[0],"symbol"|"mark
   return <TradingChart {...props} symbol={symbol} market={market} />;
 }
 function LiveBook({onSelectPrice}:{onSelectPrice?: (price:string)=>void}) {
-  const {symbol,market}=useSelectedMarket(), book=useSelectedBook();
-  return book && <OrderBookPanel symbol={symbol} book={book} mark={freshMarkPrice(market)?.decimal} onSelectPrice={onSelectPrice} />;
+  const {symbol,market}=useSelectedMarket(), book=useSelectedBook(), query=useMarketTickers();
+  const ticker=query.tickers.find(item=>item.tradingSymbolId===symbol?.id&&item.symbol===symbol.symbol&&item.quoteAsset===symbol.quoteAsset);
+  const pct=ticker?.changePercent24h?.trim();
+  const trend:"up"|"down"|"flat"=!pct||!/[1-9]/.test(pct) ? "flat" : pct.startsWith("-") ? "down" : "up";
+  return book && <OrderBookPanel symbol={symbol} book={book} mark={freshMarkPrice(market)?.decimal} trend={trend} onSelectPrice={onSelectPrice} />;
 }
 function SymbolList({symbols,search,selectedId,onSelect}:{symbols:readonly TradingSymbol[];search:string;selectedId:number|null;onSelect:(id:number)=>void}) {
   const query=useMarketTickers();

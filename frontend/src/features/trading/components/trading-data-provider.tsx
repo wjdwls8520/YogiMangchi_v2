@@ -9,13 +9,14 @@ import { GuestAccessProvider } from "./guest-access";
 import { useMember } from "../../member/components/member-provider";
 import { MemberRoundMonitor } from "./member-simulation";
 import { TradingCommandRecovery } from "./trading-command-recovery";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
 
 const SessionContext = createContext<GuestSession | null>(null);
 const emptySubscribe = () => () => {};
 const emptyGetSnapshot = () => initialSession;
 let browserSession: GuestSession | undefined;
 function getSession(contestSeasonId?: number) {
-  const origin = process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081";
+  const origin = resolveTradingOrigin();
   if (typeof window === "undefined") return createGuestSession(origin, () => { throw new Error("Browser storage required"); }, fetch, Date.now, undefined, undefined, { contestSeasonId });
   if (contestSeasonId && Number.isInteger(contestSeasonId) && contestSeasonId > 0) {
     return createGuestSession(origin, () => window.localStorage, fetch, Date.now, () => window.sessionStorage, undefined, { contestSeasonId });

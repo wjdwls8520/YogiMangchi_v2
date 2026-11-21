@@ -16,14 +16,47 @@ import {
   fetchAdminCommunityReplies,
   formatAdminDateTime,
   restoreAdminCommunityPost,
+  restoreAdminCommunityReply,
   type AdminPostDto,
   type AdminReplyDto,
 } from "../api/admin-api";
 import { AdminShell } from "./admin-layout";
 
+function AuthorStatusBadge({ status }: { status?: string | null }) {
+  const normalized = (status ?? "").trim().toUpperCase();
+  if (!normalized || normalized === "ACTIVE") return null;
+  if (normalized === "SUSPENDED") {
+    return (
+      <span className="ml-1.5 inline-flex shrink-0 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-800">
+        정지 (SUSPENDED)
+      </span>
+    );
+  }
+  if (normalized === "BANNED") {
+    return (
+      <span className="ml-1.5 inline-flex shrink-0 whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-black text-[#F6465D]">
+        영구정지 (BANNED)
+      </span>
+    );
+  }
+  if (normalized === "WITHDRAWN") {
+    return (
+      <span className="ml-1.5 inline-flex shrink-0 whitespace-nowrap rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-500">
+        탈퇴 (WITHDRAWN)
+      </span>
+    );
+  }
+  return (
+    <span className="ml-1.5 inline-flex shrink-0 whitespace-nowrap rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-600">
+      {normalized}
+    </span>
+  );
+}
+
 export function AdminCommunity() {
   const memberCtx = useOptionalMember();
   const phase = memberCtx?.snapshot.phase;
+  const role = memberCtx?.snapshot.role;
   const generation = memberCtx?.snapshot.generation;
   const session = memberCtx?.session;
   const [subTab, setSubTab] = useState<"posts" | "replies">("posts");
@@ -82,10 +115,11 @@ export function AdminCommunity() {
   const [deletePostTarget, setDeletePostTarget] = useState<AdminPostDto | null>(null);
   const [deleteReplyTarget, setDeleteReplyTarget] = useState<AdminReplyDto | null>(null);
   const [restoringPostId, setRestoringPostId] = useState<number | null>(null);
+  const [restoringReplyId, setRestoringReplyId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    if (phase !== "ready" || !session) return;
+    if (phase !== "ready" || role !== "ADMIN" || !session) return;
     const controller = new AbortController();
     if (subTab === "posts") {
       void session
@@ -139,7 +173,7 @@ export function AdminCommunity() {
         });
     }
     return () => controller.abort();
-  }, [subTab, appliedPostFilters, appliedReplyFilters, reloadTick, phase, generation, session]);
+  }, [subTab, appliedPostFilters, appliedReplyFilters, reloadTick, phase, role, generation, session]);
 
   const handleApplySearch = () => {
     if (subTab === "posts") {
@@ -278,6 +312,29 @@ export function AdminCommunity() {
       setActionToast({ kind: "error", text: "게시글 복구 처리에 실패했습니다." });
     } finally {
       setRestoringPostId(null);
+    }
+  };
+
+  const handleRestoreReply = async (reply: AdminReplyDto) => {
+    if (restoringReplyId !== null) return;
+    if (phase !== "ready" || !session) {
+      setActionToast({ kind: "error", text: "관리자 인증 세션이 필요합니다." });
+      return;
+    }
+    setRestoringReplyId(reply.replyId);
+    try {
+      await session.authorized(cred =>
+        restoreAdminCommunityReply(cred.accessToken, reply.replyId),
+      );
+      setActionToast({
+        kind: "success",
+        text: `댓글 #${reply.replyId} 복구가 완료되었습니다.`,
+      });
+      setReloadTick(prev => prev + 1);
+    } catch {
+      setActionToast({ kind: "error", text: "댓글 복구 처리에 실패했습니다." });
+    } finally {
+      setRestoringReplyId(null);
     }
   };
 
@@ -589,6 +646,7 @@ export function AdminCommunity() {
                             <span className="ml-1 text-[11px] text-gray-400">
                               (#{post.authorId})
                             </span>
+                            <AuthorStatusBadge status={post.authorStatus} />
                           </td>
                           <td className="px-4 py-3.5 tabular-nums text-[11px] text-gray-600 whitespace-nowrap">
                             <span>조회 {post.viewCount.toLocaleString("ko-KR")}</span>
@@ -715,6 +773,7 @@ export function AdminCommunity() {
                             <span className="ml-1 text-[11px] text-gray-400">
                               (#{reply.authorId})
                             </span>
+                            <AuthorStatusBadge status={reply.authorStatus} />
                           </td>
                           <td className="px-4 py-3.5 tabular-nums text-[11px] text-gray-600 whitespace-nowrap">
                             <span>좋아요 {reply.likeCount}</span>
@@ -752,9 +811,14 @@ export function AdminCommunity() {
                                 삭제
                               </button>
                             ) : (
-                              <span className="whitespace-nowrap text-[11px] font-semibold text-gray-400">
-                                삭제 완료
-                              </span>
+                              <button
+                                type="button"
+                                disabled={restoringReplyId === reply.replyId}
+                                onClick={() => void handleRestoreReply(reply)}
+                                className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-3 text-[11px] font-black text-[#0058FF] transition-colors hover:bg-blue-100 disabled:opacity-50"
+                              >
+                                {restoringReplyId === reply.replyId ? "복구 중…" : "복구"}
+                              </button>
                             )}
                           </td>
                         </tr>

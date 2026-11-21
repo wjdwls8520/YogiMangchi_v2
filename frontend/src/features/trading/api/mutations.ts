@@ -15,6 +15,7 @@ import type { TradingOrder } from "./orders";
 import { reportAdmissionRejection } from "./admission-rejection";
 import { useTradingAdmission } from "./recovery";
 import { useJournalResolution } from "./journal-resolution";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
 
 type Rejected = (issue: OrderIssue, command: TradingCommand, identity: SessionSnapshot) => void;
 type Failed = (error: Error, command: TradingCommand) => void;
@@ -25,7 +26,7 @@ export function tradingMutationEffects(client: Pick<QueryClient, "invalidateQuer
     onError: (error: Error, request: MutationRequest) => {
       if (!current(request.session)) return;
       const issue = orderRejection(error instanceof TradingApiError ? error.code : undefined, request.command);
-      if (error instanceof TradingApiError && error.code === "MARKETABLE_LIMIT_NOT_ALLOWED") void client.invalidateQueries({ queryKey: ["market", process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081", "tickers"] });
+      if (error instanceof TradingApiError && error.code === "MARKETABLE_LIMIT_NOT_ALLOWED") void client.invalidateQueries({ queryKey: ["market", resolveTradingOrigin(), "tickers"] });
       if (issue) onRejected?.(issue, request.command, request.session);
       onFailed?.(error,request.command);
     },

@@ -12,7 +12,9 @@ function describe(entry:JournalEntry) {
   const c=entry.command;
   if(c.kind==="open")return `${c.side==="LONG"?"Long":"Short"} ${c.type==="MARKET"?"시장가":"지정가"} 진입 · 종목 #${c.tradingSymbolId} · 수량 ${c.quantity}`;
   if(c.kind==="cancel")return `주문 #${c.orderId} 취소`;
+  if(c.kind==="amend")return `주문 #${c.orderId} 정정`;
   if(c.kind==="stopLoss")return `포지션 #${c.positionId} 손절 ${c.stopPrice===undefined?"해제":"설정·수정"}`;
+  if(c.kind==="takeProfit")return `포지션 #${c.positionId} 익절 ${c.takeProfitPrice===undefined?"해제":"설정·수정"}`;
   if(c.kind==="close"||c.kind==="limitClose")return `포지션 #${c.positionId} ${c.kind==="close"?"시장가":"지정가"} 청산 · ${c.quantity??"전량"}`;
   return c.kind==="guestRetry"?"Guest 모의 자금 재도전":"회원 모의투자 회차 다시시작";
 }
@@ -36,7 +38,7 @@ export function TradingCommandRecovery() {
       const settled=commandResultSettled(result);
       setCanResend(values=>({...values,[key]:!settled}));
       if(settled) {
-        const status=result.resultKind==="ORDER_CURRENT"?` · 현재 주문 ${orderStatusLabel(result.result.status)}`:" · 영속 원응답 확인";
+        const status=result.resultKind==="ORDER_CURRENT"?` · 현재 주문 ${orderStatusLabel(result.result.status)}`:result.resultKind==="TAKE_PROFIT_CURRENT"?` · 현재 익절 상태 ${result.result.status}`:" · 영속 원응답 확인";
         setReceipt({identity,text:`${describe(entry)}: 서버 기록을 확인했습니다${status}. 이번 조회는 금융 요청을 실행하지 않았습니다.`});refreshFinancial();
       } else setMessages(values=>({...values,[key]:result.status==="NOT_OBSERVED"?"서버에서 원래 결과를 관측하지 못했습니다. 미접수나 실패가 확정된 것은 아닙니다.":"취소 대상 주문이 현재 미체결 상태입니다. 취소 완료가 확인된 것은 아닙니다."}));
     } catch(error) {if(error instanceof CommandJournalError&&error.code==="RESOLVED")return;if(current()&&!signal?.aborted){setCanResend(values=>({...values,[key]:false}));setMessages(values=>({...values,[key]:error instanceof CommandJournalError?"브라우저의 저장 또는 동시 처리 기능을 확인하지 못했습니다. 안전하지 않은 재전송은 하지 않습니다.":mutationMessage(error)}));}}

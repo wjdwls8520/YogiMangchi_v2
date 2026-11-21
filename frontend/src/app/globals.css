@@ -544,7 +544,9 @@
   .order-book-level[data-book-side="ask"] > span:first-of-type { @apply text-loss; }
   .order-book-level[data-book-side="bid"] > span:first-of-type { @apply text-gain; }
   .order-book-mark { @apply flex flex-wrap items-center justify-between gap-2 px-3 py-3 text-trade-meta text-terminal-muted; }
-  .order-book-mark strong { @apply text-lg font-semibold text-gain tabular-nums; }
+  .order-book-mark strong { @apply text-lg font-semibold text-terminal-text tabular-nums; }
+  .order-book-mark strong[data-trend="up"] { @apply text-gain; }
+  .order-book-mark strong[data-trend="down"] { @apply text-loss; }
   .order-warning { @apply mt-1 text-trade-meta leading-relaxed text-loss; }
   .order-wallet div {
     @apply flex flex-wrap items-center justify-between gap-1 text-trade-body;
@@ -1069,11 +1071,16 @@
 .ym-modal-subtle { margin: 0; font-size: 12px; color: #848E9C; }
 .ym-modal-alert { margin: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(246, 70, 93, 0.35); background: rgba(246, 70, 93, 0.1); color: #FCA5A5; font-size: 12px; line-height: 1.45; }
 .ym-modal-footer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding-top: 2px; }
-.ym-exchange-modal .ym-modal-btn-confirm { height: 42px; min-height: 42px !important; padding: 0 14px !important; border-radius: 6px !important; border: 1px solid #F0B90B !important; background: rgba(240, 185, 11, 0.08) !important; color: #F0B90B !important; font-size: 13px !important; font-weight: 700 !important; cursor: pointer; }
-.ym-exchange-modal .ym-modal-btn-confirm:hover:enabled { background: rgba(240, 185, 11, 0.18) !important; }
-.ym-exchange-modal .ym-modal-btn-confirm:disabled { border-color: #2B3139 !important; background: #1E2329 !important; color: #5E6673 !important; cursor: default; }
-.ym-exchange-modal .ym-modal-btn-cancel { height: 42px; min-height: 42px !important; padding: 0 14px !important; border-radius: 6px !important; border: 1px solid #363C45 !important; background: #1E2329 !important; color: #EAECEF !important; font-size: 13px !important; font-weight: 600 !important; cursor: pointer; }
-.ym-exchange-modal .ym-modal-btn-cancel:hover:enabled { background: #2B3139 !important; }
+.ym-exchange-modal .ym-modal-btn-confirm,
+.position-partial-dialog .ym-modal-btn-confirm { height: 42px; min-height: 42px !important; padding: 0 14px !important; border-radius: 6px !important; border: 1px solid #F0B90B !important; background: rgba(240, 185, 11, 0.08) !important; color: #F0B90B !important; font-size: 13px !important; font-weight: 700 !important; cursor: pointer; }
+.ym-exchange-modal .ym-modal-btn-confirm:hover:enabled,
+.position-partial-dialog .ym-modal-btn-confirm:hover:enabled { background: rgba(240, 185, 11, 0.18) !important; }
+.ym-exchange-modal .ym-modal-btn-confirm:disabled,
+.position-partial-dialog .ym-modal-btn-confirm:disabled { border-color: #2B3139 !important; background: #1E2329 !important; color: #5E6673 !important; cursor: default; }
+.ym-exchange-modal .ym-modal-btn-cancel,
+.position-partial-dialog .ym-modal-btn-cancel { height: 42px; min-height: 42px !important; padding: 0 14px !important; border-radius: 6px !important; border: 1px solid #363C45 !important; background: #1E2329 !important; color: #EAECEF !important; font-size: 13px !important; font-weight: 600 !important; cursor: pointer; }
+.ym-exchange-modal .ym-modal-btn-cancel:hover:enabled,
+.position-partial-dialog .ym-modal-btn-cancel:hover:enabled { background: #2B3139 !important; }
 @media (max-width: 639px) {
   .position-close-dialog.ym-exchange-modal,
   .position-close-dialog.position-partial-dialog {
@@ -1088,10 +1095,34 @@
   .ym-exchange-modal .ym-modal-steppers button { width: 34px; height: 34px; min-height: 34px !important; }
   .ym-exchange-modal .ym-modal-preset-bar button { height: 34px; min-height: 34px !important; font-size: 12px !important; }
   .ym-exchange-modal .ym-modal-btn-confirm,
-  .ym-exchange-modal .ym-modal-btn-cancel { height: 44px; min-height: 44px !important; font-size: 14px !important; }
+  .ym-exchange-modal .ym-modal-btn-cancel,
+  .position-partial-dialog .ym-modal-btn-confirm,
+  .position-partial-dialog .ym-modal-btn-cancel { height: 44px; min-height: 44px !important; font-size: 14px !important; }
 }
 @media (width >= 64rem) { .order-book > .order-book-note:not([role]) { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; } }
-.activity-extra-dialog { width:min(72rem,calc(100% - 24px)); max-width:72rem; max-height:85dvh; overflow:auto; }
+.activity-extra-dialog,
+.activity-extra-dialog.position-close-dialog.ym-exchange-modal { width:min(72rem,calc(100% - 24px)); max-width:72rem; max-height:85dvh; overflow:auto; }
+.trading-workspace .member-simulation { margin-top: 16px; padding: 16px; border-radius: 10px; border: 1px solid #2B3139; background: #1E2329; color: #EAECEF; }
+.trading-workspace .member-simulation h2 { margin: 0 0 12px; font-size: 15px; font-weight: 700; color: #EAECEF; }
+.trading-workspace .member-simulation .member-note { color: #848E9C; font-size: 12px; line-height: 1.5; }
+.trading-workspace .member-simulation .member-note a { color: #F0B90B; font-weight: 600; }
+.trading-workspace .member-simulation .member-message { margin: 10px 0; padding: 10px 12px; border-radius: 8px; border: 1px solid #2B3139; background: #161A1E; color: #EAECEF; font-size: 12px; }
+.trading-workspace .member-simulation .member-message[role="alert"] { border-color: rgba(246, 70, 93, 0.4); background: rgba(246, 70, 93, 0.12); color: #FCA5A5; }
+.trading-workspace .member-simulation .member-round-select { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; font-size: 12px; font-weight: 600; color: #B7BDC6; }
+.trading-workspace .member-simulation .member-round-select select { height: 34px; border-radius: 6px; border: 1px solid #363C45; background: #161A1E; color: #EAECEF; padding: 0 10px; font-size: 12px; }
+.trading-workspace .member-simulation .member-round-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin: 12px 0; }
+.trading-workspace .member-simulation .member-round-summary > div { padding: 8px 10px; border-radius: 6px; border: 1px solid #2B3139; background: #161A1E; }
+.trading-workspace .member-simulation .member-round-summary dt { font-size: 11px; color: #848E9C; }
+.trading-workspace .member-simulation .member-round-summary dd { margin: 2px 0 0; font-size: 12px; font-weight: 600; color: #EAECEF; font-variant-numeric: tabular-nums; }
+.trading-workspace .member-simulation .member-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.trading-workspace .member-simulation .member-primary { min-height: 36px; padding: 0 14px; border-radius: 6px; border: 1px solid #F0B90B; background: rgba(240, 185, 11, 0.12); color: #F0B90B; font-size: 12px; font-weight: 700; cursor: pointer; }
+.trading-workspace .member-simulation .member-primary:hover:enabled { background: rgba(240, 185, 11, 0.22); }
+.trading-workspace .member-simulation .member-primary:disabled { opacity: 0.45; cursor: default; }
+.trading-workspace .member-simulation .member-secondary { min-height: 34px; padding: 0 12px; border-radius: 6px; border: 1px solid #363C45; background: #161A1E; color: #EAECEF; font-size: 12px; font-weight: 600; cursor: pointer; }
+.trading-workspace .member-simulation .member-secondary[aria-pressed="true"] { border-color: #F0B90B; background: rgba(240, 185, 11, 0.14); color: #F0B90B; }
+.trading-workspace .member-simulation .member-secondary:hover:enabled { background: #2B3139; }
+.trading-workspace .member-simulation .member-withdrawal-policy { margin: 0 0 12px; padding-left: 18px; color: #B7BDC6; font-size: 12px; line-height: 1.55; list-style: disc; }
+.trading-workspace .member-simulation .member-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: #EAECEF; }
 @media (width >= 64rem) { .trading-table th { background:var(--color-terminal-panel); font-size:11px; font-weight:400; } .account-records-heading { background:var(--color-terminal-panel); min-height:32px; font-size:12px; } .trading-table[data-variant="positions"] [data-key="action"] { right:10.5rem; } .trading-table[data-variant="positions"] [data-key="stopLoss"] { position:sticky; right:0; min-width:10.5rem; width:10.5rem; border-left:1px solid var(--color-terminal-line); background:var(--color-terminal-panel); z-index:1; } .trading-table[data-variant="positions"] th[data-key="stopLoss"] { z-index:20; } .trading-table .position-close-actions button, .trading-table .position-stop-loss > button, .trading-table .position-take-profit > button { min-height:28px; padding:0 8px; font-size:11px; white-space:nowrap; flex-shrink:0; } }
 .position-tpsl-actions { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .position-take-profit > button[data-active-tp="true"] { border-color: rgba(14, 203, 129, 0.45); background: rgba(14, 203, 129, 0.12); color: #0ECB81; }
@@ -1446,12 +1477,13 @@ body:has(.member-shell) :focus-visible {
   font-size: 12px;
 }
 
-.ym-helper-violet {
+.member-shell .member-fields .ym-helper-primary,
+.ym-helper-primary {
   display: block;
   margin-top: 4px;
   font-size: 12px;
   font-weight: 500;
-  color: #0058FF !important;
+  color: #0058FF;
 }
 
 .member-shell .member-message {
@@ -2462,6 +2494,13 @@ html[data-ym-auth-hint="admin"] .ym-gnb-auth-loading .ym-auth-slot-member {
   display: inline-flex;
 }
 
+@media (max-width: 639px) {
+  html .ym-gnb-auth-loading .ym-auth-slot-admin,
+  html .ym-gnb-auth-loading .ym-auth-slot-member {
+    display: none;
+  }
+}
+
 @media (min-width: 768px) {
   .ym-gnb-inner {
     display: grid;
@@ -2512,7 +2551,7 @@ table th {
   white-space: nowrap;
 }
 
-/* Native <select> vertical centering & chevron clearance across Community / News / Contest */
+/* Native <select> vertical centering & chevron clearance across Community / News / Contest / Support */
 select.rounded-xl {
   appearance: none !important;
   -webkit-appearance: none !important;
@@ -2520,7 +2559,7 @@ select.rounded-xl {
   padding-top: 0 !important;
   padding-bottom: 0 !important;
   padding-right: 2.25rem !important;
-  line-height: 2.35rem !important;
+  line-height: normal !important;
   text-overflow: ellipsis;
   white-space: nowrap;
   overflow: hidden;
@@ -2528,7 +2567,4 @@ select.rounded-xl {
   background-repeat: no-repeat !important;
   background-position: right 0.75rem center !important;
   background-size: 14px 14px !important;
-}
-select.rounded-xl.h-9 {
-  line-height: 2.1rem !important;
 }

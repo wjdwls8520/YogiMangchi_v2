@@ -309,22 +309,30 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
     logoutAll() {
       if (logoutFlight) return logoutFlight;
       withdrawalAccess = null;
-      const currentAccess = access;
-      if (!currentAccess || snapshot.phase !== "ready") {
-        return Promise.reject(new ContentApiError(401));
-      }
-      clear("ending");
-      const generation = snapshot.generation;
-      logoutFlight = lock(async () => {
-        if (snapshot.generation !== generation) throw new DOMException("Session changed", "AbortError");
-        await contentJson(origin, "/auth/logout-all", { method: "POST", access: currentAccess.accessToken }, transport);
-        if (snapshot.generation === generation) {
-          pendingStorage()?.removeItem(pendingKey);
-          clear("anonymous");
+      logoutFlight = (async () => {
+        if (!access || accessRejected || Date.parse(access.expiresAt) - now() < 30_000) {
+          await refresh();
         }
-      })
-        .catch(error => { if (snapshot.generation === generation) clear("error"); throw error; })
-        .finally(() => { logoutFlight = null; });
+        const currentAccess = access;
+        if (!currentAccess || snapshot.phase !== "ready") {
+          throw new ContentApiError(401);
+        }
+        clear("ending");
+        const generation = snapshot.generation;
+        try {
+          await lock(async () => {
+            if (snapshot.generation !== generation) throw new DOMException("Session changed", "AbortError");
+            await contentJson(origin, "/auth/logout-all", { method: "POST", access: currentAccess.accessToken }, transport);
+            if (snapshot.generation === generation) {
+              pendingStorage()?.removeItem(pendingKey);
+              clear("anonymous");
+            }
+          });
+        } catch (error) {
+          if (snapshot.generation === generation) clear("error");
+          throw error;
+        }
+      })().finally(() => { logoutFlight = null; });
       return logoutFlight;
     },
   };

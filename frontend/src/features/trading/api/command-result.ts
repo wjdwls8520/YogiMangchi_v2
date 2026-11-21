@@ -1,15 +1,17 @@
 import { record, instant, invalidContract } from "./contracts";
 import { parseOrder, type TradingOrder } from "./orders";
 import { parseStopLoss, type StopLoss } from "./stop-loss-contract";
+import type { TakeProfit } from "./take-profit-contract";
 import { parseGuestRetry } from "./guest-retry";
 import { parseRestart } from "./member-rounds";
 import { mutationRequest } from "./mutation-request";
 import { canonicalJournalCommand, type JournalEntry } from "./command-journal";
 
-type Operation="OPEN"|"CLOSE"|"LIMIT_CLOSE"|"AMEND"|"STOP_LOSS_PUT"|"STOP_LOSS_DELETE"|"MEMBER_RESTART"|"GUEST_RETRY";
+type Operation="OPEN"|"CLOSE"|"LIMIT_CLOSE"|"AMEND"|"STOP_LOSS_PUT"|"STOP_LOSS_DELETE"|"TAKE_PROFIT_PUT"|"TAKE_PROFIT_DELETE"|"MEMBER_RESTART"|"GUEST_RETRY";
 export type CommandResult = {status:"NOT_OBSERVED";operation:Operation;observedAt:string;resultKind:null;result:null}
   | {status:"FOUND";operation:"OPEN"|"CLOSE"|"LIMIT_CLOSE"|"CANCEL"|"AMEND";observedAt:string;resultKind:"ORDER_CURRENT";result:TradingOrder}
   | {status:"FOUND";operation:"STOP_LOSS_PUT"|"STOP_LOSS_DELETE";observedAt:string;resultKind:"ORIGINAL_SNAPSHOT";result:StopLoss}
+  | {status:"FOUND";operation:"TAKE_PROFIT_PUT"|"TAKE_PROFIT_DELETE";observedAt:string;resultKind:"TAKE_PROFIT_CURRENT";result:TakeProfit}
   | {status:"FOUND";operation:"GUEST_RETRY";observedAt:string;resultKind:"ORIGINAL_SNAPSHOT";result:ReturnType<typeof parseGuestRetry>}
   | {status:"FOUND";operation:"MEMBER_RESTART";observedAt:string;resultKind:"ORIGINAL_SNAPSHOT";result:ReturnType<typeof parseRestart>};
 export function commandResultRequest(entry:JournalEntry) {
@@ -23,7 +25,8 @@ export function commandResultRequest(entry:JournalEntry) {
     case "guestRetry":return {operation:"GUEST_RETRY" as const,idempotencyKey};
     case "memberRestart":return {operation:"MEMBER_RESTART" as const,idempotencyKey};
     case "amend":
-    case "cancel":return invalidContract();
+    case "cancel":
+    case "takeProfit":return invalidContract();
   }
 }
 export function parseCommandResult(value:unknown,entry:JournalEntry):CommandResult {

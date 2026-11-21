@@ -2,10 +2,13 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMember } from "./member-provider";
 import { MemberShell } from "./member-views";
 import { contentMessage } from "../api/client";
+import { parseOwnProfile } from "../api/contracts";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
 import {
   SUPPORT_INQUIRY_CATEGORIES,
   mySupportInquiriesPath,
@@ -37,9 +40,20 @@ export function SupportCenter() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [statusFilter, setStatusFilter] = useState<SupportInquiryFilterStatus>("ALL");
-  const [formFeedback, setFormFeedback] = useState<{ kind: "ok" | "error"; text: string } | null>(
-    null,
-  );
+  const [formFeedback, setFormFeedback] = useState<{
+    kind: "ok" | "error";
+    text: string;
+    requestId?: string;
+  } | null>(null);
+
+  const ownProfileQuery = useQuery({
+    queryKey: ["member", "own", snapshot.memberId, snapshot.generation],
+    enabled: isLoggedIn && snapshot.memberId !== null,
+    queryFn: async ({ signal }) =>
+      parseOwnProfile(await session.request("/members/me", { signal }), snapshot.memberId!),
+  });
+  const isSuspendedMember = ownProfileQuery.data?.status === "SUSPENDED";
+  const suspendedReason = ownProfileQuery.data?.suspendedReason ?? null;
 
   const inquiriesQuery = useInfiniteQuery({
     queryKey: ["member", "support-inquiries", statusFilter, snapshot.memberId, snapshot.generation],
@@ -84,6 +98,7 @@ export function SupportCenter() {
       setFormFeedback({
         kind: "error",
         text: contentMessage(err),
+        requestId: isUnexpectedApiError(err) ? getErrorRequestId(err) : undefined,
       });
     },
   });
@@ -165,6 +180,33 @@ export function SupportCenter() {
           </section>
         ) : (
           <>
+            {isSuspendedMember && (
+              <section
+                role="status"
+                data-suspended-appeal-banner="true"
+                className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-xs sm:text-sm text-amber-900 space-y-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <strong className="font-black text-amber-950">
+                    계정 일시 정지(SUSPENDED) 안내 — 1:1 이의제기 접수 가능
+                  </strong>
+                  <button
+                    type="button"
+                    onClick={() => setCategory("ACCOUNT")}
+                    className="rounded-lg border border-amber-300 bg-white px-3 py-1 text-xs font-bold text-amber-900 hover:bg-amber-100 cursor-pointer"
+                  >
+                    계정/이의제기 분류 선택
+                  </button>
+                </div>
+                <p className="leading-relaxed">
+                  현재 계정은 운영 정책에 따라 일시 정지 상태입니다. 일반 거래 및 커뮤니티 작성은 제한되지만, 아래 1:1 문의 폼에서 이의제기를 접수하고 운영팀 답변을 확인하실 수 있습니다.
+                </p>
+                {suspendedReason ? (
+                  <p className="font-bold text-amber-800">정지 사유: {suspendedReason}</p>
+                ) : null}
+              </section>
+            )}
+
             {/* 1:1 문의 작성 카드 */}
             <section className="rounded-2xl border border-gray-200 bg-white p-6 sm:p-7">
               <h3 className="mb-4 flex items-center gap-2 text-base font-black text-gray-900">
@@ -227,16 +269,19 @@ export function SupportCenter() {
                 </label>
 
                 {formFeedback && (
-                  <p
+                  <div
                     role={formFeedback.kind === "error" ? "alert" : "status"}
-                    className={`rounded-xl px-4 py-3 text-xs font-bold ${
+                    className={`flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3 text-xs font-bold ${
                       formFeedback.kind === "error"
                         ? "border border-red-200 bg-red-50 text-red-600"
                         : "border border-blue-200 bg-blue-50 text-[#0058FF]"
                     }`}
                   >
-                    {formFeedback.text}
-                  </p>
+                    <span>{formFeedback.text}</span>
+                    {formFeedback.requestId ? (
+                      <RequestIdChip requestId={formFeedback.requestId} />
+                    ) : null}
+                  </div>
                 )}
 
                 <div className="flex justify-end">
@@ -293,7 +338,12 @@ export function SupportCenter() {
                   role="alert"
                   className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-600"
                 >
-                  <span>문의 내역을 불러오지 못했습니다. {contentMessage(inquiriesQuery.error)}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>문의 내역을 불러오지 못했습니다. {contentMessage(inquiriesQuery.error)}</span>
+                    {isUnexpectedApiError(inquiriesQuery.error) ? (
+                      <RequestIdChip requestId={getErrorRequestId(inquiriesQuery.error)} />
+                    ) : null}
+                  </div>
                   <button
                     type="button"
                     onClick={() => void inquiriesQuery.refetch()}

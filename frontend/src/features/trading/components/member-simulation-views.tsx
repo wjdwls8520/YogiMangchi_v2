@@ -24,7 +24,7 @@ export function RestartConfirmation({ acknowledged, pending, blocked, error, unc
     <li>같은 회원 ID를 유지하며 Guest 자금과 합치지 않습니다. 성공한 시점부터 다음 24시간 동안 다시시작할 수 없습니다.</li>
     <li>이 작업은 취소하거나 이전 회차의 거래를 이어갈 수 없습니다.</li>
   </ul><label className="member-check"><input type="checkbox" checked={acknowledged} disabled={pending} onChange={event => onAcknowledge(event.currentTarget.checked)} /><span>안내 내용을 확인했으며 새 회차로 다시 시작합니다.</span></label>
-    {blocked && <p className="member-message" role="status">{blocked}</p>}{error && <p className="member-message" role="alert">{error}</p>}
+    {blocked && <p className="member-message" role="status">{blocked}</p>}{!uncertain && error && <p className="member-message" role="alert">{error}</p>}
     {uncertain && <p role="status" className="member-message">{unconfirmedMutationMessage}</p>}
     <div className="member-actions"><button className="member-secondary" disabled={pending} onClick={onClose}>닫기</button><button className="member-primary" disabled={pending || !acknowledged || !!blocked && !uncertain} onClick={onExecute}>{pending ? "처리 중…" : uncertain ? "원래 다시시작 요청 재전송" : "새 회차 시작 확인"}</button></div></>;
 }

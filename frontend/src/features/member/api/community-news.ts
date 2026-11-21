@@ -268,6 +268,7 @@ export type MemberCommunityReportItem = {
   reasonDescription: string;
   reason: string;
   status: string;
+  reportStatus: string;
   createdAt: string;
 };
 
@@ -614,7 +615,7 @@ export function parseSharedPositionSnapshot(value: unknown): SharedPositionSnaps
     pnlUsdt,
     positive,
     showPnlAmount: typeof row.showPnlAmount === "boolean" ? row.showPnlAmount : true,
-    verified: typeof row.verified === "boolean" ? row.verified : true,
+    verified: row.verified === true,
   };
 }
 
@@ -831,6 +832,13 @@ export function parseMemberCommunityReportItem(value: unknown): MemberCommunityR
       : typeof row.reason === "string" && row.reason.length > 0
         ? str(row.reason, 300)
         : "기타";
+  const rawStatus =
+    typeof row.reportStatus === "string" && row.reportStatus.trim().length > 0
+      ? str(row.reportStatus, 40).trim().toUpperCase()
+      : typeof row.status === "string" && row.status.trim().length > 0
+        ? str(row.status, 40).trim().toUpperCase()
+        : "PENDING";
+  const normalizedStatus = rawStatus === "RECEIVED" ? "PENDING" : rawStatus;
   return {
     id: posInt(row.id),
     targetType: rawType,
@@ -842,7 +850,8 @@ export function parseMemberCommunityReportItem(value: unknown): MemberCommunityR
     reasonType: typeof row.reasonType === "string" && row.reasonType.length > 0 ? str(row.reasonType, 60) : "SPAM",
     reasonDescription: reasonDesc,
     reason: reasonDesc,
-    status: typeof row.status === "string" && row.status.length > 0 ? str(row.status, 40) : "RECEIVED",
+    status: normalizedStatus,
+    reportStatus: normalizedStatus,
     createdAt: iso(row.createdAt),
   };
 }

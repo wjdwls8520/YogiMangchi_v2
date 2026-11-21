@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DimModal } from "../../member/components/dim-modal";
 import { useOptionalMember } from "../../member/components/member-provider";
 import { supportCategoryLabel, type SupportInquiry, type SupportInquiryFilterStatus } from "../../member/api/support";
 import {
@@ -10,14 +11,19 @@ import {
   V1IconRefresh,
   V1IconShield,
 } from "../../member/components/v1-ui";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId } from "../../../lib/request-id";
 import {
   fetchAdminSupportInquiries,
+  fetchAdminTradingSymbols,
   fetchContentOpsSummary,
   fetchTradingOpsSummary,
   formatAdminDateTime,
   releaseTradingRiskHold,
   replyAdminSupportInquiry,
   retryFailedS3Cleanup,
+  updateAdminTradingSymbolStatus,
+  type AdminTradingSymbolDto,
   type ContentOpsSummary,
   type OpsErrorEntry,
   type TradingOpsSummary,
@@ -38,13 +44,18 @@ export function resolveOpsHealthTone(statusRaw: string | boolean | null | undefi
     normalized === "CONNECTED" ||
     normalized === "FRESH" ||
     normalized === "OK" ||
-    normalized === "HEALTHY"
+    normalized === "HEALTHY" ||
+    normalized === "READY" ||
+    normalized === "LIVE"
   ) {
     return "green";
   }
   if (
     normalized === "DEGRADED" ||
     normalized === "RECOVERING" ||
+    normalized === "STARTING" ||
+    normalized === "CONNECTING" ||
+    normalized === "RECONNECTING" ||
     normalized === "STALE" ||
     normalized === "DISABLED" ||
     normalized === "PAUSED" ||
@@ -92,21 +103,38 @@ export function AdminOpsView() {
 
   const [contentOps, setContentOps] = useState<ContentOpsSummary | null>(null);
   const [tradingOps, setTradingOps] = useState<TradingOpsSummary | null>(null);
-  const [contentError, setContentError] = useState<string | null>(null);
-  const [tradingError, setTradingError] = useState<string | null>(null);
+  const [tradingSymbols, setTradingSymbols] = useState<AdminTradingSymbolDto[]>([]);
+  const [symbolsError, setSymbolsError] = useState<{ text: string; requestId?: string } | null>(null);
+  const [symbolToggleTarget, setSymbolToggleTarget] = useState<{
+    symbol: AdminTradingSymbolDto;
+    nextStatus: "ACTIVE" | "HALTED";
+  } | null>(null);
+  const [contentError, setContentError] = useState<{ text: string; requestId?: string } | null>(null);
+  const [tradingError, setTradingError] = useState<{ text: string; requestId?: string } | null>(null);
 
   const [inquiryFilter, setInquiryFilter] = useState<SupportInquiryFilterStatus>("OPEN");
   const [inquiries, setInquiries] = useState<SupportInquiry[]>([]);
   const [openInquiryCount, setOpenInquiryCount] = useState(0);
   const [answeredInquiryCount, setAnsweredInquiryCount] = useState(0);
-  const [inquiriesError, setInquiriesError] = useState<string | null>(null);
+  const [inquiriesError, setInquiriesError] = useState<{ text: string; requestId?: string } | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [actionBanner, setActionBanner] = useState<{
     kind: "success" | "error";
     text: string;
+    requestId?: string;
   } | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+
+  useEffect(() => {
+    if (!autoRefresh || typeof window === "undefined") return;
+    const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      setReloadTick(t => t + 1);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh]);
 
   useEffect(() => {
     if (phase !== "ready" || role !== "ADMIN" || !session) return;
@@ -118,9 +146,12 @@ export function AdminOpsView() {
         setContentError(null);
         setContentOps(summary);
       })
-      .catch(() => {
+      .catch(error => {
         if (controller.signal.aborted) return;
-        setContentError("Content 서버 운영 지표를 불러오지 못했습니다.");
+        setContentError({
+          text: "Content 서버 운영 지표를 불러오지 못했습니다.",
+          requestId: getErrorRequestId(error),
+        });
       });
 
     void session
@@ -129,9 +160,26 @@ export function AdminOpsView() {
         setTradingError(null);
         setTradingOps(summary);
       })
-      .catch(() => {
+      .catch(error => {
         if (controller.signal.aborted) return;
-        setTradingError("Trading 서버 운영 지표를 불러오지 못했습니다.");
+        setTradingError({
+          text: "Trading 서버 운영 지표를 불러오지 못했습니다.",
+          requestId: getErrorRequestId(error),
+        });
+      });
+
+    void session
+      .authorized(cred => fetchAdminTradingSymbols(cred.accessToken, { signal: controller.signal }), true)
+      .then(symbols => {
+        setSymbolsError(null);
+        setTradingSymbols(symbols);
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return;
+        setSymbolsError({
+          text: "거래 종목 목록을 불러오지 못했습니다.",
+          requestId: getErrorRequestId(error),
+        });
       });
 
     return () => controller.abort();
@@ -155,12 +203,44 @@ export function AdminOpsView() {
         setOpenInquiryCount(res.openCount);
         setAnsweredInquiryCount(res.answeredCount);
       })
-      .catch(() => {
+      .catch(error => {
         if (controller.signal.aborted) return;
-        setInquiriesError("1:1 고객문의 목록을 불러오지 못했습니다.");
+        setInquiriesError({
+          text: "1:1 고객문의 목록을 불러오지 못했습니다.",
+          requestId: getErrorRequestId(error),
+        });
       });
     return () => controller.abort();
   }, [phase, role, generation, session, inquiryFilter, reloadTick]);
+
+  async function handleConfirmSymbolStatus() {
+    if (!session || !symbolToggleTarget || busyAction !== null) return;
+    const { symbol, nextStatus } = symbolToggleTarget;
+    setBusyAction(`symbol:${symbol.id}`);
+    try {
+      const updated = await session.authorized(cred =>
+        updateAdminTradingSymbolStatus(cred.accessToken, symbol.id, nextStatus),
+      );
+      setTradingSymbols(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+      setSymbolToggleTarget(null);
+      setActionBanner({
+        kind: "success",
+        text:
+          updated.status === "HALTED"
+            ? `${updated.displaySymbol} 종목 거래를 비상 정지(HALTED)했습니다. 신규 진입·수정이 즉시 차단되며 청산·취소·강제청산은 안전하게 유지됩니다.`
+            : `${updated.displaySymbol} 종목 거래를 정상 재개(ACTIVE)했습니다.`,
+      });
+      setReloadTick(t => t + 1);
+    } catch (error) {
+      setActionBanner({
+        kind: "error",
+        text: `${symbol.displaySymbol} 종목 상태 변경에 실패했습니다.`,
+        requestId: getErrorRequestId(error),
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
 
   async function handleReleaseHold(accountId: number) {
     if (!session || busyAction !== null) return;
@@ -183,10 +263,11 @@ export function AdminOpsView() {
         });
       }
       setReloadTick(t => t + 1);
-    } catch {
+    } catch (error) {
       setActionBanner({
         kind: "error",
         text: `계정 #${accountId} Risk Hold 해제 요청 중 오류가 발생했습니다.`,
+        requestId: getErrorRequestId(error),
       });
     } finally {
       setBusyAction(null);
@@ -203,10 +284,11 @@ export function AdminOpsView() {
         text: `실패한 S3 정리 작업 ${res.retriedCount}건을 PENDING 상태로 재예약했습니다.`,
       });
       setReloadTick(t => t + 1);
-    } catch {
+    } catch (error) {
       setActionBanner({
         kind: "error",
         text: "S3 정리 재시도 요청에 실패했습니다.",
+        requestId: getErrorRequestId(error),
       });
     } finally {
       setBusyAction(null);
@@ -235,10 +317,11 @@ export function AdminOpsView() {
         text: `문의 #${inquiry.id} (${inquiry.memberNickname})에 답변을 등록하고 회원에게 알림을 전송했습니다.`,
       });
       setReloadTick(t => t + 1);
-    } catch {
+    } catch (error) {
       setActionBanner({
         kind: "error",
         text: `문의 #${inquiry.id} 답변 등록에 실패했습니다.`,
+        requestId: getErrorRequestId(error),
       });
     } finally {
       setBusyAction(null);
@@ -347,14 +430,25 @@ export function AdminOpsView() {
               {formatAdminDateTime(tradingOps?.capturedAt)}) 실시간 서버 진단 지표입니다.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setReloadTick(t => t + 1)}
-            className="inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
-          >
-            <V1IconRefresh className="h-4 w-4" />
-            <span>전체 새로고침</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <label className="inline-flex h-10 cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-xl border border-gray-200 bg-[#F9FAFB] px-3.5 text-xs font-bold text-gray-700">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={e => setAutoRefresh(e.target.checked)}
+                className="m-0 h-4 w-4 shrink-0 accent-[#0058FF]"
+              />
+              <span>30초 자동 새로고침</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => setReloadTick(t => t + 1)}
+              className="inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+            >
+              <V1IconRefresh className="h-4 w-4" />
+              <span>전체 새로고침</span>
+            </button>
+          </div>
         </header>
 
         {/* 배너 */}
@@ -362,19 +456,20 @@ export function AdminOpsView() {
           <div
             role={actionBanner.kind === "error" ? "alert" : "status"}
             className={cn(
-              "flex items-center justify-between gap-3 rounded-2xl border px-5 py-3.5 text-xs font-bold",
+              "flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5 text-xs font-bold",
               actionBanner.kind === "error"
                 ? "border-rose-200 bg-rose-50 text-[#F6465D]"
                 : "border-emerald-200 bg-emerald-50 text-emerald-800",
             )}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {actionBanner.kind === "error" ? (
                 <V1IconAlert className="h-4 w-4 shrink-0" />
               ) : (
                 <V1IconCheck className="h-4 w-4 shrink-0" />
               )}
               <span>{actionBanner.text}</span>
+              {actionBanner.requestId ? <RequestIdChip requestId={actionBanner.requestId} /> : null}
             </div>
             <button
               type="button"
@@ -391,9 +486,19 @@ export function AdminOpsView() {
             role="alert"
             className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3.5 text-xs font-bold text-[#F6465D]"
           >
-            <div className="space-y-0.5">
-              {contentError && <p>{contentError}</p>}
-              {tradingError && <p>{tradingError}</p>}
+            <div className="space-y-1">
+              {contentError && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p>{contentError.text}</p>
+                  {contentError.requestId ? <RequestIdChip requestId={contentError.requestId} /> : null}
+                </div>
+              )}
+              {tradingError && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p>{tradingError.text}</p>
+                  {tradingError.requestId ? <RequestIdChip requestId={tradingError.requestId} /> : null}
+                </div>
+              )}
             </div>
             <button
               type="button"
@@ -646,6 +751,105 @@ export function AdminOpsView() {
           )}
         </section>
 
+        {/* 3.5 거래 종목 비상 제어 (ACTIVE <-> HALTED) */}
+        <section
+          aria-label="거래 종목 비상 제어"
+          data-admin-symbol-control="true"
+          className="rounded-2xl border border-gray-200 bg-white p-6 space-y-4"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-black text-gray-900">
+                거래 종목 비상 제어 ({tradingSymbols.length}개 종목)
+              </h2>
+              <p className="text-xs text-gray-500">
+                종목을 비상 정지(HALTED)하면 신규 진입·주문 수정·견적·레버리지 변경·SL/TP 설정이 즉시 차단되며, 기존 포지션 청산·취소·강제청산은 안전하게 유지됩니다.
+              </p>
+            </div>
+          </div>
+
+          {symbolsError ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 rounded-xl bg-rose-50 px-4 py-3 text-xs font-bold text-[#F6465D]"
+            >
+              <span>{symbolsError.text}</span>
+              {symbolsError.requestId ? <RequestIdChip requestId={symbolsError.requestId} /> : null}
+            </div>
+          ) : tradingSymbols.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 bg-[#F9FAFB] py-8 text-center text-xs font-bold text-gray-400">
+              표시할 거래 종목 정보가 없습니다.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <table className="w-full min-w-[720px] text-left text-xs">
+                <thead className="border-b border-gray-200 bg-[#F9FAFB] text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3 font-bold">종목 ID</th>
+                    <th className="px-4 py-3 font-bold">표시 심볼 / 종목명</th>
+                    <th className="px-4 py-3 font-bold">공급자 심볼</th>
+                    <th className="px-4 py-3 font-bold text-center">상태</th>
+                    <th className="px-4 py-3 font-bold text-right">비상 제어</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 bg-white">
+                  {tradingSymbols.map(sym => {
+                    const isActive = sym.status === "ACTIVE";
+                    const isHalted = sym.status === "HALTED";
+                    const canToggle = isActive || isHalted;
+                    const nextStatus: "ACTIVE" | "HALTED" = isActive ? "HALTED" : "ACTIVE";
+                    return (
+                      <tr key={sym.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-black tabular-nums text-gray-500">
+                          #{sym.id}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="font-black text-gray-900">{sym.displaySymbol}</span>
+                          <span className="ml-2 text-gray-500">{sym.name}</span>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-[11px] text-gray-600">
+                          {sym.provider} · {sym.providerSymbol}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <HealthBadge
+                            tone={isActive ? "green" : isHalted ? "red" : "yellow"}
+                            label={sym.status}
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {canToggle ? (
+                            <button
+                              type="button"
+                              disabled={busyAction !== null}
+                              onClick={() => setSymbolToggleTarget({ symbol: sym, nextStatus })}
+                              className={cn(
+                                "inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border px-3 text-[11px] font-black transition-colors disabled:opacity-50 cursor-pointer",
+                                isActive
+                                  ? "border-rose-200 bg-rose-50 text-[#F6465D] hover:bg-rose-100"
+                                  : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
+                              )}
+                            >
+                              {busyAction === `symbol:${sym.id}`
+                                ? "처리 중…"
+                                : isActive
+                                  ? "비상 정지 (HALT)"
+                                  : "거래 재개 (ACTIVE)"}
+                            </button>
+                          ) : (
+                            <span className="text-[11px] font-semibold text-gray-400">
+                              비활성 종목
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
         {/* 4. 1:1 고객문의 답변 큐 */}
         <section className="rounded-2xl border border-gray-200 bg-white p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
@@ -683,9 +887,13 @@ export function AdminOpsView() {
           </div>
 
           {inquiriesError ? (
-            <p role="alert" className="rounded-xl bg-rose-50 px-4 py-3 text-xs font-bold text-[#F6465D]">
-              {inquiriesError}
-            </p>
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 rounded-xl bg-rose-50 px-4 py-3 text-xs font-bold text-[#F6465D]"
+            >
+              <span>{inquiriesError.text}</span>
+              {inquiriesError.requestId ? <RequestIdChip requestId={inquiriesError.requestId} /> : null}
+            </div>
           ) : inquiries.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 bg-[#F9FAFB] py-10 text-center text-xs font-bold text-gray-400">
               표시할 1:1 문의가 없습니다.
@@ -820,7 +1028,7 @@ export function AdminOpsView() {
                         {err.method ?? ""} {err.uri ?? "-"}
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[11px] text-gray-500">
-                        {err.requestId ?? "-"}
+                        {err.requestId ? <RequestIdChip requestId={err.requestId} compact /> : "-"}
                       </td>
                       <td className="max-w-[240px] truncate px-3 py-2.5 text-gray-600">
                         {err.rootCause ?? "-"}
@@ -832,6 +1040,66 @@ export function AdminOpsView() {
             </div>
           )}
         </section>
+
+        {/* 종목 비상 정지 / 재개 확인 모달 */}
+        <DimModal
+          open={symbolToggleTarget !== null}
+          onClose={() => {
+            if (busyAction === null) setSymbolToggleTarget(null);
+          }}
+          title={
+            symbolToggleTarget?.nextStatus === "HALTED"
+              ? "거래 종목 비상 정지 (HALTED) 확인"
+              : "거래 종목 정상 재개 (ACTIVE) 확인"
+          }
+          subtitle={
+            symbolToggleTarget
+              ? `${symbolToggleTarget.symbol.displaySymbol} (${symbolToggleTarget.symbol.providerSymbol})`
+              : undefined
+          }
+        >
+          {symbolToggleTarget ? (
+            <div className="space-y-4">
+              {symbolToggleTarget.nextStatus === "HALTED" ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs leading-relaxed font-bold text-rose-800">
+                  {symbolToggleTarget.symbol.displaySymbol} 종목을 비상 정지(HALTED)하시겠습니까?
+                  신규 진입 주문, 지정가 수정, 견적, 레버리지 변경, SL/TP 설정이 즉시 차단되며 공개 종목 목록에서 숨겨집니다. 기존 포지션 청산·취소 및 리스크 청산 엔진은 안전하게 유지됩니다.
+                </div>
+              ) : (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs leading-relaxed font-bold text-emerald-800">
+                  {symbolToggleTarget.symbol.displaySymbol} 종목을 정상 거래(ACTIVE) 상태로 복구하시겠습니까? 복구 즉시 공개 종목 목록 및 신규 주문이 재개됩니다.
+                </div>
+              )}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => setSymbolToggleTarget(null)}
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void handleConfirmSymbolStatus()}
+                  className={cn(
+                    "inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl px-4 text-xs font-black text-white disabled:opacity-50",
+                    symbolToggleTarget.nextStatus === "HALTED"
+                      ? "bg-[#F6465D] hover:bg-rose-700"
+                      : "bg-[#0058FF] hover:bg-blue-700",
+                  )}
+                >
+                  {busyAction !== null
+                    ? "처리 중…"
+                    : symbolToggleTarget.nextStatus === "HALTED"
+                      ? "비상 정지 실행"
+                      : "거래 재개 실행"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </DimModal>
       </div>
     </AdminShell>
   );

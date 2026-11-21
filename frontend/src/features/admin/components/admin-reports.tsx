@@ -469,7 +469,11 @@ export function AdminReportsView() {
                         </td>
                         <td className="w-[260px] max-w-[260px] px-4 py-3.5">
                           <Link
-                            href={`/community/all/${r.postId}`}
+                            href={
+                              r.targetType === "COMMENT"
+                                ? `/community/all/${r.postId}#comment-${r.targetId}`
+                                : `/community/all/${r.postId}`
+                            }
                             className="line-clamp-1 font-black text-gray-900 hover:text-[#0058FF] hover:underline"
                           >
                             {r.postTitle}
@@ -519,36 +523,68 @@ export function AdminReportsView() {
                         </td>
                         <td className="whitespace-nowrap px-4 py-3.5 text-center">
                           <div className="inline-flex items-center justify-center gap-1.5">
-                            <button
-                              type="button"
-                              disabled={busyKey !== null || isDeleted}
-                              onClick={() => void handleModerateTarget(r, "DELETE_TARGET")}
-                              className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-40"
-                            >
-                              {busyKey === `DELETE_TARGET:${r.reportKey}`
-                                ? "처리중..."
-                                : "대상 삭제 조치"}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busyKey !== null}
-                              onClick={() => void handleModerateTarget(r, "CLEAR_REPORTS")}
-                              className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
-                            >
-                              {busyKey === `CLEAR_REPORTS:${r.reportKey}`
-                                ? "처리중..."
-                                : "신고 일괄해제"}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busyKey !== null}
-                              onClick={() => void handleDismissSingle(r)}
-                              className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 text-xs font-bold text-gray-600 hover:bg-gray-100"
-                            >
-                              {busyKey === `dismiss:${r.reportKey}`
-                                ? "반려중..."
-                                : "단건 반려"}
-                            </button>
+                            {r.reportStatus === "PENDING" ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={busyKey !== null || isDeleted}
+                                  onClick={() => void handleModerateTarget(r, "DELETE_TARGET")}
+                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-40"
+                                >
+                                  {busyKey === `DELETE_TARGET:${r.reportKey}`
+                                    ? "처리중..."
+                                    : "대상 삭제 조치"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyKey !== null}
+                                  onClick={() => void handleModerateTarget(r, "CLEAR_REPORTS")}
+                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                                >
+                                  {busyKey === `CLEAR_REPORTS:${r.reportKey}`
+                                    ? "처리중..."
+                                    : "신고 일괄해제"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyKey !== null}
+                                  onClick={() => void handleDismissSingle(r)}
+                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 text-xs font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+                                >
+                                  {busyKey === `dismiss:${r.reportKey}`
+                                    ? "반려중..."
+                                    : "단건 반려"}
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                {!isDeleted ? (
+                                  <button
+                                    type="button"
+                                    disabled={busyKey !== null}
+                                    onClick={() => void handleModerateTarget(r, "DELETE_TARGET")}
+                                    className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-40"
+                                  >
+                                    {busyKey === `DELETE_TARGET:${r.reportKey}`
+                                      ? "처리중..."
+                                      : "대상 삭제 조치"}
+                                  </button>
+                                ) : null}
+                                <span
+                                  data-report-action-status={r.reportStatus}
+                                  className={cn(
+                                    "inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg px-2.5 text-xs font-bold",
+                                    statusBadge.className,
+                                  )}
+                                >
+                                  {r.reportStatus === "RESOLVED"
+                                    ? "조치 완료"
+                                    : r.reportStatus === "DISMISSED"
+                                      ? "반려 완료"
+                                      : statusBadge.label}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>

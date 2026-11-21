@@ -319,17 +319,15 @@ export function PositionStopLoss({
               </div>
             )}
 
-            {(message || estimate?.warning) && (
+            {unknown ? (
+              <p role="alert" className="ym-modal-alert">
+                {message || "결과가 미확정입니다. 재전송 시 이전 요청이 반영될 수 있습니다."}
+              </p>
+            ) : (message || estimate?.warning) ? (
               <p role="alert" className="ym-modal-alert">
                 {message || estimate?.warning}
               </p>
-            )}
-
-            {unknown && (
-              <p className="ym-modal-alert">
-                결과가 미확정입니다. 재전송 시 이전 요청이 반영될 수 있습니다.
-              </p>
-            )}
+            ) : null}
 
             <div className="ym-modal-footer">
               {unknown ? (

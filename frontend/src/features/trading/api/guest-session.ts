@@ -130,6 +130,13 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         result=applied
           ? {status:"FOUND",operation:"AMEND",observedAt:new Date(now()).toISOString(),resultKind:"ORDER_CURRENT",result:order}
           : {status:"NOT_OBSERVED",operation:"AMEND",observedAt:new Date(now()).toISOString(),resultKind:null,result:null};
+      } else if(entry.command.kind==="takeProfit") {
+        const operation=entry.command.takeProfitPrice===undefined?"TAKE_PROFIT_DELETE" as const:"TAKE_PROFIT_PUT" as const;
+        const tp=parseTakeProfit(await tradingJson(origin,resolvePath(`account/positions/${entry.command.positionId}/take-profit`),{token:sentToken,signal},transport),entry.command.positionId);
+        const observed=tp.version>entry.command.expectedVersion||tp.status==="TRIGGERED"||tp.status==="EXPIRED";
+        result=observed
+          ? {status:"FOUND",operation,observedAt:new Date(now()).toISOString(),resultKind:"TAKE_PROFIT_CURRENT",result:tp}
+          : {status:"NOT_OBSERVED",operation,observedAt:new Date(now()).toISOString(),resultKind:null,result:null};
       } else result=parseCommandResult(await tradingJson(origin,resolvePath("account/command-results/query"),{token:sentToken,signal,method:"POST",body:commandResultRequest(entry)},transport),entry);
       if(!owned()||signal?.aborted)throw new DOMException("Session changed","AbortError");
       if(result.status==="FOUND"&&result.operation==="MEMBER_RESTART") {
@@ -266,6 +273,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       if(!stored||JSON.stringify(stored.command)!==JSON.stringify(entry.command))return Promise.reject(new TradingApiError(409,undefined,"LOCAL_COMMAND_JOURNAL_BLOCKED"));
       switch(stored.command.kind) {
         case "stopLoss":return this.writeStopLoss(stored.command,expected,stored.key);
+        case "takeProfit":return this.writeTakeProfit(stored.command,expected,stored.key);
         case "memberRestart":return this.restartMember(expected,stored.key);
         case "guestRetry":return this.retryGuest(expected,stored.key);
         default:return this.write(stored.command,expected,stored.key);
@@ -492,29 +500,39 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       const request = takeProfitRequest(command);
       writes++;
       try {
-        const value = await tradingJson(origin, resolvePath(request.path), {
-          token: sentToken,
-          method: request.method,
-          body: request.body,
-          idempotencyKey: key,
-        }, transport);
-        if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
-        return parseTakeProfit(value, command.positionId);
+        return await journaled({ kind: "takeProfit", ...command }, current.accountId, key, async () => {
+          if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+          const value = await tradingJson(origin, resolvePath(request.path), {
+            token: sentToken,
+            method: request.method,
+            body: request.body,
+            idempotencyKey: key,
+          }, transport);
+          if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+          return parseTakeProfit(value, command.positionId);
+        });
       } catch (error) {
         if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       } finally { writes--; }
     },
-    async cancelAllOrders(expected: SessionSnapshot) {
+    async cancelAllOrders(expected: SessionSnapshot, key?: string) {
       if (retrying) throw new TradingApiError(409, undefined, "TRADING_BUSY");
       const current = credential, sentToken = current?.accessToken;
       if (current && !usable(current)) invalidate(current, sentToken);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      const idempotencyKey =
+        key && /^[A-Za-z0-9_-]{8,100}$/.test(key)
+          ? key
+          : typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `cancel-all-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       writes++;
       try {
         const value = await tradingJson(origin, resolvePath("account/orders/cancel-all"), {
           token: sentToken,
           method: "POST",
+          idempotencyKey,
         }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         return parseCancelAllOrdersResponse(value);
@@ -523,16 +541,23 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         throw error;
       } finally { writes--; }
     },
-    async closeAllPositions(expected: SessionSnapshot) {
+    async closeAllPositions(expected: SessionSnapshot, key?: string) {
       if (retrying) throw new TradingApiError(409, undefined, "TRADING_BUSY");
       const current = credential, sentToken = current?.accessToken;
       if (current && !usable(current)) invalidate(current, sentToken);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      const idempotencyKey =
+        key && /^[A-Za-z0-9_-]{8,100}$/.test(key)
+          ? key
+          : typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `close-all-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       writes++;
       try {
         const value = await tradingJson(origin, resolvePath("account/positions/close-all"), {
           token: sentToken,
           method: "POST",
+          idempotencyKey,
         }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
         return parseCloseAllPositionsResponse(value);
