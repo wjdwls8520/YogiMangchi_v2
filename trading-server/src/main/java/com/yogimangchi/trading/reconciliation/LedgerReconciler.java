@@ -2,9 +2,14 @@ package com.yogimangchi.trading.reconciliation;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yogimangchi.trading.ops.OpsAlertService;
 import com.yogimangchi.trading.tradingaccount.service.AccountLock;
 import java.math.BigDecimal;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.*;
@@ -12,13 +17,22 @@ import org.springframework.transaction.annotation.*;
 /** Financially read-only: evidence/holds are written, never balances, orders, positions or fills. */
 @Service
 public class LedgerReconciler {
+    private static final Logger log = LoggerFactory.getLogger(LedgerReconciler.class);
     private final JdbcTemplate jdbc;
     private final AccountLock locks;
     private final ObjectMapper json;
+    private final ObjectProvider<OpsAlertService> alerts;
+
     public LedgerReconciler(JdbcTemplate jdbc, AccountLock locks, ObjectMapper json) {
+        this(jdbc, locks, json, null);
+    }
+
+    @Autowired
+    public LedgerReconciler(JdbcTemplate jdbc, AccountLock locks, ObjectMapper json, ObjectProvider<OpsAlertService> alerts) {
         this.jdbc = jdbc;
         this.locks = locks;
         this.json = json;
+        this.alerts = alerts;
     }
     public record Result(long accountId,String status,List<String> failedChecks,Map<String,Object> evidence) { }
 
@@ -57,6 +71,11 @@ public class LedgerReconciler {
 
     @Transactional(propagation=Propagation.REQUIRES_NEW,timeout=5)
     public Result check(long accountId) {
+        return checkInTransaction(accountId);
+    }
+
+    @Transactional(propagation=Propagation.REQUIRES_NEW,timeout=5)
+    public Result reconcile(long accountId) {
         return checkInTransaction(accountId);
     }
 
@@ -133,10 +152,21 @@ public class LedgerReconciler {
         String status=!failed.isEmpty()?"MISMATCH":expectedBalance==null?"UNVERIFIED":"MATCHED";
         String encoded=encode(evidence),checks=encode(failed);
         jdbc.update("insert into trading.ledger_reconciliation(account_id,checked_at,status,failed_checks,evidence) values(?,clock_timestamp(),?,?::jsonb,?::jsonb) on conflict(account_id) do update set checked_at=excluded.checked_at,status=excluded.status,failed_checks=excluded.failed_checks,evidence=excluded.evidence",accountId,status,checks,encoded);
-        if(!failed.isEmpty())jdbc.update("""
-            insert into trading.risk_hold(account_id,reason,evidence)
-            values(?,'LEDGER_MISMATCH',jsonb_build_object('failedChecks',?::jsonb,'snapshot',?::jsonb)) on conflict do nothing
-            """,accountId,checks,encoded);
+        if(!failed.isEmpty()) {
+            jdbc.update("""
+                insert into trading.risk_hold(account_id,reason,evidence)
+                values(?,'LEDGER_MISMATCH',jsonb_build_object('failedChecks',?::jsonb,'snapshot',?::jsonb)) on conflict do nothing
+                """,accountId,checks,encoded);
+            log.error("[Ledger reconciliation] MISMATCH accountId={} failedChecks={}", accountId, failed);
+            OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+            if (alertService != null) {
+                alertService.alert(
+                        "LEDGER_MISMATCH:" + accountId,
+                        "CRITICAL",
+                        "Ledger reconciliation mismatch detected",
+                        Map.of("accountId", accountId, "failedChecks", List.copyOf(failed)));
+            }
+        }
         return new Result(accountId,status,List.copyOf(failed),Collections.unmodifiableMap(evidence));
     }
     private static void compare(Map<String,Object> data,List<String> failed,String actual,String expected,String code) {

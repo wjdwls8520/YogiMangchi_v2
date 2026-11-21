@@ -52,6 +52,7 @@ public class ContestSettlementChunkExecutor {
     private final LatestPriceStore priceStore;
     private final TradingEvents events;
     private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits;
 
     public ContestSettlementChunkExecutor(
             JdbcTemplate jdbc,
@@ -63,7 +64,7 @@ public class ContestSettlementChunkExecutor {
             FillRepository fills,
             LatestPriceStore priceStore,
             TradingEvents events) {
-        this(jdbc, entities, locks, wallets, positions, orders, fills, priceStore, events, null);
+        this(jdbc, entities, locks, wallets, positions, orders, fills, priceStore, events, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -77,7 +78,8 @@ public class ContestSettlementChunkExecutor {
             FillRepository fills,
             LatestPriceStore priceStore,
             TradingEvents events,
-            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications) {
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits) {
         this.jdbc = jdbc;
         this.entities = entities;
         this.locks = locks;
@@ -88,6 +90,7 @@ public class ContestSettlementChunkExecutor {
         this.priceStore = priceStore;
         this.events = events;
         this.notifications = notifications;
+        this.takeProfits = takeProfits;
     }
 
     public record RunContext(Long runId, int attemptNo, Instant startedAt) { }
@@ -306,6 +309,10 @@ public class ContestSettlementChunkExecutor {
                     shortfall));
             events.record(liqOrder, fill);
             events.recordStopLoss(position);
+            var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
+            if (tpService != null) {
+                tpService.expireIfActive(position, "CONTEST_SETTLEMENT", effectiveNow);
+            }
 
             TradingAccount account = lockedAccounts.get(position.getAccountId());
             if (account != null && !effectiveNow.isBefore(account.getLastFinancialChangeAt())) {

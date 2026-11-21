@@ -19,37 +19,67 @@ public class TradingTokenFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI().substring(request.getContextPath().length());
+        if ("OPTIONS".equals(request.getMethod())) {
+            return true;
+        }
+        boolean actuatorProtected = path.equals("/actuator/info")
+                || path.equals("/actuator/metrics")
+                || path.startsWith("/actuator/metrics/");
+        if (actuatorProtected) {
+            return false;
+        }
         return !path.startsWith("/api/v1/trading/")
-                || "OPTIONS".equals(request.getMethod())
                 || ("POST".equals(request.getMethod()) && path.equals("/api/v1/trading/accounts/guest"))
-                || ("GET".equals(request.getMethod()) && path.startsWith("/api/v1/trading/portfolios/members/"))
                 || ("GET".equals(request.getMethod()) && path.startsWith("/api/v1/trading/contest/public/"));
+    }
+
+    private static boolean isOptionalAuthPath(HttpServletRequest request) {
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        return "GET".equals(request.getMethod()) && path.startsWith("/api/v1/trading/portfolios/members/");
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String header = request.getHeader("Authorization");
+        boolean optional = isOptionalAuthPath(request);
         if (header != null) {
-            if(java.util.Collections.list(request.getHeaders("Authorization")).size()!=1) {
-                problem(response,401,"INVALID_ACCESS_TOKEN","Exactly one bearer credential is required"); return;
+            if (java.util.Collections.list(request.getHeaders("Authorization")).size() != 1) {
+                if (optional) {
+                    chain.doFilter(request, response);
+                    return;
+                }
+                problem(response, 401, "INVALID_ACCESS_TOKEN", "Exactly one bearer credential is required");
+                return;
             }
             var principal = java.util.Optional.<TradingPrincipal>empty();
             try {
-                if (header.startsWith("Bearer ") && header.length() <= 8199) principal = credentials.authenticate(header.substring(7));
+                if (header.startsWith("Bearer ") && header.length() <= 8199) {
+                    principal = credentials.authenticate(header.substring(7));
+                }
             } catch (DataAccessException | CannotCreateTransactionException exception) {
+                if (optional) {
+                    chain.doFilter(request, response);
+                    return;
+                }
                 problem(response, 503, "AUTHENTICATION_UNAVAILABLE", "Authentication is temporarily unavailable");
                 return;
             }
             if (principal.isEmpty()) {
-                problem(response, 401, header.contains(".") ? "INVALID_ACCESS_TOKEN" : "INVALID_GUEST_CREDENTIAL", "Trading credential is invalid or expired");
+                if (optional) {
+                    chain.doFilter(request, response);
+                    return;
+                }
+                problem(response, 401, header.contains(".") ? "INVALID_ACCESS_TOKEN" : "INVALID_GUEST_CREDENTIAL",
+                        "Trading credential is invalid or expired");
                 return;
             }
-            var authorities=new java.util.ArrayList<SimpleGrantedAuthority>();
-            if(principal.get().accountId()!=null) authorities.add(new SimpleGrantedAuthority("ROLE_TRADER"));
-            if(principal.get().memberId()!=null) authorities.add(new SimpleGrantedAuthority("ROLE_MEMBER"));
-            if(principal.get().isAdmin()) authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
-            SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(principal.get(),null,authorities));
+            var authorities = new java.util.ArrayList<SimpleGrantedAuthority>();
+            if (principal.get().accountId() != null) authorities.add(new SimpleGrantedAuthority("ROLE_TRADER"));
+            if (principal.get().memberId() != null) authorities.add(new SimpleGrantedAuthority("ROLE_MEMBER"));
+            if (principal.get().isAdmin()) authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+            SecurityContextHolder.getContext().setAuthentication(
+                    new UsernamePasswordAuthenticationToken(principal.get(), null, authorities));
         }
         chain.doFilter(request, response);
     }

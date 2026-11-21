@@ -17,10 +17,12 @@ public class TradingEventController {
     private final TradingEvents events;
     public TradingEventController(TradingEvents events) { this.events=events; }
     @GetMapping
-    @Operation(summary="Replay own committed trading events in ascending eventId order",
-            description="afterId defaults to0; limit1-100 default50. Use last eventId as afterId for next page or WS resume; duplicate IDs must be ignored. Only transitions created since V13 exist; no fake backfill of earlier events. Guest bearer or Content member JWT; account is derived from verified ownership, never a caller-supplied accountId. 400 invalid cursor/limit; 401 credential. WebSocket /ws/trading uses the same durable source with authenticated first frame; public /ws/market never carries these events.")
+    @Operation(summary="Replay own committed trading events in ascending eventId order (or newest first when latest=true and afterId=0)",
+            description="afterId defaults to 0; limit 1-100 default 50. Pass latest=true with afterId=0 to query the most recent limit events descending by eventId. Default latest=false preserves ascending replay for WS resume. Guest bearer or Content member JWT; account is derived from verified ownership. 400 invalid cursor/limit; 401 credential.")
     public List<TradingEventResponse> history(@AuthenticationPrincipal TradingPrincipal principal,
-            @RequestParam(defaultValue="0") long afterId,@RequestParam(defaultValue="50") int limit) {
-        return events.after(principal.accountId(),afterId,limit);
+            @RequestParam(defaultValue="0") long afterId,
+            @RequestParam(defaultValue="50") int limit,
+            @RequestParam(defaultValue="false") boolean latest) {
+        return events.query(principal.accountId(),afterId,limit,latest);
     }
 }

@@ -26,6 +26,8 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http, TradingCredentials credentials,
             @Value("${springdoc.api-docs.enabled:true}") boolean docs) throws Exception {
         http.authorizeHttpRequests(authorize -> {
+            authorize.requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness", "/actuator/health/readiness").permitAll();
+            authorize.requestMatchers(HttpMethod.GET, "/actuator/info", "/actuator/metrics", "/actuator/metrics/**").hasRole("ADMIN");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/symbols").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/tickers").permitAll();
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/market/overview").permitAll();
@@ -36,11 +38,14 @@ public class SecurityConfig {
             authorize.requestMatchers("/api/v1/trading/contest/**").hasRole("MEMBER");
             authorize.requestMatchers("/api/v1/trading/notifications", "/api/v1/trading/notifications/**").hasRole("MEMBER");
             authorize.requestMatchers("/api/v1/trading/admin/contest/**").hasRole("ADMIN");
+            authorize.requestMatchers("/api/v1/trading/admin/ops/**").hasRole("ADMIN");
             authorize.requestMatchers(HttpMethod.GET, "/ws/market").permitAll();
             // /ws/trading requires an authenticated first frame before any account data is read/sent.
             authorize.requestMatchers(HttpMethod.GET, "/ws/trading").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/guest").permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/accounts/member").hasRole("MEMBER");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/portfolio-visibility").hasRole("MEMBER");
+            authorize.requestMatchers(HttpMethod.PUT, "/api/v1/trading/account/portfolio-visibility").hasRole("MEMBER");
             authorize.requestMatchers(HttpMethod.POST,"/api/v1/trading/account/restart").hasRole("MEMBER");
             authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/rounds","/api/v1/trading/account/rounds/current","/api/v1/trading/account/rounds/{roundId:[0-9]+}","/api/v1/trading/account/rounds/{roundId:[0-9]+}/{kind:orders|fills|positions}").hasRole("MEMBER");
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/retry").authenticated();
@@ -49,11 +54,16 @@ public class SecurityConfig {
             authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.PUT,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.DELETE,"/api/v1/trading/account/positions/{positionId}/stop-loss").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.GET,"/api/v1/trading/account/positions/{positionId}/take-profit").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.PUT,"/api/v1/trading/account/positions/{positionId}/take-profit").hasRole("TRADER");
+            authorize.requestMatchers(HttpMethod.DELETE,"/api/v1/trading/account/positions/{positionId}/take-profit").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.PATCH, "/api/v1/trading/account/orders/{orderId:[0-9]+}").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/trading/account/orders",
                     "/api/v1/trading/account/orders/quote",
+                    "/api/v1/trading/account/orders/cancel-all",
                     "/api/v1/trading/account/orders/{orderId}/amend",
                     "/api/v1/trading/account/orders/{orderId}/cancel",
+                    "/api/v1/trading/account/positions/close-all",
                     "/api/v1/trading/account/positions/{positionId}/close",
                     "/api/v1/trading/account/positions/{positionId}/close-orders").hasRole("TRADER");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/trading/account/orders", "/api/v1/trading/account/orders/pending").hasRole("TRADER");
@@ -83,9 +93,10 @@ public class SecurityConfig {
                     String path = request.getRequestURI().substring(request.getContextPath().length());
                     if (path.startsWith("/api/v1/trading/")) {
                         if ("POST".equals(request.getMethod()) && path.equals("/api/v1/trading/accounts/member")
+                                || path.equals("/api/v1/trading/account/portfolio-visibility")
                                 || path.startsWith("/api/v1/trading/contest/")
                                 || path.startsWith("/api/v1/trading/notifications")
-                                || path.startsWith("/api/v1/trading/admin/contest/")) {
+                                || path.startsWith("/api/v1/trading/admin/")) {
                             TradingTokenFilter.problem(response, 401, "MEMBER_CREDENTIAL_REQUIRED", "A Content member Access JWT is required");
                             return;
                         }
@@ -117,7 +128,8 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(allowed);
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Request-Id"));
+        configuration.setExposedHeaders(List.of("X-Request-Id"));
         configuration.setAllowCredentials(false);
         configuration.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

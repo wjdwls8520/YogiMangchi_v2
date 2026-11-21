@@ -31,6 +31,7 @@ public class MemberWithdrawal {
     private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.contest.RedisContestLeaderboardStore> leaderboardStores;
     private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.tradingevent.websocket.TradingEventWebSocketHandler> wsHandlers;
     private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationSseService> notificationSse;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits;
     public MemberWithdrawal(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,
             PositionRepository positions,TradingOrderRepository orders,AccountLock locks,TradingEvents events,
             com.yogimangchi.trading.tradinground.MemberRounds rounds,
@@ -38,7 +39,7 @@ public class MemberWithdrawal {
             org.springframework.jdbc.core.JdbcTemplate jdbc,
             org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.contest.RedisContestLeaderboardStore> leaderboardStores,
             org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.tradingevent.websocket.TradingEventWebSocketHandler> wsHandlers) {
-        this(entities,accounts,wallets,positions,orders,locks,events,rounds,risk,jdbc,leaderboardStores,wsHandlers,null);
+        this(entities,accounts,wallets,positions,orders,locks,events,rounds,risk,jdbc,leaderboardStores,wsHandlers,null,null);
     }
     @org.springframework.beans.factory.annotation.Autowired
     public MemberWithdrawal(EntityManager entities,TradingAccountRepository accounts,WalletRepository wallets,
@@ -48,11 +49,13 @@ public class MemberWithdrawal {
             org.springframework.jdbc.core.JdbcTemplate jdbc,
             org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.contest.RedisContestLeaderboardStore> leaderboardStores,
             org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.tradingevent.websocket.TradingEventWebSocketHandler> wsHandlers,
-            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationSseService> notificationSse) {
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationSseService> notificationSse,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits) {
         this.risk=risk;
         this.entities=entities; this.accounts=accounts; this.wallets=wallets; this.positions=positions;
         this.orders=orders; this.locks=locks; this.events=events;this.rounds=rounds;
         this.jdbc=jdbc; this.leaderboardStores=leaderboardStores; this.wsHandlers=wsHandlers; this.notificationSse=notificationSse;
+        this.takeProfits=takeProfits;
     }
     @Transactional(timeout=10)
     public void withdraw(Long memberId) {
@@ -81,7 +84,8 @@ public class MemberWithdrawal {
                 order.cancelForWithdrawal(now); events.record(order,null);
             }
             rounds.captureRetirement(id);
-            for(var position:open) {released=released.add(position.closeForWithdrawal(now));events.recordStopLoss(position);}
+            var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
+            for(var position:open) {released=released.add(position.closeForWithdrawal(now));events.recordStopLoss(position);if(tpService!=null)tpService.expireIfActive(position,"MEMBER_WITHDRAWAL",now);}
             wallet.releaseExposure(released,reserved);
             if(wallet.getUsedMargin().signum()!=0 || wallet.getReservedMargin().signum()!=0)
                 throw new IllegalStateException("Withdrawal found inconsistent reservations");
@@ -103,7 +107,8 @@ public class MemberWithdrawal {
                 else byId.get(order.getPositionId()).releaseCloseReservation(order.getQuantity());
                 order.cancelForWithdrawal(now); events.record(order,null);
             }
-            for(var position:open) {released=released.add(position.closeForWithdrawal(now));events.recordStopLoss(position);}
+            var contestTp = takeProfits != null ? takeProfits.getIfAvailable() : null;
+            for(var position:open) {released=released.add(position.closeForWithdrawal(now));events.recordStopLoss(position);if(contestTp!=null)contestTp.expireIfActive(position,"MEMBER_WITHDRAWAL",now);}
             contestWallet.releaseExposure(released,reserved);
             if(contestWallet.getUsedMargin().signum()!=0 || contestWallet.getReservedMargin().signum()!=0)
                 throw new IllegalStateException("Contest withdrawal found inconsistent reservations");
@@ -139,6 +144,7 @@ public class MemberWithdrawal {
 
         jdbc.update("DELETE FROM trading.notification WHERE receiver_member_id = ?", memberId);
         jdbc.update("DELETE FROM trading.notification_state WHERE member_id = ?", memberId);
+        jdbc.update("DELETE FROM trading.member_portfolio_preference WHERE member_id = ?", memberId);
 
         var leaderboardStore=leaderboardStores.getIfAvailable();
         if(leaderboardStore!=null) {

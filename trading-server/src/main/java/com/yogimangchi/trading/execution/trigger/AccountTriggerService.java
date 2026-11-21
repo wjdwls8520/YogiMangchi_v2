@@ -13,6 +13,8 @@ import com.yogimangchi.trading.position.repository.PositionRepository;
 import com.yogimangchi.trading.position.service.HedgePositions;
 import com.yogimangchi.trading.position.service.IsolatedMargin;
 import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
+import com.yogimangchi.trading.takeprofit.PositionTakeProfit;
+import com.yogimangchi.trading.takeprofit.PositionTakeProfitRepository;
 import com.yogimangchi.trading.tradingaccount.entity.TradingAccount;
 import com.yogimangchi.trading.tradingaccount.entity.Wallet;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
@@ -48,15 +50,24 @@ public class AccountTriggerService {
     private final SymbolLeverageService leverage;
     private final TradingEvents events;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final PositionTakeProfitRepository takeProfits;
     public AccountTriggerService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols,
             IsolatedMargin isolated, IsolatedCutover cutover, LatestPriceStore livePrices, HedgePositions hedge, SymbolLeverageService leverage, TradingEvents events,
             org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        this(locks, wallets, positions, orders, fills, symbols, isolated, cutover, livePrices, hedge, leverage, events, jdbc, null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public AccountTriggerService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
+            TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols,
+            IsolatedMargin isolated, IsolatedCutover cutover, LatestPriceStore livePrices, HedgePositions hedge, SymbolLeverageService leverage, TradingEvents events,
+            org.springframework.jdbc.core.JdbcTemplate jdbc, PositionTakeProfitRepository takeProfits) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.isolated=isolated; this.cutover=cutover; this.livePrices=livePrices;
         this.hedge=hedge; this.leverage=leverage;
         this.events=events;
         this.jdbc=jdbc;
+        this.takeProfits=takeProfits;
     }
 
     /** No Redis I/O here. Replay and live execution share the same account lock and atomic financial transaction. */
@@ -72,15 +83,20 @@ public class AccountTriggerService {
         var state=load(permit.accountId());
         for(var tick:permit.prices())processAccount(state,tick,Map.of(tick.tradingSymbolId(),tick),true);
     }
-    private record Exposure(TradingAccount account,Wallet wallet,List<Position> open,Map<Long,Position> byId,List<TradingOrder> pending) { }
+    private record Exposure(TradingAccount account,Wallet wallet,List<Position> open,Map<Long,Position> byId,List<TradingOrder> pending,Map<Long,PositionTakeProfit> activeTakeProfits) { }
     private Exposure load(Long accountId) {
         var account=locks.lockIncludingWithdrawn(accountId);
-        if(account.getStatus()!=TradingAccount.Status.ACTIVE)return new Exposure(account,null,List.of(),Map.of(),List.of());
+        if(account.getStatus()!=TradingAccount.Status.ACTIVE)return new Exposure(account,null,List.of(),Map.of(),List.of(),Map.of());
         if(account.getContestSeasonId()!=null && !isContestSeasonLive(account.getContestSeasonId()))
-            return new Exposure(account,null,List.of(),Map.of(),List.of());
+            return new Exposure(account,null,List.of(),Map.of(),List.of(),Map.of());
         var open=new ArrayList<>(positions.findByAccountIdAndStatusOrderByIdAsc(accountId,Position.Status.OPEN));
         var byId=new HashMap<Long,Position>();open.forEach(p->byId.put(p.getId(),p));
-        return new Exposure(account,wallets.findById(accountId).orElseThrow(),open,byId,orders.findByAccountIdAndStatusOrderByIdAsc(accountId,TradingOrder.Status.PENDING));
+        var activeTp=new HashMap<Long,PositionTakeProfit>();
+        if(takeProfits!=null && !open.isEmpty()) {
+            takeProfits.findByAccountIdAndStatus(accountId,PositionTakeProfit.Status.ACTIVE)
+                    .forEach(tp -> activeTp.put(tp.getPositionId(), tp));
+        }
+        return new Exposure(account,wallets.findById(accountId).orElseThrow(),open,byId,orders.findByAccountIdAndStatusOrderByIdAsc(accountId,TradingOrder.Status.PENDING),activeTp);
     }
     private boolean isContestSeasonLive(Long seasonId) {
         java.time.OffsetDateTime tsNow=Instant.now().atOffset(java.time.ZoneOffset.UTC);
@@ -99,7 +115,7 @@ public class AccountTriggerService {
     private void processAccount(Exposure state,LatestMarkPrice tick,Map<Long,LatestMarkPrice> book,boolean recorded) {
         var account=state.account();
         if(account.getStatus()!=TradingAccount.Status.ACTIVE || state.wallet()==null)return;
-        Long accountId=account.getId();var wallet=state.wallet();var open=state.open();var byId=state.byId();var pending=state.pending();
+        Long accountId=account.getId();var wallet=state.wallet();var open=state.open();var byId=state.byId();var pending=state.pending();var activeTakeProfits=state.activeTakeProfits();
         Set<Long> required = new HashSet<>(Set.of(tick.tradingSymbolId()));
         open.forEach(p -> required.add(p.getTradingSymbolId()));
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
@@ -124,7 +140,7 @@ public class AccountTriggerService {
             if (snapshot.status() == LatestPriceStore.Status.FRESH
                     && (account.isGuestAccount() || !account.getMemberRoundStartedAt().isAfter(snapshot.latestPrice().orElseThrow().receivedAt()))
                     && isolated.risk(position, snapshot.latestPrice().orElseThrow().domainMarkPrice()).atRisk()) {
-                liquidate(account, wallet, position, pending, snapshot.latestPrice().orElseThrow(), now);
+                liquidate(account, wallet, position, pending, activeTakeProfits, snapshot.latestPrice().orElseThrow(), now);
                 // Hibernate inserts IDENTITY rows before dirty updates. Release the OPEN unique key
                 // before an independently pending OPEN can start a new lifecycle on this same tick.
                 positions.flush();
@@ -152,14 +168,43 @@ public class AccountTriggerService {
             Fill fill=fills.save(Fill.execute(stopped.getId(),tick.domainMarkPrice(),settlement.quantity(),tick.eventTime(),now,
                     settlement.realizedPnl(),fee,BigDecimal.ZERO));
             position.linkStopLossOrder(stopped.getId()); committed("stop-loss-filled",stopped,fill); events.recordStopLoss(position);
+            expireTakeProfit(activeTakeProfits, position.getId(), "STOP_LOSS", now);
             positions.flush(); open.remove(position); byId.remove(position.getId()); account.recordFinancialChange(now);
+        }
+        // Take profit executes after liquidation & stop loss checks; cancels pending CLOSE reservations and market-closes remaining quantity.
+        for(Position position:List.copyOf(open)) {
+            if(!position.getTradingSymbolId().equals(tick.tradingSymbolId())) continue;
+            PositionTakeProfit tp=activeTakeProfits.get(position.getId());
+            if(tp==null || !tp.crosses(position,tick.domainMarkPrice(),tick.receivedAt())) continue;
+            for(TradingOrder reserved:pending) {
+                if(reserved.getStatus()==TradingOrder.Status.PENDING && reserved.getAction()==TradingOrder.Action.CLOSE
+                        && position.getId().equals(reserved.getPositionId())) {
+                    position.releaseCloseReservation(reserved.getQuantity()); reserved.cancelForTakeProfit(now);
+                    committed("take-profit-cancel-close",reserved,null);
+                }
+            }
+            BigDecimal fee=TradingFees.fee(tick.domainMarkPrice(),position.getQuantity(),TradingFees.MARKET_RATE);
+            Position.Settlement settlement=position.closeByTakeProfit(tick.domainMarkPrice(),now);
+            tp.markTriggered(tick.domainMarkPrice(),tick.eventTime(),now);
+            wallet.settle(settlement.releasedMargin(),settlement.realizedPnl(),fee,BigDecimal.ZERO);
+            TradingOrder closed=orders.save(TradingOrder.takeProfit(position,settlement.quantity(),tick.domainMarkPrice(),now));
+            Fill fill=fills.save(Fill.execute(closed.getId(),tick.domainMarkPrice(),settlement.quantity(),tick.eventTime(),now,
+                    settlement.realizedPnl(),fee,BigDecimal.ZERO));
+            tp.linkOrder(closed.getId());
+            takeProfits.save(tp);
+            committed("take-profit-filled",closed,fill);
+            events.recordTakeProfit(tp);
+            events.recordStopLoss(position);
+            positions.flush(); takeProfits.flush();
+            open.remove(position); byId.remove(position.getId()); activeTakeProfits.remove(position.getId());
+            account.recordFinancialChange(now);
         }
         for (TradingOrder order : pending) {
             if (order.getStatus() != TradingOrder.Status.PENDING
                     || !order.getTradingSymbolId().equals(tick.tradingSymbolId()) || !order.crosses(tick.domainMarkPrice())
                     || !recorded && order.getCreatedAt().isAfter(tick.receivedAt())) continue;
             if (order.getAction() == TradingOrder.Action.CLOSE) {
-                close(order, byId, open, wallet, tick, now);
+                close(order, byId, open, activeTakeProfits, wallet, tick, now);
                 account.recordFinancialChange(now);
                 continue;
             }
@@ -200,7 +245,7 @@ public class AccountTriggerService {
         }
     }
 
-    private void close(TradingOrder order, Map<Long, Position> byId, List<Position> open, Wallet wallet,
+    private void close(TradingOrder order, Map<Long, Position> byId, List<Position> open, Map<Long, PositionTakeProfit> activeTakeProfits, Wallet wallet,
             LatestMarkPrice price, Instant now) {
         Position target = Objects.requireNonNull(byId.get(order.getPositionId()), "Pending CLOSE must reference an open lot");
         // Release only this order's reservation. Other pending CLOSE orders keep their reserved quantity.
@@ -217,7 +262,11 @@ public class AccountTriggerService {
         order.fill(target, price.domainMarkPrice(), now);
         Fill fill=fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), settlement.quantity(), price.eventTime(), now,
                 settlement.realizedPnl(), fee, BigDecimal.ZERO));
-        if (target.getStatus() != Position.Status.OPEN) { open.remove(target); byId.remove(target.getId()); events.recordStopLoss(target); }
+        if (target.getStatus() != Position.Status.OPEN) {
+            open.remove(target); byId.remove(target.getId());
+            events.recordStopLoss(target);
+            expireTakeProfit(activeTakeProfits, target.getId(), "POSITION_CLOSED", now);
+        }
         committed("limit-close-filled", order, fill);
     }
 
@@ -235,7 +284,7 @@ public class AccountTriggerService {
     }
 
     private void liquidate(TradingAccount account, Wallet wallet, Position position, List<TradingOrder> pending,
-            LatestMarkPrice price, Instant now) {
+            Map<Long, PositionTakeProfit> activeTakeProfits, LatestMarkPrice price, Instant now) {
         for (TradingOrder order : pending) {
             if (order.getStatus() == TradingOrder.Status.PENDING && order.getAction() == TradingOrder.Action.CLOSE
                     && position.getId().equals(order.getPositionId())) {
@@ -256,7 +305,21 @@ public class AccountTriggerService {
                 costs.grossPnl(), costs.fee(), costs.shortfallAdjustment()));
         committed("liquidated", order, fill);
         events.recordStopLoss(position);
+        expireTakeProfit(activeTakeProfits, position.getId(), "POSITION_LIQUIDATED", now);
         account.recordFinancialChange(now);
+    }
+
+    private void expireTakeProfit(Map<Long, PositionTakeProfit> activeTakeProfits, Long positionId, String reason, Instant now) {
+        if (takeProfits == null || positionId == null) return;
+        PositionTakeProfit tp = activeTakeProfits.remove(positionId);
+        if (tp == null) {
+            tp = takeProfits.findById(positionId).orElse(null);
+        }
+        if (tp != null && tp.expire(reason, now)) {
+            takeProfits.save(tp);
+            takeProfits.flush();
+            events.recordTakeProfit(tp);
+        }
     }
 
     private void committed(String result, TradingOrder order, Fill fill) {

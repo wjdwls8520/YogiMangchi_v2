@@ -3,6 +3,7 @@ package com.yogimangchi.trading.contest;
 import com.yogimangchi.trading.contest.ContestDtos.ContestSettlementResultResponse;
 import com.yogimangchi.trading.error.BusinessException;
 import com.yogimangchi.trading.error.ErrorCode;
+import com.yogimangchi.trading.ops.OpsAlertService;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -11,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -28,16 +30,26 @@ public class ContestSettlementService {
     private final JdbcTemplate jdbc;
     private final ContestSettlementChunkExecutor chunkExecutor;
     private final RedisContestLeaderboardStore leaderboardStore;
+    private final ObjectProvider<OpsAlertService> alerts;
     private final ConcurrentHashMap<Long, AtomicBoolean> activeSeasonLocks = new ConcurrentHashMap<>();
+
+    public ContestSettlementService(
+            JdbcTemplate jdbc,
+            ContestSettlementChunkExecutor chunkExecutor,
+            RedisContestLeaderboardStore leaderboardStore) {
+        this(jdbc, chunkExecutor, leaderboardStore, null);
+    }
 
     @Autowired
     public ContestSettlementService(
             JdbcTemplate jdbc,
             ContestSettlementChunkExecutor chunkExecutor,
-            RedisContestLeaderboardStore leaderboardStore) {
+            RedisContestLeaderboardStore leaderboardStore,
+            ObjectProvider<OpsAlertService> alerts) {
         this.jdbc = jdbc;
         this.chunkExecutor = chunkExecutor;
         this.leaderboardStore = leaderboardStore;
+        this.alerts = alerts;
     }
 
     public ContestSettlementResultResponse settleSeason(Long seasonId, String triggeredBy, boolean earlyTerminate) {
@@ -131,12 +143,22 @@ public class ContestSettlementService {
                     seasonId, result.runId(), triggeredBy, totalCanceledOrders, totalLiquidatedPositions, result.finalizedParticipantCount());
             return result;
         } catch (RuntimeException ex) {
+            log.error("[Contest settlement] failed seasonId={} runId={} triggeredBy={} cause={}",
+                    seasonId, run != null ? run.runId() : null, triggeredBy, ex.getClass().getSimpleName(), ex);
             if (run != null) {
                 try {
                     chunkExecutor.failSettlementRun(run.runId(), ex.getMessage(), Instant.now());
                 } catch (RuntimeException ignored) {
                     log.warn("[Contest settlement] failed to record run failure seasonId={} runId={}", seasonId, run.runId(), ignored);
                 }
+            }
+            OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+            if (alertService != null) {
+                alertService.alert(
+                        "CONTEST_SETTLEMENT_FAILED:" + seasonId,
+                        "CRITICAL",
+                        "Contest settlement failed",
+                        Map.of("seasonId", seasonId, "triggeredBy", String.valueOf(triggeredBy), "cause", ex.getClass().getSimpleName()));
             }
             throw ex;
         } finally {

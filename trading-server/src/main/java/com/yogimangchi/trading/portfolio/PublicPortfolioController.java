@@ -1,8 +1,10 @@
 package com.yogimangchi.trading.portfolio;
 
+import com.yogimangchi.trading.tradingaccount.security.TradingPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,10 +22,14 @@ public class PublicPortfolioController {
     @GetMapping("/members/{memberId:[0-9]+}")
     @Operation(
             summary = "Read public member simulation portfolio",
-            description = "Public read-only snapshot of a member's active trading round, wallet valuation, asset/side allocation, open positions, symbol performance, and closed trade win rate. Never creates an account or acquires a financial write lock.")
-    public ResponseEntity<PublicMemberPortfolioResponse> getMemberPortfolio(@PathVariable Long memberId) {
+            description = "Public read-only snapshot of a member's active trading round, wallet valuation, asset/side allocation, open positions, symbol performance, and closed trade win rate. Respects member portfolioPublic privacy toggle for non-owner/non-admin viewers. Never creates an account or acquires a financial write lock.")
+    public ResponseEntity<PublicMemberPortfolioResponse> getMemberPortfolio(
+            @PathVariable Long memberId,
+            @AuthenticationPrincipal TradingPrincipal viewer) {
+        Long viewerMemberId = viewer != null ? viewer.memberId() : null;
+        boolean viewerIsAdmin = viewer != null && viewer.isAdmin();
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(portfolios.getMemberPortfolio(memberId));
+                .body(portfolios.getMemberPortfolio(memberId, viewerMemberId, viewerIsAdmin));
     }
 }

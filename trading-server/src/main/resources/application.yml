@@ -46,6 +46,16 @@ springdoc:
   swagger-ui:
     enabled: true
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 marketdata:
   clock:
     skew-check-enabled: ${MARKET_CLOCK_SKEW_CHECK_ENABLED:false}

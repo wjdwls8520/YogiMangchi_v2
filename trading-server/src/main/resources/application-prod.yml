@@ -3,17 +3,29 @@ spring:
     url: ${TRADING_DB_URL}
     username: ${TRADING_DB_USERNAME}
     password: ${TRADING_DB_PASSWORD}
+    hikari:
+      connection-timeout: 3000
   flyway:
     url: ${TRADING_DB_URL}
     user: ${TRADING_FLYWAY_USERNAME}
     password: ${TRADING_FLYWAY_PASSWORD}
 server:
   address: 0.0.0.0
+  shutdown: graceful
 springdoc:
   api-docs:
     enabled: false
   swagger-ui:
     enabled: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
 trading:
   http:
     allowed-origins: ${TRADING_HTTP_ALLOWED_ORIGINS}
@@ -22,5 +34,7 @@ trading:
     issuer: ${YOGIMANGCHI_JWT_ISSUER}
     public-key-path: ${TRADING_JWT_PUBLIC_KEY_PATH}
 marketdata:
+  clock:
+    skew-check-enabled: true
   websocket:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS}

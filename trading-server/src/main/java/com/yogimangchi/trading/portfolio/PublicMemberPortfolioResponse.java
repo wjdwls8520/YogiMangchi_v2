@@ -7,6 +7,7 @@ import java.util.List;
 public record PublicMemberPortfolioResponse(
         Long memberId,
         boolean accountExists,
+        boolean portfolioPublic,
         Long roundId,
         int roundNumber,
         String initialSeed,
@@ -80,9 +81,14 @@ public record PublicMemberPortfolioResponse(
             String winRatePct) { }
 
     public static PublicMemberPortfolioResponse empty(Long memberId) {
+        return empty(memberId, true);
+    }
+
+    public static PublicMemberPortfolioResponse empty(Long memberId, boolean portfolioPublic) {
         return new PublicMemberPortfolioResponse(
                 memberId,
                 false,
+                portfolioPublic,
                 null,
                 0,
                 "10000",
@@ -91,5 +97,20 @@ public record PublicMemberPortfolioResponse(
                 List.of(),
                 List.of(),
                 new ClosedTradeSummary(0L, 0L, 0L, "0"));
+    }
+
+    public static PublicMemberPortfolioResponse hidden(Long memberId, boolean accountExists) {
+        return new PublicMemberPortfolioResponse(
+                memberId,
+                accountExists,
+                false,
+                null,
+                0,
+                null,
+                new WalletSnapshot(null, null, null, null, null, null, null, null, null, false),
+                new AllocationSnapshot(null, null, null, null, null, null, 0, 0),
+                List.of(),
+                List.of(),
+                new ClosedTradeSummary(0L, 0L, 0L, null));
     }
 }

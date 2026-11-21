@@ -13,6 +13,7 @@ import com.yogimangchi.trading.position.repository.PositionRepository;
 import com.yogimangchi.trading.position.service.HedgePositions;
 import com.yogimangchi.trading.position.service.IsolatedMargin;
 import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
+import com.yogimangchi.trading.takeprofit.TakeProfitService;
 import com.yogimangchi.trading.tradingaccount.entity.*;
 import com.yogimangchi.trading.tradingaccount.repository.WalletRepository;
 import com.yogimangchi.trading.tradingaccount.service.*;
@@ -44,15 +45,25 @@ public class TradingOrderService {
     private final SymbolLeverageService leverage;
     private final IsolatedMargin isolated;
     private final TradingEvents events;
+    private final TakeProfitService takeProfits;
 
     public TradingOrderService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate,
             HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated, TradingEvents events) {
+        this(locks, wallets, positions, orders, fills, symbols, valuation, gate, hedge, leverage, isolated, events, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TradingOrderService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
+            TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate,
+            HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated, TradingEvents events,
+            TakeProfitService takeProfits) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.valuation=valuation; this.gate=gate;
         this.hedge=hedge; this.leverage=leverage;
         this.isolated=isolated;
         this.events=events;
+        this.takeProfits=takeProfits;
     }
 
     @Transactional
@@ -401,12 +412,104 @@ public class TradingOrderService {
         return OrderResponse.from(order, null);
     }
 
+    @Transactional
+    public CancelAllOrdersResponse cancelAll(Long accountId) {
+        gate.enterTradingTransaction();
+        TradingAccount account = locks.lock(accountId);
+        gate.requireAccountClear(accountId);
+        List<TradingOrder> pending = orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING);
+        if (pending.isEmpty()) {
+            return new CancelAllOrdersResponse(0, List.of());
+        }
+        Wallet wallet = wallet(accountId);
+        Map<Long, Position> openById = open(accountId).stream()
+                .collect(Collectors.toMap(Position::getId, p -> p));
+        Instant now = now();
+        List<OrderResponse> canceled = new ArrayList<>(pending.size());
+        for (TradingOrder order : pending) {
+            if (order.getAction() == TradingOrder.Action.CLOSE) {
+                Position target = openById.get(order.getPositionId());
+                if (target == null) {
+                    target = positions.findById(order.getPositionId())
+                            .filter(p -> p.getAccountId().equals(accountId))
+                            .orElseThrow();
+                }
+                target.releaseCloseReservation(order.getQuantity());
+            } else {
+                wallet.releaseReservation(order.getReservedMargin());
+            }
+            Instant effectiveNow = now.isBefore(order.getCreatedAt()) ? order.getCreatedAt() : now;
+            order.cancel(effectiveNow);
+            logCommitted(order, "canceled");
+            canceled.add(OrderResponse.from(order, null));
+        }
+        Instant changeAt = now.isBefore(account.getLastFinancialChangeAt()) ? account.getLastFinancialChangeAt() : now;
+        account.recordFinancialChange(changeAt);
+        return new CancelAllOrdersResponse(canceled.size(), List.copyOf(canceled));
+    }
+
+    @Transactional
+    public CloseAllPositionsResponse closeAll(Long accountId) {
+        gate.enterTradingTransaction();
+        TradingAccount account = locks.lock(accountId);
+        gate.requireAccountClear(accountId);
+        requireActive(account);
+        Wallet wallet = wallet(accountId);
+        List<Position> openPositions = open(accountId);
+        if (openPositions.isEmpty()) {
+            return new CloseAllPositionsResponse(0, List.of());
+        }
+        AccountValuation.Value value = valuation.calculate(wallet, openPositions);
+        requireFresh(value);
+        gate.requireCaughtUp(value.prices());
+        for (Position position : openPositions) {
+            BigDecimal mark = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice();
+            if (isolated.risk(position, mark).atRisk()) {
+                throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+            }
+        }
+        Map<Long, Position> openById = openPositions.stream()
+                .collect(Collectors.toMap(Position::getId, p -> p));
+        Instant now = now();
+        for (TradingOrder pending : orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING)) {
+            if (pending.getAction() == TradingOrder.Action.CLOSE && openById.containsKey(pending.getPositionId())) {
+                Position target = openById.get(pending.getPositionId());
+                target.releaseCloseReservation(pending.getQuantity());
+                Instant orderNow = now.isBefore(pending.getCreatedAt()) ? pending.getCreatedAt() : now;
+                pending.cancel(orderNow);
+                logCommitted(pending, "canceled");
+            }
+        }
+        List<OrderResponse> closedOrders = new ArrayList<>(openPositions.size());
+        for (Position position : openPositions) {
+            LatestMarkPrice price = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow();
+            BigDecimal qty = position.getQuantity();
+            BigDecimal pnl = position.closingPnl(qty, price.domainMarkPrice());
+            BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), qty, TradingFees.MARKET_RATE);
+            Instant closeNow = now.isBefore(position.getOpenedAt()) ? position.getOpenedAt() : now;
+            Position.Settlement settlement = position.close(qty, price.domainMarkPrice(), closeNow, false);
+            wallet.settle(settlement.releasedMargin(), settlement.realizedPnl(), fee, BigDecimal.ZERO);
+            String closeKey = "close-all:position:" + position.getId();
+            String hash = TradingCommandFingerprint.close(position.getId(), null);
+            closedOrders.add(record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, closeKey, hash, closeNow, pnl, fee));
+        }
+        Instant changeAt = now.isBefore(account.getLastFinancialChangeAt()) ? account.getLastFinancialChangeAt() : now;
+        account.recordFinancialChange(changeAt);
+        if (wallet.getBalance().signum() == 0) {
+            account.declareBankrupt();
+        }
+        return new CloseAllPositionsResponse(closedOrders.size(), List.copyOf(closedOrders));
+    }
+
     private OrderResponse record(Position position, TradingOrder.Action action, BigDecimal quantity, LatestMarkPrice price,
             String key, String hash, Instant now, BigDecimal pnl, BigDecimal fee) {
         TradingOrder order = orders.save(TradingOrder.market(position, action, quantity, price.domainMarkPrice(), key, hash, now));
         Fill fill = fills.save(Fill.execute(order.getId(), price.domainMarkPrice(), quantity, price.eventTime(), now, pnl, fee, BigDecimal.ZERO));
         logCommitted(order, "filled", fill);
-        if(position.getStatus()!=Position.Status.OPEN) events.recordStopLoss(position);
+        if(position.getStatus()!=Position.Status.OPEN) {
+            events.recordStopLoss(position);
+            if(takeProfits!=null) takeProfits.expireIfActive(position, "POSITION_CLOSED", now);
+        }
         return OrderResponse.from(order, fill);
     }
 
