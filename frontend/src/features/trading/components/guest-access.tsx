@@ -119,8 +119,8 @@ export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCance
     </div>
     {failed && <p role="alert" className="ym-modal-alert mt-3">{member ? "회원 계정 준비 결과를 확인하지 못했습니다. 창을 닫고 계정을 다시 조회해 주세요." : "계정을 생성하지 못했습니다. 연결과 브라우저 저장소 설정을 확인한 뒤 다시 시도해 주세요."}</p>}
     <div className="ym-modal-footer mt-4">
-      <button type="button" className="guest-cancel ym-modal-btn-cancel" disabled={creating} onClick={onCancel}>취소</button>
-      <button type="button" className="guest-start-button ym-modal-btn-confirm" disabled={creating || (member && failed)} onClick={onStart}>{creating ? member ? "계정 확인 중…" : "계정 생성 중…" : "10,000 USDT로 시작하기"}</button>
+      <button type="button" className="guest-cancel ym-modal-btn-cancel whitespace-nowrap" disabled={creating} onClick={onCancel}>취소</button>
+      <button type="button" className="guest-start-button ym-modal-btn-confirm whitespace-nowrap" disabled={creating || (member && failed)} onClick={onStart}>{creating ? member ? "계정 확인 중…" : "계정 생성 중…" : "10,000 USDT로 시작하기"}</button>
     </div>
   </dialog>;
 }

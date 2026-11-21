@@ -9,11 +9,35 @@ import { tradingKeys } from "../api/query-keys";
 import { retryTradingQuery } from "../api/client";
 import { orderStatusLabel } from "../api/orders";
 import { orderReason } from "../api/order-reason";
+import { formatEditableDecimal } from "../api/order-input";
+import { formatMarketPrice } from "../market/price-format";
+import type { StopLoss } from "../api/stop-loss-contract";
+import type { TakeProfit } from "../api/take-profit-contract";
 
 function kstTime(value: string) {
   return new Date(value).toLocaleString("sv-SE", {
     timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   });
+}
+
+function stopLossTitle(status: StopLoss["status"]) {
+  switch (status) {
+    case "ACTIVE": return "손절(SL)이 설정되었습니다";
+    case "CANCELED": return "손절(SL)이 해제되었습니다";
+    case "TRIGGERED": return "손절(SL)이 발동되었습니다";
+    case "EXPIRED": return "손절(SL)이 만료되었습니다";
+    default: return "손절 상태가 변경되었습니다";
+  }
+}
+
+function takeProfitTitle(status: TakeProfit["status"]) {
+  switch (status) {
+    case "ACTIVE": return "익절(TP)이 설정되었습니다";
+    case "CANCELED": return "익절(TP)이 해제되었습니다";
+    case "TRIGGERED": return "익절(TP)이 발동되었습니다";
+    case "EXPIRED": return "익절(TP)이 만료되었습니다";
+    default: return "익절 상태가 변경되었습니다";
+  }
 }
 
 export function eventHistoryDisplay(event: TradingEvent) {
@@ -23,22 +47,22 @@ export function eventHistoryDisplay(event: TradingEvent) {
     const sl = event.stopLoss;
     if (!sl) return null;
     return {
-      title: sl.status === "ACTIVE" ? "손절(SL)이 설정되었습니다" : sl.status === "CANCELED" ? "손절(SL)이 해제되었습니다" : "손절 상태가 변경되었습니다",
-      detail: `포지션 #${sl.positionId} · ${sl.side}${sl.stopPrice ? ` · Mark ${sl.stopPrice}` : ""}`,
+      title: stopLossTitle(sl.status),
+      detail: `포지션 #${sl.positionId} · ${sl.side}${sl.stopPrice ? ` · Mark ${formatMarketPrice(sl.stopPrice)}` : ""}`,
     };
   }
   if (event.type === "TAKE_PROFIT_CHANGED") {
     const tp = event.takeProfit;
     if (!tp) return null;
     return {
-      title: tp.status === "ACTIVE" ? "익절(TP)이 설정되었습니다" : tp.status === "CANCELED" ? "익절(TP)이 해제되었습니다" : "익절 상태가 변경되었습니다",
-      detail: `포지션 #${tp.positionId} · ${tp.side}${tp.takeProfitPrice ? ` · Mark ${tp.takeProfitPrice}` : ""}`,
+      title: takeProfitTitle(tp.status),
+      detail: `포지션 #${tp.positionId} · ${tp.side}${tp.takeProfitPrice ? ` · Mark ${formatMarketPrice(tp.takeProfitPrice)}` : ""}`,
     };
   }
   const order = event.order;
   if (!order) return null;
   if (event.type === "ORDER_PENDING") return { title: "주문이 접수되었습니다", detail: `${order.side} · ${order.type} · 주문 #${order.orderId} · ${orderStatusLabel(order.status)}` };
-  if (event.type === "ORDER_FILLED") return { title: "주문이 체결되었습니다", detail: `${order.side} · ${order.type} · 주문 #${order.orderId} · 수량 ${order.quantity}` };
+  if (event.type === "ORDER_FILLED") return { title: "주문이 체결되었습니다", detail: `${order.side} · ${order.type} · 주문 #${order.orderId} · 수량 ${formatEditableDecimal(order.quantity)}` };
   if (event.type === "ORDER_CANCELED") return { title: "주문이 취소되었습니다", detail: `${order.side} · ${order.type} · 주문 #${order.orderId} · ${orderStatusLabel(order.status)}` };
   if (event.type === "ORDER_REJECTED") return { title: "주문이 거절되었습니다", detail: `${orderReason(order.reason)} 주문 #${order.orderId}` };
   if (event.type === "POSITION_LIQUIDATED") return { title: "포지션이 강제청산되었습니다", detail: `${order.side} · 주문 #${order.orderId} · 체결 내역을 확인해 주세요.` };
@@ -74,6 +98,20 @@ export function TradingEventStatus({ initialEvents, defaultOpen = false }: { ini
     }, setState, queueRefresh);
     return () => { stop(); if (refresh !== undefined) clearTimeout(refresh); };
   }, [session, snapshot, client, notices, attempt]);
+  useEffect(() => {
+    if (snapshot.phase !== "ready" || snapshot.retrying || state !== "unavailable") return;
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const retry = () => { setAttempt(value => value + 1); };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") retry();
+    };
+    window.addEventListener("online", retry);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("online", retry);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [snapshot.phase, snapshot.retrying, state]);
   const committedEvents = (eventsQuery.data ?? initialEvents ?? []).flatMap(event => {
     const summary = eventHistoryDisplay(event);
     return summary ? [{ event, ...summary }] : [];

@@ -163,16 +163,16 @@ export function SupportCenter() {
             <p className="text-sm text-gray-500">
               Google 또는 Kakao 소셜 로그인으로 간편하게 로그인하고 문의 접수 및 답변 알림을 받아보세요.
             </p>
-            <div className="flex justify-center gap-2 pt-2">
+            <div className="flex flex-wrap justify-center gap-2.5 pt-2">
               <Link
                 href="/login"
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-[#0058FF] px-6 text-sm font-bold text-white transition-colors hover:bg-blue-700"
+                className="inline-flex h-11 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-5 text-sm font-bold text-white transition-colors hover:bg-blue-700"
               >
                 로그인하러 가기
               </Link>
               <Link
                 href="/"
-                className="inline-flex h-11 items-center justify-center rounded-xl border border-gray-300 bg-white px-5 text-sm font-bold text-gray-700 hover:bg-gray-50"
+                className="inline-flex h-11 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-300 bg-white px-5 text-sm font-bold text-gray-700 hover:bg-gray-50"
               >
                 홈으로 돌아가기
               </Link>

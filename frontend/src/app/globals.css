@@ -1071,6 +1071,7 @@
 .ym-modal-subtle { margin: 0; font-size: 12px; color: #848E9C; }
 .ym-modal-alert { margin: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(246, 70, 93, 0.35); background: rgba(246, 70, 93, 0.1); color: #FCA5A5; font-size: 12px; line-height: 1.45; }
 .ym-modal-footer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding-top: 2px; }
+.guest-start-dialog .ym-modal-footer { grid-template-columns: auto minmax(0, 1fr); }
 .ym-exchange-modal .ym-modal-btn-confirm,
 .position-partial-dialog .ym-modal-btn-confirm { height: 42px; min-height: 42px !important; padding: 0 14px !important; border-radius: 6px !important; border: 1px solid #F0B90B !important; background: rgba(240, 185, 11, 0.08) !important; color: #F0B90B !important; font-size: 13px !important; font-weight: 700 !important; cursor: pointer; }
 .ym-exchange-modal .ym-modal-btn-confirm:hover:enabled,
@@ -2551,20 +2552,7 @@ table th {
   white-space: nowrap;
 }
 
-/* Native <select> vertical centering & chevron clearance across Community / News / Contest / Support */
+/* Native <select> ellipsis truncation across Community / News / Contest / Support */
 select.rounded-xl {
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  -moz-appearance: none !important;
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
-  padding-right: 2.25rem !important;
-  line-height: normal !important;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow: hidden;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
-  background-repeat: no-repeat !important;
-  background-position: right 0.75rem center !important;
-  background-size: 14px 14px !important;
 }
