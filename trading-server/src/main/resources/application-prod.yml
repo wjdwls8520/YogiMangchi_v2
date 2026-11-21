@@ -12,6 +12,7 @@ spring:
 server:
   address: 0.0.0.0
   shutdown: graceful
+  forward-headers-strategy: framework
 springdoc:
   api-docs:
     enabled: false

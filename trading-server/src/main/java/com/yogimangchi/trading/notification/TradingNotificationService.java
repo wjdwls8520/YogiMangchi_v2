@@ -244,14 +244,14 @@ public class TradingNotificationService {
     public void markAsRead(Long memberId, Long notificationId) {
         requireActiveMember(memberId);
         if (notificationId == null || notificationId <= 0) {
-            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND);
         }
         Boolean exists = jdbc.queryForObject(
                 "select exists(select 1 from trading.notification where id = ? and receiver_member_id = ?)",
                 Boolean.class,
                 notificationId, memberId);
         if (!Boolean.TRUE.equals(exists)) {
-            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND);
         }
         jdbc.update(
                 "update trading.notification set is_read = true, read_at = coalesce(read_at, now()) "
@@ -312,13 +312,13 @@ public class TradingNotificationService {
     public void deleteNotification(Long memberId, Long notificationId) {
         requireActiveMember(memberId);
         if (notificationId == null || notificationId <= 0) {
-            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND);
         }
         int deleted = jdbc.update(
                 "delete from trading.notification where id = ? and receiver_member_id = ?",
                 notificationId, memberId);
         if (deleted == 0) {
-            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND);
         }
         NotificationStatusResponse updatedStatus = queryStatusInternal(memberId);
         afterCommit(() -> sse.sendStatus(memberId, updatedStatus));

@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.execution;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.trigger.TradingEngineGate;
 import com.yogimangchi.trading.fill.entity.Fill;
@@ -27,6 +29,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.*;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,24 +49,35 @@ public class TradingOrderService {
     private final IsolatedMargin isolated;
     private final TradingEvents events;
     private final TakeProfitService takeProfits;
+    private final JdbcTemplate jdbc;
+    private final ObjectMapper json;
 
     public TradingOrderService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate,
             HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated, TradingEvents events) {
-        this(locks, wallets, positions, orders, fills, symbols, valuation, gate, hedge, leverage, isolated, events, null);
+        this(locks, wallets, positions, orders, fills, symbols, valuation, gate, hedge, leverage, isolated, events, null, null, null);
+    }
+
+    public TradingOrderService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
+            TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate,
+            HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated, TradingEvents events,
+            TakeProfitService takeProfits) {
+        this(locks, wallets, positions, orders, fills, symbols, valuation, gate, hedge, leverage, isolated, events, takeProfits, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public TradingOrderService(AccountLock locks, WalletRepository wallets, PositionRepository positions,
             TradingOrderRepository orders, FillRepository fills, TradingSymbolRepository symbols, AccountValuation valuation, TradingEngineGate gate,
             HedgePositions hedge, SymbolLeverageService leverage, IsolatedMargin isolated, TradingEvents events,
-            TakeProfitService takeProfits) {
+            TakeProfitService takeProfits, JdbcTemplate jdbc, ObjectMapper json) {
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders;
         this.fills=fills; this.symbols=symbols; this.valuation=valuation; this.gate=gate;
         this.hedge=hedge; this.leverage=leverage;
         this.isolated=isolated;
         this.events=events;
         this.takeProfits=takeProfits;
+        this.jdbc=jdbc;
+        this.json=json;
     }
 
     @Transactional
@@ -414,91 +428,169 @@ public class TradingOrderService {
 
     @Transactional
     public CancelAllOrdersResponse cancelAll(Long accountId) {
+        return cancelAll(accountId, null);
+    }
+
+    @Transactional
+    public CancelAllOrdersResponse cancelAll(Long accountId, String idempotencyKey) {
         gate.enterTradingTransaction();
+        if (idempotencyKey != null) {
+            validateKey(idempotencyKey);
+        }
         TradingAccount account = locks.lock(accountId);
+        String hash = idempotencyKey != null ? TradingCommandFingerprint.batchOperation("CANCEL_ALL") : null;
+        if (idempotencyKey != null) {
+            CancelAllOrdersResponse replay = findBatchIdempotentResult(
+                    accountId, idempotencyKey, "CANCEL_ALL", hash, CancelAllOrdersResponse.class);
+            if (replay != null) {
+                return replay;
+            }
+        }
         gate.requireAccountClear(accountId);
         List<TradingOrder> pending = orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING);
+        CancelAllOrdersResponse response;
         if (pending.isEmpty()) {
-            return new CancelAllOrdersResponse(0, List.of());
-        }
-        Wallet wallet = wallet(accountId);
-        Map<Long, Position> openById = open(accountId).stream()
-                .collect(Collectors.toMap(Position::getId, p -> p));
-        Instant now = now();
-        List<OrderResponse> canceled = new ArrayList<>(pending.size());
-        for (TradingOrder order : pending) {
-            if (order.getAction() == TradingOrder.Action.CLOSE) {
-                Position target = openById.get(order.getPositionId());
-                if (target == null) {
-                    target = positions.findById(order.getPositionId())
-                            .filter(p -> p.getAccountId().equals(accountId))
-                            .orElseThrow();
+            response = new CancelAllOrdersResponse(0, List.of());
+        } else {
+            Wallet wallet = wallet(accountId);
+            Map<Long, Position> openById = open(accountId).stream()
+                    .collect(Collectors.toMap(Position::getId, p -> p));
+            Instant now = now();
+            List<OrderResponse> canceled = new ArrayList<>(pending.size());
+            for (TradingOrder order : pending) {
+                if (order.getAction() == TradingOrder.Action.CLOSE) {
+                    Position target = openById.get(order.getPositionId());
+                    if (target == null) {
+                        target = positions.findById(order.getPositionId())
+                                .filter(p -> p.getAccountId().equals(accountId))
+                                .orElseThrow();
+                    }
+                    target.releaseCloseReservation(order.getQuantity());
+                } else {
+                    wallet.releaseReservation(order.getReservedMargin());
                 }
-                target.releaseCloseReservation(order.getQuantity());
-            } else {
-                wallet.releaseReservation(order.getReservedMargin());
+                Instant effectiveNow = now.isBefore(order.getCreatedAt()) ? order.getCreatedAt() : now;
+                order.cancel(effectiveNow);
+                logCommitted(order, "canceled");
+                canceled.add(OrderResponse.from(order, null));
             }
-            Instant effectiveNow = now.isBefore(order.getCreatedAt()) ? order.getCreatedAt() : now;
-            order.cancel(effectiveNow);
-            logCommitted(order, "canceled");
-            canceled.add(OrderResponse.from(order, null));
+            Instant changeAt = now.isBefore(account.getLastFinancialChangeAt()) ? account.getLastFinancialChangeAt() : now;
+            account.recordFinancialChange(changeAt);
+            response = new CancelAllOrdersResponse(canceled.size(), List.copyOf(canceled));
         }
-        Instant changeAt = now.isBefore(account.getLastFinancialChangeAt()) ? account.getLastFinancialChangeAt() : now;
-        account.recordFinancialChange(changeAt);
-        return new CancelAllOrdersResponse(canceled.size(), List.copyOf(canceled));
+        if (idempotencyKey != null) {
+            saveBatchIdempotentResult(accountId, idempotencyKey, "CANCEL_ALL", hash, response);
+        }
+        return response;
     }
 
     @Transactional
     public CloseAllPositionsResponse closeAll(Long accountId) {
+        return closeAll(accountId, null);
+    }
+
+    @Transactional
+    public CloseAllPositionsResponse closeAll(Long accountId, String idempotencyKey) {
         gate.enterTradingTransaction();
+        if (idempotencyKey != null) {
+            validateKey(idempotencyKey);
+        }
         TradingAccount account = locks.lock(accountId);
+        String hash = idempotencyKey != null ? TradingCommandFingerprint.batchOperation("CLOSE_ALL") : null;
+        if (idempotencyKey != null) {
+            CloseAllPositionsResponse replay = findBatchIdempotentResult(
+                    accountId, idempotencyKey, "CLOSE_ALL", hash, CloseAllPositionsResponse.class);
+            if (replay != null) {
+                return replay;
+            }
+        }
         gate.requireAccountClear(accountId);
         requireActive(account);
         Wallet wallet = wallet(accountId);
         List<Position> openPositions = open(accountId);
+        CloseAllPositionsResponse response;
         if (openPositions.isEmpty()) {
-            return new CloseAllPositionsResponse(0, List.of());
-        }
-        AccountValuation.Value value = valuation.calculate(wallet, openPositions);
-        requireFresh(value);
-        gate.requireCaughtUp(value.prices());
-        for (Position position : openPositions) {
-            BigDecimal mark = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice();
-            if (isolated.risk(position, mark).atRisk()) {
-                throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+            response = new CloseAllPositionsResponse(0, List.of());
+        } else {
+            AccountValuation.Value value = valuation.calculate(wallet, openPositions);
+            requireFresh(value);
+            gate.requireCaughtUp(value.prices());
+            for (Position position : openPositions) {
+                BigDecimal mark = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow().domainMarkPrice();
+                if (isolated.risk(position, mark).atRisk()) {
+                    throw new BusinessException(ErrorCode.ACCOUNT_AT_RISK);
+                }
             }
-        }
-        Map<Long, Position> openById = openPositions.stream()
-                .collect(Collectors.toMap(Position::getId, p -> p));
-        Instant now = now();
-        for (TradingOrder pending : orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING)) {
-            if (pending.getAction() == TradingOrder.Action.CLOSE && openById.containsKey(pending.getPositionId())) {
-                Position target = openById.get(pending.getPositionId());
-                target.releaseCloseReservation(pending.getQuantity());
-                Instant orderNow = now.isBefore(pending.getCreatedAt()) ? pending.getCreatedAt() : now;
-                pending.cancel(orderNow);
-                logCommitted(pending, "canceled");
+            Map<Long, Position> openById = openPositions.stream()
+                    .collect(Collectors.toMap(Position::getId, p -> p));
+            Instant now = now();
+            for (TradingOrder pending : orders.findByAccountIdAndStatusOrderByIdAsc(accountId, TradingOrder.Status.PENDING)) {
+                if (pending.getAction() == TradingOrder.Action.CLOSE && openById.containsKey(pending.getPositionId())) {
+                    Position target = openById.get(pending.getPositionId());
+                    target.releaseCloseReservation(pending.getQuantity());
+                    Instant orderNow = now.isBefore(pending.getCreatedAt()) ? pending.getCreatedAt() : now;
+                    pending.cancel(orderNow);
+                    logCommitted(pending, "canceled");
+                }
             }
+            List<OrderResponse> closedOrders = new ArrayList<>(openPositions.size());
+            for (Position position : openPositions) {
+                LatestMarkPrice price = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow();
+                BigDecimal qty = position.getQuantity();
+                BigDecimal pnl = position.closingPnl(qty, price.domainMarkPrice());
+                BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), qty, TradingFees.MARKET_RATE);
+                Instant closeNow = now.isBefore(position.getOpenedAt()) ? position.getOpenedAt() : now;
+                Position.Settlement settlement = position.close(qty, price.domainMarkPrice(), closeNow, false);
+                wallet.settle(settlement.releasedMargin(), settlement.realizedPnl(), fee, BigDecimal.ZERO);
+                String closeKey = "close-all:position:" + position.getId();
+                String closeHash = TradingCommandFingerprint.close(position.getId(), null);
+                closedOrders.add(record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, closeKey, closeHash, closeNow, pnl, fee));
+            }
+            Instant changeAt = now.isBefore(account.getLastFinancialChangeAt()) ? account.getLastFinancialChangeAt() : now;
+            account.recordFinancialChange(changeAt);
+            if (wallet.getBalance().signum() == 0) {
+                account.declareBankrupt();
+            }
+            response = new CloseAllPositionsResponse(closedOrders.size(), List.copyOf(closedOrders));
         }
-        List<OrderResponse> closedOrders = new ArrayList<>(openPositions.size());
-        for (Position position : openPositions) {
-            LatestMarkPrice price = value.prices().get(position.getTradingSymbolId()).latestPrice().orElseThrow();
-            BigDecimal qty = position.getQuantity();
-            BigDecimal pnl = position.closingPnl(qty, price.domainMarkPrice());
-            BigDecimal fee = TradingFees.fee(price.domainMarkPrice(), qty, TradingFees.MARKET_RATE);
-            Instant closeNow = now.isBefore(position.getOpenedAt()) ? position.getOpenedAt() : now;
-            Position.Settlement settlement = position.close(qty, price.domainMarkPrice(), closeNow, false);
-            wallet.settle(settlement.releasedMargin(), settlement.realizedPnl(), fee, BigDecimal.ZERO);
-            String closeKey = "close-all:position:" + position.getId();
-            String hash = TradingCommandFingerprint.close(position.getId(), null);
-            closedOrders.add(record(position, TradingOrder.Action.CLOSE, settlement.quantity(), price, closeKey, hash, closeNow, pnl, fee));
+        if (idempotencyKey != null) {
+            saveBatchIdempotentResult(accountId, idempotencyKey, "CLOSE_ALL", hash, response);
         }
-        Instant changeAt = now.isBefore(account.getLastFinancialChangeAt()) ? account.getLastFinancialChangeAt() : now;
-        account.recordFinancialChange(changeAt);
-        if (wallet.getBalance().signum() == 0) {
-            account.declareBankrupt();
+        return response;
+    }
+
+    private <T> T findBatchIdempotentResult(Long accountId, String key, String operation, String hash, Class<T> type) {
+        if (jdbc == null || json == null) {
+            return null;
         }
-        return new CloseAllPositionsResponse(closedOrders.size(), List.copyOf(closedOrders));
+        var rows = jdbc.queryForList(
+                "select operation, request_fingerprint, response::text from trading.idempotent_command where account_id = ? and request_key = ?",
+                accountId, key);
+        if (rows.isEmpty()) {
+            return null;
+        }
+        var row = rows.get(0);
+        if (!operation.equals(row.get("operation")) || !hash.equals(row.get("request_fingerprint"))) {
+            throw new BusinessException(ErrorCode.IDEMPOTENCY_CONFLICT);
+        }
+        try {
+            return json.readValue(row.get("response").toString(), type);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Invalid retained idempotent command response", exception);
+        }
+    }
+
+    private void saveBatchIdempotentResult(Long accountId, String key, String operation, String hash, Object response) {
+        if (jdbc == null || json == null) {
+            return;
+        }
+        try {
+            jdbc.update(
+                    "insert into trading.idempotent_command(account_id, request_key, operation, request_fingerprint, response) values (?, ?, ?, ?, ?::jsonb)",
+                    accountId, key, operation, hash, json.writeValueAsString(response));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Cannot retain idempotent command response", exception);
+        }
     }
 
     private OrderResponse record(Position position, TradingOrder.Action action, BigDecimal quantity, LatestMarkPrice price,

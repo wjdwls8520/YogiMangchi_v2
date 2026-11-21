@@ -24,10 +24,8 @@ public class RequestIdMdcFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String incoming = request.getHeader(HEADER_NAME);
-        String reqId = incoming != null && SAFE_REQUEST_ID.matcher(incoming.strip()).matches()
-                ? incoming.strip()
-                : generateId();
+        String incoming = sanitize(request.getHeader(HEADER_NAME));
+        String reqId = incoming != null ? incoming : generateId();
         MDC.put(MDC_KEY, reqId);
         request.setAttribute(REQUEST_ATTR, reqId);
         response.setHeader(HEADER_NAME, reqId);
@@ -36,6 +34,14 @@ public class RequestIdMdcFilter extends OncePerRequestFilter {
         } finally {
             MDC.remove(MDC_KEY);
         }
+    }
+
+    public static String sanitize(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String stripped = raw.strip();
+        return SAFE_REQUEST_ID.matcher(stripped).matches() ? stripped : null;
     }
 
     private static String generateId() {

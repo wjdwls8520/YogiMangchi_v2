@@ -224,23 +224,27 @@ public class ContestTradingController {
     }
 
     @PostMapping("/orders/cancel-all")
-    @Operation(summary = "Atomically cancel all pending orders in the active contest season")
+    @Operation(summary = "Atomically cancel all pending orders in the active contest season",
+            description = "Optional Idempotency-Key (8-100 chars) enables safe replay without double-canceling newly placed orders.")
     public CancelAllOrdersResponse cancelAllOrders(
             @AuthenticationPrincipal TradingPrincipal principal,
-            @PathVariable Long seasonId) {
+            @PathVariable Long seasonId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
-        CancelAllOrdersResponse response = orderService.cancelAll(accountId);
+        CancelAllOrdersResponse response = orderService.cancelAll(accountId, idempotencyKey);
         contestService.evictContestCache(seasonId);
         return response;
     }
 
     @PostMapping("/positions/close-all")
-    @Operation(summary = "Atomically cancel pending close reservations and market-close all open positions in the active contest season")
+    @Operation(summary = "Atomically cancel pending close reservations and market-close all open positions in the active contest season",
+            description = "Optional Idempotency-Key (8-100 chars) enables safe replay without double-closing newly opened positions.")
     public CloseAllPositionsResponse closeAllPositions(
             @AuthenticationPrincipal TradingPrincipal principal,
-            @PathVariable Long seasonId) {
+            @PathVariable Long seasonId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
-        CloseAllPositionsResponse response = orderService.closeAll(accountId);
+        CloseAllPositionsResponse response = orderService.closeAll(accountId, idempotencyKey);
         contestService.evictContestCache(seasonId);
         return response;
     }

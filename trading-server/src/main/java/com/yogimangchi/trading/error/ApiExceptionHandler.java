@@ -9,9 +9,11 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -36,6 +38,21 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @Autowired
     public ApiExceptionHandler(ObjectProvider<OpsErrorBuffer> errorBuffer) {
         this.errorBuffer = errorBuffer;
+    }
+
+    @ExceptionHandler(RateLimitedException.class)
+    public ResponseEntity<ProblemDetail> handleRateLimitedException(RateLimitedException exception) {
+        ErrorCode code = exception.getCode();
+        log.info("Rate limit exceeded code={} retryAfterSeconds={} reqId={}",
+                code, exception.retryAfterSeconds(), currentRequestId());
+        var problem = businessProblem(code);
+        problem.setProperty("retryAfterSeconds", exception.retryAfterSeconds());
+        recordIfDiagnostic(code.status().value(), code.name(), code.name());
+        return ResponseEntity.status(code.status())
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(exception.retryAfterSeconds()))
+                .cacheControl(CacheControl.noStore())
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(problem);
     }
 
     @ExceptionHandler(BusinessException.class)

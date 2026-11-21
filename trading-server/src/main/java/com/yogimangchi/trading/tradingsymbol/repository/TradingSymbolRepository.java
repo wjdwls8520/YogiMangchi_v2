@@ -20,4 +20,11 @@ public interface TradingSymbolRepository extends Repository<TradingSymbol, Long>
             order by s.symbol asc, s.id asc
             """)
     List<TradingSymbolResponse> findAllByStatus(@Param("status") TradingSymbolStatus status);
+
+    @Query("""
+            select s
+            from TradingSymbol s
+            order by s.symbol asc, s.id asc
+            """)
+    List<TradingSymbol> findAllOrdered();
 }
