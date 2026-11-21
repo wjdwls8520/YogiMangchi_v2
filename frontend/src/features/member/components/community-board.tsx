@@ -2779,7 +2779,7 @@ export function CommunityBoard({
                   value={activeSidebarSeasonId !== null ? String(activeSidebarSeasonId) : ""}
                   disabled={!sidebarContestSeasonsQuery.data || sidebarSeasons.length === 0}
                   onChange={e => setContestSeason(e.target.value)}
-                  className="h-9 w-full truncate rounded-xl border border-gray-200 bg-gray-50 px-3 text-xs font-bold text-gray-800 transition-colors hover:border-gray-300 focus:border-[#0058FF] focus:bg-white focus:outline-none disabled:opacity-70"
+                  className="h-9 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-xs font-bold text-gray-800 transition-colors hover:border-gray-300 focus:border-[#0058FF] focus:bg-white focus:outline-none disabled:opacity-70"
                 >
                   {sidebarContestSeasonsQuery.data ? (
                     sidebarSeasons.length > 0 ? (
@@ -2991,6 +2991,7 @@ export function CommunityBoard({
             </div>
           </aside>
         </div>
+        <div className="h-16 sm:h-0" aria-hidden="true" />
       </div>
 
       {/* V1 우측 하단 플로팅 글쓰기 버튼 (게시글 수정 화면에서는 숨김) */}

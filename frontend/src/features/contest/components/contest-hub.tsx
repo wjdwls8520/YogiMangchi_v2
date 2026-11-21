@@ -520,34 +520,18 @@ export function ContestListCard({
             setIsExpanded(prev => !prev);
           }
         }}
-        className="flex items-center justify-between gap-3 p-5 cursor-pointer select-none"
+        className="flex flex-col gap-3 p-5 cursor-pointer select-none"
       >
-        <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
           <span
             className={cn(
-              "inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold",
+              "inline-flex shrink-0 whitespace-nowrap items-center rounded-full px-2.5 py-1 text-[11px] font-bold leading-none",
               badgeTone,
             )}
           >
             {contest.accentLabel}
           </span>
-          <div className="min-w-0 flex-1 space-y-1">
-            <h3
-              className={cn(
-                "text-sm font-black tracking-tight text-gray-900 leading-snug",
-                contest.cardType === "reject" && "line-through text-gray-400",
-                !isExpanded && "truncate",
-              )}
-            >
-              {contest.title}
-            </h3>
-            <p className="text-[11px] font-bold text-gray-400 tabular-nums">
-              {contest.contestStartAt} ~ {contest.contestEndAt}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
           {contest.cardType === "apply" && onApply ? (
             <button
               type="button"
@@ -607,6 +591,20 @@ export function ContestListCard({
               isExpanded && "rotate-180",
             )}
           />
+          </div>
+        </div>
+        <div className="min-w-0 space-y-1">
+          <h3
+            className={cn(
+              "text-sm font-black tracking-tight text-gray-900 leading-snug break-keep",
+              contest.cardType === "reject" && "line-through text-gray-400",
+            )}
+          >
+            {contest.title}
+          </h3>
+          <p className="whitespace-nowrap text-[11px] font-bold text-gray-400 tabular-nums">
+            {contest.contestStartAt} ~ {contest.contestEndAt}
+          </p>
         </div>
       </div>
 
