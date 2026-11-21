@@ -39,15 +39,29 @@ test("reconsent does not promote an older agreement to a new policy version", as
   assert.equal(acceptance(loaded, {}, accepted).termAgree, true);
   assert.equal(policyAccepted({}, "TERMS", "ym-terms-v2", accepted), false);
 });
-test("public and popup policy content share full originals, visible versions and editable publication placeholders", async () => {
+test("public and popup policy content share clean originals without internal draft placeholders and show support fallback when missing", async () => {
   const loaded: PolicyBundle = await bundle();
   const page = renderToStaticMarkup(<PolicyContent type="TERMS" document={loaded.documents.TERMS} />);
   const popup = renderToStaticMarkup(<PolicyDialogContent document={loaded.documents.TERMS} accepted={false} onAccept={() => {}} onRevoke={() => {}} onClose={() => {}} />);
-  assert.equal(popup.includes(page), true); assert.match(page, /제10조 약관 변경 및 문의/);
-  assert.match(page, /추후 운영 주체명이 들어갈 곳/); assert.match(page, /추후 시행일이 들어갈 곳/);
-  assert.match(page, /ym-terms-v1/); assert.equal(page.includes("<script>"), false);
+  assert.equal(popup.includes(page), true);
+  assert.match(page, /TERMS original/);
+  assert.match(page, /ym-terms-v1/);
+  assert.equal(page.includes("<script>"), false);
+  for (const forbidden of ["[추후", "frontend-draft", "서버 등록 개발 초안", "위 문구는 초기안이다", "검토용 전체 원고"]) {
+    assert.equal(page.includes(forbidden), false, `TERMS should not expose ${forbidden}`);
+  }
   const privacy = renderToStaticMarkup(<PolicyContent type="PRIVACY" document={loaded.documents.PRIVACY} />);
-  for (const word of ["제11조 변경 및 시행일", "목적:", "항목:", "기간:", "거부권:"]) assert.equal(privacy.includes(word), true, word);
+  assert.match(privacy, /PRIVACY original/);
+  assert.match(privacy, /ym-privacy-v1/);
+  assert.equal(privacy.includes("[추후"), false);
+  assert.equal(privacy.includes("frontend-draft"), false);
+
+  const missingFallback = renderToStaticMarkup(<PolicyContent type="TERMS" />);
+  assert.match(missingFallback, /현재 약관 원문을 불러오지 못했습니다/);
+  assert.match(missingFallback, /href="\/support"/);
+  assert.equal(missingFallback.includes("[추후"), false);
+  assert.equal(missingFallback.includes("frontend-draft"), false);
+
   assert.match(popup, /동의하지 않고 닫기/); assert.match(popup, /현재 이 버전에 동의하지 않았습니다/);
   const fields = renderToStaticMarkup(<PolicyConsentFields versions={{ TERMS: "v1", PRIVACY: "v1" }} accepted={{ TERMS: false, PRIVACY: false }} disabled={false} onChange={() => {}} onOpen={() => {}} />);
   assert.equal(fields.includes('checked=""'), false); assert.match(fields, /개인정보 수집·이용 동의/);
