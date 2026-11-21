@@ -7,7 +7,7 @@ export function TradingWorkspace() {
   return (
     <TradingDataProvider>
       <a href="#trading-main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-10 focus:bg-terminal-panel focus:px-4 focus:py-3">
-        Trading 본문으로 바로가기
+        모의투자 본문으로 바로가기
       </a>
       <V1Header theme="dark" />
       <main id="trading-main" tabIndex={-1} className="trading-workspace">

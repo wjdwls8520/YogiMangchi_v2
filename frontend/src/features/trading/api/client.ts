@@ -4,7 +4,7 @@ import { extractRequestId } from "../../../lib/request-id";
 export class TradingApiError extends Error {
   constructor(
     readonly status: number,
-    message = "Trading 데이터를 불러올 수 없습니다.",
+    message = "모의투자 데이터를 불러올 수 없습니다.",
     readonly code?: string,
     readonly nextAvailableAt?: string,
     readonly outcome?: "NOT_ACCEPTED" | "UNKNOWN",
@@ -24,7 +24,7 @@ const serverCodes = new Set(["INVALID_STOP_LOSS", "STOP_LOSS_NOT_PROTECTIVE", "S
 
 export function tradingOrigin(base: string) {
   try { return new URL(marketEndpoints(base).symbols).origin; }
-  catch { throw new TradingApiError(400, "Trading Server 주소 설정을 확인해 주세요."); }
+  catch { throw new TradingApiError(400, "모의투자 서버 주소 설정을 확인해 주세요."); }
 }
 
 // Never propagate response bodies, URLs, headers or fetch error causes into UI/errors.

@@ -83,7 +83,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
 
       <div className="ym-login-option-box mt-5 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 sm:flex-nowrap">
         <span className="text-[11px] font-medium text-gray-400">
-          HttpOnly 보안 세션으로 안전하게 인증됩니다.
+          암호화된 보안 세션으로 안전하게 인증됩니다.
         </span>
         <button
           type="button"

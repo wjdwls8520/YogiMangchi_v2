@@ -188,7 +188,7 @@ export function SupportCenter() {
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <strong className="font-black text-amber-950">
-                    계정 일시 정지(SUSPENDED) 안내 — 1:1 이의제기 접수 가능
+                    계정 일시 정지 안내 — 1:1 이의제기 접수 가능
                   </strong>
                   <button
                     type="button"

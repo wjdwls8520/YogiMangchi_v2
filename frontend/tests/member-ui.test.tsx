@@ -230,8 +230,10 @@ test("account tabs wait for login and account lookup without asking the user to 
 });
 test("withdrawal explains irreversible identity removal and preserved records, requires explicit confirmation and blocks the unsupported API", () => {
   const html = renderToStaticMarkup(<WithdrawalConfirmation onSubmit={event => event.preventDefault()} onCancel={() => {}} />);
-  for (const text of ["복구할 수 없", "새로운 회원", "이전되지 않", "관리상 종료", "새로운 체결·손익·수수료", "게시글·댓글·대댓글", "탈퇴한회원", "Guest 기록", "서버의 확인 문구 검증과 즉시 거래 차단"])
+  for (const text of ["복구할 수 없", "새로운 회원", "이전되지 않", "관리상 종료", "새로운 체결·손익·수수료", "게시글·댓글·대댓글", "탈퇴한회원", "Guest 기록", "비식별 거래 이력과 탈퇴 시각", "최근 동일 소셜 계정으로 본인 확인을 완료한 뒤 탈퇴를 요청할 수 있습니다."])
     assert.equal(html.includes(text), true, text);
+  for (const leak of ["새로 확정된 탈퇴 정책", "서버 보존 정책", "서버의 확인 문구 검증"])
+    assert.equal(html.includes(leak), false, leak);
   assert.match(html, /<input(?=[^>]*name="acknowledged")(?=[^>]*required="")[^>]*>/);
   assert.match(html, /<input(?=[^>]*name="confirmation")(?=[^>]*required="")(?=[^>]*pattern="탈퇴합니다")[^>]*>/);
   assert.match(html, /disabled=""[^>]*>본인 확인 필요/);

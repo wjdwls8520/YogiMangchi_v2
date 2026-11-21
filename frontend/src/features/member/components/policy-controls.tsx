@@ -14,9 +14,33 @@ export function usePolicies() {
 }
 export function PublicPolicyPage({ type }: { type: PolicyType }) {
   const policies = usePolicies();
-  return <>{policies.isPending && <p role="status">현재 동의 대상 문서를 확인하는 중입니다.</p>}
-    {policies.isError && <p role="alert" className="member-message">현재 동의 대상 원문을 확인하지 못했습니다. 아래 검토용 원고는 동의 대상이 아닙니다. <button className="account-refresh" onClick={() => void policies.refetch()}>다시 조회</button></p>}
-    <PolicyContent type={type} document={!policies.isError ? policies.data?.documents[type] : undefined} /></>;
+  if (policies.isPending) {
+    return (
+      <p role="status" className="member-message">
+        약관 원문을 불러오는 중입니다.
+      </p>
+    );
+  }
+  return (
+    <>
+      {policies.isError && (
+        <p role="alert" className="member-message mb-4">
+          현재 약관 원문을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.{" "}
+          <button
+            type="button"
+            className="account-refresh"
+            onClick={() => void policies.refetch()}
+          >
+            다시 조회
+          </button>
+        </p>
+      )}
+      <PolicyContent
+        type={type}
+        document={!policies.isError ? policies.data?.documents[type] : undefined}
+      />
+    </>
+  );
 }
 export function PolicyConsentControl({ bundle, selection, onChange, pending, previous }: {
   bundle: PolicyBundle; selection: ConsentSelection; onChange: (value: ConsentSelection) => void; pending: boolean; previous?: PolicyState;

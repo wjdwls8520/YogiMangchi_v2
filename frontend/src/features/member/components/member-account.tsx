@@ -396,7 +396,7 @@ export function MemberAccount() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-bold text-gray-900">모든 기기에서 로그아웃</p>
                 <p className="mt-0.5 text-xs text-gray-500">
-                  현재 브라우저를 포함해 로그인된 모든 PC·모바일 기기의 Refresh 세션을 즉시 폐기합니다.
+                  현재 브라우저를 포함해 로그인된 모든 PC·모바일 기기의 로그인 상태를 즉시 해제합니다.
                 </p>
               </div>
               <button
@@ -416,7 +416,7 @@ export function MemberAccount() {
               open={logoutAllOpen}
               onClose={() => !logoutAllBusy && setLogoutAllOpen(false)}
               title="모든 기기에서 로그아웃할까요?"
-              subtitle="보안 세션 일괄 폐기"
+              subtitle="모든 기기 로그인 해제"
               maxWidth="440px"
               footer={
                 <div className="flex items-center justify-end gap-2">

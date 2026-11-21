@@ -76,10 +76,10 @@ export function MemberWithdrawal() {
         setAcknowledged(false); setConfirmation(""); setError(null); dialog.current?.showModal();
       }}>회원 탈퇴</button>}
     </div>
-    {((receipt && (snapshot.memberId === null || owner === snapshot.memberId)) || snapshot.phase === "withdrawing") && <><h2>탈퇴 진행 상태</h2><p className="member-message" role="status">{receipt === "COMPLETED" ? "Trading 정리와 개인정보 제거가 완료되었습니다. 같은 소셜 계정으로 새로 가입할 수 있으며 이전 회원 ID·회차·자산은 복구하거나 이전하지 않습니다."
+    {((receipt && (snapshot.memberId === null || owner === snapshot.memberId)) || snapshot.phase === "withdrawing") && <><h2>탈퇴 진행 상태</h2><p className="member-message" role="status">{receipt === "COMPLETED" ? "모의투자 정리와 개인정보 제거가 완료되었습니다. 같은 소셜 계정으로 새로 가입할 수 있으며 이전 회원 ID·회차·자산은 복구하거나 이전하지 않습니다."
       : receipt === "NOT_REQUESTED" ? "서버에서 접수된 탈퇴 요청을 찾지 못했습니다. 로그인 상태를 다시 확인한 뒤 시도해 주세요."
       : receipt === "UNCERTAIN" ? "탈퇴 요청 결과를 확인하지 못했습니다. 새 요청을 반복하지 않고 서버의 진행 상태를 확인합니다."
-      : "탈퇴 요청을 접수했습니다. Trading 주문·포지션 정리와 개인정보 제거를 진행 중이며 아직 완료되지 않았습니다."}</p>
+      : "탈퇴 요청을 접수했습니다. 모의투자 주문·포지션 정리와 개인정보 제거를 진행 중이며 아직 완료되지 않았습니다."}</p>
       {snapshot.phase === "withdrawing" && <button className="member-secondary" disabled={pending} onClick={() => void status()}>{pending ? "조회 중…" : "진행 상태 확인"}</button>}
       {receipt === "NOT_REQUESTED" && <button className="member-secondary" onClick={() => void session.restore().catch(() => {})}>로그인 상태 다시 확인</button>}
     </>}
