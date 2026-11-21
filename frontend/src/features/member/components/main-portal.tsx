@@ -961,20 +961,20 @@ export function MainPortal({
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           {/* 좌측: 24시 실시간 속보 타임라인 */}
           <div className="card rounded-2xl border border-gray-200 bg-white p-6 lg:col-span-7">
-            <div className="mb-5 flex items-center justify-between border-b border-gray-100 pb-4">
-              <div className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-[#0058FF]"></span>
-                <h2 className="text-lg font-black text-gray-900">24시 실시간 속보</h2>
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-4">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#0058FF]"></span>
+                <h2 className="text-lg font-black text-gray-900 whitespace-nowrap">24시 실시간 속보</h2>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setThumbnailModalOpen(true)}
-                  className="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100"
+                  className="inline-flex items-center justify-center whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs font-bold leading-none text-gray-700 hover:bg-gray-100"
                 >
                   속보 이미지 제보
                 </button>
-                <Link href="/news" className="text-xs font-bold text-[#0058FF] hover:underline">
+                <Link href="/news" className="inline-flex items-center whitespace-nowrap text-xs font-bold text-[#0058FF] hover:underline">
                   전체 뉴스 →
                 </Link>
               </div>
@@ -1020,12 +1020,12 @@ export function MainPortal({
 
           {/* 우측: 선물 모의투자 퀵 시뮬레이터 */}
           <div className="card rounded-2xl border border-gray-200 bg-white p-6 lg:col-span-5">
-            <div className="mb-4 flex items-center justify-between border-b border-gray-100 pb-4">
-              <div>
-                <h2 className="text-lg font-black text-gray-900">선물 모의투자 퀵 시뮬레이터</h2>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-2 border-b border-gray-100 pb-4">
+              <div className="min-w-0">
+                <h2 className="text-lg font-black text-gray-900 break-keep">선물 모의투자 퀵 시뮬레이터</h2>
                 <p className="text-xs text-gray-500">격리마진(Isolated) 예상 손익·ROE 계산</p>
               </div>
-              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-[#0058FF]">
+              <span className="inline-flex shrink-0 whitespace-nowrap items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold leading-none text-[#0058FF]">
                 10,000 USDT 기준
               </span>
             </div>

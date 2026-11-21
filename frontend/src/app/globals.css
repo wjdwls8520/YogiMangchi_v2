@@ -172,7 +172,7 @@
   .trading-header-product { @apply hidden self-stretch items-center border-b-2 border-brand-600 px-2 text-trade-body font-semibold text-terminal-text sm:flex; }
   .guest-header-action { @apply ml-auto min-w-0 text-right; }
   .guest-account-message { @apply grid min-h-40 flex-1 place-items-center px-4 py-6 text-center text-trade-body leading-relaxed text-terminal-muted; }
-  .guest-start-button { @apply min-h-11 rounded-full bg-brand-600 px-4 py-2 text-trade-body font-semibold leading-relaxed text-terminal-ink enabled:cursor-pointer enabled:hover:bg-brand-700 disabled:opacity-50; }
+  .guest-start-button { @apply inline-flex min-h-11 items-center justify-center rounded-full bg-brand-600 px-4 py-2 text-[15px] font-semibold leading-none text-white enabled:cursor-pointer enabled:hover:bg-brand-700 disabled:opacity-50; }
   .guest-entry-prompt { @apply flex flex-col gap-4 py-2 text-trade-body leading-relaxed text-terminal-muted; }
   .guest-entry-balance { @apply flex flex-col gap-1 border-b border-terminal-line pb-4 text-trade-meta; }
   .guest-entry-balance strong { @apply text-xl font-semibold text-terminal-text; }
@@ -183,12 +183,12 @@
   .guest-start-dialog h2 { @apply mb-3 text-base font-semibold text-terminal-text; }
   .guest-start-dialog p + p { @apply mt-3; }
   .guest-dialog-actions { @apply mt-5 flex flex-wrap justify-end gap-2; }
-  .guest-cancel { @apply min-h-11 rounded-sm border border-terminal-line px-3 py-2 font-medium enabled:cursor-pointer disabled:opacity-50; }
+  .guest-cancel { @apply inline-flex min-h-11 items-center justify-center whitespace-nowrap rounded-sm border border-terminal-line px-3 py-2 font-medium leading-none enabled:cursor-pointer disabled:opacity-50; }
   .position-close-dialog { @apply fixed inset-0 m-auto max-w-md rounded-sm border border-terminal-line bg-terminal-panel p-5 text-trade-body text-terminal-text tabular-nums; width: calc(100% - 2rem); max-height: calc(100dvh - 2rem); white-space: normal; backface-visibility: hidden; transform: translateZ(0); }
   .position-close-dialog::backdrop { background: rgb(0 0 0 / 65%); }
   .position-close-dialog h2 { @apply mb-4 text-base font-semibold; }
   .position-close-dialog form { @apply mt-4 flex flex-col gap-3; }
-  .position-close-dialog .guest-start-button { @apply bg-brand-600 text-terminal-ink; }
+  .position-close-dialog .guest-start-button { @apply bg-brand-600 text-white; }
   .close-position-summary { @apply grid grid-cols-2 gap-3 text-trade-meta; }
   .close-position-summary dt { @apply text-terminal-muted; }
   .close-position-summary dd { @apply mt-1 font-medium; overflow-wrap: anywhere; }
@@ -222,8 +222,12 @@
   .market-analysis { @apply grid min-w-0 flex-1; }
   .market-analysis > .order-book, .market-analysis[data-analysis-view="book"] > .market-chart { @apply hidden; }
   .market-analysis[data-analysis-view="book"] > .order-book { @apply block; }
-  .trading-account > .trading-navigation { @apply overflow-x-auto; }
+  .trading-account > .trading-navigation { @apply overflow-x-auto; scrollbar-width: none; }
+  .trading-account > .trading-navigation::-webkit-scrollbar { display: none; }
   .trading-account .trading-tab { @apply flex-none whitespace-nowrap; }
+  @media (max-width: 639px) {
+    .trading-account .trading-tab { padding-left: 7px; padding-right: 7px; font-size: 11px; gap: 3px; }
+  }
   .activity-panel { @apply min-w-0; }
   .trading-account-body { @apply min-w-0; }
   .trading-grid[data-main-view] .trading-account .activity-panel[hidden] { display: none; }
@@ -3318,8 +3322,47 @@ html[data-ym-auth-hint="admin"] .ym-gnb-auth-loading .ym-auth-slot-member {
   }
 }
 
-/* Global Table Header Single-Line Defense */
+/* Global Table Header Single-Line Defense & Toss-Grade Typography / Alignment Polish */
+h1, h2, h3, h4, p, button, a, label, th {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
 table th {
   white-space: nowrap;
-  word-break: keep-all;
+}
+
+.member-recovery-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.account-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+/* Native <select> vertical centering & chevron clearance across Community / News / Contest */
+select.rounded-xl {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  padding-right: 2.25rem !important;
+  line-height: 2.35rem !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.75rem center !important;
+  background-size: 14px 14px !important;
+}
+select.rounded-xl.h-9 {
+  line-height: 2.1rem !important;
 }

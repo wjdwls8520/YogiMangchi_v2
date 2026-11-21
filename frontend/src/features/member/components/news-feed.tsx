@@ -2396,7 +2396,7 @@ export function NewsFeed({
                                 </button>
                                 <span
                                   data-news-view-count={item.id}
-                                  className="text-[11px] font-semibold text-gray-400"
+                                  className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-gray-400"
                                 >
                                   조회 {(item.viewCount ?? 0).toLocaleString("ko-KR")}
                                 </span>
@@ -2405,7 +2405,7 @@ export function NewsFeed({
                               <button
                                 type="button"
                                 onClick={() => void inspectArticle(item.id, item)}
-                                className="text-xs font-bold text-gray-400 hover:text-gray-700"
+                                className="inline-flex shrink-0 items-center whitespace-nowrap text-xs font-bold text-gray-400 hover:text-gray-700"
                               >
                                 뉴스 상세 모달 보기 →
                               </button>
