@@ -20,7 +20,7 @@ public class WithdrawalCsrfFilter extends OncePerRequestFilter {
         CsrfToken expected=repository.loadToken(request);
         String actual=expected==null?null:handler.resolveCsrfTokenValue(request,expected);
         if(actual==null || !MessageDigest.isEqual(expected.getToken().getBytes(StandardCharsets.UTF_8),actual.getBytes(StandardCharsets.UTF_8))) {
-            ApiErrors.write(response,403,"ACCESS_DENIED");return;
+            ApiErrors.write(response,403,"CSRF_INVALID");return;
         }
         chain.doFilter(request,response);
     }

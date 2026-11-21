@@ -5,12 +5,15 @@ import com.yogimangchi.content.auth.oauth.VerifiedIdentity;
 import com.yogimangchi.content.auth.service.AuthService;
 import com.yogimangchi.content.error.AuthFailure;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.servlet.http.*;
 import jakarta.validation.Valid;
 import java.time.*;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.*;
 
@@ -55,6 +58,16 @@ public class AuthController {
             description="CSRF required; idempotent even if refresh is absent/invalid. Existing Access JWTs can remain valid until expiry (up to15 minutes); immediate Access revocation is not promised.")
     public ResponseEntity<Void> logout(@CookieValue(name=REFRESH_COOKIE,required=false) String token,HttpServletRequest request) {
         auth.logout(token); if(request.getSession(false)!=null) request.getSession(false).invalidate();
+        return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE,cookie("",Instant.EPOCH).toString()).cacheControl(CacheControl.noStore()).build();
+    }
+    @PostMapping("/logout-all")
+    @SecurityRequirement(name="memberBearer")
+    @Operation(summary="Revoke all refresh sessions across all devices for the authenticated member and clear the refresh cookie",
+            description="Active member Bearer required. Revokes every refresh session belonging to the member and clears the refresh cookie.")
+    public ResponseEntity<Void> logoutAll(@AuthenticationPrincipal Jwt jwt,HttpServletRequest request) {
+        if(jwt==null || jwt.getSubject()==null) throw AuthFailure.unauthorized();
+        auth.logoutAll(Long.valueOf(jwt.getSubject()));
+        if(request.getSession(false)!=null) request.getSession(false).invalidate();
         return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE,cookie("",Instant.EPOCH).toString()).cacheControl(CacheControl.noStore()).build();
     }
     private VerifiedIdentity identity(HttpServletRequest request) {

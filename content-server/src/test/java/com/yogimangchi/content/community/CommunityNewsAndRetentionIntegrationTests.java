@@ -156,7 +156,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
     @Test
     void communityPostCrudLikesCommentsAndWithdrawnAuthorTombstoneWorkEndToEnd() throws Exception {
         var authorProof = identity();
-        var author = auth.signup(authorProof, new SignupRequest(nickname(), true, true, "author", "ym-terms-v1", "ym-privacy-v1"));
+        var author = auth.signup(authorProof, new SignupRequest(nickname(), true, true, "author", "ym-terms-v2", "ym-privacy-v2"));
         var reader = signup();
 
         String authorBearer = "Bearer " + author.access().accessToken();
@@ -831,7 +831,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                         .param("size", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
-                .andExpect(jsonPath("$.items[0].status").value("RECEIVED"))
+                .andExpect(jsonPath("$.items[0].status").value("PENDING"))
                 .andExpect(jsonPath("$.hasNext").value(true))
                 .andReturn().getResponse().getContentAsString());
         long reportCursor = reportsPage1.path("nextCursorId").asLong();
@@ -997,21 +997,25 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.items[0].section").value("NEWSROOM"))
                 .andExpect(jsonPath("$.items[0].subCategory").value("STOCKS"));
 
-        // 5. Vote BULL and BEAR reactions on the newly ingested BTC article
+        // 5. Vote BULL and BEAR reactions on the newly ingested BTC article (from two distinct actors)
         mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
+                        .header("X-Forwarded-For", "203.0.113.10")
                         .contentType("application/json")
                         .content("{\"reaction\":\"BULL\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.newsId").value(btcItem.id()))
                 .andExpect(jsonPath("$.reaction").value("BULL"))
+                .andExpect(jsonPath("$.userReaction").value("BULL"))
                 .andExpect(jsonPath("$.bullCount").value(1))
                 .andExpect(jsonPath("$.bearCount").value(0))
                 .andExpect(jsonPath("$.bullPct").value(100));
 
         mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
+                        .header("X-Forwarded-For", "203.0.113.11")
                         .contentType("application/json")
                         .content("{\"reaction\":\"BEAR\"}"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userReaction").value("BEAR"))
                 .andExpect(jsonPath("$.bullCount").value(1))
                 .andExpect(jsonPath("$.bearCount").value(1))
                 .andExpect(jsonPath("$.bullPct").value(50))
@@ -1166,6 +1170,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         int bullPctBefore = sentimentNode.path("bullPct").asInt();
         for (int i = 0; i < 30; i++) {
             mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
+                            .header("X-Forwarded-For", "198.51.100." + (i + 1))
                             .contentType("application/json")
                             .content("{\"reaction\":\"BULL\"}"))
                     .andExpect(status().isOk());
@@ -1518,7 +1523,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
     }
 
     private AuthService.Issued signup() {
-        return auth.signup(identity(), new SignupRequest(nickname(), true, true, "test", "ym-terms-v1", "ym-privacy-v1"));
+        return auth.signup(identity(), new SignupRequest(nickname(), true, true, "test", "ym-terms-v2", "ym-privacy-v2"));
     }
 
     private static VerifiedIdentity identity() {

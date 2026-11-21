@@ -68,15 +68,25 @@ public class MemberWithdrawals {
         jdbc.update("delete from content.oauth_identity where member_id=?",memberId);
         jdbc.update("delete from content.refresh_session where member_id=?",memberId);
         jdbc.update("delete from content.member_consent_history where member_id=?",memberId);
+        jdbc.update("delete from content.notification_group_state where receiver_member_id=?",memberId);
+        jdbc.update("delete from content.notification_dedupe_state where receiver_member_id=? or actor_member_id=?",memberId,memberId);
+        jdbc.update("delete from content.notification_state where member_id=?",memberId);
+        jdbc.update("delete from content.notification where receiver_member_id=?",memberId);
         if(member.getProfileImgS3Key()!=null && !member.getProfileImgS3Key().isBlank()) {
             s3.registerAfterCommitDelete(List.of(member.getProfileImgS3Key()),"MEMBER_WITHDRAWN");
         }
         member.withdraw(Instant.now());
         jdbc.update("update content.member_withdrawal set status='COMPLETED',completed_at=now() where member_id=? and status='PENDING'",memberId);
+        if(notificationSse!=null && org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                @Override public void afterCommit() { notificationSse.disconnectMember(memberId); }
+            });
+        }
     }
     @Transactional(timeout=3)
-    public void failed(Long memberId) {
+    public int failed(Long memberId) {
         // Bounded delay, no tokens/error bodies/PII persisted. A restart resumes from the same row.
-        jdbc.update("update content.member_withdrawal set attempts=least(attempts+1,1000000),next_attempt_at=now()+make_interval(secs => least(300,5*power(2,least(attempts,6)))::int) where member_id=? and status='PENDING'",memberId);
+        var rows=jdbc.queryForList("update content.member_withdrawal set attempts=least(attempts+1,1000000),next_attempt_at=now()+make_interval(secs => least(300,5*power(2,least(attempts,6)))::int) where member_id=? and status='PENDING' returning attempts",Integer.class,memberId);
+        return rows.isEmpty() ? 0 : rows.get(0);
     }
 }

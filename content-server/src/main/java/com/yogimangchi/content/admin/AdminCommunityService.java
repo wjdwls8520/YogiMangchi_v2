@@ -3,6 +3,7 @@ package com.yogimangchi.content.admin;
 import com.yogimangchi.content.community.CommunityS3Service;
 import com.yogimangchi.content.community.CommunityService;
 import com.yogimangchi.content.error.AuthFailure;
+import com.yogimangchi.content.notification.ContentNotificationService;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -10,6 +11,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -17,12 +21,19 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AdminCommunityService {
+    private static final Logger log = LoggerFactory.getLogger(AdminCommunityService.class);
+
+    public record ModerationActionRequest(
+            String action,
+            String resolutionNote
+    ) { }
 
     public record AdminPostDto(
             Long postId,
             String category,
             String title,
             String content,
+            long viewCount,
             long likeCount,
             long replyCount,
             long reportCount,
@@ -73,6 +84,10 @@ public class AdminCommunityService {
             Long reporterId,
             String reporterNickname,
             String reasonType,
+            String reportStatus,
+            Instant resolvedAt,
+            Long resolvedByMemberId,
+            String resolutionNote,
             Instant createdAt
     ) { }
 
@@ -85,19 +100,38 @@ public class AdminCommunityService {
             boolean hasNext,
             long postReportCount,
             long commentReportCount,
-            long activeTargetReportCount
+            long activeTargetReportCount,
+            long pendingReportCount
     ) { }
 
-    private record PostStatusRow(Long id, String status, Timestamp deletedAt) { }
+    private record PostStatusRow(Long id, Long memberId, String title, String status, Timestamp deletedAt) { }
 
-    private record CommentHierarchyRow(Long id, Long postId, Long parentCommentId, String status, Timestamp deletedAt) { }
+    private record CommentHierarchyRow(
+            Long id,
+            Long postId,
+            Long memberId,
+            Long parentCommentId,
+            String content,
+            String status,
+            Timestamp deletedAt
+    ) { }
 
     private final JdbcTemplate jdbc;
     private final CommunityS3Service s3;
+    private final ContentNotificationService notifications;
 
     public AdminCommunityService(JdbcTemplate jdbc, CommunityS3Service s3) {
+        this(jdbc, s3, null);
+    }
+
+    @Autowired
+    public AdminCommunityService(
+            JdbcTemplate jdbc,
+            CommunityS3Service s3,
+            @Autowired(required = false) ContentNotificationService notifications) {
         this.jdbc = jdbc;
         this.s3 = s3;
+        this.notifications = notifications;
     }
 
     @Transactional(readOnly = true, timeout = 5)
@@ -118,7 +152,7 @@ public class AdminCommunityService {
 
         StringBuilder sql = new StringBuilder(
                 "select p.id as post_id, p.category, p.title, p.content, "
-                        + "p.like_count, p.comment_count, p.report_count, "
+                        + "p.view_count, p.like_count, p.comment_count, p.report_count, "
                         + "p.status as post_status, p.deleted_at, p.created_at, p.updated_at, "
                         + "p.member_id as author_id, m.nickname as author_nickname, m.status as author_status "
                         + "from content.community_post p "
@@ -180,8 +214,13 @@ public class AdminCommunityService {
         requireAdmin(adminId);
 
         List<PostStatusRow> locked = jdbc.query(
-                "select id, status, deleted_at from content.community_post where id = ? for update",
-                (rs, n) -> new PostStatusRow(rs.getLong("id"), rs.getString("status"), rs.getTimestamp("deleted_at")),
+                "select id, member_id, title, status, deleted_at from content.community_post where id = ? for update",
+                (rs, n) -> new PostStatusRow(
+                        rs.getLong("id"),
+                        rs.getLong("member_id"),
+                        rs.getString("title"),
+                        rs.getString("status"),
+                        rs.getTimestamp("deleted_at")),
                 postId);
         if (locked.isEmpty()) {
             throw new AuthFailure("POST_NOT_FOUND", HttpStatus.NOT_FOUND);
@@ -199,6 +238,37 @@ public class AdminCommunityService {
             jdbc.update(
                     "update content.community_post set status = 'DELETED', deleted_at = coalesce(deleted_at, now()), updated_at = now() where id = ?",
                     postId);
+            log.info("[AdminAudit] action=DELETE_POST adminId={} postId={}", adminId, postId);
+        }
+    }
+
+    @Transactional(timeout = 5)
+    public void restorePost(Long adminId, Long postId) {
+        if (postId == null || postId <= 0) {
+            throw new AuthFailure("POST_NOT_FOUND", HttpStatus.NOT_FOUND);
+        }
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        requireAdmin(adminId);
+
+        List<PostStatusRow> locked = jdbc.query(
+                "select id, member_id, title, status, deleted_at from content.community_post where id = ? for update",
+                (rs, n) -> new PostStatusRow(
+                        rs.getLong("id"),
+                        rs.getLong("member_id"),
+                        rs.getString("title"),
+                        rs.getString("status"),
+                        rs.getTimestamp("deleted_at")),
+                postId);
+        if (locked.isEmpty()) {
+            throw new AuthFailure("POST_NOT_FOUND", HttpStatus.NOT_FOUND);
+        }
+
+        PostStatusRow existing = locked.get(0);
+        if (!"ACTIVE".equals(existing.status()) || existing.deletedAt() != null) {
+            jdbc.update(
+                    "update content.community_post set status = 'ACTIVE', deleted_at = null, updated_at = now() where id = ?",
+                    postId);
+            log.info("[AdminAudit] action=RESTORE_POST adminId={} postId={}", adminId, postId);
         }
     }
 
@@ -290,14 +360,16 @@ public class AdminCommunityService {
         requireAdmin(adminId);
 
         List<CommentHierarchyRow> locked = jdbc.query(
-                "select id, post_id, parent_comment_id, status, deleted_at from content.community_comment where id = ? for update",
+                "select id, post_id, member_id, parent_comment_id, content, status, deleted_at from content.community_comment where id = ? for update",
                 (rs, n) -> {
                     long parentRaw = rs.getLong("parent_comment_id");
                     Long parentId = rs.wasNull() ? null : parentRaw;
                     return new CommentHierarchyRow(
                             rs.getLong("id"),
                             rs.getLong("post_id"),
+                            rs.getLong("member_id"),
                             parentId,
+                            rs.getString("content"),
                             rs.getString("status"),
                             rs.getTimestamp("deleted_at"));
                 },
@@ -323,6 +395,7 @@ public class AdminCommunityService {
             jdbc.update(
                     "update content.community_post set comment_count = (select count(*) from content.community_comment where post_id = ? and status = 'ACTIVE') where id = ?",
                     existing.postId(), existing.postId());
+            log.info("[AdminAudit] action=DELETE_REPLY adminId={} replyId={} postId={}", adminId, replyId, existing.postId());
         }
     }
 
@@ -335,6 +408,19 @@ public class AdminCommunityService {
             String keyword,
             Integer page,
             Integer size) {
+        return listReports(adminId, targetType, targetStatus, reasonType, "ALL", keyword, page, size);
+    }
+
+    @Transactional(readOnly = true, timeout = 5)
+    public AdminReportPageResponse listReports(
+            Long adminId,
+            String targetType,
+            String targetStatus,
+            String reasonType,
+            String reportStatus,
+            String keyword,
+            Integer page,
+            Integer size) {
         requireAdmin(adminId);
         int resolvedPage = page == null ? 0 : page;
         if (resolvedPage < 0) {
@@ -344,13 +430,15 @@ public class AdminCommunityService {
         String normalizedTargetType = normalizeReportTargetType(targetType);
         String normalizedTargetStatus = normalizeReportTargetStatus(targetStatus);
         String normalizedReasonType = normalizeReportReasonFilter(reasonType);
+        String normalizedReportStatus = normalizeReportStatusFilter(reportStatus);
 
         String baseCte = "with unified_reports as ("
                 + "select 'POST' as target_type, pr.post_id as target_id, p.id as post_id, p.title as post_title, "
                 + "p.content as target_content, p.member_id as target_author_id, ta.nickname as target_author_nickname, "
                 + "ta.status as target_author_status, p.status as target_status, p.deleted_at as target_deleted_at, "
                 + "p.report_count as target_report_count, pr.member_id as reporter_id, rm.nickname as reporter_nickname, "
-                + "rm.status as reporter_status, pr.reason_type, pr.created_at "
+                + "rm.status as reporter_status, pr.reason_type, pr.status as report_status, "
+                + "pr.resolved_at, pr.resolved_by_member_id, pr.resolution_note, pr.created_at "
                 + "from content.community_post_report pr "
                 + "join content.community_post p on p.id = pr.post_id "
                 + "join content.member ta on ta.id = p.member_id "
@@ -360,7 +448,8 @@ public class AdminCommunityService {
                 + "c.content as target_content, c.member_id as target_author_id, ta.nickname as target_author_nickname, "
                 + "ta.status as target_author_status, c.status as target_status, c.deleted_at as target_deleted_at, "
                 + "c.report_count as target_report_count, cr.member_id as reporter_id, rm.nickname as reporter_nickname, "
-                + "rm.status as reporter_status, cr.reason_type, cr.created_at "
+                + "rm.status as reporter_status, cr.reason_type, cr.status as report_status, "
+                + "cr.resolved_at, cr.resolved_by_member_id, cr.resolution_note, cr.created_at "
                 + "from content.community_comment_report cr "
                 + "join content.community_comment c on c.id = cr.comment_id "
                 + "join content.community_post p on p.id = c.post_id "
@@ -385,6 +474,11 @@ public class AdminCommunityService {
         if (!"ALL".equals(normalizedReasonType)) {
             whereClause.append(" and u.reason_type = ?");
             filterParams.add(normalizedReasonType);
+        }
+
+        if (!"ALL".equals(normalizedReportStatus)) {
+            whereClause.append(" and u.report_status = ?");
+            filterParams.add(normalizedReportStatus);
         }
 
         if (keyword != null && !keyword.isBlank()) {
@@ -422,9 +516,16 @@ public class AdminCommunityService {
                 Long.class);
         Long activeTargetReportsObj = jdbc.queryForObject(
                 "select ("
-                        + "  (select count(*) from content.community_post_report pr join content.community_post p on p.id = pr.post_id where p.status = 'ACTIVE' and p.deleted_at is null)"
+                        + "  (select count(*) from content.community_post_report pr join content.community_post p on p.id = pr.post_id where pr.status = 'PENDING' and p.status = 'ACTIVE' and p.deleted_at is null)"
                         + "  + "
-                        + "  (select count(*) from content.community_comment_report cr join content.community_comment c on c.id = cr.comment_id where c.status = 'ACTIVE' and c.deleted_at is null)"
+                        + "  (select count(*) from content.community_comment_report cr join content.community_comment c on c.id = cr.comment_id where cr.status = 'PENDING' and c.status = 'ACTIVE' and c.deleted_at is null)"
+                        + ")",
+                Long.class);
+        Long pendingReportsObj = jdbc.queryForObject(
+                "select ("
+                        + "  (select count(*) from content.community_post_report where status = 'PENDING')"
+                        + "  + "
+                        + "  (select count(*) from content.community_comment_report where status = 'PENDING')"
                         + ")",
                 Long.class);
 
@@ -440,87 +541,207 @@ public class AdminCommunityService {
                 hasNext,
                 postReportsObj == null ? 0L : postReportsObj,
                 commentReportsObj == null ? 0L : commentReportsObj,
-                activeTargetReportsObj == null ? 0L : activeTargetReportsObj);
+                activeTargetReportsObj == null ? 0L : activeTargetReportsObj,
+                pendingReportsObj == null ? 0L : pendingReportsObj);
     }
 
     @Transactional(timeout = 5)
     public void dismissReport(Long adminId, String targetType, Long targetId, Long reporterId) {
+        dismissReport(adminId, targetType, targetId, reporterId, null);
+    }
+
+    @Transactional(timeout = 5)
+    public void dismissReport(Long adminId, String targetType, Long targetId, Long reporterId, String rawResolutionNote) {
         if (targetId == null || targetId <= 0 || reporterId == null || reporterId <= 0) {
             throw invalidRequest();
         }
         String normalizedType = normalizeSingleReportTargetType(targetType);
+        String note = normalizeResolutionNote(rawResolutionNote, "검토 결과 위반 사항이 확인되지 않아 기각되었습니다.");
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
         requireAdmin(adminId);
 
         if ("POST".equals(normalizedType)) {
-            List<Long> locked = jdbc.queryForList(
-                    "select id from content.community_post where id = ? for update",
-                    Long.class,
+            List<PostStatusRow> locked = jdbc.query(
+                    "select id, member_id, title, status, deleted_at from content.community_post where id = ? for update",
+                    (rs, n) -> new PostStatusRow(
+                            rs.getLong("id"),
+                            rs.getLong("member_id"),
+                            rs.getString("title"),
+                            rs.getString("status"),
+                            rs.getTimestamp("deleted_at")),
                     targetId);
             if (locked.isEmpty()) {
                 throw new AuthFailure("POST_NOT_FOUND", HttpStatus.NOT_FOUND);
             }
+            int updated = jdbc.update(
+                    "update content.community_post_report "
+                            + "set status = 'DISMISSED', resolved_at = now(), resolved_by_member_id = ?, resolution_note = ? "
+                            + "where post_id = ? and member_id = ? and status = 'PENDING'",
+                    adminId, note, targetId, reporterId);
             jdbc.update(
-                    "delete from content.community_post_report where post_id = ? and member_id = ?",
-                    targetId, reporterId);
-            jdbc.update(
-                    "update content.community_post set report_count = (select count(*) from content.community_post_report where post_id = ?) where id = ?",
+                    "update content.community_post set report_count = ("
+                            + "select count(*) from content.community_post_report where post_id = ? and status = 'PENDING'"
+                            + ") where id = ?",
                     targetId, targetId);
+            if (updated > 0 && notifications != null) {
+                notifications.notifyReportHandledAfterCommit(
+                        reporterId, "DISMISSED", "POST", targetId, targetId, locked.get(0).title(), note);
+            }
         } else {
-            List<Long> locked = jdbc.queryForList(
-                    "select id from content.community_comment where id = ? for update",
-                    Long.class,
+            List<CommentHierarchyRow> locked = jdbc.query(
+                    "select id, post_id, member_id, parent_comment_id, content, status, deleted_at from content.community_comment where id = ? for update",
+                    (rs, n) -> {
+                        long parentRaw = rs.getLong("parent_comment_id");
+                        Long parentId = rs.wasNull() ? null : parentRaw;
+                        return new CommentHierarchyRow(
+                                rs.getLong("id"),
+                                rs.getLong("post_id"),
+                                rs.getLong("member_id"),
+                                parentId,
+                                rs.getString("content"),
+                                rs.getString("status"),
+                                rs.getTimestamp("deleted_at"));
+                    },
                     targetId);
             if (locked.isEmpty()) {
                 throw new AuthFailure("COMMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
             }
+            int updated = jdbc.update(
+                    "update content.community_comment_report "
+                            + "set status = 'DISMISSED', resolved_at = now(), resolved_by_member_id = ?, resolution_note = ? "
+                            + "where comment_id = ? and member_id = ? and status = 'PENDING'",
+                    adminId, note, targetId, reporterId);
             jdbc.update(
-                    "delete from content.community_comment_report where comment_id = ? and member_id = ?",
-                    targetId, reporterId);
-            jdbc.update(
-                    "update content.community_comment set report_count = (select count(*) from content.community_comment_report where comment_id = ?) where id = ?",
+                    "update content.community_comment set report_count = ("
+                            + "select count(*) from content.community_comment_report where comment_id = ? and status = 'PENDING'"
+                            + ") where id = ?",
                     targetId, targetId);
+            if (updated > 0 && notifications != null) {
+                CommentHierarchyRow row = locked.get(0);
+                notifications.notifyReportHandledAfterCommit(
+                        reporterId, "DISMISSED", "COMMENT", targetId, row.postId(), row.content(), note);
+            }
         }
+        log.info("[AdminAudit] action=DISMISS_REPORT adminId={} targetType={} targetId={} reporterId={}",
+                adminId, normalizedType, targetId, reporterId);
     }
 
     @Transactional(timeout = 5)
     public void moderateReportedTarget(Long adminId, String targetType, Long targetId, String action) {
+        moderateReportedTarget(adminId, targetType, targetId, action, null);
+    }
+
+    @Transactional(timeout = 5)
+    public void moderateReportedTarget(Long adminId, String targetType, Long targetId, String action, String rawResolutionNote) {
         if (targetId == null || targetId <= 0) {
             throw invalidRequest();
         }
         String normalizedType = normalizeSingleReportTargetType(targetType);
         String normalizedAction = normalizeModerationAction(action);
+        boolean deleteTarget = "DELETE_TARGET".equals(normalizedAction);
+        String nextReportStatus = deleteTarget ? "RESOLVED" : "DISMISSED";
+        String defaultNote = deleteTarget
+                ? "신고가 접수되어 해당 콘텐츠가 정책에 따라 삭제(숨김) 처리되었습니다."
+                : "검토 결과 위반 사항이 확인되지 않아 신고가 기각되었습니다.";
+        String note = normalizeResolutionNote(rawResolutionNote, defaultNote);
+
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
         requireAdmin(adminId);
 
         if ("POST".equals(normalizedType)) {
-            if ("DELETE_TARGET".equals(normalizedAction)) {
+            List<PostStatusRow> locked = jdbc.query(
+                    "select id, member_id, title, status, deleted_at from content.community_post where id = ? for update",
+                    (rs, n) -> new PostStatusRow(
+                            rs.getLong("id"),
+                            rs.getLong("member_id"),
+                            rs.getString("title"),
+                            rs.getString("status"),
+                            rs.getTimestamp("deleted_at")),
+                    targetId);
+            if (locked.isEmpty()) {
+                throw new AuthFailure("POST_NOT_FOUND", HttpStatus.NOT_FOUND);
+            }
+            PostStatusRow post = locked.get(0);
+            boolean wasActive = "ACTIVE".equals(post.status()) || post.deletedAt() == null;
+
+            List<Long> pendingReporters = jdbc.queryForList(
+                    "select member_id from content.community_post_report where post_id = ? and status = 'PENDING'",
+                    Long.class,
+                    targetId);
+
+            if (deleteTarget) {
                 deletePost(adminId, targetId);
-            } else {
-                List<Long> locked = jdbc.queryForList(
-                        "select id from content.community_post where id = ? for update",
-                        Long.class,
-                        targetId);
-                if (locked.isEmpty()) {
-                    throw new AuthFailure("POST_NOT_FOUND", HttpStatus.NOT_FOUND);
-                }
             }
-            jdbc.update("delete from content.community_post_report where post_id = ?", targetId);
+
+            jdbc.update(
+                    "update content.community_post_report "
+                            + "set status = ?, resolved_at = now(), resolved_by_member_id = ?, resolution_note = ? "
+                            + "where post_id = ? and status = 'PENDING'",
+                    nextReportStatus, adminId, note, targetId);
             jdbc.update("update content.community_post set report_count = 0 where id = ?", targetId);
-        } else {
-            if ("DELETE_TARGET".equals(normalizedAction)) {
-                deleteReply(adminId, targetId);
-            } else {
-                List<Long> locked = jdbc.queryForList(
-                        "select id from content.community_comment where id = ? for update",
-                        Long.class,
-                        targetId);
-                if (locked.isEmpty()) {
-                    throw new AuthFailure("COMMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+
+            if (notifications != null) {
+                for (Long reporterId : pendingReporters) {
+                    notifications.notifyReportHandledAfterCommit(
+                            reporterId, nextReportStatus, "POST", targetId, targetId, post.title(), note);
+                }
+                if (deleteTarget && wasActive && !post.memberId().equals(adminId)) {
+                    notifications.notifyContentModeratedAfterCommit(
+                            post.memberId(), "POST", targetId, targetId, post.title(), note);
                 }
             }
-            jdbc.update("delete from content.community_comment_report where comment_id = ?", targetId);
+            log.info("[AdminAudit] action=MODERATE_REPORTED_TARGET adminId={} targetType=POST targetId={} moderationAction={} updatedReports={}",
+                    adminId, targetId, normalizedAction, pendingReporters.size());
+        } else {
+            List<CommentHierarchyRow> locked = jdbc.query(
+                    "select id, post_id, member_id, parent_comment_id, content, status, deleted_at from content.community_comment where id = ? for update",
+                    (rs, n) -> {
+                        long parentRaw = rs.getLong("parent_comment_id");
+                        Long parentId = rs.wasNull() ? null : parentRaw;
+                        return new CommentHierarchyRow(
+                                rs.getLong("id"),
+                                rs.getLong("post_id"),
+                                rs.getLong("member_id"),
+                                parentId,
+                                rs.getString("content"),
+                                rs.getString("status"),
+                                rs.getTimestamp("deleted_at"));
+                    },
+                    targetId);
+            if (locked.isEmpty()) {
+                throw new AuthFailure("COMMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+            }
+            CommentHierarchyRow comment = locked.get(0);
+            boolean wasActive = "ACTIVE".equals(comment.status()) || comment.deletedAt() == null;
+
+            List<Long> pendingReporters = jdbc.queryForList(
+                    "select member_id from content.community_comment_report where comment_id = ? and status = 'PENDING'",
+                    Long.class,
+                    targetId);
+
+            if (deleteTarget) {
+                deleteReply(adminId, targetId);
+            }
+
+            jdbc.update(
+                    "update content.community_comment_report "
+                            + "set status = ?, resolved_at = now(), resolved_by_member_id = ?, resolution_note = ? "
+                            + "where comment_id = ? and status = 'PENDING'",
+                    nextReportStatus, adminId, note, targetId);
             jdbc.update("update content.community_comment set report_count = 0 where id = ?", targetId);
+
+            if (notifications != null) {
+                for (Long reporterId : pendingReporters) {
+                    notifications.notifyReportHandledAfterCommit(
+                            reporterId, nextReportStatus, "COMMENT", targetId, comment.postId(), comment.content(), note);
+                }
+                if (deleteTarget && wasActive && !comment.memberId().equals(adminId)) {
+                    notifications.notifyContentModeratedAfterCommit(
+                            comment.memberId(), "COMMENT", targetId, comment.postId(), comment.content(), note);
+                }
+            }
+            log.info("[AdminAudit] action=MODERATE_REPORTED_TARGET adminId={} targetType=COMMENT targetId={} moderationAction={} updatedReports={}",
+                    adminId, targetId, normalizedAction, pendingReporters.size());
         }
     }
 
@@ -541,6 +762,7 @@ public class AdminCommunityService {
                 rs.getString("category"),
                 rs.getString("title"),
                 rs.getString("content"),
+                rs.getLong("view_count"),
                 rs.getLong("like_count"),
                 rs.getLong("comment_count"),
                 rs.getLong("report_count"),
@@ -599,6 +821,9 @@ public class AdminCommunityService {
                 ? rawReporterNickname
                 : CommunityService.WITHDRAWN_AUTHOR_NICKNAME;
 
+        Timestamp resolvedTs = rs.getTimestamp("resolved_at");
+        long resolvedByRaw = rs.getLong("resolved_by_member_id");
+        Long resolvedByMemberId = rs.wasNull() ? null : resolvedByRaw;
         Timestamp createdTs = rs.getTimestamp("created_at");
 
         return new AdminReportDto(
@@ -615,6 +840,10 @@ public class AdminCommunityService {
                 reporterId,
                 displayReporterNickname,
                 rs.getString("reason_type"),
+                rs.getString("report_status"),
+                resolvedTs == null ? null : resolvedTs.toInstant(),
+                resolvedByMemberId,
+                rs.getString("resolution_note"),
                 createdTs == null ? null : createdTs.toInstant());
     }
 
@@ -680,12 +909,30 @@ public class AdminCommunityService {
             return "ALL";
         }
         String upper = reasonType.trim().toUpperCase(Locale.ROOT);
+        if ("OTHER".equals(upper)) {
+            return "ETC";
+        }
         if ("ALL".equals(upper)
                 || "SPAM".equals(upper)
+                || "SEXUAL".equals(upper)
+                || "ILLEGAL".equals(upper)
+                || "YOUTH_HARMFUL".equals(upper)
                 || "ABUSE".equals(upper)
-                || "FRAUD".equals(upper)
+                || "PRIVACY".equals(upper)
                 || "INAPPROPRIATE".equals(upper)
-                || "OTHER".equals(upper)) {
+                || "FRAUD".equals(upper)
+                || "ETC".equals(upper)) {
+            return upper;
+        }
+        throw invalidRequest();
+    }
+
+    private String normalizeReportStatusFilter(String reportStatus) {
+        if (reportStatus == null || reportStatus.isBlank()) {
+            return "ALL";
+        }
+        String upper = reportStatus.trim().toUpperCase(Locale.ROOT);
+        if ("ALL".equals(upper) || "PENDING".equals(upper) || "RESOLVED".equals(upper) || "DISMISSED".equals(upper)) {
             return upper;
         }
         throw invalidRequest();
@@ -700,6 +947,20 @@ public class AdminCommunityService {
             return upper;
         }
         throw invalidRequest();
+    }
+
+    private String normalizeResolutionNote(String rawNote, String defaultNote) {
+        if (rawNote == null || rawNote.isBlank()) {
+            return defaultNote;
+        }
+        if (rawNote.indexOf('\0') >= 0) {
+            throw invalidRequest();
+        }
+        String trimmed = rawNote.strip();
+        if (trimmed.length() > 500) {
+            throw invalidRequest();
+        }
+        return trimmed;
     }
 
     private int validateSize(Integer size) {

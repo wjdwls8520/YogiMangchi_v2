@@ -52,7 +52,7 @@ class MemberLifecycleIntegrationTests extends TestEnvironment {
     @Autowired ObjectMapper json;
     @Autowired PlatformTransactionManager transactions;
     private static final WithdrawalRequest CONFIRM=new WithdrawalRequest(true,"탈퇴합니다","ym-withdrawal-v1");
-    private static SignupRequest signup(){return new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v1","ym-privacy-v1");}
+    private static SignupRequest signup(){return new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v2","ym-privacy-v2");}
     private static VerifiedIdentity proof(Provider p){return new VerifiedIdentity(p,UUID.randomUUID().toString(),"private@example.test",Instant.now().plusSeconds(300));}
     private static MockHttpSession session(VerifiedIdentity p){var s=new MockHttpSession();s.setAttribute(VerifiedIdentity.SESSION_KEY,p);return s;}
 
@@ -70,7 +70,7 @@ class MemberLifecycleIntegrationTests extends TestEnvironment {
             assertThat(jdbc.queryForObject("select count(*) from content."+table+" where member_id=?",Long.class,id)).isZero();
         assertThat(auth.flow(proof).status()).isEqualTo("SIGNUP_REQUIRED");
         assertThatThrownBy(()->auth.refresh(old.refresh())).isInstanceOf(AuthFailure.class);
-        var fresh=auth.signup(proof,new SignupRequest(old.access().nickname(),true,true,"","ym-terms-v1","ym-privacy-v1"));assertThat(fresh.access().memberId()).isNotEqualTo(id);
+        var fresh=auth.signup(proof,new SignupRequest(old.access().nickname(),true,true,"","ym-terms-v2","ym-privacy-v2"));assertThat(fresh.access().memberId()).isNotEqualTo(id);
         assertThat(auth.completeLogin(proof).access().memberId()).isEqualTo(fresh.access().memberId());
         assertThat(jdbc.queryForObject("select status from content.member where id=?",String.class,id)).isEqualTo("WITHDRAWN");
         assertThat(consents.current(fresh.access().memberId()).reconsentRequired()).isFalse();
@@ -105,7 +105,7 @@ class MemberLifecycleIntegrationTests extends TestEnvironment {
     @Test void staleAndMissingSignupVersionsDoNotCreateMember() throws Exception {
         var proof=proof(Provider.KAKAO);
         mvc.perform(post("/api/v1/auth/signup").session(session(proof)).with(csrf()).contentType("application/json").content("{\"nickname\":\"새회원\",\"termAgree\":true,\"privateAgree\":true}")).andExpect(status().isBadRequest());
-        assertThatThrownBy(()->auth.signup(proof,new SignupRequest("새회원",true,true,"","stale","ym-privacy-v1"))).isInstanceOf(AuthFailure.class);
+        assertThatThrownBy(()->auth.signup(proof,new SignupRequest("새회원",true,true,"","stale","ym-privacy-v2"))).isInstanceOf(AuthFailure.class);
         assertThat(auth.flow(proof).status()).isEqualTo("SIGNUP_REQUIRED");
     }
     @Test void oldUnversionedConsentIsNotFabricatedAndReconsentIsAppendOnlyAndIdempotent() {
@@ -114,15 +114,15 @@ class MemberLifecycleIntegrationTests extends TestEnvironment {
         tx.executeWithoutResult(status->{
             jdbc.update("delete from content.member_consent_history where member_id=?",id); // Simulate pre-versioning member.
             assertThat(consents.current(id).reconsentRequired()).isTrue();
-            consents.accept(id,new PolicyConsents.Acceptance(true,true,"ym-terms-v1","ym-privacy-v1"));
+            consents.accept(id,new PolicyConsents.Acceptance(true,true,"ym-terms-v2","ym-privacy-v2"));
             var original=jdbc.queryForList("select * from content.member_consent_history where member_id=? order by id",id);
-            consents.accept(id,new PolicyConsents.Acceptance(true,true,"ym-terms-v1","ym-privacy-v1"));
+            consents.accept(id,new PolicyConsents.Acceptance(true,true,"ym-terms-v2","ym-privacy-v2"));
             assertThat(jdbc.queryForList("select * from content.member_consent_history where member_id=? order by id",id)).isEqualTo(original);
             jdbc.update("update content.policy_version set current=false where policy_type='TERMS'");
-            jdbc.update("insert into content.policy_version select policy_type,'ym-terms-v2',required,true,document_text,document_sha256 from content.policy_version where policy_type='TERMS' and version='ym-terms-v1'");
+            jdbc.update("insert into content.policy_version select policy_type,'ym-terms-v3',required,true,document_text,document_sha256,document_status from content.policy_version where policy_type='TERMS' and version='ym-terms-v2'");
             assertThat(consents.current(id).reconsentRequired()).isTrue();
-            assertThat(consents.current(id).policies()).anyMatch(p->"ym-terms-v1".equals(p.lastAcceptedVersion()));
-            consents.accept(id,new PolicyConsents.Acceptance(true,true,"ym-terms-v2","ym-privacy-v1"));
+            assertThat(consents.current(id).policies()).anyMatch(p->"ym-terms-v2".equals(p.lastAcceptedVersion()));
+            consents.accept(id,new PolicyConsents.Acceptance(true,true,"ym-terms-v3","ym-privacy-v2"));
             assertThat(consents.current(id).reconsentRequired()).isFalse();
             assertThat(jdbc.queryForObject("select count(*) from content.member_consent_history where member_id=?",Long.class,id)).isEqualTo(3);
             status.setRollbackOnly();
@@ -170,14 +170,21 @@ class MemberLifecycleIntegrationTests extends TestEnvironment {
     }
 
     @Test void immutableDevelopmentDocumentsHaveMatchingHashesAndPublicVersionContract() throws Exception {
-        mvc.perform(get("/api/v1/policies/current")).andExpect(status().isOk()).andExpect(jsonPath("$.policies[0].documentUrl").isString());
+        mvc.perform(get("/api/v1/policies/current")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.policies[0].documentUrl").isString());
         for(String type:List.of("TERMS","PRIVACY")){
-            String version=type.equals("TERMS")?"ym-terms-v1":"ym-privacy-v1";
-            var doc=consents.document(type,version);
-            var digest=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(doc.text().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-            assertThat(doc.sha256()).isEqualTo(digest);
-            mvc.perform(get("/api/v1/policies/"+type+"/"+version)).andExpect(status().isOk()).andExpect(jsonPath("$.documentStatus").value("DEVELOPMENT_DRAFT"));
-            assertThatThrownBy(()->jdbc.update("update content.policy_version set document_text='rewritten' where policy_type=? and version=?",type,version)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+            String v1=type.equals("TERMS")?"ym-terms-v1":"ym-privacy-v1";
+            var docV1=consents.document(type,v1);
+            var digestV1=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(docV1.text().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            assertThat(docV1.sha256()).isEqualTo(digestV1);
+            mvc.perform(get("/api/v1/policies/"+type+"/"+v1)).andExpect(status().isOk()).andExpect(jsonPath("$.documentStatus").value("DEVELOPMENT_DRAFT"));
+
+            String v2=type.equals("TERMS")?"ym-terms-v2":"ym-privacy-v2";
+            var docV2=consents.document(type,v2);
+            var digestV2=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(docV2.text().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            assertThat(docV2.sha256()).isEqualTo(digestV2);
+            mvc.perform(get("/api/v1/policies/"+type+"/"+v2)).andExpect(status().isOk()).andExpect(jsonPath("$.documentStatus").value("PUBLISHED"));
+            assertThatThrownBy(()->jdbc.update("update content.policy_version set document_text='rewritten' where policy_type=? and version=?",type,v2)).isInstanceOf(org.springframework.dao.DataAccessException.class);
         }
     }
     @Test void concurrentSignupCannotCreateOrphanMemberConsentOrProvisioningRows() throws Exception {
@@ -239,7 +246,7 @@ class MemberLifecycleIntegrationTests extends TestEnvironment {
             assertThat(erased.await(5,TimeUnit.SECONDS)).isTrue();
             assertThatThrownBy(()->auth.signup(proof,signup())).isInstanceOf(AuthFailure.class);
             release.countDown();delivery.get(5,TimeUnit.SECONDS);
-            var rejoined=auth.signup(proof,new SignupRequest(own.access().nickname(),true,true,"","ym-terms-v1","ym-privacy-v1"));
+            var rejoined=auth.signup(proof,new SignupRequest(own.access().nickname(),true,true,"","ym-terms-v2","ym-privacy-v2"));
             assertThat(rejoined.access().memberId()).isNotEqualTo(id);assertThat(auth.completeLogin(proof).access().memberId()).isEqualTo(rejoined.access().memberId());
         }finally{release.countDown();pool.shutdownNow();}
     }

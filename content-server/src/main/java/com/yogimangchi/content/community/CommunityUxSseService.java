@@ -28,6 +28,10 @@ public class CommunityUxSseService {
 
     private final Set<SseEmitter> emitters = ConcurrentHashMap.newKeySet();
 
+    public int activeConnectionCount() {
+        return emitters.size();
+    }
+
     public SseEmitter subscribeFeed() {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         emitters.add(emitter);

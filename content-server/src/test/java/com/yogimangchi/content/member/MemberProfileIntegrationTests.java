@@ -251,7 +251,7 @@ class MemberProfileIntegrationTests extends TestEnvironment {
 
     private AuthService.Issued member() {
         var id=new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"profile@example.test",Instant.now().plusSeconds(300));
-        return auth.signup(id,new SignupRequest(nickname(),true,true,"original","ym-terms-v1","ym-privacy-v1"));
+        return auth.signup(id,new SignupRequest(nickname(),true,true,"original","ym-terms-v2","ym-privacy-v2"));
     }
     private String bearer() { return "Bearer "+own.access().accessToken(); }
     private static String nickname() { return UUID.randomUUID().toString().replace("-","").substring(0,8); }

@@ -9,10 +9,22 @@ spring:
     password: ${CONTENT_FLYWAY_PASSWORD}
 server:
   address: 0.0.0.0
+  forward-headers-strategy: framework
+  shutdown: graceful
   servlet:
     session:
       cookie:
         secure: true
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
 springdoc:
   api-docs:
     enabled: false

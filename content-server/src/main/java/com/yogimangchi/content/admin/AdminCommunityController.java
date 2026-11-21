@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -83,6 +84,18 @@ public class AdminCommunityController {
                 .build();
     }
 
+    @PostMapping("/posts/{postId:[0-9]+}/restore")
+    @Operation(summary = "Restore a soft-deleted community post by admin")
+    public ResponseEntity<Void> restorePost(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long postId) {
+        Long adminId = Long.valueOf(jwt.getSubject());
+        adminCommunityService.restorePost(adminId, postId);
+        return ResponseEntity.noContent()
+                .cacheControl(CacheControl.noStore())
+                .build();
+    }
+
     @GetMapping("/replies")
     @Operation(summary = "List all community replies/comments (active and soft-deleted) for admin management")
     public ResponseEntity<AdminCommunityService.AdminReplyCursorResponse> listAllReplies(
@@ -148,12 +161,13 @@ public class AdminCommunityController {
     }
 
     @GetMapping("/reports")
-    @Operation(summary = "List community post and comment reports for admin moderation")
+    @Operation(summary = "List community post and comment reports for admin moderation with status and 9-reason filters")
     public ResponseEntity<AdminCommunityService.AdminReportPageResponse> listReports(
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false, defaultValue = "ALL") String targetType,
             @RequestParam(required = false, defaultValue = "ALL") String targetStatus,
             @RequestParam(required = false, defaultValue = "ALL") String reasonType,
+            @RequestParam(required = false, defaultValue = "ALL") String reportStatus,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false, defaultValue = "0") Integer page,
             @RequestParam(required = false, defaultValue = "20") Integer size) {
@@ -161,32 +175,39 @@ public class AdminCommunityController {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(adminCommunityService.listReports(
-                        adminId, targetType, targetStatus, reasonType, keyword, page, size));
+                        adminId, targetType, targetStatus, reasonType, reportStatus, keyword, page, size));
     }
 
     @DeleteMapping("/reports/{targetType}/{targetId:[0-9]+}/reporters/{reporterId:[0-9]+}")
-    @Operation(summary = "Dismiss a single community report and recalculate target report count")
+    @Operation(summary = "Dismiss a single community report (soft status transition to DISMISSED), recalculate pending report count, and notify reporter")
     public ResponseEntity<Void> dismissReport(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable String targetType,
             @PathVariable Long targetId,
-            @PathVariable Long reporterId) {
+            @PathVariable Long reporterId,
+            @RequestParam(required = false) String resolutionNote) {
         Long adminId = Long.valueOf(jwt.getSubject());
-        adminCommunityService.dismissReport(adminId, targetType, targetId, reporterId);
+        adminCommunityService.dismissReport(adminId, targetType, targetId, reporterId, resolutionNote);
         return ResponseEntity.noContent()
                 .cacheControl(CacheControl.noStore())
                 .build();
     }
 
     @PostMapping("/reports/{targetType}/{targetId:[0-9]+}/moderate")
-    @Operation(summary = "Moderate a reported post/comment (soft-delete target and/or clear all reports on target)")
+    @Operation(summary = "Moderate a reported post/comment (mark reports RESOLVED or DISMISSED, optionally soft-delete target, and notify reporters & author)")
     public ResponseEntity<Void> moderateReportedTarget(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable String targetType,
             @PathVariable Long targetId,
-            @RequestParam(required = false, defaultValue = "DELETE_TARGET") String action) {
+            @RequestParam(required = false, defaultValue = "DELETE_TARGET") String action,
+            @RequestParam(required = false) String resolutionNote,
+            @RequestBody(required = false) AdminCommunityService.ModerationActionRequest body) {
         Long adminId = Long.valueOf(jwt.getSubject());
-        adminCommunityService.moderateReportedTarget(adminId, targetType, targetId, action);
+        String effectiveAction = (body != null && body.action() != null && !body.action().isBlank()) ? body.action() : action;
+        String effectiveNote = (body != null && body.resolutionNote() != null && !body.resolutionNote().isBlank())
+                ? body.resolutionNote()
+                : resolutionNote;
+        adminCommunityService.moderateReportedTarget(adminId, targetType, targetId, effectiveAction, effectiveNote);
         return ResponseEntity.noContent()
                 .cacheControl(CacheControl.noStore())
                 .build();

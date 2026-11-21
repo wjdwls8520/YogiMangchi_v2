@@ -141,6 +141,10 @@ public class ContentNotificationSseService {
         }
     }
 
+    public int activeConnectionCount() {
+        return emittersByMember.values().stream().mapToInt(Set::size).sum();
+    }
+
     public void disconnectMember(Long memberId) {
         if (memberId == null) {
             return;

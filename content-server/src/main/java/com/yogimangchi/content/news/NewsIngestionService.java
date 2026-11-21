@@ -1,5 +1,6 @@
 package com.yogimangchi.content.news;
 
+import com.yogimangchi.content.ops.OpsAlertService;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -11,10 +12,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -47,7 +49,7 @@ public class NewsIngestionService {
                     "NEWSROOM",
                     "CRYPTO",
                     "Google News 가상자산",
-                    "https://news.google.com/rss/search?q=%EA%B0%80%EC%83%81%EC%9E%90%EC%82%B0+%EC%8B%9C%ED%99%A9+%EB%B6%84%EC%84%9D+OR+%EB%B9%84%ED%8A%B8%EC%BD%94%EC%9D%B8+%EA%B8%B0%EA%B4%80+%EC%88%98%EA%B8%89+OR+%EC%98%A8%EC%B2%B4%EC%9D%B8+%EB%A6%AC%ED%8F%AC%ED%8A%B8+OR+%EC%95%94%ED%98%88%ED%99%94%ED%8F%90+%EA%B7%9C%EC%A0%9C+%EB%8F%99%ED%96%A5+when:1d&hl=ko&gl=KR&ceid=KR:ko"
+                    "https://news.google.com/rss/search?q=%EA%B0%80%EC%83%81%EC%9E%90%EC%82%B0+%EC%8B%9C%ED%99%A9+%EB%B6%84%EC%84%9D+OR+%EB%B9%84%ED%8A%B8%EC%BD%94%EC%9D%B8+%EA%B8%B0%EA%B4%80+%EC%88%98%EA%B8%89+OR+%EC%98%A8%EC%B2%B4%EC%9D%B8+%EB%A6%AC%ED%8F%AC%ED%8A%B8+OR+%EC%95%94%ED%98%B8%ED%99%94%ED%8F%90+%EA%B7%9C%EC%A0%9C+%EB%8F%99%ED%96%A5+when:1d&hl=ko&gl=KR&ceid=KR:ko"
             ),
             new FeedSource(
                     "NEWSROOM",
@@ -65,21 +67,33 @@ public class NewsIngestionService {
 
     private final JdbcTemplate jdbc;
     private final NewsSseService sse;
+    private final OpsAlertService opsAlert;
     private final boolean collectorEnabled;
     private final int maxItemsPerFeed;
     private final int breakingRetentionHours;
     private final HttpClient httpClient;
-    private final Set<String> seenHashes = ConcurrentHashMap.newKeySet();
-    private volatile int consecutiveFailures = 0;
+    private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
 
     public NewsIngestionService(
             JdbcTemplate jdbc,
             NewsSseService sse,
+            boolean collectorEnabled,
+            int maxItemsPerFeed,
+            int breakingRetentionHours) {
+        this(jdbc, sse, null, collectorEnabled, maxItemsPerFeed, breakingRetentionHours);
+    }
+
+    @Autowired
+    public NewsIngestionService(
+            JdbcTemplate jdbc,
+            NewsSseService sse,
+            @Autowired(required = false) OpsAlertService opsAlert,
             @Value("${content.news.collector.enabled:true}") boolean collectorEnabled,
             @Value("${content.news.collector.max-items-per-feed:8}") int maxItemsPerFeed,
             @Value("${content.news.collector.breaking-retention-hours:6}") int breakingRetentionHours) {
         this.jdbc = jdbc;
         this.sse = sse;
+        this.opsAlert = opsAlert;
         this.collectorEnabled = collectorEnabled;
         this.maxItemsPerFeed = Math.max(1, Math.min(25, maxItemsPerFeed));
         this.breakingRetentionHours = Math.max(1, Math.min(24, breakingRetentionHours));
@@ -87,6 +101,18 @@ public class NewsIngestionService {
                 .connectTimeout(Duration.ofSeconds(4))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
+    }
+
+    public int getConsecutiveFailures() {
+        return consecutiveFailures.get();
+    }
+
+    public boolean isCollectorEnabled() {
+        return collectorEnabled;
+    }
+
+    public NewsService.NewsLiveStatus currentLiveStatus() {
+        return sse.currentLiveStatus();
     }
 
     public int collectAllDefaultFeeds() {
@@ -130,7 +156,7 @@ public class NewsIngestionService {
         }
 
         if (succeededFeeds > 0) {
-            consecutiveFailures = 0;
+            consecutiveFailures.set(0);
             sse.updateLiveStatus(new NewsService.NewsLiveStatus(
                     collectorEnabled,
                     collectorEnabled,
@@ -138,8 +164,21 @@ public class NewsIngestionService {
                     now
             ));
         } else {
-            consecutiveFailures++;
-            boolean stillLive = collectorEnabled && consecutiveFailures < 3;
+            int failures = consecutiveFailures.incrementAndGet();
+            boolean stillLive = collectorEnabled && failures < 3;
+            if (failures >= 3) {
+                log.warn("News RSS ingestion failed across all feeds consecutiveFailures={} collectorEnabled={}",
+                        failures, collectorEnabled);
+                if (opsAlert != null) {
+                    opsAlert.alert(
+                            "news-rss-ingestion-failing",
+                            "WARN",
+                            "News RSS ingestion failed across all feeds",
+                            Map.of("consecutiveFailures", failures, "collectorEnabled", collectorEnabled));
+                }
+            } else {
+                log.debug("News RSS ingestion had zero successful feeds consecutiveFailures={}", failures);
+            }
             sse.updateLiveStatus(new NewsService.NewsLiveStatus(
                     stillLive,
                     collectorEnabled,
@@ -207,6 +246,7 @@ public class NewsIngestionService {
             NewsAnalyzer.AnalysisResult analysis = NewsAnalyzer.analyze(item.title(), item.summary(), section, subCategory);
             String cleanContent = analysis.articleContent();
 
+            // Deduplication is enforced atomically by PostgreSQL unique partial index on external_hash.
             var rows = jdbc.query(
                     "insert into content.news_article ("
                             + "category, section, sub_category, external_hash, title, summary, content, "
@@ -234,7 +274,6 @@ public class NewsIngestionService {
 
             if (!rows.isEmpty()) {
                 NewsService.NewsItemResponse saved = rows.get(0);
-                seenHashes.add(externalHash);
                 newlyInserted.add(saved);
                 sse.publishNewsCreatedAfterCommit(saved);
             }

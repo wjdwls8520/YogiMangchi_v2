@@ -40,11 +40,17 @@ public class ContentNotificationService {
     private static final Logger log = LoggerFactory.getLogger(ContentNotificationService.class);
 
     public static final String CATEGORY_COMMUNITY = "COMMUNITY";
+    public static final String CATEGORY_REPORT = "REPORT";
+    public static final String CATEGORY_SUPPORT = "SUPPORT";
     public static final String TYPE_POST_COMMENT_CREATED = "POST_COMMENT_CREATED";
     public static final String TYPE_REPLY_COMMENT_CREATED = "REPLY_COMMENT_CREATED";
     public static final String TYPE_POST_LIKED = "POST_LIKED";
     public static final String TYPE_REPLY_LIKED = "REPLY_LIKED";
     public static final String TYPE_FOLLOW_CREATED = "FOLLOW_CREATED";
+    public static final String TYPE_REPORT_RESOLVED = "REPORT_RESOLVED";
+    public static final String TYPE_REPORT_DISMISSED = "REPORT_DISMISSED";
+    public static final String TYPE_CONTENT_MODERATED = "CONTENT_MODERATED";
+    public static final String TYPE_SUPPORT_INQUIRY_ANSWERED = "SUPPORT_INQUIRY_ANSWERED";
 
     private static final Pattern MENTION_PATTERN = Pattern.compile("(?:^|\\s)@([^\\s@]{1,32})");
     private static final int MAX_MENTIONS_PER_COMMENT = 5;
@@ -400,6 +406,69 @@ public class ContentNotificationService {
         });
     }
 
+    public void notifyReportHandledAfterCommit(
+            Long reporterId,
+            String status,
+            String targetType,
+            Long targetId,
+            Long postId,
+            String title,
+            String resolutionNote) {
+        afterCommit(() -> {
+            try {
+                DispatchOutcome outcome = requiresNewTx.execute(
+                        tx -> dispatchReportHandledInNewTx(reporterId, status, targetType, targetId, postId, title, resolutionNote));
+                if (outcome != null) {
+                    sse.sendNotification(outcome.receiverId(), outcome.eventName(), outcome.notification(), outcome.status());
+                }
+            } catch (Exception e) {
+                log.warn("신고 처리 알림 발송 실패: reporterId={} targetType={} targetId={} cause={}",
+                        reporterId, targetType, targetId, e.getClass().getSimpleName());
+            }
+        });
+    }
+
+    public void notifyContentModeratedAfterCommit(
+            Long targetAuthorId,
+            String targetType,
+            Long targetId,
+            Long postId,
+            String title,
+            String resolutionNote) {
+        afterCommit(() -> {
+            try {
+                DispatchOutcome outcome = requiresNewTx.execute(
+                        tx -> dispatchContentModeratedInNewTx(targetAuthorId, targetType, targetId, postId, title, resolutionNote));
+                if (outcome != null) {
+                    sse.sendNotification(outcome.receiverId(), outcome.eventName(), outcome.notification(), outcome.status());
+                }
+            } catch (Exception e) {
+                log.warn("콘텐츠 제재 알림 발송 실패: targetAuthorId={} targetType={} targetId={} cause={}",
+                        targetAuthorId, targetType, targetId, e.getClass().getSimpleName());
+            }
+        });
+    }
+
+    public void notifySupportInquiryAnsweredAfterCommit(
+            Long memberId,
+            Long inquiryId,
+            String inquiryCategory,
+            String title,
+            String adminReply) {
+        afterCommit(() -> {
+            try {
+                DispatchOutcome outcome = requiresNewTx.execute(
+                        tx -> dispatchSupportInquiryAnsweredInNewTx(memberId, inquiryId, inquiryCategory, title, adminReply));
+                if (outcome != null) {
+                    sse.sendNotification(outcome.receiverId(), outcome.eventName(), outcome.notification(), outcome.status());
+                }
+            } catch (Exception e) {
+                log.warn("고객문의 답변 알림 발송 실패: memberId={} inquiryId={} cause={}",
+                        memberId, inquiryId, e.getClass().getSimpleName());
+            }
+        });
+    }
+
     private List<DispatchOutcome> dispatchCommentCreatedInNewTx(
             Long actorId,
             Long postId,
@@ -483,6 +552,31 @@ public class ContentNotificationService {
                         saved,
                         queryStatusInternal(primaryReceiverId)));
                 notifiedReceivers.add(primaryReceiverId);
+            }
+
+            if (postAuthorId != null
+                    && !postAuthorId.equals(actorId)
+                    && !notifiedReceivers.contains(postAuthorId)
+                    && isMemberActive(postAuthorId)) {
+                Map<String, Object> postAuthorPayload = new LinkedHashMap<>();
+                postAuthorPayload.put("postId", postId);
+                postAuthorPayload.put("replyId", commentId);
+                postAuthorPayload.put("parentReplyId", parentCommentId);
+                postAuthorPayload.put("targetReplyId", targetCommentId);
+                postAuthorPayload.put("postTitle", postTitle);
+                postAuthorPayload.put("actorMemberId", actor.memberId());
+                postAuthorPayload.put("actorNickname", actor.nickname());
+                postAuthorPayload.put("actorProfileImageUrl", actor.profileImageUrl());
+                postAuthorPayload.put("replyContentPreview", preview);
+
+                NotificationItemResponse saved = insertNotification(
+                        postAuthorId, actor.memberId(), CATEGORY_COMMUNITY, TYPE_POST_COMMENT_CREATED, postAuthorPayload);
+                outcomes.add(new DispatchOutcome(
+                        postAuthorId,
+                        "NOTIFICATION_COMMUNITY_POST_COMMENT_CREATED",
+                        saved,
+                        queryStatusInternal(postAuthorId)));
+                notifiedReceivers.add(postAuthorId);
             }
         }
 
@@ -722,6 +816,85 @@ public class ContentNotificationService {
                 queryStatusInternal(targetId));
     }
 
+    private DispatchOutcome dispatchReportHandledInNewTx(
+            Long reporterId,
+            String status,
+            String targetType,
+            Long targetId,
+            Long postId,
+            String title,
+            String resolutionNote) {
+        if (reporterId == null || !isMemberActive(reporterId)) {
+            return null;
+        }
+        boolean resolved = "RESOLVED".equalsIgnoreCase(status);
+        String type = resolved ? TYPE_REPORT_RESOLVED : TYPE_REPORT_DISMISSED;
+        String eventName = resolved ? "NOTIFICATION_REPORT_RESOLVED" : "NOTIFICATION_REPORT_DISMISSED";
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("targetType", targetType);
+        payload.put("targetId", targetId);
+        if (postId != null) {
+            payload.put("postId", postId);
+        }
+        payload.put("title", summarizeText(title, PREVIEW_MAX_LENGTH));
+        payload.put("status", resolved ? "RESOLVED" : "DISMISSED");
+        if (resolutionNote != null && !resolutionNote.isBlank()) {
+            payload.put("resolutionNote", summarizeText(resolutionNote, 200));
+        }
+
+        NotificationItemResponse created = insertNotification(reporterId, null, CATEGORY_REPORT, type, payload);
+        return new DispatchOutcome(reporterId, eventName, created, queryStatusInternal(reporterId));
+    }
+
+    private DispatchOutcome dispatchContentModeratedInNewTx(
+            Long targetAuthorId,
+            String targetType,
+            Long targetId,
+            Long postId,
+            String title,
+            String resolutionNote) {
+        if (targetAuthorId == null || !isMemberActive(targetAuthorId)) {
+            return null;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("targetType", targetType);
+        payload.put("targetId", targetId);
+        if (postId != null) {
+            payload.put("postId", postId);
+        }
+        payload.put("title", summarizeText(title, PREVIEW_MAX_LENGTH));
+        if (resolutionNote != null && !resolutionNote.isBlank()) {
+            payload.put("resolutionNote", summarizeText(resolutionNote, 200));
+        }
+
+        NotificationItemResponse created = insertNotification(
+                targetAuthorId, null, CATEGORY_REPORT, TYPE_CONTENT_MODERATED, payload);
+        return new DispatchOutcome(
+                targetAuthorId, "NOTIFICATION_CONTENT_MODERATED", created, queryStatusInternal(targetAuthorId));
+    }
+
+    private DispatchOutcome dispatchSupportInquiryAnsweredInNewTx(
+            Long memberId,
+            Long inquiryId,
+            String inquiryCategory,
+            String title,
+            String adminReply) {
+        if (memberId == null || !isMemberActive(memberId)) {
+            return null;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("inquiryId", inquiryId);
+        payload.put("inquiryCategory", inquiryCategory);
+        payload.put("title", summarizeText(title, PREVIEW_MAX_LENGTH));
+        payload.put("replyPreview", summarizeText(adminReply, PREVIEW_MAX_LENGTH));
+
+        NotificationItemResponse created = insertNotification(
+                memberId, null, CATEGORY_SUPPORT, TYPE_SUPPORT_INQUIRY_ANSWERED, payload);
+        return new DispatchOutcome(
+                memberId, "NOTIFICATION_SUPPORT_INQUIRY_ANSWERED", created, queryStatusInternal(memberId));
+    }
+
     private Map<String, Object> buildLikePayload(
             Long postId,
             Long replyId,
@@ -949,6 +1122,10 @@ public class ContentNotificationService {
             case TYPE_POST_LIKED -> "NOTIFICATION_COMMUNITY_POST_LIKED_CREATED";
             case TYPE_REPLY_LIKED -> "NOTIFICATION_COMMUNITY_REPLY_LIKED_CREATED";
             case TYPE_FOLLOW_CREATED -> "NOTIFICATION_COMMUNITY_FOLLOW_CREATED";
+            case TYPE_REPORT_RESOLVED -> "NOTIFICATION_REPORT_RESOLVED";
+            case TYPE_REPORT_DISMISSED -> "NOTIFICATION_REPORT_DISMISSED";
+            case TYPE_CONTENT_MODERATED -> "NOTIFICATION_CONTENT_MODERATED";
+            case TYPE_SUPPORT_INQUIRY_ANSWERED -> "NOTIFICATION_SUPPORT_INQUIRY_ANSWERED";
             default -> "NOTIFICATION_" + type;
         };
     }

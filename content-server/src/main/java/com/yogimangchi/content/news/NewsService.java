@@ -41,8 +41,31 @@ public class NewsService {
             int bearCount,
             int viewCount,
             String symbolTag,
-            Instant publishedAt
-    ) { }
+            Instant publishedAt,
+            String userReaction
+    ) {
+        public NewsItemResponse(
+                Long id,
+                String category,
+                String section,
+                String subCategory,
+                String title,
+                String summary,
+                String content,
+                String sourceName,
+                String sourceUrl,
+                String thumbnailUrl,
+                String aiSummary,
+                String sentiment,
+                int bullCount,
+                int bearCount,
+                int viewCount,
+                String symbolTag,
+                Instant publishedAt) {
+            this(id, category, section, subCategory, title, summary, content, sourceName, sourceUrl,
+                    thumbnailUrl, aiSummary, sentiment, bullCount, bearCount, viewCount, symbolTag, publishedAt, null);
+        }
+    }
 
     public record NewsPageResponse(
             List<NewsItemResponse> items,
@@ -57,6 +80,7 @@ public class NewsService {
     public record NewsReactionResponse(
             Long newsId,
             String reaction,
+            String userReaction,
             int bullCount,
             int bearCount,
             int bullPct,
@@ -119,7 +143,7 @@ public class NewsService {
 
     @Transactional(readOnly = true, timeout = 3)
     public NewsPageResponse list(String category, String symbolTag, String keyword, Long cursorId, Integer size) {
-        return list(category, null, null, "LATEST", symbolTag, keyword, cursorId, size);
+        return list(category, null, null, "LATEST", symbolTag, keyword, cursorId, size, null);
     }
 
     @Transactional(readOnly = true, timeout = 3)
@@ -132,6 +156,20 @@ public class NewsService {
             String keyword,
             Long cursorId,
             Integer size) {
+        return list(category, section, subCategory, sort, symbolTag, keyword, cursorId, size, null);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public NewsPageResponse list(
+            String category,
+            String section,
+            String subCategory,
+            String sort,
+            String symbolTag,
+            String keyword,
+            Long cursorId,
+            Integer size,
+            String reactionActorKey) {
         int limit = size == null ? 10 : size;
         if (limit < 1 || limit > 30 || cursorId != null && cursorId <= 0) {
             throw invalidRequest();
@@ -249,17 +287,23 @@ public class NewsService {
         var rows = jdbc.query(sql.toString(), NewsService::mapRow, params.toArray());
         boolean hasNext = rows.size() > limit;
         var page = rows.subList(0, Math.min(limit, rows.size()));
-        Long nextCursorId = hasNext && !page.isEmpty() ? page.get(page.size() - 1).id() : null;
-        return new NewsPageResponse(page, hasNext, nextCursorId);
+        var hydrated = hydrateUserReactions(page, reactionActorKey);
+        Long nextCursorId = hasNext && !hydrated.isEmpty() ? hydrated.get(hydrated.size() - 1).id() : null;
+        return new NewsPageResponse(hydrated, hasNext, nextCursorId);
     }
 
     @Transactional(timeout = 3)
     public NewsItemResponse get(Long newsId) {
-        return get(newsId, null, "direct-call", true);
+        return get(newsId, null, "direct-call", true, null);
     }
 
     @Transactional(timeout = 3)
     public NewsItemResponse get(Long newsId, Long memberId, String anonViewerKey, boolean countView) {
+        return get(newsId, memberId, anonViewerKey, countView, null);
+    }
+
+    @Transactional(timeout = 3)
+    public NewsItemResponse get(Long newsId, Long memberId, String anonViewerKey, boolean countView, String reactionActorKey) {
         if (newsId == null || newsId <= 0) {
             throw notFound();
         }
@@ -299,10 +343,42 @@ public class NewsService {
         if (rows.isEmpty()) {
             throw notFound();
         }
-        return rows.get(0);
+        return hydrateUserReactions(rows, reactionActorKey).get(0);
     }
 
-    private static String sha256Hex(String input) {
+    private List<NewsItemResponse> hydrateUserReactions(List<NewsItemResponse> items, String actorKey) {
+        if (items.isEmpty() || actorKey == null || actorKey.isBlank()) {
+            return items;
+        }
+        List<Long> ids = items.stream().map(NewsItemResponse::id).toList();
+        String placeholders = ids.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
+        List<Object> params = new ArrayList<>(ids.size() + 1);
+        params.add(actorKey);
+        params.addAll(ids);
+        java.util.Map<Long, String> byArticle = new java.util.HashMap<>();
+        jdbc.query(
+                "select article_id, reaction_type from content.news_article_reaction where actor_key = ? and article_id in (" + placeholders + ")",
+                rs -> {
+                    byArticle.put(rs.getLong("article_id"), rs.getString("reaction_type"));
+                },
+                params.toArray());
+        if (byArticle.isEmpty()) {
+            return items;
+        }
+        return items.stream()
+                .map(item -> {
+                    String reaction = byArticle.get(item.id());
+                    return reaction == null ? item : new NewsItemResponse(
+                            item.id(), item.category(), item.section(), item.subCategory(),
+                            item.title(), item.summary(), item.content(), item.sourceName(),
+                            item.sourceUrl(), item.thumbnailUrl(), item.aiSummary(), item.sentiment(),
+                            item.bullCount(), item.bearCount(), item.viewCount(), item.symbolTag(),
+                            item.publishedAt(), reaction);
+                })
+                .toList();
+    }
+
+    static String sha256Hex(String input) {
         try {
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
             byte[] digest = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -318,6 +394,11 @@ public class NewsService {
 
     @Transactional(timeout = 3)
     public NewsReactionResponse react(Long newsId, String rawReaction) {
+        return react(newsId, rawReaction, "anon:direct-call");
+    }
+
+    @Transactional(timeout = 3)
+    public NewsReactionResponse react(Long newsId, String rawReaction, String actorKey) {
         if (newsId == null || newsId <= 0) {
             throw notFound();
         }
@@ -333,36 +414,98 @@ public class NewsService {
         } else {
             throw invalidRequest();
         }
+        String targetReaction = isBull ? "BULL" : "BEAR";
+        String effectiveActorKey = (actorKey == null || actorKey.isBlank())
+                ? "anon:default"
+                : (actorKey.length() > 128 ? actorKey.substring(0, 128) : actorKey);
 
-        String updateSql = isBull
-                ? "update content.news_article set bull_count = bull_count + 1 where id = ? returning id, bull_count, bear_count"
-                : "update content.news_article set bear_count = bear_count + 1 where id = ? returning id, bull_count, bear_count";
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        List<Long> locked = jdbc.queryForList(
+                "select id from content.news_article where id = ? for update",
+                Long.class,
+                newsId);
+        if (locked.isEmpty()) {
+            throw notFound();
+        }
 
-        var rows = jdbc.query(updateSql, (rs, rowNum) -> {
-            int bull = rs.getInt("bull_count");
-            int bear = rs.getInt("bear_count");
-            int total = bull + bear;
-            int bullPct = total > 0
-                    ? java.math.BigDecimal.valueOf(bull * 100L)
-                            .divide(java.math.BigDecimal.valueOf(total), 0, java.math.RoundingMode.HALF_UP)
-                            .intValue()
-                    : 50;
-            int bearPct = total > 0 ? (100 - bullPct) : 50;
-            return new NewsReactionResponse(
-                    rs.getLong("id"),
-                    isBull ? "BULL" : "BEAR",
-                    bull,
-                    bear,
-                    bullPct,
-                    bearPct
-            );
-        }, newsId);
+        List<String> existingRows = jdbc.queryForList(
+                "select reaction_type from content.news_article_reaction where article_id = ? and actor_key = ?",
+                String.class,
+                newsId,
+                effectiveActorKey);
+
+        int bullDelta;
+        int bearDelta;
+        String userReaction;
+
+        if (existingRows.isEmpty()) {
+            jdbc.update(
+                    "insert into content.news_article_reaction(article_id, actor_key, reaction_type, updated_at) values (?, ?, ?, now())",
+                    newsId, effectiveActorKey, targetReaction);
+            bullDelta = isBull ? 1 : 0;
+            bearDelta = isBull ? 0 : 1;
+            userReaction = targetReaction;
+        } else {
+            String previous = existingRows.get(0);
+            if (targetReaction.equals(previous)) {
+                // Toggle-off: clicking the same reaction removes the vote
+                jdbc.update(
+                        "delete from content.news_article_reaction where article_id = ? and actor_key = ?",
+                        newsId, effectiveActorKey);
+                bullDelta = isBull ? -1 : 0;
+                bearDelta = isBull ? 0 : -1;
+                userReaction = null;
+            } else {
+                // Switch: BULL <-> BEAR
+                jdbc.update(
+                        "update content.news_article_reaction set reaction_type = ?, updated_at = now() where article_id = ? and actor_key = ?",
+                        targetReaction, newsId, effectiveActorKey);
+                bullDelta = isBull ? 1 : -1;
+                bearDelta = isBull ? -1 : 1;
+                userReaction = targetReaction;
+            }
+        }
+
+        var rows = jdbc.query(
+                "update content.news_article "
+                        + "set bull_count = greatest(0, bull_count + ?), bear_count = greatest(0, bear_count + ?) "
+                        + "where id = ? returning id, bull_count, bear_count",
+                (rs, rowNum) -> {
+                    int bull = rs.getInt("bull_count");
+                    int bear = rs.getInt("bear_count");
+                    int total = bull + bear;
+                    int bullPct = total > 0
+                            ? java.math.BigDecimal.valueOf(bull * 100L)
+                                    .divide(java.math.BigDecimal.valueOf(total), 0, java.math.RoundingMode.HALF_UP)
+                                    .intValue()
+                            : 50;
+                    int bearPct = total > 0 ? (100 - bullPct) : 50;
+                    return new NewsReactionResponse(
+                            rs.getLong("id"),
+                            targetReaction,
+                            userReaction,
+                            bull,
+                            bear,
+                            bullPct,
+                            bearPct
+                    );
+                },
+                bullDelta, bearDelta, newsId);
 
         if (rows.isEmpty()) {
             throw notFound();
         }
         NewsReactionResponse response = rows.get(0);
-        sse.publishReactionUpdatedAfterCommit(response);
+        // Broadcast sanitized reaction counts over public SSE without leaking an individual's userReaction state.
+        NewsReactionResponse broadcastPayload = new NewsReactionResponse(
+                response.newsId(),
+                response.reaction(),
+                null,
+                response.bullCount(),
+                response.bearCount(),
+                response.bullPct(),
+                response.bearPct());
+        sse.publishReactionUpdatedAfterCommit(broadcastPayload);
         sse.publishSentimentUpdatedAfterCommit(currentSentimentSummary());
         return response;
     }
