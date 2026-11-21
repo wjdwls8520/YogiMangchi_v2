@@ -115,6 +115,93 @@ export function formatSidebarSeasonLabel(title: string, maxChars = 19): string {
   return `${cleaned || prefix}…`;
 }
 
+export type IncomingCommunityPostPayload = {
+  postId?: number | null;
+  authorId?: number | null;
+  memberId?: number | null;
+  mine?: boolean;
+  category?: string | null;
+  symbolTag?: string | null;
+};
+
+export type IncomingCommunityPostContext = {
+  currentMemberId: number | null;
+  myCreatedPostIds: ReadonlySet<number>;
+  visiblePostIds: ReadonlySet<number>;
+  queuedPostIds?: ReadonlySet<number>;
+  category: "" | CommunityCategory;
+  symbolTag: string;
+};
+
+export type FilterIncomingLatestPostsContext = {
+  currentMemberId: number | null;
+  myCreatedPostIds: ReadonlySet<number>;
+  visiblePostIds: ReadonlySet<number>;
+};
+
+export function shouldNotifyIncomingCommunityPost(
+  payload: IncomingCommunityPostPayload,
+  context: IncomingCommunityPostContext,
+): boolean {
+  if (payload.mine === true) {
+    return false;
+  }
+
+  if (
+    context.currentMemberId !== null &&
+    ((typeof payload.authorId === "number" &&
+      Number.isSafeInteger(payload.authorId) &&
+      payload.authorId === context.currentMemberId) ||
+      (typeof payload.memberId === "number" &&
+        Number.isSafeInteger(payload.memberId) &&
+        payload.memberId === context.currentMemberId))
+  ) {
+    return false;
+  }
+
+  const postId =
+    typeof payload.postId === "number" && Number.isSafeInteger(payload.postId) && payload.postId > 0
+      ? payload.postId
+      : null;
+
+  if (
+    postId !== null &&
+    (context.myCreatedPostIds.has(postId) ||
+      context.visiblePostIds.has(postId) ||
+      Boolean(context.queuedPostIds?.has(postId)))
+  ) {
+    return false;
+  }
+
+  if (context.category && payload.category && payload.category !== context.category) {
+    return false;
+  }
+
+  if (context.symbolTag && payload.symbolTag !== context.symbolTag) {
+    return false;
+  }
+
+  return true;
+}
+
+export function filterIncomingLatestPosts(
+  posts: readonly CommunityPost[],
+  context: FilterIncomingLatestPostsContext,
+): CommunityPost[] {
+  const seen = new Set<number>();
+  const filtered: CommunityPost[] = [];
+  for (const post of posts) {
+    if (post.mine === true) continue;
+    if (context.currentMemberId !== null && post.memberId === context.currentMemberId) continue;
+    if (context.myCreatedPostIds.has(post.id)) continue;
+    if (context.visiblePostIds.has(post.id)) continue;
+    if (seen.has(post.id)) continue;
+    seen.add(post.id);
+    filtered.push(post);
+  }
+  return filtered;
+}
+
 function parseScaledBigInt8(value: string | null | undefined): bigint | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -735,8 +822,14 @@ export function CommunityBoard({
   );
   const [prependedPosts, setPrependedPosts] = useState<CommunityPost[]>([]);
   const [latestCheckedItems, setLatestCheckedItems] = useState<CommunityPost[]>([]);
-  const latestPostIdRef = useRef<number>(0);
+  const latestPostIdRef = useRef<number>(
+    initialPage?.items.reduce((max, item) => (item.id > max ? item.id : max), 0) ?? 0,
+  );
   const myCreatedPostIdsRef = useRef<Set<number>>(new Set());
+  const visiblePostIdsRef = useRef<Set<number>>(
+    new Set(initialPage?.items.map(item => item.id) ?? []),
+  );
+  const queuedPostIdsRef = useRef<Set<number>>(new Set());
 
   const path = communityPostsPath({
     category,
@@ -910,6 +1003,15 @@ export function CommunityBoard({
     },
     onSuccess: created => {
       myCreatedPostIdsRef.current.add(created.id);
+      latestPostIdRef.current = Math.max(latestPostIdRef.current, created.id);
+      const removedFromQueue = queuedPostIdsRef.current.delete(created.id);
+      setLatestCheckedItems(prev => {
+        const next = prev.filter(item => item.id !== created.id);
+        return next.length === prev.length ? prev : next;
+      });
+      if (removedFromQueue) {
+        setPendingNewPostsCount(prev => Math.max(0, prev - 1));
+      }
       setWriteModalError(null);
       showSuccessFeedback("게시글이 등록되었습니다.");
       setWriteModalOpen(false);
@@ -1252,8 +1354,12 @@ export function CommunityBoard({
 
   function resetFeedPagination() {
     setExtraPosts([]);
+    setPrependedPosts([]);
     setNextCursorOverride(undefined);
     setHasNextOverride(undefined);
+    setLatestCheckedItems([]);
+    setPendingNewPostsCount(0);
+    queuedPostIdsRef.current.clear();
   }
 
   function handleV1TabChange(nextValue: string) {
@@ -1392,8 +1498,8 @@ export function CommunityBoard({
   }
 
   const page = postsQuery.data;
-  const serverItems = page?.items ?? [];
-  const items = (() => {
+  const serverItems = useMemo(() => page?.items ?? [], [page?.items]);
+  const items = useMemo(() => {
     const seen = new Set<number>();
     const merged: CommunityPost[] = [];
     for (const item of [...prependedPosts, ...serverItems, ...extraPosts]) {
@@ -1403,7 +1509,7 @@ export function CommunityBoard({
       }
     }
     return merged;
-  })();
+  }, [prependedPosts, serverItems, extraPosts]);
 
   const hasNext = hasNextOverride ?? page?.hasNext ?? false;
   const nextCursorId =
@@ -1461,13 +1567,21 @@ export function CommunityBoard({
     return () => observer.disconnect();
   }, [isDetailView, hasNext, nextCursorId]);
 
-  const highestPostId = items.reduce((max, item) => (item.id > max ? item.id : max), 0);
+  const highestPostId = useMemo(
+    () => items.reduce((max, item) => (item.id > max ? item.id : max), 0),
+    [items],
+  );
   useEffect(() => {
     latestPostIdRef.current = highestPostId;
   }, [highestPostId]);
 
   useEffect(() => {
+    visiblePostIdsRef.current = new Set(items.map(item => item.id));
+  }, [items]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
+    let cancelled = false;
 
     let es: EventSource | null = null;
     if (typeof window.EventSource === "function") {
@@ -1475,29 +1589,125 @@ export function CommunityBoard({
         es = new window.EventSource(`${contentOrigin(origin)}/api/v1/community/ux/subscribe/feed`);
         const onPostCreated = (event: MessageEvent) => {
           try {
-            const payload = JSON.parse(String(event.data ?? "{}")) as {
-              postId?: number;
-              authorId?: number;
-              category?: string;
-              symbolTag?: string | null;
+            const raw: unknown = JSON.parse(String(event.data ?? ""));
+            if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+            const payload = raw as {
+              postId?: unknown;
+              authorId?: unknown;
+              memberId?: unknown;
+              mine?: unknown;
+              category?: unknown;
+              symbolTag?: unknown;
               post?: unknown;
             };
-            if (payload.postId && myCreatedPostIdsRef.current.has(payload.postId)) return;
-            if (category && payload.category && payload.category !== category) return;
-            if (symbolTag && payload.symbolTag !== symbolTag) return;
+
+            let parsedPost: CommunityPost | null = null;
             if (payload.post) {
               try {
-                const parsed = parseCommunityPost(payload.post);
-                setLatestCheckedItems(prev =>
-                  prev.some(item => item.id === parsed.id) ? prev : [parsed, ...prev],
-                );
+                parsedPost = parseCommunityPost(payload.post);
               } catch {
-                // Ignore malformed SSE post snapshot
+                // Ignore malformed SSE post snapshot; fall back to raw fields below
               }
+            }
+
+            const rawPostObj =
+              payload.post && typeof payload.post === "object" && !Array.isArray(payload.post)
+                ? (payload.post as Record<string, unknown>)
+                : null;
+
+            const resolvedPostId =
+              typeof payload.postId === "number" &&
+              Number.isSafeInteger(payload.postId) &&
+              payload.postId > 0
+                ? payload.postId
+                : (parsedPost?.id ??
+                  (typeof rawPostObj?.id === "number" &&
+                  Number.isSafeInteger(rawPostObj.id) &&
+                  rawPostObj.id > 0
+                    ? rawPostObj.id
+                    : null));
+
+            const resolvedAuthorId =
+              typeof payload.authorId === "number" && Number.isSafeInteger(payload.authorId)
+                ? payload.authorId
+                : typeof payload.memberId === "number" && Number.isSafeInteger(payload.memberId)
+                  ? payload.memberId
+                  : (parsedPost?.memberId ??
+                    (typeof rawPostObj?.memberId === "number" &&
+                    Number.isSafeInteger(rawPostObj.memberId)
+                      ? rawPostObj.memberId
+                      : typeof rawPostObj?.authorId === "number" &&
+                          Number.isSafeInteger(rawPostObj.authorId)
+                        ? rawPostObj.authorId
+                        : null));
+
+            const resolvedMine =
+              payload.mine === true || parsedPost?.mine === true || rawPostObj?.mine === true;
+
+            if (resolvedPostId === null && resolvedAuthorId === null && !parsedPost) {
+              return;
+            }
+
+            const resolvedCategory =
+              typeof payload.category === "string"
+                ? payload.category
+                : (parsedPost?.category ??
+                  (typeof rawPostObj?.category === "string" ? rawPostObj.category : undefined));
+
+            const resolvedSymbolTag =
+              payload.symbolTag !== undefined
+                ? typeof payload.symbolTag === "string"
+                  ? payload.symbolTag
+                  : null
+                : parsedPost !== null
+                  ? parsedPost.symbolTag
+                  : typeof rawPostObj?.symbolTag === "string"
+                    ? rawPostObj.symbolTag
+                    : rawPostObj?.symbolTag === null
+                      ? null
+                      : undefined;
+
+            const shouldNotify = shouldNotifyIncomingCommunityPost(
+              {
+                postId: resolvedPostId,
+                authorId: resolvedAuthorId,
+                memberId: parsedPost?.memberId ?? null,
+                mine: resolvedMine,
+                category: resolvedCategory,
+                symbolTag: resolvedSymbolTag,
+              },
+              {
+                currentMemberId: snapshot.memberId,
+                myCreatedPostIds: myCreatedPostIdsRef.current,
+                visiblePostIds: visiblePostIdsRef.current,
+                queuedPostIds: queuedPostIdsRef.current,
+                category,
+                symbolTag,
+              },
+            );
+
+            if (!shouldNotify) return;
+            if (
+              parsedPost &&
+              (myCreatedPostIdsRef.current.has(parsedPost.id) ||
+                visiblePostIdsRef.current.has(parsedPost.id) ||
+                queuedPostIdsRef.current.has(parsedPost.id))
+            ) {
+              return;
+            }
+
+            if (resolvedPostId !== null) {
+              queuedPostIdsRef.current.add(resolvedPostId);
+            }
+            if (parsedPost) {
+              queuedPostIdsRef.current.add(parsedPost.id);
+              setLatestCheckedItems(prev =>
+                prev.some(item => item.id === parsedPost.id) ? prev : [parsedPost, ...prev],
+              );
             }
             setPendingNewPostsCount(prev => prev + 1);
           } catch {
-            setPendingNewPostsCount(prev => prev + 1);
+            // Ignore malformed SSE frames; the 30s /latest-check fallback covers missed events cleanly.
           }
         };
         es.addEventListener("UX_COMMUNITY_POST_CREATED", onPostCreated as EventListener);
@@ -1522,9 +1732,16 @@ export function CommunityBoard({
             `/community/posts/latest-check?${search.toString()}`,
           ),
         );
-        if (checked.newPostCount > 0) {
-          setPendingNewPostsCount(checked.newPostCount);
-          setLatestCheckedItems(checked.items);
+        if (cancelled) return;
+        const filtered = filterIncomingLatestPosts(checked.items, {
+          currentMemberId: snapshot.memberId,
+          myCreatedPostIds: myCreatedPostIdsRef.current,
+          visiblePostIds: visiblePostIdsRef.current,
+        });
+        if (filtered.length > 0) {
+          queuedPostIdsRef.current = new Set(filtered.map(item => item.id));
+          setPendingNewPostsCount(filtered.length);
+          setLatestCheckedItems(filtered);
         }
       } catch {
         // Ignore background latest-check errors and keep SSE / manual refresh working.
@@ -1532,12 +1749,14 @@ export function CommunityBoard({
     }, 30_000);
 
     return () => {
+      cancelled = true;
       if (es) es.close();
       window.clearInterval(timer);
     };
   }, [origin, session, snapshot, category, symbolTag]);
 
   async function handleLoadNewPosts() {
+    queuedPostIdsRef.current.clear();
     if (latestCheckedItems.length > 0) {
       setPrependedPosts(prev => {
         const existingIds = new Set([...prev, ...serverItems, ...extraPosts].map(p => p.id));
