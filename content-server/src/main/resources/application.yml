@@ -81,3 +81,16 @@ content:
       interval-ms: ${CONTENT_NEWS_COLLECTOR_INTERVAL_MS:60000}
       initial-delay-ms: ${CONTENT_NEWS_COLLECTOR_INITIAL_DELAY_MS:60000}
       max-items-per-feed: ${CONTENT_NEWS_COLLECTOR_MAX_ITEMS_PER_FEED:8}
+  ops:
+    alert-webhook-url: ${OPS_ALERT_WEBHOOK_URL:}
+    alert-cooldown-seconds: ${CONTENT_OPS_ALERT_COOLDOWN_SECONDS:300}
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

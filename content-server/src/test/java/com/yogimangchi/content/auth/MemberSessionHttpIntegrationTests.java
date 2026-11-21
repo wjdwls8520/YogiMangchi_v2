@@ -209,7 +209,7 @@ class MemberSessionHttpIntegrationTests extends TestEnvironment {
         return client.send(request.POST(HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.ofString());
     }
     private AuthService.Issued signup(VerifiedIdentity identity) {
-        return auth.signup(identity,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v1","ym-privacy-v1"));
+        return auth.signup(identity,new SignupRequest(UUID.randomUUID().toString().substring(0,8),true,true,"","ym-terms-v2","ym-privacy-v2"));
     }
     private VerifiedIdentity identity() {
         return new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"isolated@example.test",Instant.now().plusSeconds(300));

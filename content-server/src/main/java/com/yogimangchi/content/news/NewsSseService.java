@@ -35,6 +35,10 @@ public class NewsSseService {
         return liveStatus;
     }
 
+    public int activeConnectionCount() {
+        return emitters.size();
+    }
+
     public void updateLiveStatus(NewsService.NewsLiveStatus updated) {
         if (updated == null) {
             return;

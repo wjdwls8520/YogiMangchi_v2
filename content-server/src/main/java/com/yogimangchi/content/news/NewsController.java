@@ -32,7 +32,7 @@ public class NewsController {
     @GetMapping
     @Operation(
             summary = "List crypto and macro news feed",
-            description = "Public. Optional filters: category (CRYPTO/MACRO/ONCHAIN/REGULATION), section (BREAKING/NEWSROOM), subCategory (COIN_FLASH/ECONOMY_FLASH/CRYPTO/STOCKS/FX_RATES), sort (LATEST/OLDEST/POPULAR), symbolTag, keyword (up to 40 code points, case-insensitive literal match on title/summary), cursorId, size (1..30, default 10)."
+            description = "Public. Optional filters: category (CRYPTO/MACRO/ONCHAIN/REGULATION), section (BREAKING/NEWSROOM), subCategory (COIN_FLASH/ECONOMY_FLASH/CRYPTO/STOCKS/FX_RATES), sort (LATEST/OLDEST/POPULAR), symbolTag, keyword (up to 40 code points, case-insensitive literal match on title/summary), cursorId, size (1..30, default 10). Includes caller's userReaction (BULL/BEAR/null)."
     )
     public ResponseEntity<NewsService.NewsPageResponse> list(
             @RequestParam(required = false) String category,
@@ -42,10 +42,13 @@ public class NewsController {
             @RequestParam(required = false) String symbolTag,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long cursorId,
-            @RequestParam(required = false) Integer size) {
+            @RequestParam(required = false) Integer size,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
+        String actorKey = resolveReactionActorKey(jwt, request);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(news.list(category, section, subCategory, sort, symbolTag, keyword, cursorId, size));
+                .body(news.list(category, section, subCategory, sort, symbolTag, keyword, cursorId, size, actorKey));
     }
 
     @GetMapping("/highlights")
@@ -71,7 +74,7 @@ public class NewsController {
     @GetMapping("/{newsId:[0-9]+}")
     @Operation(
             summary = "Read a single news article",
-            description = "Public. Idempotently increments viewCount (once per member account when authenticated, or once per KST day per anonymous viewer key/IP+UA when unauthenticated) unless countView=false."
+            description = "Public. Idempotently increments viewCount (once per member account when authenticated, or once per KST day per anonymous viewer key/IP+UA when unauthenticated) unless countView=false. Includes userReaction."
     )
     public ResponseEntity<NewsService.NewsItemResponse> get(
             @PathVariable Long newsId,
@@ -82,9 +85,10 @@ public class NewsController {
             HttpServletRequest request) {
         Long memberId = viewerMemberId(jwt);
         String anonViewerKey = resolveAnonViewerKey(anonViewerHeader, viewerKey, request);
+        String actorKey = resolveReactionActorKey(jwt, request);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(news.get(newsId, memberId, anonViewerKey, countView));
+                .body(news.get(newsId, memberId, anonViewerKey, countView, actorKey));
     }
 
     @PostMapping("/{newsId:[0-9]+}/views")
@@ -100,26 +104,30 @@ public class NewsController {
             HttpServletRequest request) {
         Long memberId = viewerMemberId(jwt);
         String anonViewerKey = resolveAnonViewerKey(anonViewerHeader, viewerKey, request);
+        String actorKey = resolveReactionActorKey(jwt, request);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(news.get(newsId, memberId, anonViewerKey, true));
+                .body(news.get(newsId, memberId, anonViewerKey, true, actorKey));
     }
 
     @PostMapping("/{newsId:[0-9]+}/reactions")
     @Operation(
-            summary = "Submit a bull or bear reaction vote on a news article",
-            description = "Public. Increments bullCount (BULL) or bearCount (BEAR) and broadcasts NEWS_REACTION_UPDATED via SSE."
+            summary = "Create, switch (BULL <-> BEAR), or toggle-off an idempotent reaction vote on a news article",
+            description = "Public. Identifies actor by authenticated member ID or SHA-256(IP+User-Agent). Returns updated counts and userReaction (BULL, BEAR, or null when toggled off), and broadcasts NEWS_REACTION_UPDATED via SSE."
     )
     public ResponseEntity<NewsService.NewsReactionResponse> react(
             @PathVariable Long newsId,
             @RequestBody(required = false) NewsService.NewsReactionRequest body,
-            @RequestParam(required = false) String reaction) {
+            @RequestParam(required = false) String reaction,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
         String effective = (body != null && body.reaction() != null && !body.reaction().isBlank())
                 ? body.reaction()
                 : reaction;
+        String actorKey = resolveReactionActorKey(jwt, request);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(news.react(newsId, effective));
+                .body(news.react(newsId, effective, actorKey));
     }
 
     private static Long viewerMemberId(Jwt jwt) {
@@ -131,6 +139,16 @@ public class NewsController {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private static String resolveReactionActorKey(Jwt jwt, HttpServletRequest request) {
+        Long memberId = viewerMemberId(jwt);
+        if (memberId != null && memberId > 0) {
+            return "member:" + memberId;
+        }
+        String ip = request == null ? "0.0.0.0" : clientIp(request);
+        String ua = request == null ? "unknown" : Objects.toString(request.getHeader("User-Agent"), "unknown");
+        return "anon:" + NewsService.sha256Hex(ip + "|" + ua);
     }
 
     private static String resolveAnonViewerKey(

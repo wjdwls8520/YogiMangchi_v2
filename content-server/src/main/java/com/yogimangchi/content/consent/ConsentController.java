@@ -12,10 +12,10 @@ public class ConsentController {
     private final PolicyConsents consents;
     public ConsentController(PolicyConsents consents) {this.consents=consents;}
     @GetMapping("/api/v1/policies/current")
-    @Operation(summary="Current TERMS/PRIVACY versions",description="Public version metadata; no fabricated historical consent. Follow documentUrl for the immutable versioned development draft and SHA-256; publication requires operator/contact confirmation.")
+    @Operation(summary="Current TERMS/PRIVACY versions",description="Public version metadata; no fabricated historical consent. Follow documentUrl for the immutable versioned policy text, documentStatus (PUBLISHED or historical DEVELOPMENT_DRAFT), and SHA-256.")
     public PolicyConsents.State current() {return consents.current(null);}
     @GetMapping("/api/v1/policies/{type:TERMS|PRIVACY}/{version}")
-    @Operation(summary="Read an immutable policy version",description="Public text and SHA-256. Current documents are DEVELOPMENT_DRAFT; not a claim of legal/publication readiness. Missing404.")
+    @Operation(summary="Read an immutable policy version",description="Public text, documentStatus (PUBLISHED or historical DEVELOPMENT_DRAFT), and SHA-256. Missing 404.")
     public ResponseEntity<PolicyConsents.Document> document(@PathVariable String type,@PathVariable String version) {return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(consents.document(type,version));}
     @GetMapping("/api/v1/members/me/consents")
     @SecurityRequirement(name="memberBearer")

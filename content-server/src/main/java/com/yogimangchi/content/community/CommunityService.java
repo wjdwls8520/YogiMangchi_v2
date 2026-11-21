@@ -137,6 +137,7 @@ public class CommunityService {
             String symbolTag,
             String title,
             String content,
+            long viewCount,
             int likeCount,
             int commentCount,
             int reportCount,
@@ -168,7 +169,7 @@ public class CommunityService {
                 Instant createdAt,
                 Instant updatedAt) {
             this(id, memberId, authorNickname, null, authorWithdrawn, category, symbolTag, title, content,
-                    likeCount, commentCount, reportCount, likedByMe, reportedByMe, mine, files, sharedPosition, createdAt, updatedAt);
+                    0L, likeCount, commentCount, reportCount, likedByMe, reportedByMe, mine, files, sharedPosition, createdAt, updatedAt);
         }
     }
 
@@ -290,6 +291,8 @@ public class CommunityService {
             String reasonType,
             String reasonDescription,
             String status,
+            String resolutionNote,
+            Instant resolvedAt,
             Instant createdAt
     ) { }
 
@@ -386,12 +389,12 @@ public class CommunityService {
 
         StringBuilder sql = new StringBuilder(
                 "select p.id, p.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
-                        + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
+                        + "p.category, p.symbol_tag, p.title, p.content, p.view_count, p.like_count, p.comment_count, p.report_count, "
                         + "p.shared_position_json, p.created_at, p.updated_at, "
                         + (viewerId == null
                         ? "false as liked_by_me, false as reported_by_me "
                         : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me, "
-                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ?) as reported_by_me ")
+                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ? and r.status = 'PENDING') as reported_by_me ")
                         + "from content.community_post p "
                         + "join content.member m on m.id = p.member_id "
                         + "where p.status = 'ACTIVE'");
@@ -482,9 +485,15 @@ public class CommunityService {
         return new LatestPostsCheckResponse(newCount == null ? 0L : newCount, latestId, freshItems);
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(timeout = 3)
     public CommunityPostResponse getPost(Long postId, Long viewerId) {
         if (postId == null || postId <= 0) {
+            throw notFound();
+        }
+        int updated = jdbc.update(
+                "update content.community_post set view_count = view_count + 1 where id = ? and status = 'ACTIVE'",
+                postId);
+        if (updated == 0) {
             throw notFound();
         }
         return queryActivePost(postId, viewerId);
@@ -532,6 +541,7 @@ public class CommunityService {
                 created.symbolTag(),
                 created.title(),
                 created.content(),
+                created.viewCount(),
                 created.likeCount(),
                 created.commentCount(),
                 created.reportCount(),
@@ -735,18 +745,19 @@ public class CommunityService {
 
         if (report) {
             jdbc.update(
-                    "insert into content.community_post_report(post_id, member_id, reason_type, created_at) "
-                            + "values (?, ?, ?, now()) "
-                            + "on conflict(post_id, member_id) do update set reason_type = excluded.reason_type",
+                    "insert into content.community_post_report(post_id, member_id, reason_type, status, resolved_at, resolved_by_member_id, resolution_note, created_at) "
+                            + "values (?, ?, ?, 'PENDING', null, null, null, now()) "
+                            + "on conflict(post_id, member_id) do update set reason_type = excluded.reason_type, "
+                            + "status = 'PENDING', resolved_at = null, resolved_by_member_id = null, resolution_note = null",
                     postId, memberId, normalizedReason);
         } else {
             jdbc.update(
-                    "delete from content.community_post_report where post_id = ? and member_id = ?",
+                    "delete from content.community_post_report where post_id = ? and member_id = ? and status = 'PENDING'",
                     postId, memberId);
         }
 
         Integer reportCount = jdbc.queryForObject(
-                "update content.community_post set report_count = (select count(*) from content.community_post_report where post_id = ?) where id = ? returning report_count",
+                "update content.community_post set report_count = (select count(*) from content.community_post_report where post_id = ? and status = 'PENDING') where id = ? returning report_count",
                 Integer.class,
                 postId, postId);
         return new ReportResponse(postId, reportCount == null ? 0 : reportCount, report);
@@ -781,7 +792,7 @@ public class CommunityService {
                 + (viewerId == null
                 ? "false as liked_by_me, false as reported_by_me "
                 : "exists(select 1 from content.community_comment_like l where l.comment_id = c.id and l.member_id = ?) as liked_by_me, "
-                  + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
+                  + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ? and r.status = 'PENDING') as reported_by_me ")
                 + "from content.community_comment c "
                 + "join content.member m on m.id = c.member_id "
                 + "left join content.member tm on tm.id = c.target_member_id ";
@@ -1099,18 +1110,19 @@ public class CommunityService {
 
         if (report) {
             jdbc.update(
-                    "insert into content.community_comment_report(comment_id, member_id, reason_type, created_at) "
-                            + "values (?, ?, ?, now()) "
-                            + "on conflict(comment_id, member_id) do update set reason_type = excluded.reason_type",
+                    "insert into content.community_comment_report(comment_id, member_id, reason_type, status, resolved_at, resolved_by_member_id, resolution_note, created_at) "
+                            + "values (?, ?, ?, 'PENDING', null, null, null, now()) "
+                            + "on conflict(comment_id, member_id) do update set reason_type = excluded.reason_type, "
+                            + "status = 'PENDING', resolved_at = null, resolved_by_member_id = null, resolution_note = null",
                     commentId, memberId, normalizedReason);
         } else {
             jdbc.update(
-                    "delete from content.community_comment_report where comment_id = ? and member_id = ?",
+                    "delete from content.community_comment_report where comment_id = ? and member_id = ? and status = 'PENDING'",
                     commentId, memberId);
         }
 
         Integer reportCount = jdbc.queryForObject(
-                "update content.community_comment set report_count = (select count(*) from content.community_comment_report where comment_id = ?) where id = ? returning report_count",
+                "update content.community_comment set report_count = (select count(*) from content.community_comment_report where comment_id = ? and status = 'PENDING') where id = ? returning report_count",
                 Integer.class,
                 commentId, commentId);
         return new ReportResponse(commentId, reportCount == null ? 0 : reportCount, report);
@@ -1123,12 +1135,12 @@ public class CommunityService {
 
         StringBuilder sql = new StringBuilder(
                 "select p.id, p.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
-                        + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
+                        + "p.category, p.symbol_tag, p.title, p.content, p.view_count, p.like_count, p.comment_count, p.report_count, "
                         + "p.shared_position_json, p.created_at, p.updated_at, "
                         + (viewerId == null
                         ? "false as liked_by_me, false as reported_by_me "
                         : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me, "
-                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ?) as reported_by_me ")
+                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ? and r.status = 'PENDING') as reported_by_me ")
                         + "from content.community_post p "
                         + "join content.member m on m.id = p.member_id "
                         + "where p.status = 'ACTIVE' and p.member_id = ?");
@@ -1168,7 +1180,7 @@ public class CommunityService {
                         + (viewerId == null
                         ? "false as liked_by_me, false as reported_by_me "
                         : "exists(select 1 from content.community_comment_like l where l.comment_id = c.id and l.member_id = ?) as liked_by_me, "
-                          + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
+                          + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ? and r.status = 'PENDING') as reported_by_me ")
                         + "from content.community_comment c "
                         + "join content.community_post p on p.id = c.post_id "
                         + "join content.member m on m.id = c.member_id "
@@ -1202,12 +1214,12 @@ public class CommunityService {
 
         StringBuilder sql = new StringBuilder(
                 "select p.id, p.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
-                        + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
+                        + "p.category, p.symbol_tag, p.title, p.content, p.view_count, p.like_count, p.comment_count, p.report_count, "
                         + "p.shared_position_json, p.created_at, p.updated_at, "
                         + (viewerId == null
                         ? "false as liked_by_me, false as reported_by_me "
                         : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me, "
-                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ?) as reported_by_me ")
+                          + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ? and r.status = 'PENDING') as reported_by_me ")
                         + "from content.community_post p "
                         + "join content.member m on m.id = p.member_id "
                         + "where p.status = 'ACTIVE' "
@@ -1248,7 +1260,7 @@ public class CommunityService {
                         + (viewerId == null
                         ? "false as liked_by_me, false as reported_by_me "
                         : "exists(select 1 from content.community_comment_like l where l.comment_id = c.id and l.member_id = ?) as liked_by_me, "
-                          + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
+                          + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ? and r.status = 'PENDING') as reported_by_me ")
                         + "from content.community_comment c "
                         + "join content.community_post p on p.id = c.post_id "
                         + "join content.member m on m.id = c.member_id "
@@ -1287,19 +1299,25 @@ public class CommunityService {
                 .orElseThrow(() -> new AuthFailure("MEMBER_NOT_ACTIVE", HttpStatus.UNAUTHORIZED));
 
         StringBuilder sql = new StringBuilder(
-                "select synthetic_id, target_type, target_id, post_id, title, reason_type, created_at from ("
+                "select synthetic_id, target_type, target_id, post_id, title, reason_type, status, resolution_note, resolved_at, created_at from ("
                         + "select (pr.post_id * 2 + 1) as synthetic_id, 'POST' as target_type, pr.post_id as target_id, "
-                        + "pr.post_id as post_id, p.title as title, pr.reason_type as reason_type, pr.created_at as created_at "
+                        + "pr.post_id as post_id, "
+                        + "case when p.id is null or p.status <> 'ACTIVE' then coalesce(p.title, '삭제된 게시글입니다.') else p.title end as title, "
+                        + "pr.reason_type as reason_type, pr.status as status, pr.resolution_note as resolution_note, "
+                        + "pr.resolved_at as resolved_at, pr.created_at as created_at "
                         + "from content.community_post_report pr "
-                        + "join content.community_post p on p.id = pr.post_id "
-                        + "where pr.member_id = ? and p.status = 'ACTIVE' "
+                        + "left join content.community_post p on p.id = pr.post_id "
+                        + "where pr.member_id = ? "
                         + "union all "
                         + "select (cr.comment_id * 2) as synthetic_id, 'COMMENT' as target_type, cr.comment_id as target_id, "
-                        + "c.post_id as post_id, c.content as title, cr.reason_type as reason_type, cr.created_at as created_at "
+                        + "coalesce(c.post_id, 0) as post_id, "
+                        + "case when c.id is null or c.status <> 'ACTIVE' then '삭제된 댓글입니다.' else c.content end as title, "
+                        + "cr.reason_type as reason_type, cr.status as status, cr.resolution_note as resolution_note, "
+                        + "cr.resolved_at as resolved_at, cr.created_at as created_at "
                         + "from content.community_comment_report cr "
-                        + "join content.community_comment c on c.id = cr.comment_id "
-                        + "join content.community_post p on p.id = c.post_id "
-                        + "where cr.member_id = ? and c.status = 'ACTIVE' and p.status = 'ACTIVE'"
+                        + "left join content.community_comment c on c.id = cr.comment_id "
+                        + "left join content.community_post p on p.id = c.post_id "
+                        + "where cr.member_id = ?"
                         + ") combined ");
 
         List<Object> params = new ArrayList<>();
@@ -1316,6 +1334,7 @@ public class CommunityService {
                 sql.toString(),
                 (rs, n) -> {
                     String reasonType = rs.getString("reason_type");
+                    java.sql.Timestamp resolvedTs = rs.getTimestamp("resolved_at");
                     return new MemberCommunityReportItem(
                             rs.getLong("synthetic_id"),
                             rs.getString("target_type"),
@@ -1324,7 +1343,9 @@ public class CommunityService {
                             rs.getString("title"),
                             reasonType,
                             REPORT_REASONS.getOrDefault(reasonType, "기타"),
-                            "RECEIVED",
+                            rs.getString("status"),
+                            rs.getString("resolution_note"),
+                            resolvedTs == null ? null : resolvedTs.toInstant(),
                             rs.getTimestamp("created_at").toInstant());
                 },
                 params.toArray());
@@ -1366,12 +1387,12 @@ public class CommunityService {
 
     private CommunityPostResponse queryActivePost(Long postId, Long viewerId) {
         String sql = "select p.id, p.member_id, m.nickname as member_nickname, m.profile_img_url as member_profile_img_url, m.status as member_status, "
-                + "p.category, p.symbol_tag, p.title, p.content, p.like_count, p.comment_count, p.report_count, "
+                + "p.category, p.symbol_tag, p.title, p.content, p.view_count, p.like_count, p.comment_count, p.report_count, "
                 + "p.shared_position_json, p.created_at, p.updated_at, "
                 + (viewerId == null
                 ? "false as liked_by_me, false as reported_by_me "
                 : "exists(select 1 from content.community_post_like l where l.post_id = p.id and l.member_id = ?) as liked_by_me, "
-                  + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ?) as reported_by_me ")
+                  + "exists(select 1 from content.community_post_report r where r.post_id = p.id and r.member_id = ? and r.status = 'PENDING') as reported_by_me ")
                 + "from content.community_post p "
                 + "join content.member m on m.id = p.member_id "
                 + "where p.id = ? and p.status = 'ACTIVE'";
@@ -1392,7 +1413,7 @@ public class CommunityService {
                 + (viewerId == null
                 ? "false as liked_by_me, false as reported_by_me "
                 : "exists(select 1 from content.community_comment_like l where l.comment_id = c.id and l.member_id = ?) as liked_by_me, "
-                  + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ?) as reported_by_me ")
+                  + "exists(select 1 from content.community_comment_report r where r.comment_id = c.id and r.member_id = ? and r.status = 'PENDING') as reported_by_me ")
                 + "from content.community_comment c "
                 + "join content.member m on m.id = c.member_id "
                 + "left join content.member tm on tm.id = c.target_member_id "
@@ -1441,6 +1462,7 @@ public class CommunityService {
                         p.symbolTag(),
                         p.title(),
                         p.content(),
+                        p.viewCount(),
                         p.likeCount(),
                         p.commentCount(),
                         p.reportCount(),
@@ -1480,6 +1502,9 @@ public class CommunityService {
             return "SPAM";
         }
         String upper = reasonType.strip().toUpperCase(Locale.ROOT);
+        if ("OTHER".equals(upper)) {
+            return "ETC";
+        }
         if (!REPORT_REASONS.containsKey(upper)) {
             throw invalidRequest();
         }
@@ -1611,6 +1636,7 @@ public class CommunityService {
                 rs.getString("symbol_tag"),
                 rs.getString("title"),
                 rs.getString("content"),
+                rs.getLong("view_count"),
                 rs.getInt("like_count"),
                 rs.getInt("comment_count"),
                 rs.getInt("report_count"),

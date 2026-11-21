@@ -24,7 +24,7 @@ public class PolicyConsents {
     public record Document(String type,String version,String documentStatus,String sha256,String text) { }
     @Transactional(readOnly=true,timeout=3)
     public Document document(String type,String version) {
-        var docs=jdbc.query("select document_text,document_sha256 from content.policy_version where policy_type=? and version=?",(r,n)->new Document(type,version,"DEVELOPMENT_DRAFT",r.getString(2),r.getString(1)),type,version);
+        var docs=jdbc.query("select document_text,document_sha256,document_status from content.policy_version where policy_type=? and version=?",(r,n)->new Document(type,version,r.getString(3),r.getString(2),r.getString(1)),type,version);
         if(docs.isEmpty())throw new AuthFailure("POLICY_NOT_FOUND",HttpStatus.NOT_FOUND);return docs.get(0);
     }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)

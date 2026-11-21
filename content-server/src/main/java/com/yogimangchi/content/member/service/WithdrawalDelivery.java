@@ -46,13 +46,13 @@ public class WithdrawalDelivery {
                 response.body().close();
                 if(status==204) withdrawals.delivered(id);
                 else {
-                    withdrawals.failed(id);
-                    log.warn("Member withdrawal delivery deferred HTTP status={}",status);
+                    int attempts=withdrawals.failed(id);
+                    log.warn("Member withdrawal delivery deferred memberId={} attempts={} httpStatus={}",id,attempts,status);
                 }
             } catch(InterruptedException failure) { Thread.currentThread().interrupt(); return; }
             catch(Exception failure) {
-                withdrawals.failed(id);
-                log.warn("Member withdrawal delivery deferred: {}",failure.getClass().getSimpleName());
+                int attempts=withdrawals.failed(id);
+                log.warn("Member withdrawal delivery deferred memberId={} attempts={} cause={}",id,attempts,failure.getClass().getSimpleName());
             }
         }
     }

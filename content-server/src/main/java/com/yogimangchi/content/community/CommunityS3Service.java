@@ -1,6 +1,7 @@
 package com.yogimangchi.content.community;
 
 import com.yogimangchi.content.error.AuthFailure;
+import com.yogimangchi.content.ops.OpsAlertService;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.io.InputStream;
@@ -106,6 +107,7 @@ public class CommunityS3Service {
     private final S3Client s3Client;
     private final JdbcTemplate jdbc;
     private final TransactionTemplate requiresNewTx;
+    private final OpsAlertService opsAlert;
     private final Set<String> simulatedStore = ConcurrentHashMap.newKeySet();
     private final Map<String, LocalMediaPayload> localMemoryStore = new ConcurrentHashMap<>();
     private final Set<String> simulatedDeleteFailureKeys = ConcurrentHashMap.newKeySet();
@@ -113,7 +115,7 @@ public class CommunityS3Service {
     private final AtomicInteger realS3DeleteCounter = new AtomicInteger();
 
     public CommunityS3Service(String bucket, String accessKey, String secretKey, String region) {
-        this(true, null, bucket, accessKey, secretKey, region, null, null);
+        this(true, null, bucket, accessKey, secretKey, region, null, null, null);
     }
 
     public CommunityS3Service(
@@ -123,7 +125,19 @@ public class CommunityS3Service {
             String region,
             JdbcTemplate jdbc,
             PlatformTransactionManager txManager) {
-        this(true, null, bucket, accessKey, secretKey, region, jdbc, txManager);
+        this(true, null, bucket, accessKey, secretKey, region, jdbc, txManager, null);
+    }
+
+    public CommunityS3Service(
+            boolean s3Enabled,
+            String publicBaseUrl,
+            String bucket,
+            String accessKey,
+            String secretKey,
+            String region,
+            JdbcTemplate jdbc,
+            PlatformTransactionManager txManager) {
+        this(s3Enabled, publicBaseUrl, bucket, accessKey, secretKey, region, jdbc, txManager, null);
     }
 
     @Autowired
@@ -135,7 +149,9 @@ public class CommunityS3Service {
             @Value("${content.s3.secret-key:}") String secretKey,
             @Value("${content.s3.region:ap-northeast-2}") String region,
             JdbcTemplate jdbc,
-            PlatformTransactionManager txManager) {
+            PlatformTransactionManager txManager,
+            @Autowired(required = false) OpsAlertService opsAlert) {
+        this.opsAlert = opsAlert;
         this.bucket = bucket == null ? "" : bucket.strip();
         this.region = (region == null || region.isBlank()) ? "ap-northeast-2" : region.strip();
         String trimmedBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.strip().replaceAll("/+$", "");
@@ -531,6 +547,15 @@ public class CommunityS3Service {
                     jdbc.update(
                             "update content.s3_cleanup_task set status = 'FAILED', attempt_count = ?, last_error = 'Max retry attempts reached' where id = ?",
                             newAttempt, row.id());
+                    log.error("S3 cleanup task entered FAILED state taskId={} s3Key={} attempts={} maxAttempts={}",
+                            row.id(), row.s3Key(), newAttempt, row.maxAttempts());
+                    if (opsAlert != null) {
+                        opsAlert.alert(
+                                "s3-cleanup-failed",
+                                "ERROR",
+                                "S3 cleanup task entered FAILED state",
+                                Map.of("taskId", row.id(), "attempts", newAttempt, "maxAttempts", row.maxAttempts()));
+                    }
                 } else {
                     jdbc.update(
                             "update content.s3_cleanup_task set status = 'PENDING', attempt_count = ?, "

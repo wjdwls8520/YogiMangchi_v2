@@ -46,13 +46,13 @@ public class MemberProvisioningDelivery {
                 response.body().close();
                 if(status==204) provisions.acknowledged(id);
                 else {
-                    provisions.failed(id);
-                    log.warn("Member provisioning delivery deferred HTTP status={}",status);
+                    int attempts=provisions.failed(id);
+                    log.warn("Member provisioning delivery deferred memberId={} attempts={} httpStatus={}",id,attempts,status);
                 }
             } catch(InterruptedException failure) { Thread.currentThread().interrupt(); return; }
             catch(Exception failure) {
-                provisions.failed(id);
-                log.warn("Member provisioning delivery deferred: {}",failure.getClass().getSimpleName());
+                int attempts=provisions.failed(id);
+                log.warn("Member provisioning delivery deferred memberId={} attempts={} cause={}",id,attempts,failure.getClass().getSimpleName());
             }
         }
     }

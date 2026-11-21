@@ -135,26 +135,29 @@ class ContentNotificationIntegrationTests extends TestEnvironment {
                         .header("Authorization", authorToken))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString());
-        assertThat(beforeCheckList.get("content").size()).isEqualTo(2); // 1 grouped POST_LIKED + 1 POST_COMMENT_CREATED
+        // 1 grouped POST_LIKED + 1 reply POST_COMMENT_CREATED (CommenterB's reply also notifies post author) + 1 root POST_COMMENT_CREATED
+        assertThat(beforeCheckList.get("content").size()).isEqualTo(3);
         assertThat(beforeCheckList.get("content").get(0).get("type").asText()).isEqualTo("POST_LIKED");
         assertThat(beforeCheckList.get("content").get(0).get("payload").get("groupCount").asLong()).isEqualTo(2L);
+        assertThat(beforeCheckList.get("content").get(1).get("type").asText()).isEqualTo("POST_COMMENT_CREATED");
+        assertThat(beforeCheckList.get("content").get(1).get("payload").get("parentReplyId").asLong()).isEqualTo(rootCommentId);
 
-        // Author checks bell -> newCount becomes 0, unreadCount stays 2, and open like group closes!
+        // Author checks bell -> newCount becomes 0, unreadCount stays 3, and open like group closes!
         mvc.perform(put("/api/v1/notifications/check").header("Authorization", authorToken))
                 .andExpect(status().isNoContent());
         mvc.perform(get("/api/v1/notifications/status").header("Authorization", authorToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.newCount").value(0))
-                .andExpect(jsonPath("$.unreadCount").value(2));
+                .andExpect(jsonPath("$.unreadCount").value(3));
 
-        // MentionedUser likes post AFTER check -> creates a brand-new POST_LIKED group (groupCount = 1, total notifications = 3)
+        // MentionedUser likes post AFTER check -> creates a brand-new POST_LIKED group (groupCount = 1, total notifications = 4)
         mvc.perform(put("/api/v1/community/posts/" + postId + "/likes").header("Authorization", mentionedToken))
                 .andExpect(status().isOk());
         JsonNode afterCheckList = json.readTree(mvc.perform(get("/api/v1/notifications")
                         .header("Authorization", authorToken))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString());
-        assertThat(afterCheckList.get("content").size()).isEqualTo(3);
+        assertThat(afterCheckList.get("content").size()).isEqualTo(4);
         assertThat(afterCheckList.get("content").get(0).get("payload").get("groupCount").asLong()).isEqualTo(1L);
 
         // 5. Follow 1-day cooldown: CommenterA follows Author, unfollows, and immediately follows again -> only 1 FOLLOW_CREATED
@@ -197,6 +200,6 @@ class ContentNotificationIntegrationTests extends TestEnvironment {
         String nick = prefix + suffix;
         return auth.signup(
                 new VerifiedIdentity(Provider.GOOGLE, UUID.randomUUID().toString(), nick + "@example.test", Instant.now().plusSeconds(300)),
-                new SignupRequest(nick, true, true, "test", "ym-terms-v1", "ym-privacy-v1"));
+                new SignupRequest(nick, true, true, "test", "ym-terms-v2", "ym-privacy-v2"));
     }
 }
