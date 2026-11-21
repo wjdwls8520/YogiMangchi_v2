@@ -27,8 +27,13 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class CommunityService {
     private static final Set<String> CATEGORIES = Set.of("MARKET", "ANALYSIS", "POSITION", "FREE");
+    public static final int MAX_SHARED_POSITION_LEVERAGE = 100;
     public static final String WITHDRAWN_AUTHOR_NICKNAME = "탈퇴한회원";
     public static final String DELETED_COMMENT_MASK = "삭제된 댓글입니다.";
+
+    public static boolean isWithdrawnStatus(String memberStatus) {
+        return "WITHDRAWN".equals(memberStatus) || "WITHDRAWING".equals(memberStatus);
+    }
 
     private static final Map<String, String> REPORT_REASONS;
     static {
@@ -133,6 +138,7 @@ public class CommunityService {
             String authorNickname,
             String authorProfileImgUrl,
             boolean authorWithdrawn,
+            String authorStatus,
             String category,
             String symbolTag,
             String title,
@@ -153,6 +159,33 @@ public class CommunityService {
                 Long id,
                 Long memberId,
                 String authorNickname,
+                String authorProfileImgUrl,
+                boolean authorWithdrawn,
+                String category,
+                String symbolTag,
+                String title,
+                String content,
+                long viewCount,
+                int likeCount,
+                int commentCount,
+                int reportCount,
+                boolean likedByMe,
+                boolean reportedByMe,
+                boolean mine,
+                List<PostFileResponse> files,
+                SharedPositionSnapshot sharedPosition,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, memberId, authorNickname, authorProfileImgUrl, authorWithdrawn,
+                    authorWithdrawn ? "WITHDRAWN" : "ACTIVE",
+                    category, symbolTag, title, content, viewCount, likeCount, commentCount, reportCount,
+                    likedByMe, reportedByMe, mine, files, sharedPosition, createdAt, updatedAt);
+        }
+
+        public CommunityPostResponse(
+                Long id,
+                Long memberId,
+                String authorNickname,
                 boolean authorWithdrawn,
                 String category,
                 String symbolTag,
@@ -168,8 +201,10 @@ public class CommunityService {
                 SharedPositionSnapshot sharedPosition,
                 Instant createdAt,
                 Instant updatedAt) {
-            this(id, memberId, authorNickname, null, authorWithdrawn, category, symbolTag, title, content,
-                    0L, likeCount, commentCount, reportCount, likedByMe, reportedByMe, mine, files, sharedPosition, createdAt, updatedAt);
+            this(id, memberId, authorNickname, null, authorWithdrawn,
+                    authorWithdrawn ? "WITHDRAWN" : "ACTIVE",
+                    category, symbolTag, title, content, 0L, likeCount, commentCount, reportCount,
+                    likedByMe, reportedByMe, mine, files, sharedPosition, createdAt, updatedAt);
         }
     }
 
@@ -204,6 +239,7 @@ public class CommunityService {
             String authorNickname,
             String authorProfileImgUrl,
             boolean authorWithdrawn,
+            String authorStatus,
             Long parentCommentId,
             Long targetCommentId,
             Long targetMemberId,
@@ -223,6 +259,7 @@ public class CommunityService {
                 Long postId,
                 Long memberId,
                 String authorNickname,
+                String authorProfileImgUrl,
                 boolean authorWithdrawn,
                 Long parentCommentId,
                 Long targetCommentId,
@@ -237,8 +274,35 @@ public class CommunityService {
                 boolean deleted,
                 Instant createdAt,
                 Instant updatedAt) {
-            this(id, postId, memberId, authorNickname, null, authorWithdrawn, parentCommentId, targetCommentId,
-                    targetMemberId, targetNickname, content, likeCount, reportCount, likedByMe, reportedByMe, mine, deleted, createdAt, updatedAt);
+            this(id, postId, memberId, authorNickname, authorProfileImgUrl, authorWithdrawn,
+                    authorWithdrawn ? "WITHDRAWN" : "ACTIVE",
+                    parentCommentId, targetCommentId, targetMemberId, targetNickname, content, likeCount, reportCount,
+                    likedByMe, reportedByMe, mine, deleted, createdAt, updatedAt);
+        }
+
+        public CommunityCommentResponse(
+                Long id,
+                Long postId,
+                Long memberId,
+                String authorNickname,
+                boolean authorWithdrawn,
+                Long parentCommentId,
+                Long targetCommentId,
+                Long targetMemberId,
+                String targetNickname,
+                String content,
+                int likeCount,
+                int reportCount,
+                boolean likedByMe,
+                boolean reportedByMe,
+                boolean mine,
+                boolean deleted,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, postId, memberId, authorNickname, null, authorWithdrawn,
+                    authorWithdrawn ? "WITHDRAWN" : "ACTIVE",
+                    parentCommentId, targetCommentId, targetMemberId, targetNickname, content, likeCount, reportCount,
+                    likedByMe, reportedByMe, mine, deleted, createdAt, updatedAt);
         }
     }
 
@@ -262,6 +326,7 @@ public class CommunityService {
             String authorNickname,
             String authorProfileImgUrl,
             boolean authorWithdrawn,
+            String authorStatus,
             Long parentCommentId,
             Long targetCommentId,
             Long targetMemberId,
@@ -501,11 +566,20 @@ public class CommunityService {
 
     @Transactional(timeout = 5)
     public CommunityPostResponse createPost(Long memberId, CreatePostRequest body) {
-        return createPost(memberId, body, List.of());
+        return createPost(memberId, body, List.of(), null);
     }
 
     @Transactional(timeout = 5)
     public CommunityPostResponse createPost(Long memberId, CreatePostRequest body, List<MultipartFile> files) {
+        return createPost(memberId, body, files, null);
+    }
+
+    @Transactional(timeout = 5)
+    public CommunityPostResponse createPost(
+            Long memberId,
+            CreatePostRequest body,
+            List<MultipartFile> files,
+            TradingPositionVerifier.VerificationResult verifiedPosition) {
         if (body == null) {
             throw invalidRequest();
         }
@@ -513,7 +587,9 @@ public class CommunityService {
         String symbolTag = normalizeSymbolTag(body.symbolTag());
         String title = validateTitle(body.title());
         String content = validatePostContent(body.content());
-        String sharedPositionJson = serializeSharedPosition(body.sharedPosition());
+        SharedPositionSnapshot effectiveSnapshot = verifiedPosition != null ? verifiedPosition.snapshot() : body.sharedPosition();
+        boolean serverVerified = verifiedPosition != null && verifiedPosition.verified();
+        String sharedPositionJson = serializeSharedPosition(effectiveSnapshot, serverVerified);
 
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
         requireActiveMember(memberId);
@@ -537,6 +613,7 @@ public class CommunityService {
                 created.authorNickname(),
                 created.authorProfileImgUrl(),
                 created.authorWithdrawn(),
+                created.authorStatus(),
                 created.category(),
                 created.symbolTag(),
                 created.title(),
@@ -568,11 +645,21 @@ public class CommunityService {
 
     @Transactional(timeout = 5)
     public CommunityPostResponse updatePost(Long memberId, Long postId, UpdatePostRequest body) {
-        return updatePost(memberId, postId, body, List.of());
+        return updatePost(memberId, postId, body, List.of(), null);
     }
 
     @Transactional(timeout = 5)
     public CommunityPostResponse updatePost(Long memberId, Long postId, UpdatePostRequest body, List<MultipartFile> newFiles) {
+        return updatePost(memberId, postId, body, newFiles, null);
+    }
+
+    @Transactional(timeout = 5)
+    public CommunityPostResponse updatePost(
+            Long memberId,
+            Long postId,
+            UpdatePostRequest body,
+            List<MultipartFile> newFiles,
+            TradingPositionVerifier.VerificationResult verifiedPosition) {
         if (postId == null || postId <= 0 || body == null) {
             throw invalidRequest();
         }
@@ -644,7 +731,9 @@ public class CommunityService {
         if (Boolean.TRUE.equals(body.clearSharedPosition())) {
             sharedPositionJson = null;
         } else if (body.sharedPosition() != null) {
-            sharedPositionJson = serializeSharedPosition(body.sharedPosition());
+            SharedPositionSnapshot effectiveSnapshot = verifiedPosition != null ? verifiedPosition.snapshot() : body.sharedPosition();
+            boolean serverVerified = verifiedPosition != null && verifiedPosition.verified();
+            sharedPositionJson = serializeSharedPosition(effectiveSnapshot, serverVerified);
         } else {
             sharedPositionJson = existing.sharedPositionJson();
         }
@@ -1458,6 +1547,7 @@ public class CommunityService {
                         p.authorNickname(),
                         p.authorProfileImgUrl(),
                         p.authorWithdrawn(),
+                        p.authorStatus(),
                         p.category(),
                         p.symbolTag(),
                         p.title(),
@@ -1511,19 +1601,28 @@ public class CommunityService {
         return upper;
     }
 
-    private String serializeSharedPosition(SharedPositionSnapshot snapshot) {
+    static void validateSharedPositionInput(SharedPositionSnapshot snapshot) {
         if (snapshot == null) {
-            return null;
+            return;
         }
         if (snapshot.symbol() == null || snapshot.symbol().isBlank()
                 || snapshot.side() == null || snapshot.side().isBlank()
-                || snapshot.leverage() < 1 || snapshot.leverage() > 125) {
+                || snapshot.leverage() < 1 || snapshot.leverage() > MAX_SHARED_POSITION_LEVERAGE) {
             throw invalidRequest();
         }
         String normalizedSide = snapshot.side().strip().toUpperCase(Locale.ROOT);
         if (!"LONG".equals(normalizedSide) && !"SHORT".equals(normalizedSide)) {
             throw invalidRequest();
         }
+    }
+
+    private String serializeSharedPosition(SharedPositionSnapshot snapshot, boolean serverVerified) {
+        if (snapshot == null) {
+            return null;
+        }
+        validateSharedPositionInput(snapshot);
+        String normalizedSide = snapshot.side().strip().toUpperCase(Locale.ROOT);
+        // Never trust client-submitted verified flag; only server-side TradingPositionVerifier can set true.
         SharedPositionSnapshot canonical = new SharedPositionSnapshot(
                 snapshot.id(),
                 snapshot.marketLabel(),
@@ -1538,7 +1637,7 @@ public class CommunityService {
                 snapshot.pnlUsdt(),
                 snapshot.positive(),
                 snapshot.showPnlAmount(),
-                snapshot.verified());
+                Boolean.valueOf(serverVerified));
         try {
             return json.writeValueAsString(canonical);
         } catch (JsonProcessingException e) {
@@ -1616,7 +1715,10 @@ public class CommunityService {
     }
 
     private static boolean isMaskedAuthorStatus(String memberStatus, String nickname) {
-        return memberStatus == null || !"ACTIVE".equals(memberStatus) || nickname == null;
+        return memberStatus == null
+                || isWithdrawnStatus(memberStatus)
+                || nickname == null
+                || nickname.isBlank();
     }
 
     private CommunityPostResponse mapRawPost(ResultSet rs, Long viewerId) throws SQLException {
@@ -1632,6 +1734,7 @@ public class CommunityService {
                 displayNickname,
                 displayProfileImgUrl,
                 authorWithdrawn,
+                memberStatus,
                 rs.getString("category"),
                 rs.getString("symbol_tag"),
                 rs.getString("title"),
@@ -1686,6 +1789,7 @@ public class CommunityService {
                 displayNickname,
                 displayProfileImgUrl,
                 authorWithdrawn,
+                memberStatus,
                 parentCommentId,
                 targetCommentId,
                 targetMemberId,
@@ -1737,6 +1841,7 @@ public class CommunityService {
                 displayNickname,
                 displayProfileImgUrl,
                 authorWithdrawn,
+                memberStatus,
                 parentCommentId,
                 targetCommentId,
                 targetMemberId,

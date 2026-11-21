@@ -19,8 +19,19 @@ public class MemberQueries {
     public MemberProfileResponse ownProfile(String subject) {
         Long id;
         try { id=Long.valueOf(subject); } catch(NumberFormatException failure) { throw AuthFailure.unauthorized(); }
-        var member=members.findById(id).filter(m -> m.getStatus()==Member.Status.ACTIVE).orElseThrow(AuthFailure::unauthorized);
+        var member=members.findById(id)
+                .filter(m -> m.getStatus()==Member.Status.ACTIVE || m.getStatus()==Member.Status.SUSPENDED)
+                .orElseThrow(AuthFailure::unauthorized);
         String imgUrl = s3 == null ? member.getProfileImgUrl() : s3.sanitizeProfileImageUrl(member.getProfileImgUrl());
-        return new MemberProfileResponse(member.getId(),member.getNickname(),member.getProfileMessage(),imgUrl,member.getRole().name(),member.getCreatedAt());
+        return new MemberProfileResponse(
+                member.getId(),
+                member.getNickname(),
+                member.getProfileMessage(),
+                imgUrl,
+                member.getRole().name(),
+                member.getStatus().name(),
+                member.getSuspendedAt(),
+                member.getSuspendedReason(),
+                member.getCreatedAt());
     }
 }

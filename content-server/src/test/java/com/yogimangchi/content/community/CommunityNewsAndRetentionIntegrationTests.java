@@ -997,9 +997,12 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.items[0].section").value("NEWSROOM"))
                 .andExpect(jsonPath("$.items[0].subCategory").value("STOCKS"));
 
-        // 5. Vote BULL and BEAR reactions on the newly ingested BTC article (from two distinct actors)
+        // 5. Vote BULL and BEAR reactions on the newly ingested BTC article (from two distinct client remote addresses)
         mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
-                        .header("X-Forwarded-For", "203.0.113.10")
+                        .with(req -> {
+                            req.setRemoteAddr("203.0.113.10");
+                            return req;
+                        })
                         .contentType("application/json")
                         .content("{\"reaction\":\"BULL\"}"))
                 .andExpect(status().isOk())
@@ -1011,7 +1014,10 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.bullPct").value(100));
 
         mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
-                        .header("X-Forwarded-For", "203.0.113.11")
+                        .with(req -> {
+                            req.setRemoteAddr("203.0.113.11");
+                            return req;
+                        })
                         .contentType("application/json")
                         .content("{\"reaction\":\"BEAR\"}"))
                 .andExpect(status().isOk())
@@ -1169,8 +1175,12 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         long bullVotesBefore = sentimentNode.path("totalBullVotes").asLong();
         int bullPctBefore = sentimentNode.path("bullPct").asInt();
         for (int i = 0; i < 30; i++) {
+            String remoteIp = "198.51.100." + (i + 1);
             mvc.perform(post("/api/v1/news/" + btcItem.id() + "/reactions")
-                            .header("X-Forwarded-For", "198.51.100." + (i + 1))
+                            .with(req -> {
+                                req.setRemoteAddr(remoteIp);
+                                return req;
+                            })
                             .contentType("application/json")
                             .content("{\"reaction\":\"BULL\"}"))
                     .andExpect(status().isOk());
@@ -1500,6 +1510,7 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.sharedPosition.symbol").value("DOGE"))
                 .andExpect(jsonPath("$.sharedPosition.side").value("LONG"))
                 .andExpect(jsonPath("$.sharedPosition.liquidationPrice").value("-"))
+                .andExpect(jsonPath("$.sharedPosition.verified").value(false))
                 .andReturn().getResponse().getContentAsString();
         long postId = json.readTree(createdBody).path("id").asLong();
 

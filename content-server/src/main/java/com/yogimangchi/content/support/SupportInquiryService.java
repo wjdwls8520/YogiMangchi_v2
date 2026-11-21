@@ -38,6 +38,7 @@ public class SupportInquiryService {
             Long id,
             Long memberId,
             String memberNickname,
+            String memberStatus,
             String category,
             String title,
             String content,
@@ -46,7 +47,23 @@ public class SupportInquiryService {
             Long repliedByMemberId,
             Instant repliedAt,
             Instant createdAt
-    ) { }
+    ) {
+        public SupportInquiryResponse(
+                Long id,
+                Long memberId,
+                String memberNickname,
+                String category,
+                String title,
+                String content,
+                String status,
+                String adminReply,
+                Long repliedByMemberId,
+                Instant repliedAt,
+                Instant createdAt) {
+            this(id, memberId, memberNickname, null, category, title, content, status,
+                    adminReply, repliedByMemberId, repliedAt, createdAt);
+        }
+    }
 
     public record SupportInquiryPageResponse(
             List<SupportInquiryResponse> items,
@@ -88,7 +105,7 @@ public class SupportInquiryService {
         String content = validateText(body.content(), 4000);
 
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
-        requireActiveMember(memberId);
+        requireMemberForSupport(memberId);
 
         Long id = jdbc.queryForObject(
                 "insert into content.support_inquiry(member_id, category, title, content, status, created_at) "
@@ -101,7 +118,7 @@ public class SupportInquiryService {
 
     @Transactional(readOnly = true, timeout = 3)
     public SupportInquiryPageResponse listMyInquiries(Long memberId, String status, Long cursorId, Integer size) {
-        requireActiveMember(memberId);
+        requireMemberForSupport(memberId);
         int limit = validateSize(size, 20, 50);
         if (cursorId != null && cursorId <= 0) {
             throw invalidRequest();
@@ -253,7 +270,8 @@ public class SupportInquiryService {
     private SupportInquiryResponse mapRow(ResultSet rs) throws SQLException {
         String memberStatus = rs.getString("member_status");
         String rawNick = rs.getString("member_nickname");
-        String displayNick = "ACTIVE".equals(memberStatus) && rawNick != null && !rawNick.isBlank()
+        boolean withdrawn = CommunityService.isWithdrawnStatus(memberStatus);
+        String displayNick = !withdrawn && rawNick != null && !rawNick.isBlank()
                 ? rawNick
                 : CommunityService.WITHDRAWN_AUTHOR_NICKNAME;
         long repliedByRaw = rs.getLong("replied_by_member_id");
@@ -264,6 +282,7 @@ public class SupportInquiryService {
                 rs.getLong("id"),
                 rs.getLong("member_id"),
                 displayNick,
+                memberStatus,
                 rs.getString("category"),
                 rs.getString("title"),
                 rs.getString("content"),
@@ -274,12 +293,12 @@ public class SupportInquiryService {
                 createdTs == null ? null : createdTs.toInstant());
     }
 
-    private void requireActiveMember(Long memberId) {
+    private void requireMemberForSupport(Long memberId) {
         if (memberId == null || memberId <= 0) {
             throw AuthFailure.unauthorized();
         }
         members.findById(memberId)
-                .filter(m -> m.getStatus() == Member.Status.ACTIVE)
+                .filter(m -> m.getStatus() == Member.Status.ACTIVE || m.getStatus() == Member.Status.SUSPENDED)
                 .orElseThrow(AuthFailure::unauthorized);
     }
 

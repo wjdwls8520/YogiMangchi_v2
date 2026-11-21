@@ -28,7 +28,7 @@ public class SupportInquiryController {
     @PostMapping(value = "/api/v1/support/inquiries", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(
             summary = "Submit a 1:1 customer support inquiry",
-            description = "Active member Bearer required. Recommended categories: ACCOUNT, TRADING, CONTEST, COMMUNITY, BUG, GENERAL, ETC."
+            description = "ACTIVE or SUSPENDED member Bearer required (allows suspension appeals). Recommended categories: ACCOUNT, TRADING, CONTEST, COMMUNITY, BUG, GENERAL, ETC."
     )
     public ResponseEntity<SupportInquiryService.SupportInquiryResponse> createInquiry(
             @AuthenticationPrincipal Jwt jwt,
