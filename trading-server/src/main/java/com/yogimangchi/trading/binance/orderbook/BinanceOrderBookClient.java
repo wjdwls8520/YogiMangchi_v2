@@ -122,6 +122,17 @@ public class BinanceOrderBookClient {
         }
     }
 
+    public String connectionStatus() {
+        if (stopping) {
+            return "STOPPING";
+        }
+        Session session = this.current;
+        if (session == null) {
+            return "DISCONNECTED";
+        }
+        return session.healthy ? "CONNECTED" : "CONNECTING";
+    }
+
     private final class Session implements WebSocket.Listener {
         final BinanceOrderBookProtocol protocol;
         final StringBuilder text = new StringBuilder();
@@ -129,7 +140,7 @@ public class BinanceOrderBookClient {
         volatile WebSocket socket;
         CompletableFuture<WebSocket> handshake;
         long opened, lastData;
-        boolean healthy;
+        volatile boolean healthy;
         Session(BinanceOrderBookProtocol protocol) { this.protocol = protocol; }
         void abort() {
             if (socket != null) socket.abort();

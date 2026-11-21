@@ -28,10 +28,18 @@ public class GuestRetryService {
     private final TradingOrderRepository orders;
     private final TradingEvents events;
     private final JdbcTemplate jdbc;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits;
     public GuestRetryService(AccountLock locks,WalletRepository wallets,PositionRepository positions,
             TradingOrderRepository orders,TradingEvents events,JdbcTemplate jdbc,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {
+        this(locks,wallets,positions,orders,events,jdbc,risk,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public GuestRetryService(AccountLock locks,WalletRepository wallets,PositionRepository positions,
+            TradingOrderRepository orders,TradingEvents events,JdbcTemplate jdbc,com.yogimangchi.trading.execution.recovery.RiskAdmission risk,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits) {
         this.risk=risk;
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders; this.events=events; this.jdbc=jdbc;
+        this.takeProfits=takeProfits;
     }
     @Transactional(timeout=10)
     public GuestRetryResponse retry(Long accountId,String key) {
@@ -55,7 +63,8 @@ public class GuestRetryService {
             else byId.get(order.getPositionId()).releaseCloseReservation(order.getQuantity());
             order.cancelForGuestRetry(now); events.record(order,null);
         }
-        for(var position:open) {released=released.add(position.closeForGuestRetry(now));events.recordStopLoss(position);}
+        var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
+        for(var position:open) {released=released.add(position.closeForGuestRetry(now));events.recordStopLoss(position);if(tpService!=null)tpService.expireIfActive(position,"GUEST_RETRY",now);}
         wallet.restartGuest(released,reserved);
         account.restartGuest(now);
         Long id=jdbc.queryForObject("insert into trading.guest_retry(account_id,request_key,balance_before,balance_after,capital_adjustment,canceled_order_count,closed_position_count,reset_at) values (?,?,?,?,?,?,?,?) returning id",

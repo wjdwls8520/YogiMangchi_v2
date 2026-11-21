@@ -398,7 +398,7 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    int connectedClients() {
+    public int connectedClients() {
         return clients.size();
     }
 

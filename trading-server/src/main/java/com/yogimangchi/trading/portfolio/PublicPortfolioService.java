@@ -68,9 +68,20 @@ public class PublicPortfolioService {
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, timeout = 5)
     public PublicMemberPortfolioResponse getMemberPortfolio(Long memberId) {
-        if (memberId == null || memberId <= 0) {
+        return getMemberPortfolio(memberId, null, false);
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, timeout = 5)
+    public PublicMemberPortfolioResponse getMemberPortfolio(Long targetMemberId, Long viewerMemberId) {
+        return getMemberPortfolio(targetMemberId, viewerMemberId, false);
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, timeout = 5)
+    public PublicMemberPortfolioResponse getMemberPortfolio(Long targetMemberId, Long viewerMemberId, boolean viewerIsAdmin) {
+        if (targetMemberId == null || targetMemberId <= 0) {
             throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
         }
+        boolean portfolioPublic = isPortfolioPublic(targetMemberId);
         var accountRows = jdbc.queryForList("""
                 SELECT id
                 FROM trading.trading_account
@@ -80,9 +91,12 @@ public class PublicPortfolioService {
                   AND status IN ('ACTIVE', 'BANKRUPT')
                 ORDER BY id DESC
                 LIMIT 1
-                """, memberId);
+                """, targetMemberId);
         if (accountRows.isEmpty()) {
-            return PublicMemberPortfolioResponse.empty(memberId);
+            if (!portfolioPublic && !viewerIsAdmin && !targetMemberId.equals(viewerMemberId)) {
+                return PublicMemberPortfolioResponse.hidden(targetMemberId, false);
+            }
+            return PublicMemberPortfolioResponse.empty(targetMemberId, portfolioPublic);
         }
         long accountId = ((Number) accountRows.get(0).get("id")).longValue();
         TradingAccount account = accounts.findById(accountId).orElse(null);
@@ -90,7 +104,14 @@ public class PublicPortfolioService {
         if (account == null || wallet == null
                 || (account.getStatus() != TradingAccount.Status.ACTIVE
                         && account.getStatus() != TradingAccount.Status.BANKRUPT)) {
-            return PublicMemberPortfolioResponse.empty(memberId);
+            if (!portfolioPublic && !viewerIsAdmin && !targetMemberId.equals(viewerMemberId)) {
+                return PublicMemberPortfolioResponse.hidden(targetMemberId, false);
+            }
+            return PublicMemberPortfolioResponse.empty(targetMemberId, portfolioPublic);
+        }
+
+        if (!portfolioPublic && !viewerIsAdmin && !targetMemberId.equals(viewerMemberId)) {
+            return PublicMemberPortfolioResponse.hidden(targetMemberId, true);
         }
 
         var roundRows = jdbc.queryForList("""
@@ -218,8 +239,9 @@ public class PublicPortfolioService {
         ClosedTradeSummary closedTradeSummary = computeClosedTradeSummary(accountId, roundId);
 
         return new PublicMemberPortfolioResponse(
-                memberId,
+                targetMemberId,
                 true,
+                portfolioPublic,
                 roundId,
                 roundNumber,
                 plain(initialSeed),
@@ -228,6 +250,13 @@ public class PublicPortfolioService {
                 List.copyOf(positionItems),
                 symbolPerformances,
                 closedTradeSummary);
+    }
+
+    private boolean isPortfolioPublic(Long memberId) {
+        var rows = jdbc.queryForList(
+                "SELECT portfolio_public FROM trading.member_portfolio_preference WHERE member_id = ?",
+                Boolean.class, memberId);
+        return rows.isEmpty() || Boolean.TRUE.equals(rows.get(0));
     }
 
     private Map<Long, String> loadSymbolNames(List<Position> open) {

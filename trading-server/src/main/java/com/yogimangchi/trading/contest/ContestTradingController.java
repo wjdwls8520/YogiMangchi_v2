@@ -10,6 +10,8 @@ import com.yogimangchi.trading.leverage.dto.LeverageRequest;
 import com.yogimangchi.trading.leverage.dto.LeverageResponse;
 import com.yogimangchi.trading.leverage.service.SymbolLeverageService;
 import com.yogimangchi.trading.order.dto.AmendOrderRequest;
+import com.yogimangchi.trading.order.dto.CancelAllOrdersResponse;
+import com.yogimangchi.trading.order.dto.CloseAllPositionsResponse;
 import com.yogimangchi.trading.order.dto.ClosePositionRequest;
 import com.yogimangchi.trading.order.dto.CreateOrderRequest;
 import com.yogimangchi.trading.order.dto.LimitCloseRequest;
@@ -24,6 +26,9 @@ import com.yogimangchi.trading.position.entity.Position;
 import com.yogimangchi.trading.stoploss.StopLossRequest;
 import com.yogimangchi.trading.stoploss.StopLossResponse;
 import com.yogimangchi.trading.stoploss.StopLossService;
+import com.yogimangchi.trading.takeprofit.TakeProfitRequest;
+import com.yogimangchi.trading.takeprofit.TakeProfitResponse;
+import com.yogimangchi.trading.takeprofit.TakeProfitService;
 import com.yogimangchi.trading.tradehistory.dto.ClosedPositionPage;
 import com.yogimangchi.trading.tradehistory.dto.FillHistoryResponse;
 import com.yogimangchi.trading.tradehistory.service.TradeHistoryService;
@@ -66,6 +71,7 @@ public class ContestTradingController {
     private final SymbolLeverageService leverageService;
     private final TradeHistoryService historyService;
     private final StopLossService stopLossService;
+    private final TakeProfitService takeProfitService;
     private final CommandResultQueryService commandResultService;
     private final TradingEvents tradingEvents;
     private final RiskRecoveryController riskRecoveryController;
@@ -79,6 +85,7 @@ public class ContestTradingController {
             SymbolLeverageService leverageService,
             TradeHistoryService historyService,
             StopLossService stopLossService,
+            TakeProfitService takeProfitService,
             CommandResultQueryService commandResultService,
             TradingEvents tradingEvents,
             RiskRecoveryController riskRecoveryController,
@@ -90,6 +97,7 @@ public class ContestTradingController {
         this.leverageService = leverageService;
         this.historyService = historyService;
         this.stopLossService = stopLossService;
+        this.takeProfitService = takeProfitService;
         this.commandResultService = commandResultService;
         this.tradingEvents = tradingEvents;
         this.riskRecoveryController = riskRecoveryController;
@@ -215,6 +223,28 @@ public class ContestTradingController {
         return response;
     }
 
+    @PostMapping("/orders/cancel-all")
+    @Operation(summary = "Atomically cancel all pending orders in the active contest season")
+    public CancelAllOrdersResponse cancelAllOrders(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @PathVariable Long seasonId) {
+        Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        CancelAllOrdersResponse response = orderService.cancelAll(accountId);
+        contestService.evictContestCache(seasonId);
+        return response;
+    }
+
+    @PostMapping("/positions/close-all")
+    @Operation(summary = "Atomically cancel pending close reservations and market-close all open positions in the active contest season")
+    public CloseAllPositionsResponse closeAllPositions(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @PathVariable Long seasonId) {
+        Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        CloseAllPositionsResponse response = orderService.closeAll(accountId);
+        contestService.evictContestCache(seasonId);
+        return response;
+    }
+
     @PostMapping("/positions/{positionId:[0-9]+}/close")
     @Operation(summary = "Market-close an open position in the active contest season")
     public OrderResponse closePosition(
@@ -277,6 +307,44 @@ public class ContestTradingController {
             @RequestParam long expectedVersion) {
         Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
         StopLossResponse response = stopLossService.delete(accountId, positionId, idempotencyKey, expectedVersion);
+        contestService.evictContestCache(seasonId);
+        return response;
+    }
+
+    @GetMapping("/positions/{positionId:[0-9]+}/take-profit")
+    @Operation(summary = "Get take-profit configuration for a contest position")
+    public TakeProfitResponse getTakeProfit(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @PathVariable Long seasonId,
+            @PathVariable Long positionId) {
+        Long accountId = contestService.requireContestAccountForRead(principal.memberId(), seasonId);
+        return takeProfitService.get(accountId, positionId);
+    }
+
+    @PutMapping("/positions/{positionId:[0-9]+}/take-profit")
+    @Operation(summary = "Set or update take-profit on a contest position")
+    public TakeProfitResponse setTakeProfit(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @PathVariable Long seasonId,
+            @PathVariable Long positionId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody TakeProfitRequest request) {
+        Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        TakeProfitResponse response = takeProfitService.put(accountId, positionId, idempotencyKey, request);
+        contestService.evictContestCache(seasonId);
+        return response;
+    }
+
+    @DeleteMapping("/positions/{positionId:[0-9]+}/take-profit")
+    @Operation(summary = "Cancel take-profit on a contest position")
+    public TakeProfitResponse cancelTakeProfit(
+            @AuthenticationPrincipal TradingPrincipal principal,
+            @PathVariable Long seasonId,
+            @PathVariable Long positionId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestParam long expectedVersion) {
+        Long accountId = contestService.requireActiveContestAccountForTrading(principal.memberId(), seasonId);
+        TakeProfitResponse response = takeProfitService.delete(accountId, positionId, idempotencyKey, expectedVersion);
         contestService.evictContestCache(seasonId);
         return response;
     }
@@ -379,14 +447,15 @@ public class ContestTradingController {
     }
 
     @GetMapping("/events")
-    @Operation(summary = "Replay own committed contest trading events in ascending eventId order")
+    @Operation(summary = "Replay own committed contest trading events in ascending eventId order (or newest first when latest=true and afterId=0)")
     public List<TradingEventResponse> getEvents(
             @AuthenticationPrincipal TradingPrincipal principal,
             @PathVariable Long seasonId,
             @RequestParam(defaultValue = "0") long afterId,
-            @RequestParam(defaultValue = "50") int limit) {
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(defaultValue = "false") boolean latest) {
         Long accountId = contestService.requireContestAccountForRead(principal.memberId(), seasonId);
-        return tradingEvents.after(accountId, afterId, limit);
+        return tradingEvents.query(accountId, afterId, limit, latest);
     }
 
     @GetMapping("/recovery")

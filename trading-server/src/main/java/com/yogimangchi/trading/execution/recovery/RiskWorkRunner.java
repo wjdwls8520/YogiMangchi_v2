@@ -3,19 +3,30 @@ package com.yogimangchi.trading.execution.recovery;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.execution.trigger.AccountTriggerService;
 import com.yogimangchi.trading.marketdata.MarketDataEvent;
+import com.yogimangchi.trading.ops.OpsAlertService;
 import com.yogimangchi.trading.tradingaccount.entity.TradingAccount;
 import com.yogimangchi.trading.tradingaccount.service.AccountLock;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class RiskWorkRunner {
+    private static final Logger log = LoggerFactory.getLogger(RiskWorkRunner.class);
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final AccountLock locks;
     private final AccountTriggerService trigger;private final RiskAdmission admission;private final RiskGapRecovery gaps;
+    private final ObjectProvider<OpsAlertService> alerts;
     public RiskWorkRunner(JdbcTemplate jdbc,ObjectMapper json,AccountLock locks,AccountTriggerService trigger,RiskAdmission admission,RiskGapRecovery gaps) {
-        this.jdbc=jdbc;this.json=json;this.locks=locks;this.trigger=trigger;this.admission=admission;this.gaps=gaps;
+        this(jdbc,json,locks,trigger,admission,gaps,null);
+    }
+    @Autowired
+    public RiskWorkRunner(JdbcTemplate jdbc,ObjectMapper json,AccountLock locks,AccountTriggerService trigger,RiskAdmission admission,RiskGapRecovery gaps,ObjectProvider<OpsAlertService> alerts) {
+        this.jdbc=jdbc;this.json=json;this.locks=locks;this.trigger=trigger;this.admission=admission;this.gaps=gaps;this.alerts=alerts;
     }
     @Transactional(timeout=5)
     public boolean process(long accountId,long eventId) {return processPrefix(accountId,eventId,1)>0;}
@@ -72,9 +83,20 @@ public class RiskWorkRunner {
         int limit=((Number)rows.get(0).get("retry_limit")).intValue();
         jdbc.update("insert into trading.risk_work_attempt(account_id,event_id,attempt_number,error_code) values(?,?,?,?)",accountId,eventId,attempt,code);
         jdbc.update("update trading.risk_account_work set attempts=?,status=?,next_attempt_at=clock_timestamp()+make_interval(secs=>?) where account_id=? and event_id=?",attempt,attempt>=limit?"HELD":"PENDING",Math.min(30,1<<Math.min(attempt,4)),accountId,eventId);
-        if(attempt>=limit)jdbc.update("""
-            insert into trading.risk_hold(account_id,event_id,reason,evidence)
-            values(?,?,'RISK_PROCESSING_FAILED',jsonb_build_object('eventId',?,'attempts',?,'code',?::text)) on conflict do nothing
-            """,accountId,eventId,eventId,attempt,code);
+        if(attempt>=limit) {
+            jdbc.update("""
+                insert into trading.risk_hold(account_id,event_id,reason,evidence)
+                values(?,?,'RISK_PROCESSING_FAILED',jsonb_build_object('eventId',?,'attempts',?,'code',?::text)) on conflict do nothing
+                """,accountId,eventId,eventId,attempt,code);
+            log.error("[Risk work] HELD accountId={} eventId={} attempts={} code={}", accountId, eventId, attempt, code);
+            OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+            if (alertService != null) {
+                alertService.alert(
+                        "RISK_PROCESSING_FAILED:" + accountId,
+                        "CRITICAL",
+                        "Risk work held after retries exhausted",
+                        Map.of("accountId", accountId, "eventId", eventId, "attempts", attempt, "code", String.valueOf(code)));
+            }
+        }
     }
 }

@@ -32,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import org.slf4j.Logger;
@@ -86,6 +87,7 @@ public class MarketOverviewCollector {
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicLong tickCounter = new AtomicLong(0);
+    private final AtomicInteger consecutiveUpstreamFailures = new AtomicInteger(0);
 
     private volatile MarketOverviewSnapshot lastSnapshot;
 
@@ -588,13 +590,33 @@ public class MarketOverviewCollector {
     }
 
     private Optional<JsonNode> fetchJson(URI uri) {
-        return httpGet.apply(uri).flatMap(body -> {
-            try {
-                return Optional.ofNullable(mapper.readTree(body));
-            } catch (IOException exception) {
-                return Optional.empty();
+        Optional<String> raw = httpGet.apply(uri);
+        if (raw.isEmpty()) {
+            int failures = consecutiveUpstreamFailures.incrementAndGet();
+            if (failures == 3 || (failures > 3 && failures % 10 == 0)) {
+                log.warn("[Market overview] consecutive upstream fetch failures count={} host={}", failures, uri.getHost());
             }
-        });
+            return Optional.empty();
+        }
+        try {
+            JsonNode parsed = mapper.readTree(raw.get());
+            if (parsed != null) {
+                consecutiveUpstreamFailures.set(0);
+                return Optional.of(parsed);
+            }
+            int failures = consecutiveUpstreamFailures.incrementAndGet();
+            if (failures == 3 || (failures > 3 && failures % 10 == 0)) {
+                log.warn("[Market overview] consecutive upstream empty JSON responses count={} host={}", failures, uri.getHost());
+            }
+            return Optional.empty();
+        } catch (IOException exception) {
+            int failures = consecutiveUpstreamFailures.incrementAndGet();
+            if (failures == 3 || (failures > 3 && failures % 10 == 0)) {
+                log.warn("[Market overview] consecutive upstream parse failures count={} host={} cause={}",
+                        failures, uri.getHost(), exception.getClass().getSimpleName());
+            }
+            return Optional.empty();
+        }
     }
 
     private static Optional<BigDecimal> parseDecimal(JsonNode node) {

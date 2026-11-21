@@ -45,6 +45,7 @@ public class TradingNotificationService {
     public static final String TYPE_CONTEST_APPLICATION_APPROVED = "CONTEST_APPLICATION_APPROVED";
     public static final String TYPE_CONTEST_APPLICATION_REJECTED = "CONTEST_APPLICATION_REJECTED";
     public static final String TYPE_CONTEST_SEASON_SETTLED = "CONTEST_SEASON_SETTLED";
+    public static final String TYPE_CONTEST_SEASON_CANCELED = "CONTEST_SEASON_CANCELED";
 
     private static final Map<String, String> SYMBOL_KOREAN_NAMES = Map.ofEntries(
             Map.entry("BTC", "비트코인"),
@@ -432,6 +433,30 @@ public class TradingNotificationService {
         });
     }
 
+    public void notifyContestSeasonCanceledAfterCommit(
+            Long seasonId,
+            String seasonTitle,
+            java.util.Collection<Long> affectedMemberIds,
+            Instant canceledAt) {
+        if (affectedMemberIds == null || affectedMemberIds.isEmpty()) {
+            return;
+        }
+        List<Long> memberSnapshot = List.copyOf(new java.util.LinkedHashSet<>(affectedMemberIds));
+        afterCommit(() -> {
+            try {
+                List<DispatchOutcome> outcomes = requiresNewTx.execute(
+                        tx -> dispatchContestSeasonCanceledInNewTx(seasonId, seasonTitle, memberSnapshot, canceledAt));
+                if (outcomes != null) {
+                    for (DispatchOutcome outcome : outcomes) {
+                        sse.sendNotification(outcome.receiverId(), outcome.eventName(), outcome.notification(), outcome.status());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("대회 취소 알림 저장 실패: seasonId={}", seasonId, e);
+            }
+        });
+    }
+
     private DispatchOutcome dispatchOrderSnapshotInNewTx(OrderSnapshot snap) {
         List<AccountOwnerRow> ownerRows = jdbc.query(
                 "select member_id, guest_account, status, account_type, contest_season_id from trading.trading_account where id = ?",
@@ -523,7 +548,9 @@ public class TradingNotificationService {
                     queryStatusInternal(owner.memberId()));
         }
 
-        String effectiveOrderType = "STOP_LOSS".equals(snap.reason()) ? "STOP_MARKET" : snap.type();
+        String effectiveOrderType = "STOP_LOSS".equals(snap.reason()) ? "STOP_MARKET"
+                : "TAKE_PROFIT".equals(snap.reason()) ? "TAKE_PROFIT_MARKET"
+                : snap.type();
         BigDecimal executedMargin = TradingMath.margin(snap.fillPrice(), snap.fillQuantity(), snap.leverage());
         boolean isClose = "CLOSE".equals(snap.action());
 
@@ -542,6 +569,9 @@ public class TradingNotificationService {
         payload.put("baseSymbol", baseSymbol);
         payload.put("displayNameKr", displayNameKr);
         payload.put("orderType", effectiveOrderType);
+        if (snap.reason() != null) {
+            payload.put("reason", snap.reason());
+        }
         payload.put("positionSide", snap.side());
         payload.put("positionAction", snap.action());
         payload.put("leverage", snap.leverage());
@@ -708,6 +738,43 @@ public class TradingNotificationService {
         return outcomes;
     }
 
+    private List<DispatchOutcome> dispatchContestSeasonCanceledInNewTx(
+            Long seasonId,
+            String seasonTitle,
+            List<Long> affectedMemberIds,
+            Instant canceledAt) {
+        String resolvedTitle = (seasonTitle == null || seasonTitle.isBlank()) ? "대회" : seasonTitle;
+        String canceledAtIso = canceledAt != null ? canceledAt.toString() : Instant.now().toString();
+        List<DispatchOutcome> outcomes = new ArrayList<>(affectedMemberIds.size());
+        for (Long memberId : affectedMemberIds) {
+            if (memberId == null || memberId <= 0
+                    || accounts.existsByMemberIdAndStatus(memberId, TradingAccount.Status.WITHDRAWN)) {
+                continue;
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("seasonId", seasonId);
+            payload.put("seasonTitle", resolvedTitle);
+            payload.put("canceledAt", canceledAtIso);
+            payload.put("reason", "대회 시즌이 취소되어 진행 중인 신청·주문·포지션이 정리되었습니다.");
+
+            String dedupeKey = "CONTEST_CANCELED:" + seasonId + ":" + memberId;
+            NotificationItemResponse saved = insertIdempotentNotification(
+                    memberId,
+                    CATEGORY_CONTEST,
+                    TYPE_CONTEST_SEASON_CANCELED,
+                    payload,
+                    dedupeKey);
+            if (saved != null) {
+                outcomes.add(new DispatchOutcome(
+                        memberId,
+                        resolveEventName(CATEGORY_CONTEST, TYPE_CONTEST_SEASON_CANCELED),
+                        saved,
+                        queryStatusInternal(memberId)));
+            }
+        }
+        return outcomes;
+    }
+
     private NotificationItemResponse insertIdempotentNotification(
             Long receiverId,
             String category,
@@ -823,6 +890,7 @@ public class TradingNotificationService {
             case TYPE_CONTEST_APPLICATION_APPROVED -> "NOTIFICATION_CONTEST_APPLICATION_APPROVED";
             case TYPE_CONTEST_APPLICATION_REJECTED -> "NOTIFICATION_CONTEST_APPLICATION_REJECTED";
             case TYPE_CONTEST_SEASON_SETTLED -> "NOTIFICATION_CONTEST_SEASON_SETTLED";
+            case TYPE_CONTEST_SEASON_CANCELED -> "NOTIFICATION_CONTEST_SEASON_CANCELED";
             default -> "NOTIFICATION_" + type;
         };
     }

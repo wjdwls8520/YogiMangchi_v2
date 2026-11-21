@@ -161,10 +161,16 @@ public class Position {
         return closeAdministratively(now,"GUEST_RETRY");
     }
     public BigDecimal closeForMemberRestart(Instant now) {return closeAdministratively(now,"MEMBER_RESTART");}
+    public BigDecimal closeForContestCancellation(Instant now) { return closeAdministratively(now, "CONTEST_CANCELED"); }
     public Settlement closeForContestSettlement(BigDecimal price, Instant now) {
         Settlement settlement = close(quantity, price, now, true);
         closeReason = "CONTEST_SETTLEMENT";
         return settlement;
+    }
+    public Settlement closeByTakeProfit(BigDecimal mark, Instant now) {
+        if (status != Status.OPEN) throw new IllegalStateException("Position is already closed");
+        expireStopLoss("TAKE_PROFIT", now);
+        return close(quantity, mark, now, false);
     }
     private BigDecimal closeAdministratively(Instant now,String reason) {
         if(status!=Status.OPEN || reservedCloseQuantity.signum()!=0 || now.isBefore(openedAt))

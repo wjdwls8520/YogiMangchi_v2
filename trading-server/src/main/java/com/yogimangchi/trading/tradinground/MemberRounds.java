@@ -36,9 +36,16 @@ public class MemberRounds {
     private final TradingOrderRepository orders;
     private final TradingEvents events;
     private final EntityManager entities;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits;
     public MemberRounds(JdbcTemplate jdbc,ObjectMapper mapper,AccountLock locks,TradingAccountService summaries,WalletRepository wallets,PositionRepository positions,TradingOrderRepository orders,TradingEvents events,EntityManager entities,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {
+        this(jdbc,mapper,locks,summaries,wallets,positions,orders,events,entities,risk,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public MemberRounds(JdbcTemplate jdbc,ObjectMapper mapper,AccountLock locks,TradingAccountService summaries,WalletRepository wallets,PositionRepository positions,TradingOrderRepository orders,TradingEvents events,EntityManager entities,com.yogimangchi.trading.execution.recovery.RiskAdmission risk,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits) {
         this.risk=risk;
         this.jdbc=jdbc;this.mapper=mapper;this.locks=locks;this.summaries=summaries;this.wallets=wallets;this.positions=positions;this.orders=orders;this.events=events;this.entities=entities;
+        this.takeProfits=takeProfits;
     }
     @Transactional(propagation=Propagation.MANDATORY)
     public long begin(TradingAccount account,Wallet wallet,String funding,int number,Instant now) {
@@ -78,7 +85,8 @@ public class MemberRounds {
             order.cancelForMemberRestart(now);events.record(order,null);
         }
         captureRetirement(accountId);
-        for(var position:open) {released=released.add(position.closeForMemberRestart(now));events.recordStopLoss(position);}
+        var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
+        for(var position:open) {released=released.add(position.closeForMemberRestart(now));events.recordStopLoss(position);if(tpService!=null)tpService.expireIfActive(position,"MEMBER_RESTART",now);}
         wallet.releaseExposure(released,reserved);
         finish(accountId,wallet,"MEMBER_RESTART",now);
         wallet.restartMember();account.restartMember(now);

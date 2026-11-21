@@ -80,4 +80,16 @@ public class OrderController {
     public OrderResponse cancel(@AuthenticationPrincipal TradingPrincipal principal, @PathVariable Long orderId) {
         return engine.cancel(principal.accountId(), orderId);
     }
+    @PostMapping("/orders/cancel-all")
+    @Operation(summary="Atomically cancel all PENDING orders for the authenticated account",
+            description="Executes under TradingEngineGate and AccountLock, releasing all OPEN margin reservations and CLOSE quantity reservations. Available during price outages.")
+    public CancelAllOrdersResponse cancelAll(@AuthenticationPrincipal TradingPrincipal principal) {
+        return engine.cancelAll(principal.accountId());
+    }
+    @PostMapping("/positions/close-all")
+    @Operation(summary="Atomically cancel pending CLOSE reservations and market-close all OPEN positions at fresh Mark Price",
+            description="Executes under TradingEngineGate and AccountLock. Requires fresh Mark Prices and safe isolated risk across all open positions.")
+    public CloseAllPositionsResponse closeAll(@AuthenticationPrincipal TradingPrincipal principal) {
+        return engine.closeAll(principal.accountId());
+    }
 }

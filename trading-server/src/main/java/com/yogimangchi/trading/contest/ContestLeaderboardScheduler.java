@@ -60,7 +60,7 @@ public class ContestLeaderboardScheduler {
         try {
             contestService.refreshPublicSeasonsSnapshot();
         } catch (Exception ex) {
-            log.debug("[Contest leaderboard scheduler] failed to refresh public seasons snapshot", ex);
+            log.warn("[Contest leaderboard scheduler] failed to refresh public seasons snapshot cause={}", ex.getClass().getSimpleName(), ex);
         }
 
         for (Long seasonId : activeSeasonIds) {
@@ -68,7 +68,7 @@ public class ContestLeaderboardScheduler {
                 contestService.refreshLeaderboardSnapshot(seasonId);
                 refreshed++;
             } catch (Exception ex) {
-                log.debug("[Contest leaderboard scheduler] failed to refresh seasonId={}", seasonId, ex);
+                log.warn("[Contest leaderboard scheduler] failed to refresh seasonId={} cause={}", seasonId, ex.getClass().getSimpleName(), ex);
             }
         }
         return refreshed;

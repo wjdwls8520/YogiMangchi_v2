@@ -183,6 +183,9 @@ public class TradingEventWebSocketHandler extends TextWebSocketHandler {
     @Override public void handleTransportError(WebSocketSession session,Throwable exception) {
         Client client=clients.get(session.getId()); if(client!=null) disconnect(client,new CloseStatus(1011,"Trading stream transport failed"));
     }
+    public int connectedClients() {
+        return clients.size();
+    }
     public void disconnectMember(Long memberId) {
         if(memberId==null || memberId<=0) return;
         List.copyOf(clients.values()).stream()

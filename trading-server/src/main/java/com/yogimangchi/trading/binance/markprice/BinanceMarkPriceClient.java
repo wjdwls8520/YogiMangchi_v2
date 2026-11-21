@@ -67,7 +67,7 @@ public class BinanceMarkPriceClient {
 
     // Lifecycle mutations run on one executor. Identity checks discard callbacks from old sessions.
     private volatile Session current;
-    private State state = State.DISCONNECTED;
+    private volatile State state = State.DISCONNECTED;
     private ScheduledFuture<?> retry;
     private ScheduledFuture<?> watchdog;
     private int retryAttempt;
@@ -220,7 +220,7 @@ public class BinanceMarkPriceClient {
             }
         }
         long elapsed = now - previousStatsAt;
-        if (elapsed >= Duration.ofSeconds(10).toNanos()) {
+        if (elapsed >= Duration.ofSeconds(60).toNanos()) {
             log.info("[Binance WS] stats state={} subscribedSymbols={} receivedEvents={} eventsPerSecond={}"
                             + " rejectedEvents={} lastReceivedAt={}",
                     state, current == null ? 0 : current.protocol.size(), receivedEvents,
@@ -229,6 +229,15 @@ public class BinanceMarkPriceClient {
             previousStatsAt = now;
             previousEvents = receivedEvents;
         }
+    }
+
+    public String connectionStatus() {
+        State currentState = this.state;
+        Session session = this.current;
+        if (currentState == State.CONNECTED && session != null && session.healthy) {
+            return "HEALTHY";
+        }
+        return currentState.name();
     }
 
     private void received(Session session, String text) {
@@ -358,7 +367,7 @@ public class BinanceMarkPriceClient {
         private CompletableFuture<WebSocket> handshake;
         private long openedAt;
         private long lastDataAt;
-        private boolean healthy;
+        private volatile boolean healthy;
 
         private Session(BinanceMarkPriceProtocol protocol, BinanceTickerProtocol tickerProtocol) {
             this.protocol = protocol;
