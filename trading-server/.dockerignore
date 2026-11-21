@@ -1,0 +1,16 @@
+.gradle/
+.gradle-user-home/
+build/
+.git/
+.idea/
+*.iml
+*.log
+local-runtime/
+logs/
+.env
+.env.*
+docs/
+ops/
+scripts/
+README.md
+AGENTS.md

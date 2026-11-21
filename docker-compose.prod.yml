@@ -1,0 +1,231 @@
+# YogiMangchi V2 - $0 Free-Tier EC2 Production Compose (1-2 GB RAM target)
+#
+# Usage (from repository root with production .env prepared outside Git):
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#
+# Security & resource invariants:
+# - PostgreSQL, Redis, content-server, and trading-server stay on the internal
+#   bridge network only; ONLY nginx binds host ports.
+# - Every service inherits bounded json-file log rotation (max 30 MB / service)
+#   and explicit memory caps so the stack stays within a 1-2 GB EC2 footprint.
+# - Zero hardcoded secrets: inject credentials via .env / host environment and
+#   read-only RSA key mount (/run/secrets).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    container_name: yogimangchi-postgres
+    restart: unless-stopped
+    mem_limit: 384m
+    logging: *default-logging
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=96MB"
+      - "-c"
+      - "max_connections=60"
+      - "-c"
+      - "work_mem=4MB"
+    environment:
+      POSTGRES_DB: yogimangchi
+      POSTGRES_USER: ${YOGIMANGCHI_DB_USERNAME}
+      POSTGRES_PASSWORD: ${YOGIMANGCHI_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d yogimangchi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - yogimangchi-internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: yogimangchi-redis
+    restart: unless-stopped
+    mem_limit: 192m
+    logging: *default-logging
+    environment:
+      YOGIMANGCHI_REDIS_PASSWORD: ${YOGIMANGCHI_REDIS_PASSWORD:-}
+    command:
+      - "sh"
+      - "-c"
+      - |
+        if [ -n "$$YOGIMANGCHI_REDIS_PASSWORD" ]; then
+          exec redis-server --appendonly no --save "" --maxmemory 128mb --maxmemory-policy volatile-lru --requirepass "$$YOGIMANGCHI_REDIS_PASSWORD"
+        else
+          exec redis-server --appendonly no --save "" --maxmemory 128mb --maxmemory-policy volatile-lru
+        fi
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - |
+          if [ -n "$$YOGIMANGCHI_REDIS_PASSWORD" ]; then
+            REDISCLI_AUTH="$$YOGIMANGCHI_REDIS_PASSWORD" redis-cli ping | grep -q PONG
+          else
+            redis-cli ping | grep -q PONG
+          fi
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - yogimangchi-internal
+
+  content-server:
+    build:
+      context: ./content-server
+      dockerfile: Dockerfile
+    container_name: yogimangchi-content-server
+    restart: unless-stopped
+    mem_limit: 512m
+    stop_grace_period: 30s
+    logging: *default-logging
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxMetaspaceSize=128m -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
+      SPRING_PROFILES_ACTIVE: "prod,file-log"
+      SERVER_ADDRESS: "0.0.0.0"
+      CONTENT_SERVER_PORT: "8080"
+      LOGGING_FILE_NAME: "/var/log/yogimangchi/content-server.log"
+      YOGIMANGCHI_DB_URL: "jdbc:postgresql://postgres:5432/yogimangchi"
+      YOGIMANGCHI_DB_USERNAME: ${YOGIMANGCHI_DB_USERNAME}
+      YOGIMANGCHI_DB_PASSWORD: ${YOGIMANGCHI_DB_PASSWORD}
+      CONTENT_DB_URL: ${CONTENT_DB_URL:-jdbc:postgresql://postgres:5432/yogimangchi}
+      CONTENT_DB_USERNAME: ${CONTENT_DB_USERNAME:-${YOGIMANGCHI_DB_USERNAME}}
+      CONTENT_DB_PASSWORD: ${CONTENT_DB_PASSWORD:-${YOGIMANGCHI_DB_PASSWORD}}
+      CONTENT_FLYWAY_USERNAME: ${CONTENT_FLYWAY_USERNAME:-${YOGIMANGCHI_DB_USERNAME}}
+      CONTENT_FLYWAY_PASSWORD: ${CONTENT_FLYWAY_PASSWORD:-${YOGIMANGCHI_DB_PASSWORD}}
+      CONTENT_TRADING_BASE_URL: "http://trading-server:8081"
+      CONTENT_WITHDRAWAL_DELIVERY_ENABLED: ${CONTENT_WITHDRAWAL_DELIVERY_ENABLED:-true}
+      CONTENT_LOCAL_MEDIA_DIR: "/var/lib/yogimangchi/uploads"
+      YOGIMANGCHI_JWT_ISSUER: ${YOGIMANGCHI_JWT_ISSUER}
+      CONTENT_JWT_PRIVATE_KEY_PATH: ${CONTENT_JWT_PRIVATE_KEY_PATH:-/run/secrets/content-private.pem}
+      CONTENT_JWT_KEY_ID: ${CONTENT_JWT_KEY_ID:-content-1}
+      CONTENT_AUTH_RETURN_URI: ${CONTENT_AUTH_RETURN_URI}
+      CONTENT_HTTP_ALLOWED_ORIGINS: ${CONTENT_HTTP_ALLOWED_ORIGINS}
+      CONTENT_OAUTH_ENABLED: ${CONTENT_OAUTH_ENABLED:-true}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-}
+      CONTENT_S3_ENABLED: ${CONTENT_S3_ENABLED:-false}
+      CONTENT_S3_PUBLIC_BASE_URL: ${CONTENT_S3_PUBLIC_BASE_URL:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS: ${S3_ACCESS:-}
+      S3_SECRET: ${S3_SECRET:-}
+      S3_REGION: ${S3_REGION:-ap-northeast-2}
+      OPS_ALERT_WEBHOOK_URL: ${OPS_ALERT_WEBHOOK_URL:-}
+      CONTENT_OPS_ALERT_COOLDOWN_SECONDS: ${CONTENT_OPS_ALERT_COOLDOWN_SECONDS:-300}
+    volumes:
+      - content-uploads:/var/lib/yogimangchi/uploads
+      - content-logs:/var/log/yogimangchi
+      - ${YOGIMANGCHI_KEYS_DIR:-./.gradle/local-runtime}:/run/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/actuator/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - yogimangchi-internal
+
+  trading-server:
+    build:
+      context: ./trading-server
+      dockerfile: Dockerfile
+    container_name: yogimangchi-trading-server
+    restart: unless-stopped
+    mem_limit: 640m
+    stop_grace_period: 30s
+    logging: *default-logging
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx320m -XX:MaxMetaspaceSize=128m -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
+      SPRING_PROFILES_ACTIVE: "prod,file-log"
+      SERVER_ADDRESS: "0.0.0.0"
+      TRADING_SERVER_PORT: "8081"
+      LOGGING_FILE_NAME: "/var/log/yogimangchi/trading-server.log"
+      YOGIMANGCHI_DB_URL: "jdbc:postgresql://postgres:5432/yogimangchi"
+      YOGIMANGCHI_DB_USERNAME: ${YOGIMANGCHI_DB_USERNAME}
+      YOGIMANGCHI_DB_PASSWORD: ${YOGIMANGCHI_DB_PASSWORD}
+      TRADING_DB_URL: ${TRADING_DB_URL:-jdbc:postgresql://postgres:5432/yogimangchi}
+      TRADING_DB_USERNAME: ${TRADING_DB_USERNAME:-${YOGIMANGCHI_DB_USERNAME}}
+      TRADING_DB_PASSWORD: ${TRADING_DB_PASSWORD:-${YOGIMANGCHI_DB_PASSWORD}}
+      TRADING_FLYWAY_USERNAME: ${TRADING_FLYWAY_USERNAME:-${YOGIMANGCHI_DB_USERNAME}}
+      TRADING_FLYWAY_PASSWORD: ${TRADING_FLYWAY_PASSWORD:-${YOGIMANGCHI_DB_PASSWORD}}
+      YOGIMANGCHI_REDIS_HOST: "redis"
+      YOGIMANGCHI_REDIS_PORT: "6379"
+      YOGIMANGCHI_REDIS_PASSWORD: ${YOGIMANGCHI_REDIS_PASSWORD:-}
+      TRADING_MEMBER_AUTH_ENABLED: ${TRADING_MEMBER_AUTH_ENABLED:-true}
+      YOGIMANGCHI_JWT_ISSUER: ${YOGIMANGCHI_JWT_ISSUER}
+      TRADING_JWT_PUBLIC_KEY_PATH: ${TRADING_JWT_PUBLIC_KEY_PATH:-/run/secrets/content-public.pem}
+      TRADING_HTTP_ALLOWED_ORIGINS: ${TRADING_HTTP_ALLOWED_ORIGINS}
+      TRADING_WS_ALLOWED_ORIGINS: ${TRADING_WS_ALLOWED_ORIGINS}
+      OPS_ALERT_WEBHOOK_URL: ${OPS_ALERT_WEBHOOK_URL:-}
+      TRADING_OPS_ALERT_COOLDOWN_SECONDS: ${TRADING_OPS_ALERT_COOLDOWN_SECONDS:-300}
+    volumes:
+      - trading-logs:/var/log/yogimangchi
+      - ${YOGIMANGCHI_KEYS_DIR:-./.gradle/local-runtime}:/run/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/actuator/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - yogimangchi-internal
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: yogimangchi-nginx
+    restart: unless-stopped
+    mem_limit: 96m
+    logging: *default-logging
+    ports:
+      - "80:80"
+      # Uncomment after provisioning Let's Encrypt / Certbot TLS certificates on EC2:
+      # - "443:443"
+    volumes:
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Uncomment for Certbot ACME webroot & TLS certificates:
+      # - /var/www/certbot:/var/www/certbot:ro
+      # - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      content-server:
+        condition: service_healthy
+      trading-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - yogimangchi-internal
+
+networks:
+  yogimangchi-internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  content-uploads:
+  content-logs:
+  trading-logs:
