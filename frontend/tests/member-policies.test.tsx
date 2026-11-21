@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { renderToStaticMarkup } from "react-dom/server";
 import { acceptance, parsePolicyState, policyAccepted, readPolicies, type PolicyBundle, type PolicyType } from "../src/features/member/api/policies";
-import { PolicyContent } from "../src/features/member/components/policy-content";
+import { PolicyContent, sanitizePolicyDisplayText } from "../src/features/member/components/policy-content";
 import { PolicyConsentFields, PolicyDialogContent } from "../src/features/member/components/policy-consent-views";
 import { WithdrawalConfirmation } from "../src/features/member/components/withdrawal-confirmation";
 const types: PolicyType[] = ["TERMS", "PRIVACY"];
@@ -12,8 +12,10 @@ const json = (value: unknown) => new Response(JSON.stringify(value));
 async function bundle() {
   return readPolicies("http://localhost:8080", new AbortController().signal, async url => {
     if (String(url).endsWith("/current")) return json(current);
-    const type = String(url).includes("/TERMS/") ? "TERMS" : "PRIVACY", text = `# ${type} original\n\n<script>private</script>`;
-    return json({ type, version: `ym-${type.toLowerCase()}-v1`, documentStatus: "DEVELOPMENT_DRAFT", text, sha256: createHash("sha256").update(text).digest("hex") });
+    const type = String(url).includes("/TERMS/") ? "TERMS" : "PRIVACY";
+    const version = `ym-${type.toLowerCase()}-v1`;
+    const text = `# ${type} original (${version})\n시행일: 2026-11-22 · 문서 상태: 확정(PUBLISHED)\n\n<script>private</script>`;
+    return json({ type, version, documentStatus: "DEVELOPMENT_DRAFT", text, sha256: createHash("sha256").update(text).digest("hex") });
   });
 }
 test("policy bundle uses exact type/version and verifies the original SHA-256", async () => {
@@ -39,20 +41,29 @@ test("reconsent does not promote an older agreement to a new policy version", as
   assert.equal(acceptance(loaded, {}, accepted).termAgree, true);
   assert.equal(policyAccepted({}, "TERMS", "ym-terms-v2", accepted), false);
 });
-test("public and popup policy content share clean originals without internal draft placeholders and show support fallback when missing", async () => {
+test("public and popup policy content share clean originals without internal policy codes or draft placeholders and preserve hidden version inputs", async () => {
   const loaded: PolicyBundle = await bundle();
+  assert.equal(
+    sanitizePolicyDisplayText("# 요기망치 이용약관 (ym-terms-v3)\n시행일: 2026-11-22 · 문서 상태: 확정(PUBLISHED)\n\n제1조"),
+    "# 요기망치 이용약관\n시행일: 2026-11-22\n\n제1조",
+  );
   const page = renderToStaticMarkup(<PolicyContent type="TERMS" document={loaded.documents.TERMS} />);
   const popup = renderToStaticMarkup(<PolicyDialogContent document={loaded.documents.TERMS} accepted={false} onAccept={() => {}} onRevoke={() => {}} onClose={() => {}} />);
   assert.equal(popup.includes(page), true);
   assert.match(page, /TERMS original/);
-  assert.match(page, /ym-terms-v1/);
+  assert.match(page, /<h2>이용약관 전문<\/h2>/);
+  assert.match(page, /현재 동의 대상 약관입니다\./);
+  assert.equal(page.includes("ym-terms-"), false);
+  assert.equal(page.includes("(PUBLISHED)"), false);
   assert.equal(page.includes("<script>"), false);
-  for (const forbidden of ["[추후", "frontend-draft", "서버 등록 개발 초안", "위 문구는 초기안이다", "검토용 전체 원고"]) {
+  for (const forbidden of ["[추후", "frontend-draft", "서버 등록 개발 초안", "위 문구는 초기안이다", "검토용 전체 원고", "문서 상태:"]) {
     assert.equal(page.includes(forbidden), false, `TERMS should not expose ${forbidden}`);
   }
   const privacy = renderToStaticMarkup(<PolicyContent type="PRIVACY" document={loaded.documents.PRIVACY} />);
   assert.match(privacy, /PRIVACY original/);
-  assert.match(privacy, /ym-privacy-v1/);
+  assert.match(privacy, /<h2>개인정보처리방침 전문<\/h2>/);
+  assert.equal(privacy.includes("ym-privacy-"), false);
+  assert.equal(privacy.includes("(PUBLISHED)"), false);
   assert.equal(privacy.includes("[추후"), false);
   assert.equal(privacy.includes("frontend-draft"), false);
 
@@ -62,9 +73,21 @@ test("public and popup policy content share clean originals without internal dra
   assert.equal(missingFallback.includes("[추후"), false);
   assert.equal(missingFallback.includes("frontend-draft"), false);
 
-  assert.match(popup, /동의하지 않고 닫기/); assert.match(popup, /현재 이 버전에 동의하지 않았습니다/);
-  const fields = renderToStaticMarkup(<PolicyConsentFields versions={{ TERMS: "v1", PRIVACY: "v1" }} accepted={{ TERMS: false, PRIVACY: false }} disabled={false} onChange={() => {}} onOpen={() => {}} />);
-  assert.equal(fields.includes('checked=""'), false); assert.match(fields, /개인정보 수집·이용 동의/);
+  assert.match(popup, /동의하지 않고 닫기/);
+  assert.match(popup, /현재 약관에 동의하지 않았습니다\./);
+  assert.match(popup, />동의하고 닫기<\/button>/);
+  assert.equal(popup.includes("ym-terms-"), false);
+  const popupAccepted = renderToStaticMarkup(<PolicyDialogContent document={loaded.documents.TERMS} accepted={true} onAccept={() => {}} onRevoke={() => {}} onClose={() => {}} />);
+  assert.match(popupAccepted, /현재 약관에 동의한 상태입니다\./);
+
+  const fields = renderToStaticMarkup(<PolicyConsentFields versions={{ TERMS: "ym-terms-v3", PRIVACY: "ym-privacy-v3" }} accepted={{ TERMS: false, PRIVACY: false }} disabled={false} onChange={() => {}} onOpen={() => {}} />);
+  assert.equal(fields.includes('checked=""'), false);
+  assert.match(fields, /개인정보 수집·이용 동의/);
+  assert.match(fields, /<input type="hidden" name="termsVersion" value="ym-terms-v3"\/>/);
+  assert.match(fields, /<input type="hidden" name="privacyVersion" value="ym-privacy-v3"\/>/);
+  const visibleFieldsText = fields.replace(/<[^>]+>/g, " ");
+  assert.equal(visibleFieldsText.includes("ym-terms-"), false);
+  assert.equal(visibleFieldsText.includes("ym-privacy-"), false);
 });
 test("withdrawal execution requires both exact explicit phrase and acknowledgment after reauthentication", () => {
   const render = (ready: boolean, acknowledged: boolean, confirmation: string) => renderToStaticMarkup(<WithdrawalConfirmation ready={ready} acknowledged={acknowledged} confirmation={confirmation} onSubmit={event => event.preventDefault()} onCancel={() => {}} />);

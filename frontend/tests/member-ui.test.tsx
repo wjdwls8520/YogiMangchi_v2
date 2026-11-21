@@ -17,7 +17,7 @@ import {
   getNotificationTradeMeta,
   normalizeRawNotification,
 } from "../src/features/member/notifications/notification-utils";
-import { MemberConsents } from "../src/features/member/components/member-consents";
+import { MemberConsentGate, MemberConsents } from "../src/features/member/components/member-consents";
 import { MemberLoginView, ProfileEditForm, SignupForm } from "../src/features/member/components/member-views";
 import { GuestStartDialog } from "../src/features/trading/components/guest-access";
 import { AccountQueryState } from "../src/features/trading/components/account-query-state";
@@ -268,7 +268,7 @@ test("MemberWithdrawal automatically opens the confirmation dialog when rendered
   }
 });
 
-test("MemberConsents displays consented policy versions, agreed timestamps, and expandable policy text when reconsent is not required", async () => {
+test("MemberConsents displays clean KST consent summaries, reconsent prompts, and sanitized policy text without internal ym-* version codes", async () => {
   const epoch = Date.now();
   const session = createMemberSession("http://localhost:8080", async url => String(url).endsWith("csrf")
     ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
@@ -278,15 +278,27 @@ test("MemberConsents displays consented policy versions, agreed timestamps, and 
   const policyState = parsePolicyState({
     reconsentRequired: false,
     policies: [
-      { type: "TERMS", version: "ym-terms-v1", required: true, accepted: true, lastAcceptedVersion: "ym-terms-v1", lastAcceptedAt: "2026-10-25T12:00:00Z", documentUrl: "/api/v1/policies/TERMS/ym-terms-v1" },
-      { type: "PRIVACY", version: "ym-privacy-v1", required: true, accepted: true, lastAcceptedVersion: "ym-privacy-v1", lastAcceptedAt: "2026-10-25T12:00:00Z", documentUrl: "/api/v1/policies/PRIVACY/ym-privacy-v1" },
+      { type: "TERMS", version: "ym-terms-v3", required: true, accepted: true, lastAcceptedVersion: "ym-terms-v3", lastAcceptedAt: "2026-10-25T12:00:00Z", documentUrl: "/api/v1/policies/TERMS/ym-terms-v3" },
+      { type: "PRIVACY", version: "ym-privacy-v3", required: true, accepted: true, lastAcceptedVersion: "ym-privacy-v3", lastAcceptedAt: "2026-10-25T12:00:00Z", documentUrl: "/api/v1/policies/PRIVACY/ym-privacy-v3" },
     ],
   });
   const bundle: PolicyBundle = {
     state: policyState,
     documents: {
-      TERMS: { type: "TERMS", version: "ym-terms-v1", documentStatus: "DEVELOPMENT_DRAFT", sha256: "a".repeat(64), text: "제1조 이용약관 등록 원문" },
-      PRIVACY: { type: "PRIVACY", version: "ym-privacy-v1", documentStatus: "DEVELOPMENT_DRAFT", sha256: "b".repeat(64), text: "제1조 개인정보처리방침 등록 원문" },
+      TERMS: {
+        type: "TERMS",
+        version: "ym-terms-v3",
+        documentStatus: "PUBLISHED",
+        sha256: "a".repeat(64),
+        text: "# 요기망치 이용약관 (ym-terms-v3)\n시행일: 2026-11-22 · 문서 상태: 확정(PUBLISHED)\n\n제1조 이용약관 등록 원문",
+      },
+      PRIVACY: {
+        type: "PRIVACY",
+        version: "ym-privacy-v3",
+        documentStatus: "PUBLISHED",
+        sha256: "b".repeat(64),
+        text: "# 요기망치 개인정보 처리방침 (ym-privacy-v3)\n시행일: 2026-11-22 · 문서 상태: 확정(PUBLISHED)\n\n제1조 개인정보처리방침 등록 원문",
+      },
     },
   };
   const client = new QueryClient();
@@ -295,10 +307,40 @@ test("MemberConsents displays consented policy versions, agreed timestamps, and 
   try {
     const html = renderToStaticMarkup(<MemberProvider session={session} client={client}><MemberConsents /></MemberProvider>);
     assert.match(html, /현재 필요한 정책 동의가 완료되었습니다\./);
-    assert.match(html, /<strong>이용약관<\/strong> · 동의 버전 ym-terms-v1 · 동의 시각 2026-10-25T12:00:00Z/);
-    assert.match(html, /<strong>개인정보처리방침<\/strong> · 동의 버전 ym-privacy-v1 · 동의 시각 2026-10-25T12:00:00Z/);
-    assert.match(html, /<details><summary>이용약관 원문 보기 \(ym-terms-v1\)<\/summary><pre class="policy-original">제1조 이용약관 등록 원문<\/pre><\/details>/);
-    assert.match(html, /<details><summary>개인정보처리방침 원문 보기 \(ym-privacy-v1\)<\/summary><pre class="policy-original">제1조 개인정보처리방침 등록 원문<\/pre><\/details>/);
+    assert.match(html, /<strong>이용약관<\/strong> · 동의 완료 · 2026-10-25 21:00 KST/);
+    assert.match(html, /<strong>개인정보처리방침<\/strong> · 동의 완료 · 2026-10-25 21:00 KST/);
+    assert.match(html, /<details><summary>이용약관 전문 보기<\/summary><pre class="policy-original"># 요기망치 이용약관\n시행일: 2026-11-22\n\n제1조 이용약관 등록 원문<\/pre><\/details>/);
+    assert.match(html, /<details><summary>개인정보처리방침 전문 보기<\/summary><pre class="policy-original"># 요기망치 개인정보 처리방침\n시행일: 2026-11-22\n\n제1조 개인정보처리방침 등록 원문<\/pre><\/details>/);
+    assert.equal(html.includes("ym-terms-"), false);
+    assert.equal(html.includes("ym-privacy-"), false);
+    assert.equal(html.includes("(PUBLISHED)"), false);
+    assert.equal(html.includes("동의 버전"), false);
+
+    // Pending re-consent state + banner: visible copy hides internal codes while hidden inputs keep API versions
+    const reconsentState = parsePolicyState({
+      reconsentRequired: true,
+      policies: [
+        { type: "TERMS", version: "ym-terms-v3", required: true, accepted: false, lastAcceptedVersion: "ym-terms-v1", lastAcceptedAt: "2026-10-20T00:00:00Z", documentUrl: "/api/v1/policies/TERMS/ym-terms-v3" },
+        { type: "PRIVACY", version: "ym-privacy-v3", required: true, accepted: false, lastAcceptedVersion: null, lastAcceptedAt: null, documentUrl: "/api/v1/policies/PRIVACY/ym-privacy-v3" },
+      ],
+    });
+    client.setQueryData(["member", "consents", snapshot.memberId, snapshot.generation], reconsentState);
+    const pendingHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <MemberConsentGate>
+          <MemberConsents />
+        </MemberConsentGate>
+      </MemberProvider>,
+    );
+    assert.match(pendingHtml, /약관이 개정되었습니다\. 최신 약관을 확인하고 동의해 주세요\./);
+    assert.match(pendingHtml, /<strong>이용약관<\/strong> · 약관이 개정되어 다시 동의가 필요합니다/);
+    assert.match(pendingHtml, /<strong>개인정보처리방침<\/strong> · 필수 동의가 필요합니다/);
+    assert.match(pendingHtml, /<input type="hidden" name="termsVersion" value="ym-terms-v3"\/>/);
+    assert.match(pendingHtml, /<input type="hidden" name="privacyVersion" value="ym-privacy-v3"\/>/);
+    const visiblePendingText = pendingHtml.replace(/<[^>]+>/g, " ");
+    assert.equal(visiblePendingText.includes("ym-terms-"), false);
+    assert.equal(visiblePendingText.includes("ym-privacy-"), false);
+    assert.equal(visiblePendingText.includes("(PUBLISHED)"), false);
   } finally {
     client.clear();
   }

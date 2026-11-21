@@ -338,11 +338,15 @@ test("전 사용자 서브페이지(/login, /mypage, /withdraw, /support, /priva
           version: "ym-terms-v3",
           documentStatus: "PUBLISHED",
           sha256: "a".repeat(64),
-          text: "제1조 (목적) 요기망치 공식 이용약관입니다.",
+          text: "# 요기망치 이용약관 (ym-terms-v3)\n시행일: 2026-11-22 · 문서 상태: 확정(PUBLISHED)\n\n제1조 (목적) 요기망치 공식 이용약관입니다.",
         }}
       />,
     );
-    assert.equal(termsV3Html.includes("시행 중인 공식 약관 · ym-terms-v3"), true);
+    assert.equal(termsV3Html.includes("시행 중인 공식 이용약관"), true);
+    assert.equal(termsV3Html.includes("<h2>이용약관 전문</h2>"), true);
+    assert.equal(termsV3Html.includes("현재 서비스에 적용 중인 공식 약관입니다."), true);
+    assert.equal(termsV3Html.includes("ym-terms-"), false);
+    assert.equal(termsV3Html.includes("(PUBLISHED)"), false);
     assert.equal(termsV3Html.includes("[추후"), false);
     assert.equal(termsV3Html.includes("frontend-draft"), false);
 
@@ -354,11 +358,14 @@ test("전 사용자 서브페이지(/login, /mypage, /withdraw, /support, /priva
           version: "ym-privacy-v3",
           documentStatus: "DEVELOPMENT_DRAFT",
           sha256: "b".repeat(64),
-          text: "제1조 (목적) 요기망치 개인정보처리방침입니다.",
+          text: "# 요기망치 개인정보처리방침 (ym-privacy-v3)\n\n제1조 (목적) 요기망치 개인정보처리방침입니다.",
         }}
       />,
     );
-    assert.equal(privacyDraftHtml.includes("개인정보처리방침 · ym-privacy-v3"), true);
+    assert.equal(privacyDraftHtml.includes("<span>개인정보처리방침</span>"), true);
+    assert.equal(privacyDraftHtml.includes("<h2>개인정보처리방침 전문</h2>"), true);
+    assert.equal(privacyDraftHtml.includes("현재 동의 대상 약관입니다."), true);
+    assert.equal(privacyDraftHtml.includes("ym-privacy-"), false);
     for (const leak of ["[추후", "frontend-draft", "서버 등록 개발 초안", "초안 · 정식 게시 전 법률 검토 필요"]) {
       assert.equal(privacyDraftHtml.includes(leak), false, leak);
     }
