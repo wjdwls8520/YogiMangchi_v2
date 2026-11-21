@@ -4117,3 +4117,40 @@ test("V1 규격 실시간 알림은 체결(시장가·지정가·손절)·강제
     client.clear();
   }
 });
+
+test("native <select> exact box-model vertical centering, single-line truncation, and single chevron invariant", () => {
+  const globalsCss = fs.readFileSync(
+    path.join(process.cwd(), "src/app/globals.css"),
+    "utf8",
+  );
+  const selectTail = globalsCss.slice(globalsCss.indexOf("select.rounded-xl"));
+  assert.equal(selectTail.includes("appearance: none"), false);
+  assert.equal(selectTail.includes("background-image"), false);
+  assert.match(
+    selectTail,
+    /select\.rounded-xl,\s*select\.rounded-lg\s*\{[\s\S]*?white-space:\s*nowrap;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;/,
+  );
+  assert.match(
+    selectTail,
+    /select\.rounded-xl\.h-9,\s*select\.rounded-lg\.h-9\s*\{[\s\S]*?padding-top:\s*8px;[\s\S]*?padding-bottom:\s*8px;[\s\S]*?line-height:\s*18px;/,
+  );
+  assert.match(
+    selectTail,
+    /select\.rounded-xl\.h-10,\s*select\.rounded-lg\.h-10\s*\{[\s\S]*?padding-top:\s*10px;[\s\S]*?padding-bottom:\s*10px;[\s\S]*?line-height:\s*18px;/,
+  );
+  assert.match(
+    selectTail,
+    /select\.rounded-xl\.h-11,\s*select\.rounded-lg\.h-11\s*\{[\s\S]*?padding-top:\s*11px;[\s\S]*?padding-bottom:\s*11px;[\s\S]*?line-height:\s*20px;/,
+  );
+  assert.match(globalsCss, /\.order-leverage-input\s*\{[\s\S]*?py-\[11px\]/);
+  assert.match(globalsCss, /\.close-position-select select\s*\{[\s\S]*?py-\[11px\]/);
+  assert.match(globalsCss, /\.history-filters select\s*\{[\s\S]*?py-\[7px\]/);
+  assert.match(
+    globalsCss,
+    /\.trading-workspace \.member-simulation \.member-round-select select\s*\{[\s\S]*?height:\s*34px;[\s\S]*?padding:\s*7px 10px;[\s\S]*?line-height:\s*18px;/,
+  );
+  assert.match(
+    globalsCss,
+    /\.member-shell \.member-round-select select\s*\{[\s\S]*?height:\s*46px;[\s\S]*?padding-top:\s*12px;[\s\S]*?padding-bottom:\s*12px;[\s\S]*?line-height:\s*20px;/,
+  );
+});

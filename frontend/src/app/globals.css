@@ -152,7 +152,7 @@
   .member-round-summary dt { @apply mb-1 text-xs text-terminal-muted; }
   .member-round-summary dd { @apply text-sm font-semibold tabular-nums; overflow-wrap: anywhere; }
   .member-round-select { @apply my-4 flex flex-wrap items-center gap-3; }
-  .member-round-select select { @apply min-h-11 min-w-0 max-w-full rounded-sm border border-terminal-line bg-terminal-raised px-3; }
+  .member-round-select select { @apply min-h-11 min-w-0 max-w-full rounded-sm border border-terminal-line bg-terminal-raised px-3 py-[11px]; }
   .member-round-ledger { @apply my-4 max-w-full overflow-x-auto; scrollbar-width: thin; }
   .member-round-ledger table { @apply w-full whitespace-nowrap text-xs; }
   .member-round-ledger th { @apply border-b border-terminal-line bg-terminal-raised px-3 py-3 text-left font-medium text-terminal-muted; }
@@ -297,7 +297,7 @@
   .close-order-fields .field-label > span { @apply float-right tabular-nums text-brand-700; }
   .position-close-entry .close-submit { @apply min-h-11 rounded-sm border border-brand-600 bg-brand-600 px-3 py-2 font-semibold text-terminal-ink enabled:cursor-pointer disabled:opacity-50; }
   .close-position-select { @apply flex flex-col gap-2 border-b border-terminal-line p-3; }
-  .close-position-select select { @apply min-h-11 w-full min-w-0 rounded-sm border border-terminal-line bg-terminal-raised px-2 text-trade-body; }
+  .close-position-select select { @apply min-h-11 w-full min-w-0 rounded-sm border border-terminal-line bg-terminal-raised px-2 py-[11px] text-trade-body; }
   .trading-table[data-variant="positions"] td[data-key="action"] { @apply col-span-3; }
   .trading-table[data-variant="positions"] td[data-key="action"]::before { @apply hidden; }
   .trading-navigation {
@@ -619,7 +619,7 @@
     @apply flex min-w-0 flex-col gap-1;
   }
   .order-leverage-input {
-    @apply min-h-11 min-w-0 w-full rounded-sm border border-terminal-line bg-terminal-raised px-3 text-trade-body font-semibold tabular-nums;
+    @apply min-h-11 min-w-0 w-full rounded-sm border border-terminal-line bg-terminal-raised px-3 py-[11px] text-trade-body font-semibold tabular-nums;
   }
   .order-input {
     @apply grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-sm border border-transparent bg-terminal-raised px-3 pt-2;
@@ -699,6 +699,9 @@
   .history-filters select, .history-filters input {
     @apply min-h-9 min-w-0 rounded-sm border border-terminal-line bg-terminal-raised px-2 text-trade-body text-terminal-text;
     color-scheme: dark;
+  }
+  .history-filters select {
+    @apply py-[7px];
   }
   .history-more { @apply flex flex-col items-center border-t border-terminal-line py-2 text-trade-meta text-terminal-muted; }
   .account-event-state { @apply flex min-h-7 flex-wrap items-center gap-2 border-b border-terminal-line px-3 text-trade-meta text-terminal-muted; }
@@ -1110,7 +1113,7 @@
 .trading-workspace .member-simulation .member-message { margin: 10px 0; padding: 10px 12px; border-radius: 8px; border: 1px solid #2B3139; background: #161A1E; color: #EAECEF; font-size: 12px; }
 .trading-workspace .member-simulation .member-message[role="alert"] { border-color: rgba(246, 70, 93, 0.4); background: rgba(246, 70, 93, 0.12); color: #FCA5A5; }
 .trading-workspace .member-simulation .member-round-select { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; font-size: 12px; font-weight: 600; color: #B7BDC6; }
-.trading-workspace .member-simulation .member-round-select select { height: 34px; border-radius: 6px; border: 1px solid #363C45; background: #161A1E; color: #EAECEF; padding: 0 10px; font-size: 12px; }
+.trading-workspace .member-simulation .member-round-select select { height: 34px; border-radius: 6px; border: 1px solid #363C45; background: #161A1E; color: #EAECEF; padding: 7px 10px; font-size: 12px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trading-workspace .member-simulation .member-round-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin: 12px 0; }
 .trading-workspace .member-simulation .member-round-summary > div { padding: 8px 10px; border-radius: 6px; border: 1px solid #2B3139; background: #161A1E; }
 .trading-workspace .member-simulation .member-round-summary dt { font-size: 11px; color: #848E9C; }
@@ -2077,6 +2080,12 @@ body:has(.member-shell) :focus-visible {
 
 .member-shell .member-round-select select {
   height: 46px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   border: 1px solid #DEE1E6;
   border-radius: 8px;
   background-color: #FFFFFF;
@@ -2552,7 +2561,28 @@ table th {
   white-space: nowrap;
 }
 
-/* Native <select> ellipsis truncation across Community / News / Contest / Support */
-select.rounded-xl {
+/* Native <select> exact box-model vertical centering & single-line truncation across all viewports */
+select.rounded-xl,
+select.rounded-lg {
+  white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+select.rounded-xl.h-9,
+select.rounded-lg.h-9 {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  line-height: 18px;
+}
+select.rounded-xl.h-10,
+select.rounded-lg.h-10 {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  line-height: 18px;
+}
+select.rounded-xl.h-11,
+select.rounded-lg.h-11 {
+  padding-top: 11px;
+  padding-bottom: 11px;
+  line-height: 20px;
 }
