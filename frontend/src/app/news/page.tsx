@@ -11,11 +11,13 @@ async function loadInitialNewsSidebarData(): Promise<{
 }> {
   const contentBase = (
     process.env.CONTENT_API_BASE_URL ??
+    process.env.NEXT_PUBLIC_CONTENT_SERVER_URL ??
     process.env.NEXT_PUBLIC_CONTENT_API_BASE_URL ??
     "http://127.0.0.1:8080"
   ).replace(/\/+$/, "");
   const tradingBase = (
     process.env.TRADING_API_BASE_URL ??
+    process.env.NEXT_PUBLIC_TRADING_SERVER_URL ??
     process.env.NEXT_PUBLIC_TRADING_API_BASE_URL ??
     "http://127.0.0.1:8081"
   ).replace(/\/+$/, "");

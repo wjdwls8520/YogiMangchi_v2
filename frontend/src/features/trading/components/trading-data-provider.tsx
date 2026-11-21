@@ -47,11 +47,16 @@ export function TradingDataProvider({ children, session: providedSession, client
   useEffect(() => {
     const unsubscribe = bindGuestCache(client, session);
     const identity = memberSession.observeAccess(access => {
-      const phase = memberSession.getSnapshot().phase;
-      if (access && phase === "ready" && memberSession.getSnapshot().consentStatus === "accepted") {
+      const memberSnapshot = memberSession.getSnapshot();
+      const phase = memberSnapshot.phase;
+      if (access && phase === "ready" && memberSnapshot.consentStatus === "accepted") {
         void session.enterMember(access, () => { void memberSession.refresh().catch(() => {}); });
-      } else if (phase === "recovering" && session.suspendMember(memberSession.getSnapshot().memberId)) {
+      } else if (phase === "recovering" && session.suspendMember(memberSnapshot.memberId)) {
         // Retain same-owner unresolved intents while requests/WS are suspended.
+      } else if (phase === "recovering" && memberSnapshot.memberId === null && !memberSnapshot.recovery?.retryable) {
+        // Do not permanently brick Guest trading when an anonymous visitor's initial Content refresh failed.
+        session.leaveMember();
+        void session.restore();
       } else if (["loading", "authenticating", "ending", "withdrawing", "recovering", "ready"].includes(phase)) session.pauseMemberCheck();
       else { session.leaveMember(); void session.restore(); }
     });

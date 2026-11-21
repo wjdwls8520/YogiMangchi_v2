@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 import { DEFAULT_TRADING_API_BASE_URL } from "../../contest/api/contest-client";
 import { useDimScrollLock } from "../components/dim-modal";
 import { useOptionalMember } from "../components/member-provider";
@@ -39,6 +40,7 @@ import {
   getNotificationActivityValue,
   getNotificationNavigationTarget,
   getNotificationTradeMeta,
+  isTradingTerminalPath,
   mergeNotificationsByUid,
 } from "./notification-utils";
 
@@ -89,6 +91,8 @@ export function NotificationCenterProvider({
   children: ReactNode;
   initialState?: NotificationCenterInitialState;
 }) {
+  const pathname = usePathname();
+  const isDarkDrawer = isTradingTerminalPath(pathname);
   const memberCtx = useOptionalMember();
   const phase = memberCtx?.snapshot.phase;
   const memberId = memberCtx?.snapshot.memberId ?? null;
@@ -620,13 +624,20 @@ export function NotificationCenterProvider({
             className="fixed inset-0 z-[70] bg-black/35 backdrop-blur-[1px] transition-opacity cursor-pointer"
             onClick={closeDrawer}
           />
-          <div className="fixed bottom-0 right-0 top-0 z-[71] w-full max-w-sm border-l border-gray-200 bg-white shadow-[0_24px_60px_rgba(15,23,42,0.22)]">
+          <div
+            className={
+              isDarkDrawer
+                ? "fixed bottom-0 right-0 top-0 z-[71] w-full max-w-sm border-l border-[#2B3139] bg-[#161A1E]"
+                : "fixed bottom-0 right-0 top-0 z-[71] w-full max-w-sm border-l border-gray-200 bg-white"
+            }
+          >
             <NotificationDrawer
               notifications={effectiveItems}
               isLoading={isLoading}
               isReadingAll={isReadingAll}
               isLoadingMore={isLoadingMore}
               hasNext={hasNext}
+              isDark={isDarkDrawer}
               onClose={closeDrawer}
               onSelectNotification={handleSelectDrawerNotification}
               onAcknowledgeNewNotifications={() => void acknowledgeNew()}

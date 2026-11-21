@@ -6,6 +6,7 @@ export type NotificationCategory =
   | "COMMUNITY"
   | "FOLLOW"
   | "REPORT"
+  | "SUPPORT"
   | (string & {});
 
 export type NotificationTradeTone =

@@ -10,7 +10,6 @@ import {
   parseCommunityPostPage,
   parseNewsPage,
   readCommunityOrPublic,
-  type CommunityPost,
   type NewsItem,
 } from "../api/community-news";
 import {
@@ -22,7 +21,6 @@ import {
 } from "../api/market-overview";
 import { marketTickersJson } from "../../trading/api/client";
 import { DimModal } from "./dim-modal";
-import { CommunityImageUploadSlot, type SelectedS3File } from "./s3-upload-slot";
 import {
   V1Header,
   V1Button,
@@ -36,120 +34,6 @@ import {
   V1IconHeart,
   V1IconComment,
 } from "./v1-ui";
-
-const FALLBACK_NEWS: NewsItem[] = [
-  {
-    id: 901,
-    category: "CRYPTO",
-    title: "비트코인 현물 ETF 일간 순유입 지속 및 선물 미결제약정 연고점 경신",
-    summary: "기관 자금 유입과 함께 주요 거래소 BTC 무기한 선물 펀딩비가 완만한 양(+)의 구간을 유지하고 있습니다.",
-    content:
-      "미국 현물 ETF 시장으로의 자금 유입이 이어지면서 BTCUSDT 무기한 선물 시장의 유동성과 미결제약정(Open Interest)이 동반 상승하고 있습니다. 과도한 레버리지 추격 진입보다 지지 구간 분할 대응이 권장됩니다.",
-    sourceName: "Yogimangchi Market Desk",
-    symbolTag: "BTC",
-    publishedAt: "2026-11-08T09:15:00Z",
-  },
-  {
-    id: 902,
-    category: "MACRO",
-    title: "미 연준 통화정책 의사록 공개 앞두고 달러 인덱스 보합권 등락",
-    summary: "국채 금리 변동성 완화 속에 위험자산 전반의 단기 수급이 개선되는 흐름입니다.",
-    content:
-      "거시경제 불확실성이 일부 완화되면서 나스닥 선물과 주요 암호화폐 시총 상위 종목이 동조화 흐름을 보이고 있습니다.",
-    sourceName: "Global Macro Wire",
-    symbolTag: "ETH",
-    publishedAt: "2026-11-08T08:40:00Z",
-  },
-  {
-    id: 903,
-    category: "ONCHAIN",
-    title: "솔라나(SOL) 네트워크 DEX 일간 거래대금 및 활성 지갑 수 강세",
-    summary: "온체인 트랜잭션 증가와 함께 SOL 선물 거래량 비중이 확대되었습니다.",
-    content:
-      "솔라나 생태계 내 탈중앙화 거래소(DEX) 유동성이 빠르게 증가하며 파생상품 시장에서도 단기 변동성 확대가 관찰됩니다.",
-    sourceName: "Onchain Radar",
-    symbolTag: "SOL",
-    publishedAt: "2026-11-08T07:55:00Z",
-  },
-  {
-    id: 904,
-    category: "REGULATION",
-    title: "글로벌 가상자산 파생상품 공시 투명성 및 투자자 보호 가이드라인 강화",
-    summary: "주요 금융당국이 격리마진 및 청산 위험 고지 표준안을 발표했습니다.",
-    content:
-      "글로벌 규제 기관들이 파생상품 거래소의 준비금 증명 및 강제청산 기준 공시를 표준화하는 가이드라인을 순차 도입하고 있습니다.",
-    sourceName: "Policy Watch",
-    symbolTag: "XRP",
-    publishedAt: "2026-11-08T06:30:00Z",
-  },
-];
-
-const FALLBACK_POSTS: CommunityPost[] = [
-  {
-    id: 701,
-    memberId: 11,
-    authorNickname: "알파트레이더",
-    authorWithdrawn: false,
-    category: "ANALYSIS",
-    symbolTag: "BTC",
-    title: "BTC 4시간봉 추세선 리테스트 구간 10배 격리 롱 시나리오",
-    content: "직전 매물대 상단에서 지지 확인 후 진입했습니다. 손절가는 전저점 이탈 시점(-18% ROE)으로 짧게 잡았습니다.",
-    likeCount: 19,
-    commentCount: 6,
-    likedByMe: false,
-    mine: false,
-    createdAt: "2026-11-08T09:10:00Z",
-    updatedAt: "2026-11-08T09:10:00Z",
-  },
-  {
-    id: 702,
-    memberId: 15,
-    authorNickname: "퀀트매니저",
-    authorWithdrawn: false,
-    category: "POSITION",
-    symbolTag: "ETH",
-    title: "ETH/BTC 상대강도 반등 시그널 및 단기 스위칭 전략 공유",
-    content: "비트코인 도미넌스가 단기 저항에 도달해 이더리움 5배 포지션 비중을 30%로 확대했습니다.",
-    likeCount: 14,
-    commentCount: 4,
-    likedByMe: false,
-    mine: false,
-    createdAt: "2026-11-08T08:25:00Z",
-    updatedAt: "2026-11-08T08:25:00Z",
-  },
-  {
-    id: 703,
-    memberId: 22,
-    authorNickname: "솔라나고래",
-    authorWithdrawn: false,
-    category: "FREE",
-    symbolTag: "SOL",
-    title: "모의투자로 손절 원칙 지키는 습관 들이니까 승률이 확 오르네요",
-    content: "예전에는 물타기하다가 강제청산 당했는데 격리마진으로 손절가 미리 걸어두니 계좌가 우상향합니다.",
-    likeCount: 11,
-    commentCount: 3,
-    likedByMe: false,
-    mine: false,
-    createdAt: "2026-11-08T07:45:00Z",
-    updatedAt: "2026-11-08T07:45:00Z",
-  },
-  {
-    id: 704,
-    memberId: 31,
-    authorNickname: "매크로워처",
-    authorWithdrawn: false,
-    category: "MARKET",
-    symbolTag: "XRP",
-    title: "오늘 밤 미 증시 개장 전후 변동성 대비 레버리지 몇 배가 적당할까요?",
-    content: "지표 발표 있는 날에는 3~5배 이하 저배율로만 대응하는 게 맞겠죠? 의견 부탁드립니다.",
-    likeCount: 8,
-    commentCount: 5,
-    likedByMe: false,
-    mine: false,
-    createdAt: "2026-11-08T07:10:00Z",
-    updatedAt: "2026-11-08T07:10:00Z",
-  },
-];
 
 const POPULAR_COINS = [
   {
@@ -189,7 +73,7 @@ export interface PopularCoinCardData {
   changeRate: number;
   volume: string;
   sparkline: string;
-  strokeColor: "#EF4444" | "#2563EB";
+  strokeColor: "#0ECB81" | "#F6465D";
 }
 
 function buildCoinSparkline(
@@ -257,7 +141,7 @@ export function mapRedisTickersToPopularCoins(rawTickers: unknown): PopularCoinC
     if (!matched || matched.status === "UNAVAILABLE") {
       return {
         ...baseCoin,
-        strokeColor: baseCoin.changeRate >= 0 ? "#EF4444" : "#2563EB",
+        strokeColor: baseCoin.changeRate >= 0 ? "#0ECB81" : "#F6465D",
       };
     }
 
@@ -307,7 +191,7 @@ export function mapRedisTickersToPopularCoins(rawTickers: unknown): PopularCoinC
       changeRate,
       volume,
       sparkline,
-      strokeColor: changeRate >= 0 ? "#EF4444" : "#2563EB",
+      strokeColor: changeRate >= 0 ? "#0ECB81" : "#F6465D",
     };
   });
 }
@@ -322,8 +206,6 @@ export function MainPortal({
   const { origin, session, snapshot } = useMember();
   const tradingBase = resolveTradingMarketBaseUrl();
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
-  const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false);
-  const [reportFiles, setReportFiles] = useState<SelectedS3File[]>([]);
 
   const [ydInput, setYdInput] = useState("100");
   const [krwInput, setKrwInput] = useState(() =>
@@ -342,7 +224,7 @@ export function MainPortal({
     queryKey: ["portal-redis-market-overview", tradingBase],
     initialData: initialMarketOverview,
     staleTime: 3_000,
-    refetchInterval: selectedNews !== null || thumbnailModalOpen ? false : 5_000,
+    refetchInterval: selectedNews !== null ? false : 5_000,
     queryFn: async ({ signal }) => fetchRedisMarketOverview(tradingBase, signal),
   });
 
@@ -350,7 +232,7 @@ export function MainPortal({
     queryKey: ["portal-redis-tickers", tradingBase],
     initialData: initialTickers,
     staleTime: 2_000,
-    refetchInterval: selectedNews !== null || thumbnailModalOpen ? false : 3_000,
+    refetchInterval: selectedNews !== null ? false : 3_000,
     queryFn: async ({ signal }) => marketTickersJson(tradingBase, signal),
   });
 
@@ -392,8 +274,8 @@ export function MainPortal({
       : ydInput && Number.isFinite(Number(ydInput))
         ? Math.round(Number(ydInput) * exchangeRate).toLocaleString("ko-KR")
         : "";
-  const newsItems = newsQuery.data?.items?.length ? newsQuery.data.items : FALLBACK_NEWS;
-  const postItems = postsQuery.data?.items?.length ? postsQuery.data.items : FALLBACK_POSTS;
+  const newsItems = newsQuery.data?.items ?? [];
+  const postItems = postsQuery.data?.items ?? [];
 
   const simResult = useMemo(() => {
     const notional = simMargin * simLeverage;
@@ -482,8 +364,8 @@ export function MainPortal({
               <em
                 className={
                   marketOverview.btcDominanceChange24h >= 0
-                    ? "not-italic font-bold text-red-500"
-                    : "not-italic font-bold text-blue-600"
+                    ? "not-italic font-bold text-[#0ECB81]"
+                    : "not-italic font-bold text-[#F6465D]"
                 }
               >
                 {marketOverview.btcDominanceChange24h >= 0 ? "+" : ""}
@@ -583,8 +465,8 @@ export function MainPortal({
                       <span
                         className={
                           marketOverview.usdKrwChangeAmount >= 0
-                            ? "shrink-0 whitespace-nowrap rounded-md bg-red-50 px-2 py-0.5 text-xs font-bold text-red-500"
-                            : "shrink-0 whitespace-nowrap rounded-md bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-600"
+                            ? "shrink-0 whitespace-nowrap rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-bold text-[#0ECB81]"
+                            : "shrink-0 whitespace-nowrap rounded-md bg-rose-50 px-2 py-0.5 text-xs font-bold text-[#F6465D]"
                         }
                       >
                         {marketOverview.usdKrwChangeAmount >= 0
@@ -735,7 +617,7 @@ export function MainPortal({
             {popularCoins.map(coin => (
               <Link
                 key={coin.symbol}
-                href="/trading"
+                href={`/trading?symbol=${coin.base}`}
                 className="card group flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-6 transition-colors hover:border-[#0058FF]"
               >
                 <div className="flex items-start justify-between">
@@ -753,8 +635,8 @@ export function MainPortal({
                   <span
                     className={
                       coin.changeRate >= 0
-                        ? "rounded-lg bg-red-50 px-2.5 py-1 text-xs font-black text-red-500"
-                        : "rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-black text-blue-600"
+                        ? "rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-black text-[#0ECB81]"
+                        : "rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-black text-[#F6465D]"
                     }
                   >
                     {coin.changeRate >= 0 ? "+" : ""}
@@ -900,61 +782,98 @@ export function MainPortal({
             </Link>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {postItems.slice(0, 4).map(post => (
-              <article
-                key={post.id}
-                className="card flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-6 transition-colors hover:border-gray-300"
-              >
-                <div>
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <V1UserAvatar
-                        memberId={post.memberId}
-                        nickname={post.authorNickname}
-                        withdrawn={post.authorWithdrawn}
-                        size="sm"
-                      />
-                      <div>
-                        <p className="text-xs font-bold text-gray-900">
-                          {post.authorWithdrawn ? "탈퇴한회원" : post.authorNickname}
-                        </p>
-                        <p className="text-[11px] text-gray-400">{formatPortalKstDate(post.createdAt)}</p>
-                      </div>
+          {postsQuery.isPending ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2" aria-busy="true" aria-label="최신 커뮤니티 글 불러오는 중">
+              {[0, 1, 2, 3].map(idx => (
+                <div
+                  key={idx}
+                  className="h-44 animate-pulse rounded-2xl border border-gray-200 bg-white p-6"
+                >
+                  <div className="mb-3 flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-full bg-gray-200" />
+                    <div className="space-y-1.5">
+                      <div className="h-3 w-20 rounded bg-gray-200" />
+                      <div className="h-2.5 w-16 rounded bg-gray-100" />
                     </div>
-                    {post.symbolTag ? (
-                      <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-[#0058FF]">
-                        #{post.symbolTag}
+                  </div>
+                  <div className="mb-2 h-4 w-3/4 rounded bg-gray-200" />
+                  <div className="h-3 w-full rounded bg-gray-100" />
+                </div>
+              ))}
+            </div>
+          ) : postItems.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-12 text-center">
+              <p className="text-sm font-bold text-gray-700">
+                아직 등록된 인기 커뮤니티 글이 없습니다.
+              </p>
+              <p className="text-xs text-gray-500">
+                첫 번째 시황 분석이나 포지션 전략을 커뮤니티에 공유해보세요.
+              </p>
+              <Link
+                href="/community"
+                className="inline-flex h-9 items-center justify-center rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white hover:bg-blue-700"
+              >
+                커뮤니티로 이동 →
+              </Link>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {postItems.slice(0, 4).map(post => (
+                <article
+                  key={post.id}
+                  className="card flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-6 transition-colors hover:border-gray-300"
+                >
+                  <div>
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <V1UserAvatar
+                          memberId={post.memberId}
+                          nickname={post.authorNickname}
+                          src={post.authorProfileImgUrl}
+                          withdrawn={post.authorWithdrawn}
+                          size="sm"
+                        />
+                        <div>
+                          <p className="text-xs font-bold text-gray-900">
+                            {post.authorWithdrawn ? "탈퇴한회원" : post.authorNickname}
+                          </p>
+                          <p className="text-[11px] text-gray-400">{formatPortalKstDate(post.createdAt)}</p>
+                        </div>
+                      </div>
+                      {post.symbolTag ? (
+                        <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-[#0058FF]">
+                          #{post.symbolTag}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <Link href={`/community/all/${post.id}`} className="block group">
+                      <h3 className="mb-1.5 text-base font-black text-gray-900 group-hover:text-[#0058FF] line-clamp-1">
+                        {post.title}
+                      </h3>
+                      <p className="text-sm text-gray-600 line-clamp-2">{post.content}</p>
+                    </Link>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3 text-xs font-bold text-gray-400">
+                    <div className="flex items-center gap-4">
+                      <span className="flex items-center gap-1 text-[#F6465D]">
+                        <V1IconHeart className="h-3.5 w-3.5" />
+                        <span>좋아요 {post.likeCount}</span>
                       </span>
-                    ) : null}
+                      <span className="flex items-center gap-1 text-gray-500">
+                        <V1IconComment className="h-3.5 w-3.5" />
+                        <span>댓글 {post.commentCount}</span>
+                      </span>
+                    </div>
+                    <Link href={`/community/all/${post.id}`} className="text-[#0058FF] hover:underline">
+                      피드 열기 →
+                    </Link>
                   </div>
-
-                  <Link href={`/community/all/${post.id}`} className="block group">
-                    <h3 className="mb-1.5 text-base font-black text-gray-900 group-hover:text-[#0058FF] line-clamp-1">
-                      {post.title}
-                    </h3>
-                    <p className="text-sm text-gray-600 line-clamp-2">{post.content}</p>
-                  </Link>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3 text-xs font-bold text-gray-400">
-                  <div className="flex items-center gap-4">
-                    <span className="flex items-center gap-1 text-red-500">
-                      <V1IconHeart className="h-3.5 w-3.5" />
-                      <span>좋아요 {post.likeCount}</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-gray-500">
-                      <V1IconComment className="h-3.5 w-3.5" />
-                      <span>댓글 {post.commentCount}</span>
-                    </span>
-                  </div>
-                  <Link href="/community" className="text-[#0058FF] hover:underline">
-                    피드 열기 →
-                  </Link>
-                </div>
-              </article>
-            ))}
-          </div>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* 섹션 5: 24시 실시간 속보 & 선물 모의투자 퀵 시뮬레이터 */}
@@ -967,55 +886,78 @@ export function MainPortal({
                 <h2 className="text-lg font-black text-gray-900 whitespace-nowrap">24시 실시간 속보</h2>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setThumbnailModalOpen(true)}
+                <Link
+                  href="/community"
                   className="inline-flex items-center justify-center whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs font-bold leading-none text-gray-700 hover:bg-gray-100"
                 >
-                  속보 이미지 제보
-                </button>
+                  커뮤니티 시황 공유
+                </Link>
                 <Link href="/news" className="inline-flex items-center whitespace-nowrap text-xs font-bold text-[#0058FF] hover:underline">
                   전체 뉴스 →
                 </Link>
               </div>
             </div>
 
-            <div className="space-y-4">
-              {newsItems.slice(0, 4).map(article => (
-                <article
-                  key={article.id}
-                  className="flex flex-col gap-1.5 rounded-xl border border-gray-100 bg-[#F9FAFB] p-4"
-                >
-                  <div className="flex items-center justify-between text-xs text-gray-400">
-                    <span className="font-bold text-[#0058FF]">
-                      {formatPortalKstTime(article.publishedAt)} · {article.category}
-                    </span>
-                    {article.symbolTag ? (
-                      <span className="rounded bg-blue-50 px-2 py-0.5 font-bold text-[#0058FF]">
-                        #{article.symbolTag}
+            {newsQuery.isPending ? (
+              <div className="space-y-3" aria-busy="true" aria-label="실시간 속보 불러오는 중">
+                {[0, 1, 2, 3].map(idx => (
+                  <div
+                    key={idx}
+                    className="h-24 animate-pulse rounded-xl border border-gray-100 bg-[#F9FAFB] p-4"
+                  >
+                    <div className="mb-2 h-3 w-28 rounded bg-gray-200" />
+                    <div className="mb-1.5 h-4 w-3/4 rounded bg-gray-200" />
+                    <div className="h-3 w-full rounded bg-gray-100" />
+                  </div>
+                ))}
+              </div>
+            ) : newsItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-gray-200 bg-[#F9FAFB] px-5 py-10 text-center">
+                <p className="text-sm font-bold text-gray-700">
+                  현재 표시할 실시간 속보가 없습니다.
+                </p>
+                <Link href="/news" className="text-xs font-bold text-[#0058FF] hover:underline">
+                  실시간 뉴스 데스크 확인하기 →
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {newsItems.slice(0, 4).map(article => (
+                  <article
+                    key={article.id}
+                    className="flex flex-col gap-1.5 rounded-xl border border-gray-100 bg-[#F9FAFB] p-4"
+                  >
+                    <div className="flex items-center justify-between text-xs text-gray-400">
+                      <span className="font-bold text-[#0058FF]">
+                        {formatPortalKstTime(article.publishedAt)} · {article.category}
                       </span>
-                    ) : null}
-                  </div>
-                  <h3 className="text-sm font-black text-gray-900">{article.title}</h3>
-                  <p className="text-xs leading-relaxed text-gray-600">{article.summary}</p>
-                  <div className="mt-1 flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedNews(article)}
-                      className="text-xs font-bold text-gray-700 hover:text-[#0058FF]"
-                    >
-                      전문 팝업 보기
-                    </button>
-                    <Link href="/trading" className="text-xs font-bold text-[#0058FF] hover:underline">
-                      {article.symbolTag ?? "BTC"} 모의투자 하러가기 →
-                    </Link>
-                  </div>
-                </article>
-              ))}
-            </div>
-
-            {/* S3 썸네일 슬롯 (테스트 호환) */}
-            <div className="sr-only" data-s3-slot="news-thumbnail" />
+                      {article.symbolTag ? (
+                        <span className="rounded bg-blue-50 px-2 py-0.5 font-bold text-[#0058FF]">
+                          #{article.symbolTag}
+                        </span>
+                      ) : null}
+                    </div>
+                    <h3 className="text-sm font-black text-gray-900">{article.title}</h3>
+                    <p className="text-xs leading-relaxed text-gray-600">{article.summary}</p>
+                    <div className="mt-1 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedNews(article)}
+                        className="text-xs font-bold text-gray-700 hover:text-[#0058FF]"
+                      >
+                        전문 팝업 보기
+                      </button>
+                      <Link
+                        href={`/trading?symbol=${article.symbolTag ?? "BTC"}`}
+                        className="text-xs font-bold text-[#0058FF] hover:underline"
+                      >
+                        {article.symbolTag ?? "BTC"} 모의투자 하러가기 →
+                      </Link>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 우측: 선물 모의투자 퀵 시뮬레이터 */}
@@ -1037,7 +979,7 @@ export function MainPortal({
                   onClick={() => setSimSide("LONG")}
                   className={`h-10 rounded-xl text-xs font-black transition-colors ${
                     simSide === "LONG"
-                      ? "bg-red-500 text-white"
+                      ? "bg-[#0ECB81] text-white"
                       : "border border-gray-200 bg-gray-50 text-gray-600"
                   }`}
                 >
@@ -1048,7 +990,7 @@ export function MainPortal({
                   onClick={() => setSimSide("SHORT")}
                   className={`h-10 rounded-xl text-xs font-black transition-colors ${
                     simSide === "SHORT"
-                      ? "bg-blue-600 text-white"
+                      ? "bg-[#F6465D] text-white"
                       : "border border-gray-200 bg-gray-50 text-gray-600"
                   }`}
                 >
@@ -1125,13 +1067,13 @@ export function MainPortal({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">예상 수익률 (ROE)</span>
-                  <strong className={simResult.isPositive ? "text-red-400" : "text-blue-400"}>
+                  <strong className={simResult.isPositive ? "text-[#0ECB81]" : "text-[#F6465D]"}>
                     {simResult.roe}
                   </strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">예상 실현 손익</span>
-                  <strong className={simResult.isPositive ? "text-red-400" : "text-blue-400"}>
+                  <strong className={simResult.isPositive ? "text-[#0ECB81]" : "text-[#F6465D]"}>
                     {simResult.pnl}
                   </strong>
                 </div>
@@ -1142,10 +1084,10 @@ export function MainPortal({
               </div>
 
               <Link
-                href="/trading"
+                href={`/trading?symbol=BTC&side=${simSide}&leverage=${simLeverage}`}
                 className="flex h-12 w-full items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] text-sm font-bold text-white transition-colors hover:bg-blue-700"
               >
-                모의투자 하러가기
+                {simSide} {simLeverage}x 모의투자 하러가기
               </Link>
             </div>
           </div>
@@ -1161,7 +1103,7 @@ export function MainPortal({
         footer={
           <div className="flex justify-end gap-2">
             <Link
-              href="/trading"
+              href={`/trading?symbol=${selectedNews?.symbolTag ?? "BTC"}`}
               className="rounded-xl bg-[#0058FF] px-4 py-2.5 text-xs font-bold text-white"
               onClick={() => setSelectedNews(null)}
             >
@@ -1179,40 +1121,6 @@ export function MainPortal({
             <p>{selectedNews.content}</p>
           </div>
         )}
-      </DimModal>
-
-      {/* 제보 모달 */}
-      <DimModal
-        open={thumbnailModalOpen}
-        onClose={() => setThumbnailModalOpen(false)}
-        title="속보 차트/캡처 이미지 제보"
-        subtitle="차트나 시장 캡처 이미지를 첨부한 뒤 커뮤니티 시황·관점 게시판에 공유할 수 있습니다."
-        footer={
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <V1Button
-              variant="gray"
-              size="sm"
-              onClick={() => {
-                setReportFiles([]);
-                setThumbnailModalOpen(false);
-              }}
-            >
-              닫기
-            </V1Button>
-            <Link
-              href="/community"
-              onClick={() => setThumbnailModalOpen(false)}
-              className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white transition-colors hover:bg-blue-700"
-            >
-              커뮤니티에 제보하러 가기 →
-            </Link>
-          </div>
-        }
-      >
-        <CommunityImageUploadSlot
-          files={reportFiles}
-          onChange={setReportFiles}
-        />
       </DimModal>
     </div>
   );

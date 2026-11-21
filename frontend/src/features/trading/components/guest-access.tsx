@@ -67,7 +67,25 @@ export function GuestHeaderAction() {
 export function GuestStartPrompt() {
   const { snapshot, open } = useGuestAccess();
   const member = useMember();
-  if (snapshot.mode === "checking" || (member.snapshot.phase === "recovering" || member.snapshot.recovery)) return <MemberTradingPrompt member={member.snapshot} retry={() => void member.session.restore().catch(() => {})} retryConsents={member.retryConsents} />;
+  const canContinueAsGuestFromAnonymousRecovery =
+    !snapshot.contestSeasonId
+    && member.snapshot.phase === "recovering"
+    && member.snapshot.memberId === null
+    && !member.snapshot.recovery?.retryable;
+  if (snapshot.mode === "checking" || (!canContinueAsGuestFromAnonymousRecovery && (member.snapshot.phase === "recovering" || member.snapshot.recovery))) {
+    return (
+      <MemberTradingPrompt
+        member={member.snapshot}
+        retry={() => void member.session.restore().catch(() => {})}
+        retryConsents={member.retryConsents}
+        onContinueGuest={
+          !snapshot.contestSeasonId && member.snapshot.memberId === null
+            ? () => { member.session.forget(); }
+            : undefined
+        }
+      />
+    );
+  }
   if (snapshot.contestSeasonId) {
     const anonymousViewer = member.snapshot.phase === "anonymous";
     const loadingContest = snapshot.phase === "loading" || snapshot.phase === "creating" || member.snapshot.phase === "loading";
@@ -81,9 +99,16 @@ export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCance
   dialogRef: RefObject<HTMLDialogElement | null>; creating: boolean; failed: boolean;
   onStart: () => void; onCancel: () => void; onClose: () => void; member?: boolean;
 }) {
-  return <dialog ref={dialogRef} className="guest-start-dialog" aria-modal="true" aria-labelledby="guest-start-heading" aria-describedby="guest-start-description"
+  return <dialog ref={dialogRef} className="guest-start-dialog ym-exchange-modal" aria-modal="true" aria-labelledby="guest-start-heading" aria-describedby="guest-start-description"
     onCancel={(event) => { if (creating) event.preventDefault(); }} onClose={onClose}>
-    <h2 id="guest-start-heading">{member ? "회원 선물 계정 열기" : "게스트 모의투자 시작"}</h2>
+    <header className="ym-modal-header">
+      <h2 id="guest-start-heading">{member ? "회원 선물 계정 열기" : "게스트 모의투자 시작"}</h2>
+      <button type="button" className="ym-modal-close" aria-label="닫기" aria-disabled={creating} onClick={() => { if (!creating) onCancel(); }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </button>
+    </header>
     <div id="guest-start-description">
       {member ? <><p>회원 계정과 현재 회차를 서버에서 확인합니다. 신규 계정의 1회차 시작 자금은 10,000 USDT이며 기존 계정 잔액은 자동 변경하지 않습니다.</p><p>Guest의 체험 자산과 금융 이력을 가져오거나 초기화하지 않습니다.</p></> : <>
       <p>10,000 USDT의 가상 자산으로 실제 자금 없이 모의투자를 체험할 수 있습니다.</p>

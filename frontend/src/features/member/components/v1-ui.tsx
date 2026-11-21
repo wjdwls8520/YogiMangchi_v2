@@ -448,21 +448,51 @@ export function V1UserAvatar({
     withdrawn,
     isAdmin,
   });
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const showFallbackInitial = failedSrc === resolved;
+  const fallbackInitial = withdrawn
+    ? "탈"
+    : (nickname?.trim().charAt(0) || (isAdmin ? "관" : "회")).toUpperCase();
+  const initialFontClass =
+    size === "sm"
+      ? "text-xs"
+      : size === "lg"
+        ? "text-base"
+        : size === "xl"
+          ? "text-2xl"
+          : "text-sm";
 
   return (
     <div
       className={cn(
-        "relative shrink-0 overflow-hidden rounded-full bg-gray-100 flex items-center justify-center text-gray-400 border border-gray-200",
+        "relative shrink-0 overflow-hidden rounded-full flex items-center justify-center border",
+        showFallbackInitial
+          ? withdrawn
+            ? "bg-gray-100 text-gray-500 border-gray-200"
+            : isAdmin
+              ? "bg-blue-50 text-[#0058FF] border-blue-200"
+              : "bg-slate-100 text-slate-700 border-slate-200"
+          : "bg-gray-100 text-gray-400 border-gray-200",
         sizeClass,
         className,
       )}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={resolved}
-        alt={withdrawn ? "탈퇴한회원 프로필" : `${nickname || "회원"} 프로필`}
-        className="h-full w-full object-cover"
-      />
+      {showFallbackInitial ? (
+        <span
+          aria-label={withdrawn ? "탈퇴한회원 프로필" : `${nickname || "회원"} 프로필`}
+          className={cn("font-black select-none", initialFontClass)}
+        >
+          {fallbackInitial}
+        </span>
+      ) : (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img
+          src={resolved}
+          alt={withdrawn ? "탈퇴한회원 프로필" : `${nickname || "회원"} 프로필`}
+          className="h-full w-full object-cover"
+          onError={() => setFailedSrc(resolved)}
+        />
+      )}
     </div>
   );
 }
@@ -820,9 +850,9 @@ export function V1AssetSummaryCard({
   const valueColorClass = isZeroProfit
     ? "text-gray-200"
     : summary.isNegative || summary.totalProfit.trim().startsWith("-")
-      ? "text-blue-400"
+      ? "text-[#F6465D]"
       : summary.isPositive
-        ? "text-red-400"
+        ? "text-[#0ECB81]"
         : "text-white";
 
   return (
@@ -1058,6 +1088,17 @@ export function V1Header({
 
   useDimScrollLock(isMenuOpen);
 
+  useEffect(() => {
+    if (!isMenuOpen || typeof window === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isMenuOpen]);
+
   function rememberCurrentPageForLogin() {
     if (typeof window === "undefined") return;
     const currentPath = `${window.location.pathname || "/"}${window.location.search || ""}`;
@@ -1129,7 +1170,7 @@ export function V1Header({
           </nav>
 
           {/* 3. 오른쪽 액션 영역 (알림벨 + 관리자 배지 + 마이페이지 또는 로그인 버튼: 고정 슬롯 및 동일 버튼 규격 유지) */}
-          <div className="ym-gnb-right flex min-h-[38px] md:w-[188px] md:min-w-[188px] lg:w-[232px] lg:min-w-[232px] md:justify-self-end shrink-0 items-center justify-end gap-2">
+          <div className="ym-gnb-right flex min-h-[38px] md:min-w-[104px] md:justify-self-end shrink-0 items-center justify-end gap-2">
             {isInitialAuthLoading ? (
               <div className="ym-gnb-auth-loading flex items-center justify-end gap-2">
                 <Link
@@ -1248,40 +1289,70 @@ export function V1Header({
       {isMenuOpen ? (
         <div className="fixed inset-0 z-50 md:hidden" data-dim-modal="open">
           <div
-            className="fixed inset-0 z-40 cursor-pointer bg-black/50 backdrop-blur-xs transition-opacity"
+            className="fixed inset-0 z-40 cursor-pointer bg-black/55 backdrop-blur-xs transition-opacity"
             onClick={() => setIsMenuOpen(false)}
           />
-          <aside className="fixed right-0 top-0 z-50 h-screen w-[min(18rem,85vw)] overflow-y-auto bg-white p-6 text-gray-900 border-l border-gray-200">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-4">
+          <aside
+            className={cn(
+              "fixed right-0 top-0 z-50 h-screen w-[min(18rem,85vw)] overflow-y-auto p-6 border-l",
+              isDark
+                ? "bg-[#161A1E] text-gray-100 border-[#2B3139]"
+                : "bg-white text-gray-900 border-gray-200",
+            )}
+          >
+            <div
+              className={cn(
+                "flex items-center justify-between border-b pb-4",
+                isDark ? "border-white/10" : "border-gray-100",
+              )}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/images/logo.webp" alt="YogiMangchi" className="h-7 w-auto object-contain" />
+              <img
+                src={isDark ? "/logo_dark.png" : "/images/logo.webp"}
+                alt="YogiMangchi"
+                className="h-7 w-auto object-contain"
+              />
               <button
                 type="button"
                 onClick={() => setIsMenuOpen(false)}
-                className="rounded-lg p-1 text-gray-500 hover:bg-gray-100"
+                className={cn(
+                  "rounded-lg p-1 cursor-pointer",
+                  isDark ? "text-gray-400 hover:bg-white/10 hover:text-white" : "text-gray-500 hover:bg-gray-100",
+                )}
                 aria-label="메뉴 닫기"
               >
                 <V1IconClose className="h-4 w-4" />
               </button>
             </div>
             <nav aria-label="모바일 전체 메뉴" className="mt-6 flex flex-col gap-3 text-sm font-bold">
-              <Link href="/" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                홈 · 메인 대시보드
-              </Link>
-              <Link href="/news" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                실시간 뉴스 · 시황/속보
-              </Link>
-              <Link href="/trading" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                모의투자 하러가기
-              </Link>
-              <Link href="/contest" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                대회 · 시즌 랭킹
-              </Link>
-              <Link href="/community" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
-                커뮤니티 · 전체/인기/최신글
-              </Link>
+              {[
+                { href: "/", label: "홈 · 메인 대시보드" },
+                { href: "/news", label: "실시간 뉴스 · 시황/속보" },
+                { href: "/trading", label: "모의투자 하러가기" },
+                { href: "/contest", label: "대회 · 시즌 랭킹" },
+                { href: "/community", label: "커뮤니티 · 전체/인기/최신글" },
+              ].map(item => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "rounded-xl px-3 py-2.5 transition-colors",
+                    isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
+                  )}
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  {item.label}
+                </Link>
+              ))}
               {isLoggedIn ? (
-                <Link href="/notifications" className="flex items-center justify-between rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
+                <Link
+                  href="/notifications"
+                  className={cn(
+                    "flex items-center justify-between rounded-xl px-3 py-2.5 transition-colors",
+                    isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
+                  )}
+                  onClick={() => setIsMenuOpen(false)}
+                >
                   <span>알림 내역</span>
                   {newNotificationCount > 0 ? (
                     <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-extrabold text-white">
@@ -1290,27 +1361,66 @@ export function V1Header({
                   ) : null}
                 </Link>
               ) : null}
-              <Link href="/me" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
+              <Link
+                href="/me"
+                className={cn(
+                  "rounded-xl px-3 py-2.5 transition-colors",
+                  isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
+                )}
+                onClick={() => setIsMenuOpen(false)}
+              >
                 마이페이지 · 자산/포트폴리오
               </Link>
-              <Link href="/me/settings" className="rounded-xl px-3 py-2.5 hover:bg-gray-50" onClick={() => setIsMenuOpen(false)}>
+              <Link
+                href="/me/settings"
+                className={cn(
+                  "rounded-xl px-3 py-2.5 transition-colors",
+                  isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
+                )}
+                onClick={() => setIsMenuOpen(false)}
+              >
                 회원정보 수정
+              </Link>
+              <Link
+                href="/support"
+                className={cn(
+                  "rounded-xl px-3 py-2.5 transition-colors",
+                  isDark ? "text-gray-200 hover:bg-white/10 hover:text-white" : "hover:bg-gray-50",
+                )}
+                onClick={() => setIsMenuOpen(false)}
+              >
+                고객센터 · 1:1 문의
               </Link>
               {isLoggedIn && isAdmin ? (
                 <Link
                   href="/admin/contest"
-                  className="rounded-xl bg-blue-50 px-3 py-2.5 text-[#0058FF] hover:bg-blue-100"
+                  className={cn(
+                    "rounded-xl px-3 py-2.5 transition-colors",
+                    isDark
+                      ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
+                      : "bg-blue-50 text-[#0058FF] hover:bg-blue-100",
+                  )}
                   onClick={() => setIsMenuOpen(false)}
                 >
-                  관리자 · 대회 운영
+                  관리자 · 운영 콘솔
                 </Link>
               ) : null}
             </nav>
-            <div className="mt-6 flex flex-col gap-2 border-t border-gray-100 pt-4">
+            <div
+              className={cn(
+                "mt-6 flex flex-col gap-2 border-t pt-4",
+                isDark ? "border-white/10" : "border-gray-100",
+              )}
+            >
               {isLoggedIn ? (
                 <Link
                   href="/me"
-                  className="inline-flex h-9 w-full items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
+                  className={cn(
+                    "inline-flex h-9 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
+                    isDark
+                      ? "bg-white text-gray-900 hover:bg-gray-200"
+                      : "bg-gray-900 text-white hover:bg-gray-800",
+                  )}
                   onClick={() => setIsMenuOpen(false)}
                 >
                   마이페이지
@@ -1318,7 +1428,12 @@ export function V1Header({
               ) : (
                 <Link
                   href="/login"
-                  className="inline-flex h-9 w-full items-center justify-center rounded-full bg-gray-900 px-4 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
+                  className={cn(
+                    "inline-flex h-9 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
+                    isDark
+                      ? "bg-white text-gray-900 hover:bg-gray-200"
+                      : "bg-gray-900 text-white hover:bg-gray-800",
+                  )}
                   onClick={() => {
                     rememberCurrentPageForLogin();
                     setIsMenuOpen(false);

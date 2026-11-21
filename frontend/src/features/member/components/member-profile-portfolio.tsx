@@ -155,9 +155,9 @@ function computeRoePctString(netPnl: string, initialMargin: string): string {
 
 function pnlColorText(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed.startsWith("-")) return "text-blue-600";
+  if (trimmed.startsWith("-")) return "text-[#F6465D]";
   if (!/[1-9]/.test(trimmed)) return "text-gray-600";
-  return "text-red-500";
+  return "text-[#0ECB81]";
 }
 
 function formatKstDateTimeShort(value: string): string {
@@ -263,6 +263,32 @@ export function MemberMyProfilePage({
   const [selectedTab, setSelectedTab] = useState<MyPageMainTab | null>(initialMainTab ?? null);
   const [detailTab, setDetailTab] = useState<LedgerDetailTab>(initialDetailTab ?? "holdings");
   const [contestSubTab, setContestSubTab] = useState<ContestSubTab>(initialContestSubTab ?? "live");
+  const [syncedTabs, setSyncedTabs] = useState({
+    initialMainTab,
+    initialDetailTab,
+    initialContestSubTab,
+  });
+
+  // Sync URL query params into tab state when navigating via notification deep-links while already on /me
+  if (
+    syncedTabs.initialMainTab !== initialMainTab ||
+    syncedTabs.initialDetailTab !== initialDetailTab ||
+    syncedTabs.initialContestSubTab !== initialContestSubTab
+  ) {
+    setSyncedTabs({ initialMainTab, initialDetailTab, initialContestSubTab });
+    if (initialMainTab !== undefined && syncedTabs.initialMainTab !== initialMainTab) {
+      setSelectedTab(initialMainTab);
+    }
+    if (initialDetailTab !== undefined && syncedTabs.initialDetailTab !== initialDetailTab) {
+      setDetailTab(initialDetailTab);
+    }
+    if (
+      initialContestSubTab !== undefined &&
+      syncedTabs.initialContestSubTab !== initialContestSubTab
+    ) {
+      setContestSubTab(initialContestSubTab);
+    }
+  }
   const [portfolioTab, setPortfolioTab] = useState<"mock" | "contest">("mock");
   const [communityTab, setCommunityTab] = useState<
     "posts" | "replies" | "likedPosts" | "likedReplies" | "reports"
@@ -340,14 +366,26 @@ export function MemberMyProfilePage({
     return exact?.id;
   }, [filterSymbol, symbolsQuery.data]);
 
-  // [T-1] 공개 포트폴리오 API 조회
+  // [T-1] 공개 포트폴리오 API 조회 (본인 로그인 시 Bearer JWT 전달하여 비공개 상태에서도 본인 열람 보장)
   const publicPortfolioQuery = useQuery({
     queryKey: ["member", "public-portfolio", targetMemberId, tradingBase, member.generation],
     enabled: targetMemberId > 0,
-    queryFn: async ({ signal }) =>
-      parsePublicMemberPortfolio(
+    queryFn: async ({ signal }) => {
+      if (isOwnAndLoggedIn) {
+        return parsePublicMemberPortfolio(
+          await session.authorized(cred =>
+            tradingJson(tradingBase, `portfolios/members/${targetMemberId}`, {
+              token: cred.accessToken,
+              signal,
+            }),
+            true,
+          ),
+        );
+      }
+      return parsePublicMemberPortfolio(
         await tradingJson(tradingBase, `portfolios/members/${targetMemberId}`, { signal }),
-      ),
+      );
+    },
   });
 
   // 시즌별 대회 참가 자산 및 정산 이력 API 조회
@@ -365,6 +403,7 @@ export function MemberMyProfilePage({
       isOwnAndLoggedIn
         ? session.authorized(cred =>
             fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
+            true,
           )
         : fetchPublicMemberContestSeasons(targetMemberId, { baseUrl: tradingBase, signal }),
   });
@@ -402,6 +441,7 @@ export function MemberMyProfilePage({
           token: cred.accessToken,
           signal,
         }),
+        true,
       ) as Promise<Array<Record<string, unknown>>>;
     },
   });
@@ -413,6 +453,7 @@ export function MemberMyProfilePage({
     queryFn: async ({ signal }) =>
       session.authorized(cred =>
         tradingJson(tradingBase, "account/fills?limit=50", { token: cred.accessToken, signal }),
+        true,
       ) as Promise<Array<Record<string, unknown>>>,
   });
 
@@ -426,6 +467,7 @@ export function MemberMyProfilePage({
           token: cred.accessToken,
           signal,
         }),
+        true,
       ) as Promise<Record<string, unknown>>,
   });
 
@@ -436,6 +478,7 @@ export function MemberMyProfilePage({
     queryFn: async ({ signal }) =>
       session.authorized(cred =>
         tradingJson(tradingBase, "account/orders/pending", { token: cred.accessToken, signal }),
+        true,
       ) as Promise<Array<Record<string, unknown>>>,
   });
 
@@ -574,6 +617,11 @@ export function MemberMyProfilePage({
             ? communityLikedCommentsInfinite
             : communityReportsInfinite;
 
+  const fetchNextCommunityRef = useRef(activeInfinite.fetchNextPage);
+  useEffect(() => {
+    fetchNextCommunityRef.current = activeInfinite.fetchNextPage;
+  });
+
   useEffect(() => {
     if (
       typeof window === "undefined" ||
@@ -588,14 +636,19 @@ export function MemberMyProfilePage({
     const observer = new window.IntersectionObserver(
       entries => {
         if (entries.some(entry => entry.isIntersecting)) {
-          void activeInfinite.fetchNextPage();
+          void fetchNextCommunityRef.current();
         }
       },
       { rootMargin: "200px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  });
+  }, [
+    activeMainTab,
+    communityTab,
+    activeInfinite.hasNextPage,
+    activeInfinite.isFetchingNextPage,
+  ]);
 
   const livePortfolio =
     publicPortfolioQuery.data && publicPortfolioQuery.data.accountExists
@@ -1121,20 +1174,20 @@ export function MemberMyProfilePage({
                       </div>
                       <div className="my-4 space-y-2">
                         <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-black">
-                          <span className="text-red-500">
+                          <span className="text-[#0ECB81]">
                             LONG {longRatioDisplay}% ({longMarginDisplay})
                           </span>
-                          <span className="text-blue-600">
+                          <span className="text-[#F6465D]">
                             SHORT {shortRatioDisplay}% ({shortMarginDisplay})
                           </span>
                         </div>
                         <div className="flex h-3.5 w-full overflow-hidden rounded-full bg-gray-200">
                           <div
-                            className="h-full bg-red-500"
+                            className="h-full bg-[#0ECB81]"
                             style={{ width: `${longRatioDisplay}%` }}
                           />
                           <div
-                            className="h-full bg-blue-600"
+                            className="h-full bg-[#F6465D]"
                             style={{ width: `${shortRatioDisplay}%` }}
                           />
                         </div>
@@ -1216,8 +1269,8 @@ export function MemberMyProfilePage({
                                     <span
                                       className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
                                         pos.side === "LONG"
-                                          ? "bg-red-50 text-red-500"
-                                          : "bg-blue-50 text-blue-600"
+                                          ? "bg-emerald-50 text-[#0ECB81]"
+                                          : "bg-rose-50 text-[#F6465D]"
                                       }`}
                                     >
                                       {pos.side}
@@ -1339,8 +1392,8 @@ export function MemberMyProfilePage({
                                     <span
                                       className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
                                         row.side === "LONG"
-                                          ? "bg-red-50 text-red-500"
-                                          : "bg-blue-50 text-blue-600"
+                                          ? "bg-emerald-50 text-[#0ECB81]"
+                                          : "bg-rose-50 text-[#F6465D]"
                                       }`}
                                     >
                                       {row.side}
@@ -1465,7 +1518,7 @@ export function MemberMyProfilePage({
                                   </td>
                                   <td
                                     className={`px-4 py-3.5 font-bold ${
-                                      order.side === "BUY" ? "text-red-500" : "text-blue-600"
+                                      order.side === "BUY" ? "text-[#0ECB81]" : "text-[#F6465D]"
                                     }`}
                                   >
                                     {order.sideLabel}
@@ -1539,7 +1592,7 @@ export function MemberMyProfilePage({
                                 </td>
                                 <td
                                   className={`px-4 py-3.5 font-bold ${
-                                    trade.side === "BUY" ? "text-red-500" : "text-blue-600"
+                                    trade.side === "BUY" ? "text-[#0ECB81]" : "text-[#F6465D]"
                                   }`}
                                 >
                                   {trade.sideLabel}
@@ -1599,7 +1652,7 @@ export function MemberMyProfilePage({
                                 </td>
                                 <td
                                   className={`px-4 py-3.5 font-bold ${
-                                    order.side === "BUY" ? "text-red-500" : "text-blue-600"
+                                    order.side === "BUY" ? "text-[#0ECB81]" : "text-[#F6465D]"
                                   }`}
                                 >
                                   {order.sideLabel}
@@ -1910,20 +1963,20 @@ export function MemberMyProfilePage({
 
                         <div className="my-4 space-y-2">
                           <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-black">
-                            <span className="text-red-500">
+                            <span className="text-[#0ECB81]">
                               LONG {longRatioDisplay}% ({longCountDisplay}종목)
                             </span>
-                            <span className="text-blue-600">
+                            <span className="text-[#F6465D]">
                               SHORT {shortRatioDisplay}% ({shortCountDisplay}종목)
                             </span>
                           </div>
                           <div className="flex h-3.5 w-full overflow-hidden rounded-full bg-gray-200">
                             <div
-                              className="h-full bg-red-500"
+                              className="h-full bg-[#0ECB81]"
                               style={{ width: `${longRatioDisplay}%` }}
                             />
                             <div
-                              className="h-full bg-blue-600"
+                              className="h-full bg-[#F6465D]"
                               style={{ width: `${shortRatioDisplay}%` }}
                             />
                           </div>
@@ -1984,8 +2037,8 @@ export function MemberMyProfilePage({
                                     <span
                                       className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
                                         pos.side === "LONG"
-                                          ? "bg-red-50 text-red-500"
-                                          : "bg-blue-50 text-blue-600"
+                                          ? "bg-emerald-50 text-[#0ECB81]"
+                                          : "bg-rose-50 text-[#F6465D]"
                                       }`}
                                     >
                                       {pos.side}

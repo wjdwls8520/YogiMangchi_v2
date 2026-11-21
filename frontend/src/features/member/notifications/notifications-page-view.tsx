@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_TRADING_API_BASE_URL } from "../../contest/api/contest-client";
 import { useOptionalMember } from "../components/member-provider";
 import {
@@ -108,12 +108,17 @@ export function NotificationsPageView({
     return counts;
   }, [mergedAllItems]);
 
+  const acknowledgeNewRef = useRef(notifCenter?.acknowledgeNew);
+  useEffect(() => {
+    acknowledgeNewRef.current = notifCenter?.acknowledgeNew;
+  }, [notifCenter?.acknowledgeNew]);
+
   // Acknowledge badge & load fuller page when entering /notifications
   useEffect(() => {
     if (phase !== "ready" || !session || typeof window === "undefined") {
       return;
     }
-    void notifCenter?.acknowledgeNew();
+    void acknowledgeNewRef.current?.();
     const controller = new AbortController();
     void (async () => {
       await Promise.resolve();
@@ -139,7 +144,7 @@ export function NotificationsPageView({
     })();
 
     return () => controller.abort();
-  }, [phase, session, notifCenter]);
+  }, [phase, session]);
 
   const handleLoadMore = async () => {
     if (!session || isLoadingMore) return;

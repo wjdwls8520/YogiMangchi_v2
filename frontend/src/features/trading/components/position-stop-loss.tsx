@@ -162,7 +162,7 @@ export function PositionStopLoss({
         disabled={snapshot.phase !== "ready"}
         onClick={openModal}
       >
-        {current?.status === "ACTIVE" ? formatMarketPrice(current.stopPrice, priceTickSize) : "설정"}
+        {current?.status === "ACTIVE" ? `SL ${formatMarketPrice(current.stopPrice, priceTickSize)}` : "SL 설정"}
       </button>
       <dialog
         ref={dialog}

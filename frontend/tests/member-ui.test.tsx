@@ -309,6 +309,7 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     {
       newsId: 10,
       reaction: "BULL",
+      userReaction: "BULL",
       bullCount: 45,
       bearCount: 12,
       bullPct: 79,
@@ -420,7 +421,8 @@ test("NewsFeed renders category/symbol filters, expandable article content, and 
     assert.equal(html.includes("data-news-new-badge="), false);
     assert.match(html, /<select[^>]*aria-label="뉴스 카테고리 필터"/);
     assert.match(html, /<select[^>]*aria-label="뉴스 종목 태그 필터"/);
-    assert.match(html, /<select[^>]*aria-label="뉴스 브리핑 보기 방식"/);
+    assert.doesNotMatch(html, /<select[^>]*aria-label="뉴스 브리핑 보기 방식"/);
+    assert.equal(html.includes("중요 헤드라인"), false);
     assert.match(html, /미국 현물 ETF 순유입과 함께 BTC 선물 시장의 유동성이 확대되고 있습니다\./);
     assert.equal(html.includes("선물 모의투자 이동"), false);
     assert.equal(html.includes("선물 거래 바로가기"), false);
@@ -1105,9 +1107,49 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     assert.match(portalHtml, /선물 모의투자 퀵 시뮬레이터/);
     assert.match(portalHtml, /선물 모의투자 시작하기/);
     assert.match(portalHtml, /실시간 커뮤니티 HOT/);
-    assert.match(portalHtml, /data-s3-slot="news-thumbnail"/);
+    assert.match(portalHtml, /aria-label="최신 커뮤니티 글 불러오는 중"/);
+    assert.match(portalHtml, /aria-label="실시간 속보 불러오는 중"/);
+    assert.equal(portalHtml.includes("속보 이미지 제보"), false);
     assert.equal(portalHtml.includes('href="/signup"'), false);
     assert.equal(portalHtml.includes('href="/assets"'), false);
+
+    // Seed real portal post to verify heart/comment icons and author profile image rendering
+    const seededPortalClient = new QueryClient();
+    seededPortalClient.setQueryData(
+      ["portal-posts", "http://localhost:8080", 0],
+      parseCommunityPostPage({
+        items: [
+          {
+            id: 901,
+            memberId: 7,
+            authorNickname: "트레이더7",
+            authorProfileImgUrl: "https://cdn.example.com/avatar-7.png",
+            authorWithdrawn: false,
+            category: "ANALYSIS",
+            symbolTag: "BTC",
+            title: "실시간 BTC 돌파 시나리오",
+            content: "거래량 동반 돌파 구간입니다.",
+            likeCount: 12,
+            commentCount: 4,
+            likedByMe: false,
+            mine: false,
+            createdAt: "2026-11-10T09:00:00Z",
+            updatedAt: "2026-11-10T09:00:00Z",
+          },
+        ],
+        hasNext: false,
+        nextCursorId: null,
+      }),
+    );
+    const seededPortalHtml = renderToStaticMarkup(
+      <MemberProvider client={seededPortalClient}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+    seededPortalClient.clear();
+    assert.match(seededPortalHtml, /src="https:\/\/cdn\.example\.com\/avatar-7\.png"/);
+    assert.match(seededPortalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="heart"/);
+    assert.match(seededPortalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="comment"/);
 
     const signupAnonHtml = renderToStaticMarkup(
       <MemberProvider client={client}>
@@ -1240,8 +1282,6 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="swap"/);
     assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="bolt"/);
     assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="trophy"/);
-    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="heart"/);
-    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="comment"/);
     assert.match(signupAnonHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="check"/);
   } finally {
     client.clear();
@@ -1426,7 +1466,7 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
         <MainPortal initialMarketOverview={parsed} />
       </MemberProvider>,
     );
-    assert.match(html, /BTC 도미넌스[\s\S]*?>59\.1%<\/strong>[\s\S]*?text-blue-600">-0\.45%<\/em>/);
+    assert.match(html, /BTC 도미넌스[\s\S]*?>59\.1%<\/strong>[\s\S]*?text-\[#F6465D\]">-0\.45%<\/em>/);
     assert.match(html, /김치프리미엄[\s\S]*?>-0\.32%<\/strong>/);
     assert.match(html, /24h 선물 미결제약정[\s\S]*?>\$44\.8B<\/strong>/);
     assert.match(html, /공포·탐욕 지수[\s\S]*?>22 \(극단적 공포\)<\/strong>/);
@@ -1617,17 +1657,17 @@ test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-ser
   assert.equal(mappedCoins[0].price, "$96,840.25");
   assert.equal(mappedCoins[0].changeRate, 3.42);
   assert.equal(mappedCoins[0].volume, "2,450.8M USDT");
-  assert.equal(mappedCoins[0].strokeColor, "#EF4444");
+  assert.equal(mappedCoins[0].strokeColor, "#0ECB81");
 
   assert.equal(mappedCoins[1].price, "$3,085.50");
   assert.equal(mappedCoins[1].changeRate, -1.75);
   assert.equal(mappedCoins[1].volume, "980.4M USDT");
-  assert.equal(mappedCoins[1].strokeColor, "#2563EB");
+  assert.equal(mappedCoins[1].strokeColor, "#F6465D");
 
   assert.equal(mappedCoins[2].price, "$228.90");
   assert.equal(mappedCoins[2].changeRate, 6.15);
   assert.equal(mappedCoins[2].volume, "745.2M USDT");
-  assert.equal(mappedCoins[2].strokeColor, "#EF4444");
+  assert.equal(mappedCoins[2].strokeColor, "#0ECB81");
 
   const customOverview = parseMarketOverviewPayload({
     btcDominancePercent: 58.1,
@@ -1706,9 +1746,9 @@ test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-ser
     assert.match(html, /24h 거래대금 2,450\.8M USDT/);
 
     assert.match(html, /\$3,085\.50/);
-    assert.match(html, /text-blue-600">-1\.75%<\/span>/);
+    assert.match(html, /text-\[#F6465D\]">-1\.75%<\/span>/);
     assert.match(html, /24h 거래대금 980\.4M USDT/);
-    assert.match(html, /stroke="#2563EB"/);
+    assert.match(html, /stroke="#F6465D"/);
   } finally {
     client.clear();
   }
@@ -1744,7 +1784,7 @@ test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커�
     );
     // 속보 서브탭 뉴스룸과 동일한 중앙 세그먼트 탭 바 및 투자 심리 바 줄바꿈 방지
     assert.match(newsHtml, /mx-auto grid max-w-xl grid-cols-3 gap-1 rounded-2xl bg-\[#F2F4F7\] p-1\.5/);
-    assert.match(newsHtml, /bg-\[#2EBD85\] px-1\.5 whitespace-nowrap/);
+    assert.match(newsHtml, /bg-\[#0ECB81\] px-1\.5 whitespace-nowrap/);
     assert.match(newsHtml, /data-breaking-badge="all"/);
 
     const communityHtml = renderToStaticMarkup(
@@ -2079,17 +2119,16 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
       /현재 대회 목록만 열람하고 계십니다\. 대회에 참가 신청하고 수익률 랭킹에 도전하려면 로그인이 필요합니다\./,
     );
     assert.match(anonContestHtml, /href="\/login"[^>]*>지금 로그인하기<\/a>/);
+    assert.match(anonContestHtml, /aria-label="대회 시즌 불러오는 중"/);
     assert.match(anonContestHtml, /data-public-contest-stage="running"/);
     assert.match(anonContestHtml, /data-public-contest-stage="recruiting"/);
     assert.match(anonContestHtml, /data-public-contest-stage="finished"/);
     assert.match(anonContestHtml, /data-contest-section="leaderboard"/);
-    assert.match(anonContestHtml, /1위 · 골드 메달/);
-    assert.match(anonContestHtml, /2위 · 실버 메달/);
-    assert.match(anonContestHtml, /3위 · 브론즈 메달/);
+    assert.equal(anonContestHtml.includes("2026 정규 시즌 2 선물 수익률 대회"), false);
     assert.equal(anonContestHtml.includes("cursor-not-allowed"), false);
     assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(anonContestHtml), false);
 
-    // 3. 정식 로그인 회원 ContestHub: 내 진행 중인 대회 캐러셀 + 참가 신청 가능/참가 심사 중/종료 및 반려 3탭 + 리더보드
+    // 3. 정식 로그인 회원 ContestHub: 내 진행 중인 대회 섹션 + 참가 신청 가능/참가 심사 중/종료 및 반려 3탭 (가짜 목업 미노출)
     const memberContestHtml = renderToStaticMarkup(
       <MemberProvider session={loggedInSession} client={client}>
         <ContestHub />
@@ -2097,14 +2136,11 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     );
     assert.match(memberContestHtml, /data-contest-section="ongoing"/);
     assert.match(memberContestHtml, /내 진행 중인 대회/);
-    assert.match(memberContestHtml, /href="\/contest\/202602\/trading"/);
-    assert.match(memberContestHtml, /대회 참여하기/);
     assert.match(memberContestHtml, /data-contest-section="catalog"/);
-    assert.match(memberContestHtml, /참가 신청 가능 \(3\)/);
-    assert.match(memberContestHtml, /참가 심사 중 \(1\)/);
-    assert.match(memberContestHtml, /종료 및 반려 \(2\)/);
-    assert.match(memberContestHtml, /초기 시드머니/);
-    assert.match(memberContestHtml, /10,000 USDT/);
+    assert.match(memberContestHtml, /참가 신청 가능 \(0\)/);
+    assert.match(memberContestHtml, /참가 심사 중 \(0\)/);
+    assert.match(memberContestHtml, /종료 및 반려 \(0\)/);
+    assert.equal(memberContestHtml.includes("202602"), false);
     assert.equal(memberContestHtml.includes("cursor-not-allowed"), false);
 
     // 4. 대회 전용 선물 트레이딩 48px 서브헤더 (/contest/[seasonId]/trading)
@@ -2114,7 +2150,7 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(subheaderHtml, /data-contest-trading-subheader="202602"/);
     assert.match(subheaderHtml, /href="\/contest"/);
     assert.match(subheaderHtml, /대회 목록/);
-    assert.match(subheaderHtml, /2026 정규 시즌 2 선물 수익률 대회/);
+    assert.match(subheaderHtml, /대회 시즌 #202602/);
     assert.match(subheaderHtml, /ACTIVE/);
     assert.match(subheaderHtml, /시즌 시드/);
     assert.match(subheaderHtml, /대회 평가자산/);
@@ -2162,13 +2198,13 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(adminListHtml, /회원 관리/);
     assert.match(adminListHtml, /커뮤니티 관리/);
     assert.match(adminListHtml, /신고 관리/);
+    assert.match(adminListHtml, /시스템 운영/);
     assert.match(adminListHtml, /서비스 홈으로/);
     assert.match(adminListHtml, /대회 시즌 관리/);
     assert.match(adminListHtml, /\+ 새 대회 시즌 생성/);
     assert.match(adminListHtml, /전체 대회 시즌/);
     assert.match(adminListHtml, /참가 모집중 시즌/);
     assert.match(adminListHtml, /진행중\(LIVE\) 시즌/);
-    assert.match(adminListHtml, /role="switch"/);
     assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>시즌 ID<\/th>/);
     assert.match(adminListHtml, /<th[^>]*w-\[220px\] max-w-\[220px\][^>]*whitespace-nowrap[^>]*>대회명<\/th>/);
     assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>공개여부<\/th>/);
@@ -2176,8 +2212,7 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>초기 시드머니<\/th>/);
     assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>정산 상태<\/th>/);
     assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>관리<\/th>/);
-    assert.match(adminListHtml, /<button[^>]*data-admin-edit-season="202602"[^>]*whitespace-nowrap[^>]*>수정<\/button>/);
-    assert.match(adminListHtml, /<a[^>]*whitespace-nowrap[^>]*>상세 운영<\/a>/);
+    assert.equal(adminListHtml.includes("data-admin-edit-season=\"202602\""), false);
     assert.equal(adminListHtml.includes("cursor-not-allowed"), false);
 
     const createModalHtml = renderToStaticMarkup(
@@ -2210,17 +2245,12 @@ test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더
     assert.match(adminDetailHtml, /대회 개요 및 상태 제어/);
     assert.match(adminDetailHtml, /주요 일정 및 자동 종료 스케줄/);
     assert.match(adminDetailHtml, /청크 500 정산 시스템 상태 &amp; 실행 이력/);
-    assert.match(
-      adminDetailHtml,
-      /가격 스냅샷 → 지갑 비활성화 → 미체결 주문 500청크 소프트 취소 → 오픈 포지션 500청크 강제청산 → 올림픽 순위 확정/,
-    );
-    assert.match(adminDetailHtml, /신청자 관리 \(3\)/);
-    assert.match(adminDetailHtml, /참가자 및 시즌 지갑 목록 \(4\)/);
-    assert.match(adminDetailHtml, /반려 이력 \(1\)/);
+    assert.match(adminDetailHtml, /아직 실행된 정산 이력이 없습니다\./);
+    assert.match(adminDetailHtml, /신청자 관리 \(0\)/);
+    assert.match(adminDetailHtml, /참가자 및 시즌 지갑 목록 \(0\)/);
+    assert.match(adminDetailHtml, /반려 이력 \(0\)/);
     assert.match(adminDetailHtml, /선택 일괄 승인 \(0\)/);
-    assert.match(adminDetailHtml, /델타헤저/);
-    assert.match(adminDetailHtml, /data-admin-approve-applicant="501"[^>]*whitespace-nowrap[^>]*>승인<\/button>/);
-    assert.match(adminDetailHtml, /data-admin-reject-applicant="501"[^>]*whitespace-nowrap[^>]*>반려<\/button>/);
+    assert.equal(adminDetailHtml.includes("델타헤저"), false);
     assert.equal(adminDetailHtml.includes("cursor-not-allowed"), false);
 
     // 7. contest-client API 계약 검증 (공개·회원·관리자 엔드포인트, 메서드, Authorization 헤더, Decimal 포맷)
@@ -2971,7 +3001,8 @@ test("GNB는 대칭 3열 그리드로 정중앙 고정되고 우측 유틸 영�
 
     for (const html of [anonHtml, loadingHtml, memberHtml, adminHtml]) {
       assert.equal(html.includes("md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"), true);
-      assert.equal(html.includes("ym-gnb-right flex min-h-[38px] md:w-[188px] md:min-w-[188px]"), true);
+      assert.equal(html.includes("ym-gnb-right flex min-h-[38px] md:min-w-[104px] md:justify-self-end"), true);
+      assert.equal(html.includes("md:w-[188px]"), false);
       assert.equal(html.includes("h-9 min-w-[96px] w-[104px]"), true);
       assert.equal(html.includes("-translate-x-1/2"), false);
     }
@@ -3861,7 +3892,7 @@ test("V1 규격 실시간 알림은 체결(시장가·지정가·손절)·강제
     formatNotificationTitle(contestApproved),
     "[제3회 선물 챔피언십] 신청이 승인되었습니다!",
   );
-  assert.equal(getNotificationNavigationTarget(contestApproved)?.href, "/contest");
+  assert.equal(getNotificationNavigationTarget(contestApproved)?.href, "/contest/3/trading");
 
   const contestRejected = normalizeRawNotification("TRADING", {
     notificationId: 106,
@@ -3908,7 +3939,7 @@ test("V1 규격 실시간 알림은 체결(시장가·지정가·손절)·강제
   assert.match(formatNotificationDescription(contestSettled), /48명 중 2위 · 수익률 \+64\.25%/);
   assert.equal(
     getNotificationNavigationTarget(contestSettled)?.href,
-    "/me?tab=contest-assets&contestSubTab=finished",
+    "/me?tab=contest-assets&contestSubTab=finished&seasonId=3",
   );
   assert.equal(
     getNotificationDetailFields(contestSettled).some(f => f.value === "2위 / 48명"),

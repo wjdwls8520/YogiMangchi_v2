@@ -32,6 +32,7 @@ export interface NotificationDrawerProps {
   isReadingAll: boolean;
   isLoadingMore: boolean;
   hasNext: boolean;
+  isDark?: boolean;
   onClose: () => void;
   onSelectNotification: (notification: NotificationItem) => void;
   onAcknowledgeNewNotifications: () => void;
@@ -45,6 +46,7 @@ export function NotificationDrawer({
   isReadingAll,
   isLoadingMore,
   hasNext,
+  isDark = false,
   onClose,
   onSelectNotification,
   onAcknowledgeNewNotifications,
@@ -128,12 +130,21 @@ export function NotificationDrawer({
   return (
     <aside
       data-notification-drawer="true"
+      data-drawer-theme={isDark ? "dark" : "light"}
       aria-label="실시간 알림 패널"
-      className="flex h-full flex-col overflow-hidden bg-white text-gray-900"
+      className={cn(
+        "flex h-full flex-col overflow-hidden",
+        isDark ? "bg-[#161A1E] text-gray-100" : "bg-white text-gray-900",
+      )}
     >
       <div className="flex items-center justify-between px-5 py-4">
         <div className="flex min-w-0 items-center gap-2.5">
-          <h2 className="text-left text-[17px] font-extrabold tracking-tight text-gray-900">
+          <h2
+            className={cn(
+              "text-left text-[17px] font-extrabold tracking-tight",
+              isDark ? "text-gray-100" : "text-gray-900",
+            )}
+          >
             알림
           </h2>
 
@@ -141,7 +152,12 @@ export function NotificationDrawer({
             <button
               type="button"
               onClick={handleRevealPending}
-              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[#0058FF]/10 px-3 text-[12px] font-bold text-[#0058FF] transition-colors hover:bg-[#0058FF]/15 cursor-pointer"
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-bold transition-colors cursor-pointer",
+                isDark
+                  ? "bg-[#F0B90B]/15 text-[#F0B90B] hover:bg-[#F0B90B]/25"
+                  : "bg-[#0058FF]/10 text-[#0058FF] hover:bg-[#0058FF]/15",
+              )}
             >
               <span>
                 새로운 알림 {formatNotificationCount(pendingNotifications.length)}건
@@ -154,18 +170,33 @@ export function NotificationDrawer({
         <button
           type="button"
           onClick={onClose}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 cursor-pointer"
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-lg transition-colors cursor-pointer",
+            isDark
+              ? "text-gray-400 hover:bg-white/10 hover:text-gray-100"
+              : "text-gray-400 hover:bg-gray-100 hover:text-gray-600",
+          )}
           aria-label="알림 패널 닫기"
         >
           <V1IconClose className="h-[18px] w-[18px]" />
         </button>
       </div>
 
-      <div className="flex items-center justify-between border-b border-gray-100 px-5 pb-3">
+      <div
+        className={cn(
+          "flex items-center justify-between border-b px-5 pb-3",
+          isDark ? "border-[#2B3139]" : "border-gray-100",
+        )}
+      >
         <Link
           href="/notifications"
           onClick={onClose}
-          className="inline-flex items-center gap-1 text-[12px] font-bold text-gray-500 transition-colors hover:text-[#0058FF]"
+          className={cn(
+            "inline-flex items-center gap-1 text-[12px] font-bold transition-colors",
+            isDark
+              ? "text-gray-400 hover:text-[#F0B90B]"
+              : "text-gray-500 hover:text-[#0058FF]",
+          )}
         >
           <span>전체보기</span>
           <V1IconChevronRight className="h-3.5 w-3.5" />
@@ -175,23 +206,40 @@ export function NotificationDrawer({
           type="button"
           onClick={onReadAll}
           disabled={!hasUnreadNotifications || isReadingAll}
-          className="text-[12px] font-bold text-gray-500 transition-colors hover:text-gray-800 cursor-pointer disabled:cursor-default disabled:opacity-40"
+          className={cn(
+            "text-[12px] font-bold transition-colors cursor-pointer disabled:cursor-default disabled:opacity-40",
+            isDark
+              ? "text-gray-400 hover:text-gray-100"
+              : "text-gray-500 hover:text-gray-800",
+          )}
         >
           {isReadingAll ? "처리 중..." : "모두 읽음"}
         </button>
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
-        {isLoading ? <NotificationDrawerSkeleton /> : null}
+        {isLoading ? <NotificationDrawerSkeleton isDark={isDark} /> : null}
 
         {!isLoading &&
         visibleNotifications.length === 0 &&
         pendingNotifications.length === 0 ? (
           <div className="flex h-full min-h-[260px] flex-col items-center justify-center px-6 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-50">
-              <V1IconBell className="h-6 w-6 text-gray-300" />
+            <div
+              className={cn(
+                "flex h-14 w-14 items-center justify-center rounded-2xl",
+                isDark ? "bg-white/5" : "bg-gray-50",
+              )}
+            >
+              <V1IconBell
+                className={cn("h-6 w-6", isDark ? "text-gray-500" : "text-gray-300")}
+              />
             </div>
-            <p className="mt-4 text-[13px] font-bold text-gray-500">
+            <p
+              className={cn(
+                "mt-4 text-[13px] font-bold",
+                isDark ? "text-gray-300" : "text-gray-500",
+              )}
+            >
               최근 도착한 알림이 없습니다
             </p>
             <p className="mt-1 text-xs text-gray-400">
@@ -207,6 +255,7 @@ export function NotificationDrawer({
                 key={item.uid}
                 notification={item}
                 isHighlighted={highlightedUids.includes(item.uid)}
+                isDark={isDark}
                 onSelect={onSelectNotification}
               />
             ))}
@@ -215,12 +264,22 @@ export function NotificationDrawer({
       </div>
 
       {hasNext ? (
-        <div className="border-t border-gray-100 px-4 py-3">
+        <div
+          className={cn(
+            "border-t px-4 py-3",
+            isDark ? "border-[#2B3139]" : "border-gray-100",
+          )}
+        >
           <button
             type="button"
             onClick={onLoadMore}
             disabled={isLoadingMore}
-            className="flex h-9 w-full items-center justify-center rounded-xl text-[12px] font-bold text-gray-600 transition-colors hover:bg-gray-50 cursor-pointer disabled:cursor-default disabled:opacity-50"
+            className={cn(
+              "flex h-9 w-full items-center justify-center rounded-xl text-[12px] font-bold transition-colors cursor-pointer disabled:cursor-default disabled:opacity-50",
+              isDark
+                ? "text-gray-300 hover:bg-white/5"
+                : "text-gray-600 hover:bg-gray-50",
+            )}
           >
             {isLoadingMore ? "불러오는 중..." : "이전 알림 더 보기"}
           </button>
@@ -233,10 +292,12 @@ export function NotificationDrawer({
 function NotificationDrawerRow({
   notification,
   isHighlighted,
+  isDark,
   onSelect,
 }: {
   notification: NotificationItem;
   isHighlighted: boolean;
+  isDark: boolean;
   onSelect: (notification: NotificationItem) => void;
 }) {
   const title = formatNotificationTitle(notification);
@@ -268,9 +329,13 @@ function NotificationDrawerRow({
             <span
               className={cn(
                 "rounded-md px-2 py-0.5 text-[10px] font-bold tracking-wide",
-                isUnread
-                  ? "bg-gray-100 text-gray-700"
-                  : "bg-gray-50 text-gray-400",
+                isDark
+                  ? isUnread
+                    ? "bg-white/10 text-gray-200"
+                    : "bg-white/5 text-gray-500"
+                  : isUnread
+                    ? "bg-gray-100 text-gray-700"
+                    : "bg-gray-50 text-gray-400",
               )}
             >
               {categoryLabel}
@@ -298,14 +363,25 @@ function NotificationDrawerRow({
         <p
           className={cn(
             "mt-2 text-left text-[13px] leading-[20px]",
-            isUnread ? "font-bold text-gray-900" : "font-medium text-gray-500",
+            isDark
+              ? isUnread
+                ? "font-bold text-gray-100"
+                : "font-medium text-gray-400"
+              : isUnread
+                ? "font-bold text-gray-900"
+                : "font-medium text-gray-500",
           )}
         >
           {title}
         </p>
 
         {description ? (
-          <div className="mt-1 flex items-start gap-1.5 text-left text-[12px] leading-[18px] text-gray-500">
+          <div
+            className={cn(
+              "mt-1 flex items-start gap-1.5 text-left text-[12px] leading-[18px]",
+              isDark ? "text-gray-400" : "text-gray-500",
+            )}
+          >
             {showCommentIcon ? (
               <V1IconCornerDownRight className="mt-[2px] h-3.5 w-3.5 shrink-0" />
             ) : null}
@@ -320,7 +396,8 @@ function NotificationDrawerRow({
     <li
       data-notification-row={notification.uid}
       className={cn(
-        "relative border-b border-gray-50 last:border-b-0 transition-colors duration-200",
+        "relative border-b last:border-b-0 transition-colors duration-200",
+        isDark ? "border-[#232830]" : "border-gray-50",
         isHighlighted
           ? toneStyles.highlightSurface
           : isUnread && toneStyles.unreadSurface,
@@ -330,7 +407,10 @@ function NotificationDrawerRow({
         <Link
           href={target.href}
           onClick={() => onSelect(notification)}
-          className="flex w-full items-start gap-3 px-5 py-4 text-left transition-colors hover:bg-gray-50/80"
+          className={cn(
+            "flex w-full items-start gap-3 px-5 py-4 text-left transition-colors",
+            isDark ? "hover:bg-white/5" : "hover:bg-gray-50/80",
+          )}
           aria-label={`${title} 알림으로 이동`}
         >
           {innerContent}
@@ -339,7 +419,10 @@ function NotificationDrawerRow({
         <button
           type="button"
           onClick={() => onSelect(notification)}
-          className="flex w-full items-start gap-3 px-5 py-4 text-left transition-colors hover:bg-gray-50/80 cursor-pointer"
+          className={cn(
+            "flex w-full items-start gap-3 px-5 py-4 text-left transition-colors cursor-pointer",
+            isDark ? "hover:bg-white/5" : "hover:bg-gray-50/80",
+          )}
           aria-label={`${title} 알림 읽음 처리`}
         >
           {innerContent}
@@ -349,17 +432,37 @@ function NotificationDrawerRow({
   );
 }
 
-function NotificationDrawerSkeleton() {
+function NotificationDrawerSkeleton({ isDark }: { isDark: boolean }) {
   return (
     <div className="px-5 py-4">
       <div className="space-y-1">
         {Array.from({ length: 4 }).map((_, index) => (
           <div key={index} className="flex items-start gap-3 rounded-xl py-3">
-            <div className="mt-[7px] h-[7px] w-[7px] shrink-0 animate-pulse rounded-full bg-gray-200" />
+            <div
+              className={cn(
+                "mt-[7px] h-[7px] w-[7px] shrink-0 animate-pulse rounded-full",
+                isDark ? "bg-white/15" : "bg-gray-200",
+              )}
+            />
             <div className="flex-1 space-y-2">
-              <div className="h-[18px] w-16 animate-pulse rounded-md bg-gray-100" />
-              <div className="h-4 w-full animate-pulse rounded-md bg-gray-100" />
-              <div className="h-3 w-2/3 animate-pulse rounded-md bg-gray-50" />
+              <div
+                className={cn(
+                  "h-[18px] w-16 animate-pulse rounded-md",
+                  isDark ? "bg-white/10" : "bg-gray-100",
+                )}
+              />
+              <div
+                className={cn(
+                  "h-4 w-full animate-pulse rounded-md",
+                  isDark ? "bg-white/10" : "bg-gray-100",
+                )}
+              />
+              <div
+                className={cn(
+                  "h-3 w-2/3 animate-pulse rounded-md",
+                  isDark ? "bg-white/5" : "bg-gray-50",
+                )}
+              />
             </div>
           </div>
         ))}

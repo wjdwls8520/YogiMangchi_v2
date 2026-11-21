@@ -1,22 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createNoticeStore, NOTICE_LIFETIME, orderFailureNotice, orderNotice } from "../src/features/trading/api/notices";
+import { createNoticeStore, NOTICE_ERROR_LIFETIME, NOTICE_LIFETIME, orderFailureNotice, orderNotice } from "../src/features/trading/api/notices";
 import { TradingNoticeList } from "../src/features/trading/components/trading-notices";
 import { TradingApiError } from "../src/features/trading/api/client";
 import type { TradingOrder } from "../src/features/trading/api/orders";
 
-test("notices stack in arrival order and expire individually after 1500ms, with manual dismissal and cleanup",()=>{
+test("notices stack in arrival order and auto-expire (1500ms success, 5000ms error/warning) with manual dismissal and cleanup",()=>{
   const timers: { callback:()=>void; delay:number; canceled:boolean }[]=[];
   const store=createNoticeStore((callback,delay)=>{const timer={callback,delay,canceled:false};timers.push(timer);return()=>{timer.canceled=true;};});
   const one=store.push({kind:"success",title:"first",message:"done"},"account-1");
   const two=store.push({kind:"error",title:"second",message:"failed"},"account-1");
-  assert.equal(NOTICE_LIFETIME,1500);assert.deepEqual(timers.map(timer=>timer.delay),[1500]);
+  assert.equal(NOTICE_LIFETIME,1500);assert.equal(NOTICE_ERROR_LIFETIME,5000);assert.deepEqual(timers.map(timer=>timer.delay),[1500,5000]);
   assert.deepEqual(store.getSnapshot().map(notice=>notice.id),[one,two]);
   timers[0].callback();assert.deepEqual(store.getSnapshot().map(notice=>notice.id),[two]);
-  store.dismiss(two!);assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers.length,1);
+  store.dismiss(two!);assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers[1].canceled,true);
   store.push({kind:"warning",title:"third",message:"unknown"},"account-2");
-  store.clear();assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers.length,1);
+  assert.equal(timers.length,3);assert.equal(timers[2].delay,5000);
+  store.clear();assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers[2].canceled,true);
 });
 
 test("accepted LIMIT is not described as filled, and uncertain results are never described as failed",()=>{

@@ -29,6 +29,7 @@ import {
 import {
   cn,
   V1Button,
+  V1IconAlert,
   V1IconArrowRight,
   V1IconCalendar,
   V1IconCheck,
@@ -116,365 +117,6 @@ type EnrichedMemberMeta = {
   profileImgUrl: string | null;
   withdrawn: boolean;
 };
-
-const INITIAL_MY_ONGOING_CONTESTS: OngoingMyContestItem[] = [
-  {
-    id: 202602,
-    title: "2026 정규 시즌 2 선물 수익률 대회",
-    period: "2026.11.01 09:00 ~ 2026.11.30 23:59",
-    contestStartAt: "2026-11-01 09:00",
-    contestEndAt: "2026-11-30 23:59",
-    seedMoney: "10,000.00 USDT",
-    currentEquity: "13,480.50 USDT",
-    myRoi: "+34.81%",
-    myPnl: "+3,480.50 USDT",
-    myRank: 4,
-    participantCount: 186,
-    isLive: true,
-    statusLabel: "라이브 진행중",
-    dotColor: "#0058FF",
-  },
-  {
-    id: 202603,
-    title: "2026 연말 메이저 코인 단기 스프린트",
-    period: "2026.11.05 09:00 ~ 2026.11.20 23:59",
-    contestStartAt: "2026-11-05 09:00",
-    contestEndAt: "2026-11-20 23:59",
-    seedMoney: "10,000.00 USDT",
-    currentEquity: "11,125.00 USDT",
-    myRoi: "+11.25%",
-    myPnl: "+1,125.00 USDT",
-    myRank: 12,
-    participantCount: 94,
-    isLive: true,
-    statusLabel: "라이브 진행중",
-    dotColor: "#10B981",
-  },
-  {
-    id: 202604,
-    title: "2026 윈터 파이널 챔피언십 시즌 3",
-    period: "2026.12.01 09:00 ~ 2026.12.31 23:59",
-    contestStartAt: "2026-12-01 09:00",
-    contestEndAt: "2026-12-31 23:59",
-    seedMoney: "10,000.00 USDT",
-    currentEquity: "10,000.00 USDT",
-    myRoi: "0.00%",
-    myPnl: "0.00 USDT",
-    myRank: 1,
-    participantCount: 68,
-    isLive: false,
-    statusLabel: "시작 대기중",
-    dotColor: "#F59E0B",
-  },
-];
-
-const INITIAL_AVAILABLE_CONTESTS: ContestSeasonItem[] = [
-  {
-    id: 202605,
-    title: "2026 정규 시즌 4 알트코인 변동성 챌린지",
-    description:
-      "비트코인·이더리움·솔라나·리플 무기한 선물을 대상으로 동일 10,000 USDT 시드머니에서 출발해 시즌 누적 수익률을 겨루는 공식 대회입니다.",
-    seedMoney: "10,000 USDT",
-    recruitmentStartAt: "2026.11.01 00:00",
-    recruitmentEndAt: "2026.11.25 23:59",
-    contestStartAt: "2026.11.26 09:00",
-    contestEndAt: "2026.12.15 23:59",
-    participantCount: 112,
-    cardType: "apply",
-    accentLabel: "모집중",
-    actionLabel: "신청",
-    rewardSummary: "1위 명예 골드 배지 · TOP 3 프로필 타이틀 부여",
-  },
-  {
-    id: 202606,
-    title: "2026 하이레버리지 실전 리스크 매니지먼트 리그",
-    description:
-      "손절가 설정과 격리/교차 증거금 규율을 준수하며 최고 실현 손익률을 기록한 트레이더를 선발하는 시즌 대회입니다.",
-    seedMoney: "10,000 USDT",
-    recruitmentStartAt: "2026.11.03 00:00",
-    recruitmentEndAt: "2026.11.28 23:59",
-    contestStartAt: "2026.11.29 09:00",
-    contestEndAt: "2026.12.20 23:59",
-    participantCount: 79,
-    cardType: "apply",
-    accentLabel: "모집중",
-    actionLabel: "신청",
-    rewardSummary: "시즌 공식 리더보드 영구 박제 및 차티스트 랭킹 등재",
-  },
-  {
-    id: 202607,
-    title: "2027 신년 오프닝 선물 모의투자 그랑프리",
-    description:
-      "신년 글로벌 거시 지표 발표 주간에 맞춰 오픈되는 정규 그랑프리 시즌으로, 정식 회원 누구나 무료로 참가 신청할 수 있습니다.",
-    seedMoney: "10,000 USDT",
-    recruitmentStartAt: "2026.11.10 00:00",
-    recruitmentEndAt: "2026.12.28 23:59",
-    contestStartAt: "2027.01.02 09:00",
-    contestEndAt: "2027.01.31 23:59",
-    participantCount: 45,
-    cardType: "apply",
-    accentLabel: "모집중",
-    actionLabel: "신청",
-    rewardSummary: "시즌 1~3위 공식 메달 배지 및 커뮤니티 상단 랭킹 노출",
-  },
-];
-
-const INITIAL_PENDING_CONTESTS: ContestSeasonItem[] = [
-  {
-    id: 202608,
-    title: "2026 매크로 위클리 FOMC 특별 토너먼트",
-    description:
-      "금리 결정 주간의 급격한 변동성 장세에서 안정적인 수익률을 달성하는 단기 집중 토너먼트입니다. 관리자 승인 즉시 시즌 전용 지갑이 생성됩니다.",
-    seedMoney: "10,000 USDT",
-    recruitmentStartAt: "2026.11.01 00:00",
-    recruitmentEndAt: "2026.11.18 23:59",
-    contestStartAt: "2026.11.19 09:00",
-    contestEndAt: "2026.11.26 23:59",
-    participantCount: 64,
-    cardType: "wait",
-    accentLabel: "심사중",
-    actionLabel: "승인 대기중",
-  },
-];
-
-const INITIAL_HISTORY_CONTESTS: ContestSeasonItem[] = [
-  {
-    id: 202601,
-    title: "2026 정규 시즌 1 선물 수익률 대회",
-    description:
-      "요기망치 V2 첫 정규 시즌 대회로, 종료 시각 기준 모든 미체결 주문 소프트 취소 및 오픈 포지션 마크가격 스냅샷 정산을 완료하여 최종 순위가 확정되었습니다.",
-    seedMoney: "10,000 USDT",
-    recruitmentStartAt: "2026.09.20 00:00",
-    recruitmentEndAt: "2026.09.30 23:59",
-    contestStartAt: "2026.10.01 09:00",
-    contestEndAt: "2026.10.31 23:59",
-    participantCount: 240,
-    cardType: "past",
-    accentLabel: "종료",
-    actionLabel: "정산 완료",
-    finalRank: 5,
-    finalRoi: "+62.40%",
-    finalPnl: "+6,240.00 USDT",
-  },
-  {
-    id: 202512,
-    title: "2026 프리시즌 VIP 초청 스페셜 매치",
-    description:
-      "사전 초청 기준 및 시즌 운영 정책 검증을 위한 스페셜 매치 시즌입니다.",
-    seedMoney: "10,000 USDT",
-    recruitmentStartAt: "2026.09.01 00:00",
-    recruitmentEndAt: "2026.09.10 23:59",
-    contestStartAt: "2026.09.12 09:00",
-    contestEndAt: "2026.09.25 23:59",
-    participantCount: 50,
-    cardType: "reject",
-    accentLabel: "반려",
-    actionLabel: "반려됨",
-    rejectReason:
-      "신청 마감 시각 직전 중복 신청 건으로 확인되어 기본 정규 시즌으로 안내되었습니다.",
-  },
-];
-
-const PUBLIC_RUNNING_CONTESTS: ContestSeasonItem[] = [
-  {
-    id: 202602,
-    title: "2026 정규 시즌 2 선물 수익률 대회",
-    description:
-      "현재 실시간으로 186명의 트레이더가 10,000 USDT 전용 시드머니로 수익률 경쟁을 펼치고 있는 메인 정규 시즌입니다.",
-    seedMoney: "10,000 USDT",
-    recruitmentStartAt: "2026.10.20 00:00",
-    recruitmentEndAt: "2026.10.31 23:59",
-    contestStartAt: "2026.11.01 09:00",
-    contestEndAt: "2026.11.30 23:59",
-    participantCount: 186,
-    cardType: "live",
-    accentLabel: "진행중",
-    actionLabel: "진행중인 대회",
-    isLive: true,
-  },
-  {
-    id: 202603,
-    title: "2026 연말 메이저 코인 단기 스프린트",
-    description:
-      "비트코인과 이더리움 무기한 선물에 집중하여 단기 추세 추종 실력을 겨루는 스프린트 시즌입니다.",
-    seedMoney: "10,000 USDT",
-    recruitmentStartAt: "2026.10.25 00:00",
-    recruitmentEndAt: "2026.11.04 23:59",
-    contestStartAt: "2026.11.05 09:00",
-    contestEndAt: "2026.11.20 23:59",
-    participantCount: 94,
-    cardType: "live",
-    accentLabel: "진행중",
-    actionLabel: "진행중인 대회",
-    isLive: true,
-  },
-];
-
-const LEADERBOARD_SEASONS: ContestLeaderboardSeason[] = [
-  {
-    seasonId: 202602,
-    seasonTitle: "2026 정규 시즌 2 선물 수익률 대회",
-    statusLabel: "실시간 랭킹",
-    period: "2026.11.01 ~ 2026.11.30",
-    participantCount: 186,
-    entries: [
-      {
-        rank: 1,
-        memberId: 11,
-        nickname: "알파트레이더",
-        seedMoney: "10,000.00 USDT",
-        equity: "24,850.00 USDT",
-        realizedPnl: "+14,850.00 USDT",
-        roi: "+148.50%",
-        isPositive: true,
-        tradeCount: 42,
-        winRate: "76.2%",
-      },
-      {
-        rank: 2,
-        memberId: 22,
-        nickname: "솔라나고래",
-        seedMoney: "10,000.00 USDT",
-        equity: "19,320.40 USDT",
-        realizedPnl: "+9,320.40 USDT",
-        roi: "+93.20%",
-        isPositive: true,
-        tradeCount: 31,
-        winRate: "71.0%",
-      },
-      {
-        rank: 3,
-        memberId: 15,
-        nickname: "퀀트매니저",
-        seedMoney: "10,000.00 USDT",
-        equity: "16,740.00 USDT",
-        realizedPnl: "+6,740.00 USDT",
-        roi: "+67.40%",
-        isPositive: true,
-        tradeCount: 58,
-        winRate: "68.9%",
-      },
-      {
-        rank: 4,
-        memberId: 31,
-        nickname: "매크로워처",
-        seedMoney: "10,000.00 USDT",
-        equity: "13,480.50 USDT",
-        realizedPnl: "+3,480.50 USDT",
-        roi: "+34.81%",
-        isPositive: true,
-        tradeCount: 19,
-        winRate: "63.2%",
-      },
-      {
-        rank: 5,
-        memberId: 44,
-        nickname: "리스크헌터",
-        seedMoney: "10,000.00 USDT",
-        equity: "12,190.00 USDT",
-        realizedPnl: "+2,190.00 USDT",
-        roi: "+21.90%",
-        isPositive: true,
-        tradeCount: 27,
-        winRate: "59.3%",
-      },
-      {
-        rank: 6,
-        memberId: 52,
-        nickname: "돌파매매왕",
-        seedMoney: "10,000.00 USDT",
-        equity: "11,040.20 USDT",
-        realizedPnl: "+1,040.20 USDT",
-        roi: "+10.40%",
-        isPositive: true,
-        tradeCount: 36,
-        winRate: "55.6%",
-      },
-      {
-        rank: 7,
-        memberId: 63,
-        nickname: "모멘텀시커",
-        seedMoney: "10,000.00 USDT",
-        equity: "9,420.00 USDT",
-        realizedPnl: "-580.00 USDT",
-        roi: "-5.80%",
-        isPositive: false,
-        tradeCount: 24,
-        winRate: "45.8%",
-      },
-    ],
-  },
-  {
-    seasonId: 202601,
-    seasonTitle: "2026 정규 시즌 1 선물 수익률 대회",
-    statusLabel: "최종 확정 순위",
-    period: "2026.10.01 ~ 2026.10.31",
-    settledAt: "2026.10.31 23:59 정산 확정",
-    participantCount: 240,
-    entries: [
-      {
-        rank: 1,
-        memberId: 15,
-        nickname: "퀀트매니저",
-        seedMoney: "10,000.00 USDT",
-        equity: "31,200.00 USDT",
-        realizedPnl: "+21,200.00 USDT",
-        roi: "+212.00%",
-        isPositive: true,
-        tradeCount: 64,
-        winRate: "78.1%",
-      },
-      {
-        rank: 2,
-        memberId: 11,
-        nickname: "알파트레이더",
-        seedMoney: "10,000.00 USDT",
-        equity: "25,400.00 USDT",
-        realizedPnl: "+15,400.00 USDT",
-        roi: "+154.00%",
-        isPositive: true,
-        tradeCount: 49,
-        winRate: "73.5%",
-      },
-      {
-        rank: 3,
-        memberId: 31,
-        nickname: "매크로워처",
-        seedMoney: "10,000.00 USDT",
-        equity: "18,950.00 USDT",
-        realizedPnl: "+8,950.00 USDT",
-        roi: "+89.50%",
-        isPositive: true,
-        tradeCount: 38,
-        winRate: "68.4%",
-      },
-      {
-        rank: 4,
-        memberId: 22,
-        nickname: "솔라나고래",
-        seedMoney: "10,000.00 USDT",
-        equity: "17,120.00 USDT",
-        realizedPnl: "+7,120.00 USDT",
-        roi: "+71.20%",
-        isPositive: true,
-        tradeCount: 41,
-        winRate: "65.9%",
-      },
-      {
-        rank: 5,
-        memberId: 44,
-        nickname: "리스크헌터",
-        seedMoney: "10,000.00 USDT",
-        equity: "16,240.00 USDT",
-        realizedPnl: "+6,240.00 USDT",
-        roi: "+62.40%",
-        isPositive: true,
-        tradeCount: 29,
-        winRate: "62.1%",
-      },
-    ],
-  },
-];
 
 export function ContestListCard({
   contest,
@@ -780,9 +422,9 @@ export function ContestOngoingSection({
                       className={cn(
                         "mt-0.5 text-xs font-black tabular-nums",
                         contest.myRoi.startsWith("+")
-                          ? "text-red-500"
+                          ? "text-[#0ECB81]"
                           : contest.myRoi.startsWith("-")
-                            ? "text-[#0058FF]"
+                            ? "text-[#F6465D]"
                             : "text-gray-700",
                       )}
                     >
@@ -832,7 +474,7 @@ export function ContestOngoingSection({
   );
 }
 
-const ONGOING_DOT_PALETTE = ["#0058FF", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899"];
+const ONGOING_DOT_PALETTE = ["#0058FF", "#0ECB81", "#F59E0B", "#0EA5E9", "#F6465D"];
 
 function mapSeasonViewToItem(
   view: ContestSeasonView,
@@ -924,23 +566,21 @@ export function ContestHub() {
   const [activeCatalogTab, setActiveCatalogTab] = useState<"available" | "pending" | "history">(
     "available",
   );
-  const [publicRunningContests, setPublicRunningContests] =
-    useState<ContestSeasonItem[]>(PUBLIC_RUNNING_CONTESTS);
-  const [myOngoingContests, setMyOngoingContests] =
-    useState<OngoingMyContestItem[]>(INITIAL_MY_ONGOING_CONTESTS);
-  const [availableContests, setAvailableContests] =
-    useState<ContestSeasonItem[]>(INITIAL_AVAILABLE_CONTESTS);
-  const [pendingContests, setPendingContests] =
-    useState<ContestSeasonItem[]>(INITIAL_PENDING_CONTESTS);
-  const [historyContests, setHistoryContests] =
-    useState<ContestSeasonItem[]>(INITIAL_HISTORY_CONTESTS);
-  const [leaderboardSeasons, setLeaderboardSeasons] =
-    useState<ContestLeaderboardSeason[]>(LEADERBOARD_SEASONS);
-  const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
+  const [publicRunningContests, setPublicRunningContests] = useState<ContestSeasonItem[]>([]);
+  const [myOngoingContests, setMyOngoingContests] = useState<OngoingMyContestItem[]>([]);
+  const [availableContests, setAvailableContests] = useState<ContestSeasonItem[]>([]);
+  const [pendingContests, setPendingContests] = useState<ContestSeasonItem[]>([]);
+  const [historyContests, setHistoryContests] = useState<ContestSeasonItem[]>([]);
+  const [leaderboardSeasons, setLeaderboardSeasons] = useState<ContestLeaderboardSeason[]>([]);
+  const [isLoadingOverview, setIsLoadingOverview] = useState(true);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
+  const [feedbackNotice, setFeedbackNotice] = useState<{
+    kind: "success" | "error";
+    text: string;
+  } | null>(null);
 
-  const [selectedLeaderboardSeasonId, setSelectedLeaderboardSeasonId] = useState<number>(
-    LEADERBOARD_SEASONS[0]!.seasonId,
-  );
+  const [selectedLeaderboardSeasonId, setSelectedLeaderboardSeasonId] = useState<number>(0);
   const [visibleRankCount, setVisibleRankCount] = useState<number>(5);
   const [loadingMoreLeaderboard, setLoadingMoreLeaderboard] = useState(false);
 
@@ -1093,6 +733,8 @@ export function ContestHub() {
     const refreshContestOverview = () => {
       void fetchPublicContestSeasons({ signal: controller.signal })
         .then(res => {
+          setOverviewError(null);
+          setIsLoadingOverview(false);
           if (!res || !Array.isArray(res.seasons)) return;
           setPublicRunningContests(res.running.map(s => mapSeasonViewToItem(s, "live")));
           if (!isLoggedIn) {
@@ -1142,6 +784,8 @@ export function ContestHub() {
         })
         .catch(() => {
           if (controller.signal.aborted) return;
+          setIsLoadingOverview(false);
+          setOverviewError("대회 시즌 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
           setPublicRunningContests([]);
           setLeaderboardSeasons([]);
           if (!isLoggedIn) {
@@ -1156,13 +800,17 @@ export function ContestHub() {
         void memberCtx.session
           .authorized(cred =>
             fetchMyContestOverview(cred.accessToken, { signal: controller.signal }),
+            true,
           )
           .then(overview => {
+            setIsLoadingOverview(false);
             if (!overview || !Array.isArray(overview.participatingSeasons)) return;
             applyMyOverviewResponse(overview);
           })
           .catch(() => {
             if (controller.signal.aborted) return;
+            setIsLoadingOverview(false);
+            setOverviewError("내 대회 참가 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
             setMyOngoingContests([]);
             setAvailableContests([]);
             setPendingContests([]);
@@ -1173,7 +821,6 @@ export function ContestHub() {
 
     refreshContestOverview();
     const timer = window.setInterval(() => {
-
       if (document.visibilityState === "hidden" || guideOpenRef.current) return;
       refreshContestOverview();
     }, 10_000);
@@ -1182,7 +829,7 @@ export function ContestHub() {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [isLoggedIn, memberCtx?.session, memberCtx?.snapshot.generation]);
+  }, [isLoggedIn, memberCtx?.session, memberCtx?.snapshot.generation, reloadTick]);
 
   useEffect(() => {
     if (!selectedLeaderboardSeasonId || selectedLeaderboardSeasonId <= 0) return;
@@ -1301,7 +948,10 @@ export function ContestHub() {
       setVisibleRankCount(prev => prev + 10);
       enrichLeaderboardMemberProfiles(nextPage.items.map(item => item.memberId));
     } catch {
-      setFeedbackNotice("추가 리더보드 순위를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      setFeedbackNotice({
+        kind: "error",
+        text: "추가 리더보드 순위를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      });
     } finally {
       setLoadingMoreLeaderboard(false);
     }
@@ -1309,12 +959,18 @@ export function ContestHub() {
 
   async function handleApplySeason(contest: ContestSeasonItem) {
     if (!isLoggedIn) {
-      setFeedbackNotice("대회에 참가 신청하려면 먼저 소셜 계정으로 로그인해 주세요.");
+      setFeedbackNotice({
+        kind: "error",
+        text: "대회에 참가 신청하려면 먼저 소셜 계정으로 로그인해 주세요.",
+      });
       return;
     }
 
     if (!memberCtx?.session) {
-      setFeedbackNotice("로그인 세션을 확인한 뒤 다시 시도해 주세요.");
+      setFeedbackNotice({
+        kind: "error",
+        text: "로그인 세션을 확인한 뒤 다시 시도해 주세요.",
+      });
       return;
     }
 
@@ -1334,9 +990,10 @@ export function ContestHub() {
         ...prev,
       ]);
       setActiveCatalogTab("pending");
-      setFeedbackNotice(
-        `"${contest.title}" 참가 신청이 접수되었습니다. 관리자 승인 즉시 시즌 전용 ${contest.seedMoney} 대회 지갑이 자동 발급됩니다.`,
-      );
+      setFeedbackNotice({
+        kind: "success",
+        text: `"${contest.title}" 참가 신청이 접수되었습니다. 관리자 승인 즉시 시즌 전용 ${contest.seedMoney} 대회 지갑이 자동 발급됩니다.`,
+      });
       const overview = await memberCtx.session.authorized(cred =>
         fetchMyContestOverview(cred.accessToken),
       );
@@ -1346,13 +1003,16 @@ export function ContestHub() {
         error instanceof Error && error.message
           ? error.message
           : "참가 신청 처리에 실패했습니다. 모집 기간 및 계정 상태를 확인해 주세요.";
-      setFeedbackNotice(message);
+      setFeedbackNotice({ kind: "error", text: message });
     }
   }
 
   async function handleCancelApplication(contest: ContestSeasonItem) {
     if (!isLoggedIn || !memberCtx?.session) {
-      setFeedbackNotice("로그인 세션을 확인한 뒤 다시 시도해 주세요.");
+      setFeedbackNotice({
+        kind: "error",
+        text: "로그인 세션을 확인한 뒤 다시 시도해 주세요.",
+      });
       return;
     }
 
@@ -1361,9 +1021,10 @@ export function ContestHub() {
         cancelContestSeasonApplication(contest.id, cred.accessToken),
       );
       setPendingContests(prev => prev.filter(item => item.id !== contest.id));
-      setFeedbackNotice(
-        `"${contest.title}" 참가 신청이 취소되었습니다. 모집 마감 전까지 언제든 다시 신청할 수 있습니다.`,
-      );
+      setFeedbackNotice({
+        kind: "success",
+        text: `"${contest.title}" 참가 신청이 취소되었습니다. 모집 마감 전까지 언제든 다시 신청할 수 있습니다.`,
+      });
       const overview = await memberCtx.session.authorized(cred =>
         fetchMyContestOverview(cred.accessToken),
       );
@@ -1373,7 +1034,7 @@ export function ContestHub() {
         error instanceof Error && error.message
           ? error.message
           : "참가 신청 취소에 실패했습니다. 이미 심사 완료되었는지 확인해 주세요.";
-      setFeedbackNotice(message);
+      setFeedbackNotice({ kind: "error", text: message });
     }
   }
 
@@ -1414,23 +1075,69 @@ export function ContestHub() {
           </div>
         </header>
 
+        {/* 서버 오류 배너 */}
+        {overviewError ? (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-xs sm:text-sm font-bold text-[#F6465D]"
+          >
+            <div className="flex items-center gap-2">
+              <V1IconAlert className="h-4 w-4 shrink-0" />
+              <span>{overviewError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setOverviewError(null);
+                setIsLoadingOverview(true);
+                setReloadTick(t => t + 1);
+              }}
+              className="shrink-0 whitespace-nowrap rounded-lg border border-rose-200 bg-white px-3 py-1 text-xs font-bold text-[#F6465D] hover:bg-rose-100"
+            >
+              다시 시도
+            </button>
+          </div>
+        ) : null}
+
         {/* 상단 알림 피드백 배너 */}
         {feedbackNotice ? (
           <div
-            role="status"
-            className="flex items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-xs sm:text-sm font-bold text-[#0058FF]"
+            role={feedbackNotice.kind === "error" ? "alert" : "status"}
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-2xl border px-5 py-4 text-xs sm:text-sm font-bold",
+              feedbackNotice.kind === "error"
+                ? "border-rose-200 bg-rose-50 text-[#F6465D]"
+                : "border-blue-200 bg-blue-50 text-[#0058FF]",
+            )}
           >
             <div className="flex items-center gap-2">
-              <V1IconCheck className="h-4 w-4 shrink-0" />
-              <span>{feedbackNotice}</span>
+              {feedbackNotice.kind === "error" ? (
+                <V1IconAlert className="h-4 w-4 shrink-0" />
+              ) : (
+                <V1IconCheck className="h-4 w-4 shrink-0" />
+              )}
+              <span>{feedbackNotice.text}</span>
             </div>
             <button
               type="button"
               onClick={() => setFeedbackNotice(null)}
-              className="shrink-0 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-bold text-gray-500 hover:bg-blue-100"
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-bold",
+                feedbackNotice.kind === "error"
+                  ? "text-rose-600 hover:bg-rose-100"
+                  : "text-gray-500 hover:bg-blue-100",
+              )}
             >
               닫기
             </button>
+          </div>
+        ) : null}
+
+        {isLoadingOverview ? (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3" aria-busy="true" aria-label="대회 시즌 불러오는 중">
+            {[0, 1, 2].map(idx => (
+              <div key={idx} className="h-40 animate-pulse rounded-2xl border border-gray-200 bg-white p-5" />
+            ))}
           </div>
         ) : null}
 
@@ -1530,7 +1237,7 @@ export function ContestHub() {
             {/* 1. 내 진행 중인 대회 캐러셀 */}
             <ContestOngoingSection
               contests={myOngoingContests}
-              onBlockedEnter={message => setFeedbackNotice(message)}
+              onBlockedEnter={message => setFeedbackNotice({ kind: "error", text: message })}
             />
 
             {otherPublicRunningContests.length > 0 ? (
@@ -1767,10 +1474,10 @@ export function ContestHub() {
                         className={cn(
                           "text-lg font-black tabular-nums",
                           entry.roi.startsWith("-")
-                            ? "text-[#0058FF]"
+                            ? "text-[#F6465D]"
                             : entry.roi === "0.00%"
                               ? "text-gray-700"
-                              : "text-red-500",
+                              : "text-[#0ECB81]",
                         )}
                       >
                         {entry.roi}
@@ -1853,10 +1560,10 @@ export function ContestHub() {
                         className={cn(
                           "px-4 py-3.5 text-right font-bold tabular-nums whitespace-nowrap",
                           entry.realizedPnl.startsWith("-")
-                            ? "text-[#0058FF]"
+                            ? "text-[#F6465D]"
                             : entry.realizedPnl === "0.00 USDT"
                               ? "text-gray-700"
-                              : "text-red-500",
+                              : "text-[#0ECB81]",
                         )}
                       >
                         {entry.realizedPnl}
@@ -1865,10 +1572,10 @@ export function ContestHub() {
                         className={cn(
                           "px-4 py-3.5 text-right font-black tabular-nums whitespace-nowrap",
                           entry.roi.startsWith("-")
-                            ? "text-[#0058FF]"
+                            ? "text-[#F6465D]"
                             : entry.roi === "0.00%"
                               ? "text-gray-700"
-                              : "text-red-500",
+                              : "text-[#0ECB81]",
                         )}
                       >
                         {entry.roi}

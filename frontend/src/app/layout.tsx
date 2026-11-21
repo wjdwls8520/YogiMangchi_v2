@@ -1,7 +1,22 @@
 import type { Metadata } from "next";
+import { Inter, Noto_Sans_KR } from "next/font/google";
 import { SiteFooter } from "../components/site-footer";
 import "./globals.css";
 import { MemberProvider } from "../features/member/components/member-provider";
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const notoSansKr = Noto_Sans_KR({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-noto-sans-kr",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL(
@@ -46,7 +61,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ko" suppressHydrationWarning>
+    <html lang="ko" className={`${inter.variable} ${notoSansKr.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: HEADER_AUTH_HINT_INIT_SCRIPT }} />
       </head>

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMember } from "./member-provider";
+import { useOptionalNotificationCenter } from "../notifications/notification-context";
 import { MemberShell } from "./member-views";
 import { DimModal } from "./dim-modal";
 import {
@@ -80,58 +81,18 @@ function kstFullDateLabel(value?: string | null): string {
 
 const USER_NEWS_REACTIONS_STORAGE_KEY = "yogimangchi:news-user-reactions:v1";
 
-const BREAKING_MUST_READ = [
-  {
-    id: 901,
-    title: "美 나스닥 지수 장중 2%대 상승",
-    timeAgo: "31분 전",
-    badge: null as string | null,
-  },
-  {
-    id: 902,
-    title: '"美 암호화폐 규제 지연, 토큰화 기업 해외 진출 가속화"',
-    timeAgo: "56분 전",
-    badge: null as string | null,
-  },
-  {
-    id: 903,
-    title: "유럽 37개 금융기관, 유로화 스테이블코인 공동 발행 추진",
-    timeAgo: "48분 전",
-    badge: "XRP -2.6%",
-  },
-] as const;
-
-const POPULAR_BREAKING_BY_QUOTE = [
-  { rank: 1, title: '트럼프 "UAE의 WLFI 투자 관련 아는 바 없어...아들들이 처리"', timeAgo: "7시간 전" },
-  { rank: 2, title: "BTC $75,000 상회 · 선물 미결제약정 동반 급증", timeAgo: "18시간 전" },
-  { rank: 3, title: '트럼프 "가족 암호화폐 사업 상황 잘 몰라...중단 요구 못해"', timeAgo: "14시간 전" },
-  { rank: 4, title: "BTC $74,000 단기 지지선 테스트 후 반등 시도", timeAgo: "10시간 전" },
-] as const;
-
-const POPULAR_BREAKING_BY_REACTION = [
-  { rank: 1, title: "비트코인 현물 ETF 일일 순유입 5억 달러 돌파", timeAgo: "3시간 전" },
-  { rank: 2, title: "미 연준 금리 동결 시사 및 기술주 중심 위험자산 강세", timeAgo: "5시간 전" },
-  { rank: 3, title: "솔라나(SOL) DEX 일간 거래량 사상 최고치 경신", timeAgo: "9시간 전" },
-  { rank: 4, title: "이더리움 레이어2 스테이블코인 시가총액 140억 달러 돌파", timeAgo: "12시간 전" },
-] as const;
-
-const KEYWORD_ISSUES = [
-  {
-    tag: "#클래리티법",
-    headline: '"美 암호화폐 규제 지연, 토큰화 기업 해외 진출 가속화"',
-    timeAgo: "56분 전",
-  },
-  {
-    tag: "#현물ETF",
-    headline: '"블랙록·피델리티 비트코인 현물 ETF 기관 순유입세 지속"',
-    timeAgo: "1시간 전",
-  },
-  {
-    tag: "#FOMC금리",
-    headline: '"미 국채 금리 안정세 속 나스닥·가상자산 동반 반등"',
-    timeAgo: "2시간 전",
-  },
-] as const;
+export function extractNewsConnectedLiveStatus(raw: unknown): NewsLiveStatus | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const candidate =
+    obj.liveStatus && typeof obj.liveStatus === "object" && !Array.isArray(obj.liveStatus)
+      ? (obj.liveStatus as Record<string, unknown>)
+      : obj;
+  if ("live" in candidate) {
+    return parseNewsLiveStatus(candidate);
+  }
+  return null;
+}
 
 function parseUrlTabState(search: string): {
   section?: "BREAKING" | "NEWSROOM";
@@ -730,6 +691,7 @@ export function NewsFeed({
   initialLiveActive?: boolean;
 } = {}) {
   const { origin, session, snapshot } = useMember();
+  const notifCenter = useOptionalNotificationCenter();
   const queryClient = useQueryClient();
   const accountStorageKey =
     snapshot.phase === "ready" && snapshot.memberId
@@ -775,7 +737,6 @@ export function NewsFeed({
     return "LATEST";
   });
 
-  const [viewMode, setViewMode] = useState<"ALL" | "HEADLINE">("ALL");
   const [category, setCategory] = useState<"" | NewsCategory>(initialCategory);
   const [symbolTag, setSymbolTag] = useState<string>(initialSymbolTag);
   const [keyword, setKeyword] = useState("");
@@ -1144,8 +1105,8 @@ export function NewsFeed({
     return !Number.isNaN(collectedMs) ? Math.max(collectedMs, maxItemMs) : maxItemMs;
   })();
 
-  // 서브탭 필터링 (결과가 비어있으면 전체 항목 fallback)
-  const subFilteredItems = (() => {
+  // 서브탭 필터링 (해당 카테고리에 맞는 기사만 정직하게 표시)
+  const visibleItems = (() => {
     if (sectionTab === "BREAKING") {
       const cutoffMs =
         referenceNowMs > 0 ? referenceNowMs - retentionHours * 60 * 60 * 1000 : 0;
@@ -1156,17 +1117,15 @@ export function NewsFeed({
       });
       const pool = recentItems.length > 0 ? recentItems : allItems;
       if (breakingSubTab === "COIN") {
-        const matched = pool.filter(isCoinBreakingItem);
         return orderNewsWithPrependedFirst(
-          matched.length > 0 ? matched : pool,
+          pool.filter(isCoinBreakingItem),
           prependedIdSet,
           activeSort,
         );
       }
       if (breakingSubTab === "ECONOMY") {
-        const matched = pool.filter(isEconomyBreakingItem);
         return orderNewsWithPrependedFirst(
-          matched.length > 0 ? matched : pool,
+          pool.filter(isEconomyBreakingItem),
           prependedIdSet,
           activeSort,
         );
@@ -1174,38 +1133,31 @@ export function NewsFeed({
       return orderNewsWithPrependedFirst(pool, prependedIdSet, activeSort);
     }
     if (newsroomTab === "CRYPTO") {
-      const matched = allItems.filter(
-        item =>
-          item.subCategory === "CRYPTO" ||
-          item.category === "CRYPTO" ||
-          item.category === "ONCHAIN",
-      );
       return orderNewsWithPrependedFirst(
-        matched.length > 0 ? matched : allItems,
+        allItems.filter(
+          item =>
+            item.subCategory === "CRYPTO" ||
+            item.category === "CRYPTO" ||
+            item.category === "ONCHAIN",
+        ),
         prependedIdSet,
         activeSort,
       );
     }
     if (newsroomTab === "STOCKS" || newsroomTab === "FX_RATES") {
-      const matched = allItems.filter(
-        item =>
-          item.subCategory === newsroomTab ||
-          item.category === "MACRO" ||
-          item.category === "REGULATION",
-      );
       return orderNewsWithPrependedFirst(
-        matched.length > 0 ? matched : allItems,
+        allItems.filter(
+          item =>
+            item.subCategory === newsroomTab ||
+            item.category === "MACRO" ||
+            item.category === "REGULATION",
+        ),
         prependedIdSet,
         activeSort,
       );
     }
     return orderNewsWithPrependedFirst(allItems, prependedIdSet, activeSort);
   })();
-
-  const visibleItems =
-    viewMode === "HEADLINE"
-      ? subFilteredItems.filter((_, idx) => idx % 2 === 0 || subFilteredItems.length <= 2)
-      : subFilteredItems;
 
   const hasNext = hasNextOverride ?? query.data?.hasNext ?? false;
   const cursorId = nextCursor !== undefined ? nextCursor : (query.data?.nextCursorId ?? null);
@@ -1237,6 +1189,11 @@ export function NewsFeed({
     }
   }
 
+  const loadMoreRef = useRef(loadMore);
+  useEffect(() => {
+    loadMoreRef.current = loadMore;
+  });
+
   useEffect(() => {
     if (typeof window === "undefined" || !hasNext || !cursorId) return;
     const node = loadMoreSentinelRef.current;
@@ -1244,14 +1201,14 @@ export function NewsFeed({
     const observer = new window.IntersectionObserver(
       entries => {
         if (entries.some(entry => entry.isIntersecting)) {
-          void loadMore();
+          void loadMoreRef.current();
         }
       },
       { rootMargin: "240px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  });
+  }, [hasNext, cursorId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.EventSource !== "function") return;
@@ -1270,9 +1227,11 @@ export function NewsFeed({
         setSseConnected(true);
         setSseError(false);
         try {
-          const parsed = JSON.parse(String(event.data ?? "{}"));
-          if (parsed && typeof parsed === "object" && "live" in parsed) {
-            setSseLiveStatus(parseNewsLiveStatus(parsed));
+          const liveStatus = extractNewsConnectedLiveStatus(
+            JSON.parse(String(event.data ?? "{}")),
+          );
+          if (liveStatus) {
+            setSseLiveStatus(liveStatus);
           }
         } catch {
           // Ignore malformed frame
@@ -1480,30 +1439,68 @@ export function NewsFeed({
     }
   }
 
+  function persistReactionsMap(next: Record<number, "bull" | "bear">) {
+    if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
+      try {
+        window.localStorage.setItem(USER_NEWS_REACTIONS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Ignore storage quota error
+      }
+    }
+  }
+
   function toggleReaction(id: number, kind: "bull" | "bear") {
     setReactions(current => {
-      const next = { ...current, [id]: kind };
-      if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
-        try {
-          window.localStorage.setItem(USER_NEWS_REACTIONS_STORAGE_KEY, JSON.stringify(next));
-        } catch {
-          // Ignore storage quota error
-        }
+      const next = { ...current };
+      if (next[id] === kind) {
+        delete next[id];
+      } else {
+        next[id] = kind;
       }
+      persistReactionsMap(next);
       return next;
     });
     void (async () => {
       try {
-        const res = parseNewsReaction(
-          await contentJson(origin, `/news/${id}/reactions`, {
+        const body = { reaction: kind === "bull" ? "BULL" : "BEAR" };
+        let raw: unknown;
+        if (snapshot.phase === "ready" && snapshot.memberId) {
+          try {
+            raw = await session.request(`/news/${id}/reactions`, {
+              method: "POST",
+              body,
+            });
+          } catch {
+            raw = await contentJson(origin, `/news/${id}/reactions`, {
+              method: "POST",
+              body,
+              anonViewerId: getOrCreateAnonNewsViewerId(),
+            });
+          }
+        } else {
+          raw = await contentJson(origin, `/news/${id}/reactions`, {
             method: "POST",
-            body: { reaction: kind === "bull" ? "BULL" : "BEAR" },
-          }),
-        );
+            body,
+            anonViewerId: getOrCreateAnonNewsViewerId(),
+          });
+        }
+        const res = parseNewsReaction(raw);
         setLiveReactions(prev => ({
           ...prev,
           [id]: { bullCount: res.bullCount, bearCount: res.bearCount },
         }));
+        setReactions(current => {
+          const next = { ...current };
+          if (res.userReaction === "BULL") {
+            next[id] = "bull";
+          } else if (res.userReaction === "BEAR") {
+            next[id] = "bear";
+          } else {
+            delete next[id];
+          }
+          persistReactionsMap(next);
+          return next;
+        });
         void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
       } catch {
         // Keep optimistic local reaction state if offline or in test mock
@@ -1519,10 +1516,10 @@ export function NewsFeed({
           id: item.id,
           title: item.title,
           timeAgo: `${kstTimeOnly(item.publishedAt)} KST`,
-          badge: item.symbolTag ? `#${item.symbolTag}` : ( null as string | null ),
+          badge: item.symbolTag ? `#${item.symbolTag}` : (null as string | null),
           item,
         }))
-      : BREAKING_MUST_READ.map(card => ({ ...card, item: undefined as NewsItem | undefined }));
+      : [];
 
   const popularBreakingList = (() => {
     const serverList =
@@ -1542,13 +1539,7 @@ export function NewsFeed({
         item,
       }));
     }
-    const fallbackList =
-      popularMode === "QUOTE" ? POPULAR_BREAKING_BY_QUOTE : POPULAR_BREAKING_BY_REACTION;
-    return fallbackList.map(row => ({
-      ...row,
-      id: row.rank,
-      item: undefined as NewsItem | undefined,
-    }));
+    return [];
   })();
 
   const keywordIssueList =
@@ -1559,10 +1550,12 @@ export function NewsFeed({
           timeAgo: issue.articles[0]
             ? `${kstTimeOnly(issue.articles[0].publishedAt)} KST`
             : `${issue.articleCount}건`,
+          article: issue.articles[0] as NewsItem | undefined,
         }))
-      : KEYWORD_ISSUES;
+      : [];
 
-  const activeIssue = keywordIssueList[issueIndex % keywordIssueList.length] ?? KEYWORD_ISSUES[0];
+  const activeIssue =
+    keywordIssueList.length > 0 ? keywordIssueList[issueIndex % keywordIssueList.length] : null;
 
   const effectiveHighlights: NewsHighlights | undefined = highlights
     ? sseSentimentSummary
@@ -1716,7 +1709,7 @@ export function NewsFeed({
             </div>
             <div className="mt-2.5 flex h-6 overflow-hidden rounded-lg text-[11px] font-extrabold text-white">
               <div
-                className="flex items-center justify-center bg-[#2EBD85] px-1.5 whitespace-nowrap overflow-hidden"
+                className="flex items-center justify-center bg-[#0ECB81] px-1.5 whitespace-nowrap overflow-hidden"
                 style={{ width: `${sentimentBullPct}%` }}
               >
                 {sentimentBullPct >= 20
@@ -1751,9 +1744,9 @@ export function NewsFeed({
         {/* 중앙 메인 컨텐츠 영역 */}
         <div className="min-w-0 flex-1 space-y-5">
           <div ref={feedTopRef} className="scroll-mt-24" />
-          {activeToastCount > 0 && (
+          {activeToastCount > 0 && !(notifCenter && notifCenter.toasts.length > 0) && (
             <div
-              className="pointer-events-none fixed left-1/2 top-20 z-40 -translate-x-1/2"
+              className="pointer-events-none fixed left-1/2 top-20 z-30 -translate-x-1/2"
               role="status"
               aria-live="polite"
             >
@@ -1827,53 +1820,57 @@ export function NewsFeed({
                 {/* 좌측: 지금 꼭 봐야할 속보 */}
                 <div>
                   <h3 className="mb-3 text-sm font-black text-gray-900">지금 꼭 봐야할 속보</h3>
-                  <div className="space-y-3">
-                    {mustReadCards[0] && (
-                      <div
-                        onClick={() => {
-                          if (mustReadCards[0].item) {
-                            void inspectArticle(mustReadCards[0].id, mustReadCards[0].item);
-                          } else if (visibleItems[0]) {
-                            void inspectArticle(visibleItems[0].id, visibleItems[0]);
-                          }
-                        }}
-                        className="cursor-pointer rounded-xl bg-[#F7F8FA] p-4 transition-colors hover:bg-gray-100"
-                      >
-                        <p className="text-sm font-bold text-gray-900">
-                          {mustReadCards[0].title}
-                        </p>
-                        <span className="mt-2 block text-xs font-medium text-gray-400">
-                          {mustReadCards[0].timeAgo}
-                        </span>
+                  {highlightsQuery.isPending ? (
+                    <div className="space-y-3" aria-busy="true">
+                      <div className="h-20 animate-pulse rounded-xl bg-gray-100" />
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="h-20 animate-pulse rounded-xl bg-gray-100" />
+                        <div className="h-20 animate-pulse rounded-xl bg-gray-100" />
                       </div>
-                    )}
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {mustReadCards.slice(1).map(card => (
-                        <div
-                          key={card.id}
-                          onClick={() => {
-                            if (card.item) {
-                              void inspectArticle(card.id, card.item);
-                            } else if (visibleItems[0]) {
-                              void inspectArticle(visibleItems[0].id, visibleItems[0]);
-                            }
-                          }}
-                          className="cursor-pointer rounded-xl bg-[#F7F8FA] p-3.5 transition-colors hover:bg-gray-100"
-                        >
-                          <p className="line-clamp-2 text-xs font-bold leading-relaxed text-gray-900">
-                            {card.title}
-                          </p>
-                          <div className="mt-2 flex items-center gap-2 text-[11px] font-medium text-gray-400">
-                            {card.badge && (
-                              <span className="font-extrabold text-[#0058FF]">{card.badge}</span>
-                            )}
-                            <span>{card.timeAgo}</span>
-                          </div>
-                        </div>
-                      ))}
                     </div>
-                  </div>
+                  ) : mustReadCards.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-gray-200 bg-[#F7F8FA] p-6 text-center text-xs font-medium text-gray-500">
+                      현재 집계된 주요 속보가 없습니다.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {mustReadCards[0] && (
+                        <button
+                          type="button"
+                          onClick={() => void inspectArticle(mustReadCards[0].id, mustReadCards[0].item)}
+                          className="w-full cursor-pointer rounded-xl bg-[#F7F8FA] p-4 text-left transition-colors hover:bg-gray-100"
+                        >
+                          <p className="text-sm font-bold text-gray-900">
+                            {mustReadCards[0].title}
+                          </p>
+                          <span className="mt-2 block text-xs font-medium text-gray-400">
+                            {mustReadCards[0].timeAgo}
+                          </span>
+                        </button>
+                      )}
+
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {mustReadCards.slice(1).map(card => (
+                          <button
+                            key={card.id}
+                            type="button"
+                            onClick={() => void inspectArticle(card.id, card.item)}
+                            className="w-full cursor-pointer rounded-xl bg-[#F7F8FA] p-3.5 text-left transition-colors hover:bg-gray-100"
+                          >
+                            <p className="line-clamp-2 text-xs font-bold leading-relaxed text-gray-900">
+                              {card.title}
+                            </p>
+                            <div className="mt-2 flex items-center gap-2 text-[11px] font-medium text-gray-400">
+                              {card.badge && (
+                                <span className="font-extrabold text-[#0058FF]">{card.badge}</span>
+                              )}
+                              <span>{card.timeAgo}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 우측: 인기 속보 */}
@@ -1891,7 +1888,7 @@ export function NewsFeed({
                               : "text-gray-400 hover:text-gray-700"
                           }
                         >
-                          인용글 많은
+                          조회수 많은
                         </button>
                         <span className="text-gray-300" aria-hidden="true">
                           |
@@ -1910,33 +1907,39 @@ export function NewsFeed({
                       </div>
                     </div>
 
-                    <ol className="space-y-3">
-                      {popularBreakingList.map(item => (
-                        <li
-                          key={item.rank}
-                          onClick={() => {
-                            if (item.item) {
-                              void inspectArticle(item.id, item.item);
-                            } else if (visibleItems[0]) {
-                              void inspectArticle(visibleItems[0].id, visibleItems[0]);
-                            }
-                          }}
-                          className="flex cursor-pointer items-center justify-between gap-3 text-xs"
-                        >
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span className="w-4 shrink-0 font-black text-gray-400">
-                              {item.rank}
+                    {highlightsQuery.isPending ? (
+                      <div className="space-y-2.5" aria-busy="true">
+                        {[0, 1, 2, 3].map(idx => (
+                          <div key={idx} className="h-5 animate-pulse rounded bg-gray-100" />
+                        ))}
+                      </div>
+                    ) : popularBreakingList.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-gray-200 bg-[#F7F8FA] p-6 text-center text-xs font-medium text-gray-500">
+                        집계된 인기 속보가 아직 없습니다.
+                      </div>
+                    ) : (
+                      <ol className="space-y-3">
+                        {popularBreakingList.map(item => (
+                          <li
+                            key={item.rank}
+                            onClick={() => void inspectArticle(item.id, item.item)}
+                            className="flex cursor-pointer items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <span className="w-4 shrink-0 font-black text-gray-400">
+                                {item.rank}
+                              </span>
+                              <span className="truncate font-bold text-gray-800 hover:text-[#0058FF]">
+                                {item.title}
+                              </span>
+                            </div>
+                            <span className="shrink-0 text-[11px] font-medium text-gray-400">
+                              · {item.timeAgo}
                             </span>
-                            <span className="truncate font-bold text-gray-800 hover:text-[#0058FF]">
-                              {item.title}
-                            </span>
-                          </div>
-                          <span className="shrink-0 text-[11px] font-medium text-gray-400">
-                            · {item.timeAgo}
-                          </span>
-                        </li>
-                      ))}
-                    </ol>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                   </div>
 
                   <div className="mt-4 flex items-center justify-center gap-1.5" aria-hidden="true">
@@ -1955,44 +1958,56 @@ export function NewsFeed({
               </div>
 
               {/* 키워드로 보는 이슈 바 */}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#F7F8FA] px-4 py-3 text-xs">
-                <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-                  <span className="font-extrabold text-gray-600">키워드로 보는 이슈</span>
-                  <span className="text-gray-300" aria-hidden="true">
-                    |
-                  </span>
-                  <span className="font-extrabold text-red-500">{activeIssue.tag}</span>
-                  <strong className="truncate font-bold text-gray-900">
-                    {activeIssue.headline}
-                  </strong>
-                  <span className="text-gray-400">{activeIssue.timeAgo}</span>
+              {activeIssue && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#F7F8FA] px-4 py-3 text-xs">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+                    <span className="font-extrabold text-gray-600">키워드로 보는 이슈</span>
+                    <span className="text-gray-300" aria-hidden="true">
+                      |
+                    </span>
+                    <span className="font-extrabold text-[#0058FF]">{activeIssue.tag}</span>
+                    {activeIssue.article ? (
+                      <button
+                        type="button"
+                        onClick={() => void inspectArticle(activeIssue.article!.id, activeIssue.article)}
+                        className="truncate text-left font-bold text-gray-900 hover:text-[#0058FF]"
+                      >
+                        {activeIssue.headline}
+                      </button>
+                    ) : (
+                      <strong className="truncate font-bold text-gray-900">
+                        {activeIssue.headline}
+                      </strong>
+                    )}
+                    <span className="text-gray-400">{activeIssue.timeAgo}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <span className="font-bold">
+                      {(issueIndex % keywordIssueList.length) + 1} / {keywordIssueList.length}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="이전 이슈 키워드"
+                      onClick={() =>
+                        setIssueIndex(
+                          prev => (prev - 1 + keywordIssueList.length) % keywordIssueList.length,
+                        )
+                      }
+                      className="rounded px-1.5 py-0.5 hover:bg-gray-200"
+                    >
+                      ∧
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="다음 이슈 키워드"
+                      onClick={() => setIssueIndex(prev => (prev + 1) % keywordIssueList.length)}
+                      className="rounded px-1.5 py-0.5 hover:bg-gray-200"
+                    >
+                      ∨
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-gray-500">
-                  <span className="font-bold">
-                    {(issueIndex % keywordIssueList.length) + 1} / {keywordIssueList.length}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="이전 이슈 키워드"
-                    onClick={() =>
-                      setIssueIndex(
-                        prev => (prev - 1 + keywordIssueList.length) % keywordIssueList.length,
-                      )
-                    }
-                    className="rounded px-1.5 py-0.5 hover:bg-gray-200"
-                  >
-                    ∧
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="다음 이슈 키워드"
-                    onClick={() => setIssueIndex(prev => (prev + 1) % keywordIssueList.length)}
-                    className="rounded px-1.5 py-0.5 hover:bg-gray-200"
-                  >
-                    ∨
-                  </button>
-                </div>
-              </div>
+              )}
 
               {/* 속보 정렬 (최신순 | 많이 본 순 | 오래된순) */}
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2143,9 +2158,9 @@ export function NewsFeed({
             </>
           )}
 
-          {/* 공통 셀렉트박스 3열 상세 필터 & 키워드 검색 바 */}
+          {/* 공통 셀렉트박스 2열 상세 필터 & 키워드 검색 바 */}
           <div className="ym-news-filter-panel space-y-3 rounded-2xl border border-gray-200 bg-white p-4">
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold text-gray-500">
                   뉴스 카테고리
@@ -2185,21 +2200,6 @@ export function NewsFeed({
                       {tag ? `#${tag} (${tag}USDT)` : "전체 종목"}
                     </option>
                   ))}
-                </select>
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-[11px] font-bold text-gray-500">
-                  브리핑 보기 방식
-                </span>
-                <select
-                  aria-label="뉴스 브리핑 보기 방식"
-                  value={viewMode}
-                  onChange={event => setViewMode(event.target.value as "ALL" | "HEADLINE")}
-                  className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
-                >
-                  <option value="ALL">전체 뉴스·속보</option>
-                  <option value="HEADLINE">중요 헤드라인</option>
                 </select>
               </label>
             </div>
@@ -2271,16 +2271,23 @@ export function NewsFeed({
                     const isUnreadNewItem =
                       positiveUnreadIdSet.has(item.id) ||
                       (placeholderUnreadCount > 0 && itemIdx < placeholderUnreadCount);
-                    const userReaction = reactions[item.id];
+                    const serverReaction =
+                      item.userReaction === "BULL"
+                        ? "bull"
+                        : item.userReaction === "BEAR"
+                          ? "bear"
+                          : undefined;
+                    const userReaction =
+                      item.id in reactions ? reactions[item.id] : serverReaction;
                     const liveReaction = liveReactions[item.id];
                     const baseBull = item.bullCount ?? 0;
                     const baseBear = item.bearCount ?? 0;
                     const bullCount = liveReaction
                       ? liveReaction.bullCount
-                      : baseBull + (userReaction === "bull" ? 1 : 0);
+                      : baseBull + (userReaction === "bull" && serverReaction !== "bull" ? 1 : 0);
                     const bearCount = liveReaction
                       ? liveReaction.bearCount
-                      : baseBear + (userReaction === "bear" ? 1 : 0);
+                      : baseBear + (userReaction === "bear" && serverReaction !== "bear" ? 1 : 0);
                     const extraBody = cleanBreakingBody(
                       item.content,
                       item.summary,
@@ -2323,21 +2330,23 @@ export function NewsFeed({
                             )}
 
                             {item.aiSummary && (
-                              <div className="mt-2.5 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs font-bold text-[#5B44F2]">
+                              <div className="mt-2.5 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs font-bold text-[#0058FF]">
                                 <V1IconSparkle className="mr-1 inline h-3.5 w-3.5" />
                                 <span>AI 분석: {item.aiSummary}</span>
                               </div>
                             )}
 
                             <div className="mt-3 flex flex-wrap items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => void inspectArticle(item.id, item)}
-                                className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-1 text-[11px] font-extrabold text-[#5B44F2] hover:bg-indigo-100"
-                              >
-                                <V1IconSparkle className="h-3.5 w-3.5" />
-                                <span>AI 분석</span>
-                              </button>
+                              {item.aiSummary && (
+                                <button
+                                  type="button"
+                                  onClick={() => void inspectArticle(item.id, item)}
+                                  className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2.5 py-1 text-[11px] font-extrabold text-[#0058FF] hover:bg-blue-100"
+                                >
+                                  <V1IconSparkle className="h-3.5 w-3.5" />
+                                  <span>AI 분석</span>
+                                </button>
+                              )}
 
                               <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
                                 {newsCategoryLabel(item.category)}
@@ -2374,7 +2383,7 @@ export function NewsFeed({
                                   onClick={() => toggleReaction(item.id, "bull")}
                                   className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 transition-colors ${
                                     userReaction === "bull"
-                                      ? "bg-emerald-50 text-[#2EBD85]"
+                                      ? "bg-emerald-50 text-[#0ECB81]"
                                       : "hover:bg-gray-100 hover:text-gray-700"
                                   }`}
                                 >
@@ -2490,7 +2499,7 @@ export function NewsFeed({
                               )}
                             </p>
                             {item.aiSummary && (
-                              <p className="mt-1.5 text-xs font-bold text-[#5B44F2]">
+                              <p className="mt-1.5 text-xs font-bold text-[#0058FF]">
                                 <V1IconSparkle className="mr-1 inline h-3.5 w-3.5" />
                                 <span>AI 분석: {item.aiSummary}</span>
                               </p>

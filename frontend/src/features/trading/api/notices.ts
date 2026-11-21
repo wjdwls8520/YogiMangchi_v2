@@ -4,6 +4,7 @@ import type { TradingOrder } from "./orders";
 
 export type TradingNotice = { kind: "success" | "error" | "warning"; title: string; message: string; resultKey?: string };
 export const NOTICE_LIFETIME = 1500;
+export const NOTICE_ERROR_LIFETIME = 5000;
 
 function describeOrder(order: TradingOrder, command: TradingCommand): TradingNotice {
   if (order.status === "REJECTED") return { kind: "error", title: "주문이 거절되었습니다", message: `${orderReason(order.reason)} 주문 #${order.orderId} 내역에서 확인해 주세요.` };
@@ -52,7 +53,9 @@ export function createNoticeStore(schedule: (callback: () => void, delay: number
       if (key) { seen.add(key); if (seen.size > 512) seen.delete(seen.values().next().value!); }
       const id = ++nextId;
       entries = [...entries, { ...notice, identity, id }];
-      if (notice.kind === "success") timers.set(id, schedule(() => dismiss(id), NOTICE_LIFETIME)); emit();
+      const ttl = notice.kind === "success" ? NOTICE_LIFETIME : NOTICE_ERROR_LIFETIME;
+      timers.set(id, schedule(() => dismiss(id), ttl));
+      emit();
       return id;
     },
     dismiss,

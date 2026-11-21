@@ -39,8 +39,15 @@ export function GuestRetry() {
   return <div className="guest-retry">
     <button type="button" className="account-refresh" disabled={(!unresolved&&!admission.trade)||pending||snapshot.retrying} onClick={()=>{setError(unresolved ? unconfirmedMutationMessage : null);dialog.current?.showModal();}}>{unresolved ? "원래 재도전 요청 재전송" : "모의투자 재도전"}</button>
     {completed?.accountId===snapshot.accountId&&<p role="status" className="order-input-hint">{completed.message}</p>}
-    <dialog ref={dialog} className="position-close-dialog" aria-modal="true" aria-labelledby="guest-retry-title" onCancel={event=>{if(pending)event.preventDefault();}}>
-      <h2 id="guest-retry-title">같은 Guest 계정으로 다시 시작</h2>
+    <dialog ref={dialog} className="position-close-dialog ym-exchange-modal" aria-modal="true" aria-labelledby="guest-retry-title" onCancel={event=>{if(pending)event.preventDefault();}}>
+      <header className="ym-modal-header">
+        <h2 id="guest-retry-title">같은 Guest 계정으로 다시 시작</h2>
+        <button type="button" className="ym-modal-close" aria-label="닫기" disabled={pending} onClick={()=>dialog.current?.close()}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+      </header>
       <p>미체결 주문을 취소하고 모든 포지션을 종료한 뒤 모의 자금을 10,000 USDT로 초기화합니다.</p>
       <p>현재 계정 ID와 만료일, 레버리지 설정, 기존 거래 이력은 유지됩니다. 이 포지션 종료로 체결이나 손익이 새로 발생하지 않습니다.</p>
       {error&&<p role="alert" className="order-warning">{error}</p>}

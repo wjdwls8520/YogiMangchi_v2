@@ -56,6 +56,7 @@ export type NewsItem = {
   bullCount?: number;
   bearCount?: number;
   viewCount?: number;
+  userReaction?: "BULL" | "BEAR" | null;
   symbolTag: string | null;
   publishedAt: string;
 };
@@ -68,7 +69,8 @@ export type NewsPage = {
 
 export type NewsReactionResult = {
   newsId: number;
-  reaction: "BULL" | "BEAR" | string;
+  reaction: "BULL" | "BEAR" | string | null;
+  userReaction: "BULL" | "BEAR" | null;
   bullCount: number;
   bearCount: number;
   bullPct: number;
@@ -346,6 +348,7 @@ export type PublicPortfolioClosedTradeSummary = {
 export type PublicMemberPortfolio = {
   memberId: number;
   accountExists: boolean;
+  portfolioPublic: boolean;
   roundId: number | null;
   roundNumber: number;
   initialSeed: string;
@@ -436,6 +439,9 @@ export function parseNewsItem(value: unknown): NewsItem {
     bullCount: typeof row.bullCount === "number" ? nonNegInt(row.bullCount) : 0,
     bearCount: typeof row.bearCount === "number" ? nonNegInt(row.bearCount) : 0,
     viewCount: typeof row.viewCount === "number" ? nonNegInt(row.viewCount) : 0,
+    ...(row.userReaction === "BULL" || row.userReaction === "BEAR" || row.userReaction === null
+      ? { userReaction: row.userReaction }
+      : {}),
     symbolTag: optStr(row.symbolTag, 20),
     publishedAt: iso(row.publishedAt),
   };
@@ -453,9 +459,19 @@ export function parseNewsPage(value: unknown): NewsPage {
 
 export function parseNewsReaction(value: unknown): NewsReactionResult {
   const row = obj(value);
+  const rawUserReaction = row.userReaction;
+  const userReaction: "BULL" | "BEAR" | null =
+    rawUserReaction === "BULL" || rawUserReaction === "BEAR"
+      ? rawUserReaction
+      : rawUserReaction === null
+        ? null
+        : row.reaction === "BULL" || row.reaction === "BEAR"
+          ? row.reaction
+          : null;
   return {
     newsId: posInt(row.newsId),
-    reaction: typeof row.reaction === "string" ? str(row.reaction, 20) : "BULL",
+    reaction: typeof row.reaction === "string" ? str(row.reaction, 20) : userReaction,
+    userReaction,
     bullCount: nonNegInt(row.bullCount),
     bearCount: nonNegInt(row.bearCount),
     bullPct: typeof row.bullPct === "number" ? nonNegInt(row.bullPct) : 50,
@@ -859,6 +875,7 @@ export function parsePublicMemberPortfolio(value: unknown): PublicMemberPortfoli
   return {
     memberId: posInt(row.memberId),
     accountExists: typeof row.accountExists === "boolean" ? row.accountExists : false,
+    portfolioPublic: typeof row.portfolioPublic === "boolean" ? row.portfolioPublic : true,
     roundId: row.roundId === null || row.roundId === undefined ? null : posInt(row.roundId),
     roundNumber: typeof row.roundNumber === "number" ? nonNegInt(row.roundNumber) : 0,
     initialSeed: strOrZero(row.initialSeed ?? "10000"),

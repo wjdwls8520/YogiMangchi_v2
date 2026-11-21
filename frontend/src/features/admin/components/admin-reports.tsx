@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useOptionalMember } from "../../member/components/member-provider";
-import { cn, V1IconCheck, V1IconRefresh } from "../../member/components/v1-ui";
+import { cn, V1IconAlert, V1IconCheck, V1IconRefresh } from "../../member/components/v1-ui";
 import {
   type AdminReportDto,
+  type AdminReportReasonFilter,
+  type AdminReportStatusFilter,
   dismissAdminReport,
   fetchAdminReports,
   formatAdminDateTime,
@@ -15,18 +17,42 @@ import { AdminShell } from "./admin-layout";
 
 type ReportTargetTypeFilter = "ALL" | "POST" | "COMMENT";
 type ReportTargetStatusFilter = "ALL" | "ACTIVE" | "DELETED";
-type ReportReasonFilter = "ALL" | "SPAM" | "ABUSE" | "FRAUD" | "INAPPROPRIATE" | "OTHER";
 
-const REASON_LABELS: Record<string, string> = {
+export const ADMIN_REPORT_REASON_LABELS: Record<string, string> = {
   SPAM: "스팸·홍보",
-  ABUSE: "욕설·비방",
-  FRAUD: "사기·리딩방",
+  SEXUAL: "음란물·선정성",
+  ILLEGAL: "불법정보",
+  YOUTH_HARMFUL: "청소년 유해",
+  ABUSE: "욕설·혐오·비방",
+  PRIVACY: "개인정보 노출",
   INAPPROPRIATE: "부적절 콘텐츠",
-  OTHER: "기타 사유",
+  FRAUD: "사기·리딩방",
+  ETC: "기타",
+  OTHER: "기타",
+};
+
+const REPORT_STATUS_META: Record<string, { label: string; className: string }> = {
+  PENDING: {
+    label: "대기 (PENDING)",
+    className: "border border-amber-200 bg-amber-50 text-amber-800",
+  },
+  RESOLVED: {
+    label: "처리 완료 (RESOLVED)",
+    className: "border border-emerald-200 bg-emerald-50 text-emerald-700",
+  },
+  DISMISSED: {
+    label: "반려 (DISMISSED)",
+    className: "border border-gray-200 bg-gray-100 text-gray-600",
+  },
 };
 
 export function AdminReportsView() {
   const memberCtx = useOptionalMember();
+  const phase = memberCtx?.snapshot.phase;
+  const role = memberCtx?.snapshot.role;
+  const generation = memberCtx?.snapshot.generation;
+  const session = memberCtx?.session;
+
   const [items, setItems] = useState<AdminReportDto[]>([]);
   const [page, setPage] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
@@ -35,28 +61,31 @@ export function AdminReportsView() {
   const [postReportCount, setPostReportCount] = useState(0);
   const [commentReportCount, setCommentReportCount] = useState(0);
   const [activeTargetReportCount, setActiveTargetReportCount] = useState(0);
+  const [pendingReportCount, setPendingReportCount] = useState(0);
 
   const [targetTypeFilter, setTargetTypeFilter] = useState<ReportTargetTypeFilter>("ALL");
   const [targetStatusFilter, setTargetStatusFilter] =
     useState<ReportTargetStatusFilter>("ALL");
-  const [reasonFilter, setReasonFilter] = useState<ReportReasonFilter>("ALL");
+  const [reasonFilter, setReasonFilter] = useState<AdminReportReasonFilter>("ALL");
+  const [reportStatusFilter, setReportStatusFilter] =
+    useState<AdminReportStatusFilter>("ALL");
   const [keywordInput, setKeywordInput] = useState("");
   const [appliedKeyword, setAppliedKeyword] = useState("");
   const [reloadTick, setReloadTick] = useState(0);
 
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [bannerMessage, setBannerMessage] = useState<{
+    kind: "success" | "error";
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
-    if (
-      memberCtx?.snapshot.phase !== "ready" ||
-      memberCtx.snapshot.role !== "ADMIN" ||
-      !memberCtx.session
-    ) {
+    if (phase !== "ready" || role !== "ADMIN" || !session) {
       return;
     }
     const controller = new AbortController();
-    void memberCtx.session
+    void session
       .authorized(cred =>
         fetchAdminReports(
           cred.accessToken,
@@ -64,6 +93,7 @@ export function AdminReportsView() {
             targetType: targetTypeFilter,
             targetStatus: targetStatusFilter,
             reasonType: reasonFilter,
+            reportStatus: reportStatusFilter,
             keyword: appliedKeyword || undefined,
             page,
             size: 20,
@@ -72,6 +102,7 @@ export function AdminReportsView() {
         ),
       )
       .then(res => {
+        setLoadError(null);
         if (res.totalPages > 0 && page >= res.totalPages) {
           setPage(res.totalPages - 1);
           return;
@@ -84,26 +115,32 @@ export function AdminReportsView() {
         setPostReportCount(res.postReportCount);
         setCommentReportCount(res.commentReportCount);
         setActiveTargetReportCount(res.activeTargetReportCount);
+        setPendingReportCount(res.pendingReportCount);
       })
       .catch(() => {
-        // Keep current list on transient error
+        if (controller.signal.aborted) return;
+        setLoadError("신고 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
       });
     return () => controller.abort();
   }, [
-    memberCtx,
+    phase,
+    role,
+    generation,
+    session,
     targetTypeFilter,
     targetStatusFilter,
     reasonFilter,
+    reportStatusFilter,
     appliedKeyword,
     page,
     reloadTick,
   ]);
 
   async function handleDismissSingle(item: AdminReportDto) {
-    if (!memberCtx?.session) return;
+    if (!session) return;
     setBusyKey(`dismiss:${item.reportKey}`);
     try {
-      await memberCtx.session.authorized(cred =>
+      await session.authorized(cred =>
         dismissAdminReport(
           cred.accessToken,
           item.targetType,
@@ -111,12 +148,13 @@ export function AdminReportsView() {
           item.reporterId,
         ),
       );
-      setBannerMessage(
-        `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}에 대한 신고자(#${item.reporterId})의 신고를 반려 처리했습니다.`,
-      );
+      setBannerMessage({
+        kind: "success",
+        text: `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}에 대한 신고자(#${item.reporterId})의 신고를 반려 처리했습니다.`,
+      });
       setReloadTick(t => t + 1);
     } catch {
-      setBannerMessage("신고 반려 처리에 실패했습니다.");
+      setBannerMessage({ kind: "error", text: "신고 반려 처리에 실패했습니다." });
     } finally {
       setBusyKey(null);
     }
@@ -126,10 +164,10 @@ export function AdminReportsView() {
     item: AdminReportDto,
     action: "DELETE_TARGET" | "CLEAR_REPORTS",
   ) {
-    if (!memberCtx?.session) return;
+    if (!session) return;
     setBusyKey(`${action}:${item.reportKey}`);
     try {
-      await memberCtx.session.authorized(cred =>
+      await session.authorized(cred =>
         moderateAdminReportTarget(
           cred.accessToken,
           item.targetType,
@@ -137,14 +175,16 @@ export function AdminReportsView() {
           action,
         ),
       );
-      setBannerMessage(
-        action === "DELETE_TARGET"
-          ? `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}을(를) 소프트 삭제하고 누적 신고를 일괄 정리했습니다.`
-          : `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}의 허위·중복 신고를 일괄 해제했습니다.`,
-      );
+      setBannerMessage({
+        kind: "success",
+        text:
+          action === "DELETE_TARGET"
+            ? `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}을(를) 소프트 삭제하고 누적 신고를 일괄 정리했습니다.`
+            : `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}의 허위·중복 신고를 일괄 해제했습니다.`,
+      });
       setReloadTick(t => t + 1);
     } catch {
-      setBannerMessage("대상 제재 처리에 실패했습니다.");
+      setBannerMessage({ kind: "error", text: "대상 제재 처리에 실패했습니다." });
     } finally {
       setBusyKey(null);
     }
@@ -183,7 +223,7 @@ export function AdminReportsView() {
         </div>
 
         {/* KPI 요약 카드 */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs">
             <p className="text-xs font-bold text-gray-500">현재 필터 조회 건수</p>
             <p className="mt-2 text-2xl font-black tabular-nums text-gray-900">
@@ -191,8 +231,14 @@ export function AdminReportsView() {
             </p>
           </div>
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs">
+            <p className="text-xs font-bold text-gray-500">미처리 대기 (PENDING)</p>
+            <p className="mt-2 text-2xl font-black tabular-nums text-amber-600">
+              {pendingReportCount.toLocaleString("ko-KR")}건
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs">
             <p className="text-xs font-bold text-gray-500">활성 대상 미처리 신고</p>
-            <p className="mt-2 text-2xl font-black tabular-nums text-red-600">
+            <p className="mt-2 text-2xl font-black tabular-nums text-[#F6465D]">
               {activeTargetReportCount.toLocaleString("ko-KR")}건
             </p>
           </div>
@@ -210,11 +256,45 @@ export function AdminReportsView() {
           </div>
         </div>
 
-        {bannerMessage ? (
-          <div className="flex items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50/80 px-5 py-3.5 text-xs font-bold text-[#0058FF]">
+        {loadError ? (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3.5 text-xs font-bold text-[#F6465D]"
+          >
             <div className="flex items-center gap-2">
-              <V1IconCheck className="h-4 w-4 shrink-0" />
-              <span>{bannerMessage}</span>
+              <V1IconAlert className="h-4 w-4 shrink-0" />
+              <span>{loadError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setLoadError(null);
+                setReloadTick(t => t + 1);
+              }}
+              className="shrink-0 whitespace-nowrap rounded-lg border border-rose-200 bg-white px-3 py-1 text-xs font-bold text-[#F6465D] hover:bg-rose-100"
+            >
+              다시 시도
+            </button>
+          </div>
+        ) : null}
+
+        {bannerMessage ? (
+          <div
+            role={bannerMessage.kind === "error" ? "alert" : "status"}
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-2xl border px-5 py-3.5 text-xs font-bold",
+              bannerMessage.kind === "error"
+                ? "border-rose-200 bg-rose-50 text-[#F6465D]"
+                : "border-blue-200 bg-blue-50/80 text-[#0058FF]",
+            )}
+          >
+            <div className="flex items-center gap-2">
+              {bannerMessage.kind === "error" ? (
+                <V1IconAlert className="h-4 w-4 shrink-0" />
+              ) : (
+                <V1IconCheck className="h-4 w-4 shrink-0" />
+              )}
+              <span>{bannerMessage.text}</span>
             </div>
             <button
               type="button"
@@ -255,6 +335,21 @@ export function AdminReportsView() {
             ))}
 
             <select
+              value={reportStatusFilter}
+              onChange={e => {
+                setReportStatusFilter(e.target.value as AdminReportStatusFilter);
+                setPage(0);
+              }}
+              aria-label="신고 처리 상태 필터"
+              className="h-9 shrink-0 rounded-xl border border-gray-200 bg-[#F9FAFB] px-3 text-xs font-bold text-gray-700 outline-none focus:border-[#0058FF]"
+            >
+              <option value="ALL">처리 상태: 전체</option>
+              <option value="PENDING">대기 (PENDING)</option>
+              <option value="RESOLVED">처리 완료 (RESOLVED)</option>
+              <option value="DISMISSED">반려 (DISMISSED)</option>
+            </select>
+
+            <select
               value={targetStatusFilter}
               onChange={e => {
                 setTargetStatusFilter(e.target.value as ReportTargetStatusFilter);
@@ -271,7 +366,7 @@ export function AdminReportsView() {
             <select
               value={reasonFilter}
               onChange={e => {
-                setReasonFilter(e.target.value as ReportReasonFilter);
+                setReasonFilter(e.target.value as AdminReportReasonFilter);
                 setPage(0);
               }}
               aria-label="신고 사유 필터"
@@ -279,10 +374,14 @@ export function AdminReportsView() {
             >
               <option value="ALL">신고 사유: 전체</option>
               <option value="SPAM">스팸·홍보 (SPAM)</option>
-              <option value="ABUSE">욕설·비방 (ABUSE)</option>
-              <option value="FRAUD">사기·리딩방 (FRAUD)</option>
+              <option value="SEXUAL">음란물·선정성 (SEXUAL)</option>
+              <option value="ILLEGAL">불법정보 (ILLEGAL)</option>
+              <option value="YOUTH_HARMFUL">청소년 유해 (YOUTH_HARMFUL)</option>
+              <option value="ABUSE">욕설·혐오·비방 (ABUSE)</option>
+              <option value="PRIVACY">개인정보 노출 (PRIVACY)</option>
               <option value="INAPPROPRIATE">부적절 콘텐츠 (INAPPROPRIATE)</option>
-              <option value="OTHER">기타 사유 (OTHER)</option>
+              <option value="FRAUD">사기·리딩방 (FRAUD)</option>
+              <option value="ETC">기타 (ETC)</option>
             </select>
           </div>
 
@@ -325,6 +424,7 @@ export function AdminReportsView() {
                   <th className="whitespace-nowrap px-3 py-3.5 text-right">대상 누적신고</th>
                   <th className="whitespace-nowrap px-3 py-3.5">신고자</th>
                   <th className="whitespace-nowrap px-3 py-3.5 text-center">신고 사유</th>
+                  <th className="whitespace-nowrap px-3 py-3.5 text-center">처리 상태</th>
                   <th className="whitespace-nowrap px-3 py-3.5 text-center">대상 상태</th>
                   <th className="whitespace-nowrap px-3 py-3.5">신고 일시</th>
                   <th className="whitespace-nowrap px-4 py-3.5 text-center">관리</th>
@@ -334,7 +434,7 @@ export function AdminReportsView() {
                 {items.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={10}
+                      colSpan={11}
                       className="px-4 py-12 text-center text-xs font-semibold text-gray-500"
                     >
                       조건에 일치하는 신고 접수 내역이 없습니다.
@@ -343,6 +443,10 @@ export function AdminReportsView() {
                 ) : (
                   items.map(r => {
                     const isDeleted = r.targetDeleteYn === "Y";
+                    const statusBadge = REPORT_STATUS_META[r.reportStatus] ?? {
+                      label: r.reportStatus,
+                      className: "border border-gray-200 bg-gray-100 text-gray-600",
+                    };
                     return (
                       <tr
                         key={r.reportKey}
@@ -377,7 +481,7 @@ export function AdminReportsView() {
                         <td className="whitespace-nowrap px-3 py-3.5 text-xs font-bold text-gray-800">
                           {r.targetAuthorNickname ?? "-"} (#{r.targetAuthorId})
                         </td>
-                        <td className="whitespace-nowrap px-3 py-3.5 text-right font-black tabular-nums text-red-600">
+                        <td className="whitespace-nowrap px-3 py-3.5 text-right font-black tabular-nums text-[#F6465D]">
                           {r.targetReportCount}건
                         </td>
                         <td className="whitespace-nowrap px-3 py-3.5 text-xs font-bold text-gray-800">
@@ -385,7 +489,17 @@ export function AdminReportsView() {
                         </td>
                         <td className="whitespace-nowrap px-3 py-3.5 text-center">
                           <span className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 border border-amber-200">
-                            {REASON_LABELS[r.reasonType] ?? r.reasonType}
+                            {ADMIN_REPORT_REASON_LABELS[r.reasonType] ?? r.reasonType}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-3.5 text-center">
+                          <span
+                            className={cn(
+                              "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold",
+                              statusBadge.className,
+                            )}
+                          >
+                            {statusBadge.label}
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-3 py-3.5 text-center">
@@ -393,8 +507,8 @@ export function AdminReportsView() {
                             className={cn(
                               "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold",
                               isDeleted
-                                ? "bg-red-50 text-red-600"
-                                : "bg-emerald-50 text-emerald-700",
+                                ? "bg-red-50 text-[#F6465D]"
+                                : "bg-emerald-50 text-[#0ECB81]",
                             )}
                           >
                             {isDeleted ? "삭제됨 (Y)" : "활성 (N)"}
