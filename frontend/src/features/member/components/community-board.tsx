@@ -105,6 +105,16 @@ function formatCommunityTimestamp(value: string): string {
   return `${y}.${m}.${d} ${hh}:${mm}`;
 }
 
+export function formatSidebarSeasonLabel(title: string, maxChars = 19): string {
+  const trimmed = title.trim();
+  const chars = Array.from(trimmed);
+  if (chars.length <= maxChars) return trimmed;
+  if (maxChars <= 1) return "…";
+  const prefix = chars.slice(0, maxChars - 1).join("");
+  const cleaned = prefix.replace(/[\s·-]+$/, "");
+  return `${cleaned || prefix}…`;
+}
+
 function parseScaledBigInt8(value: string | null | undefined): bigint | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -2833,6 +2843,7 @@ export function CommunityBoard({
               <div className="mt-3">
                 <select
                   aria-label="대회 시즌 선택"
+                  title={activeSidebarSeason?.title}
                   value={activeSidebarSeasonId !== null ? String(activeSidebarSeasonId) : ""}
                   disabled={!sidebarContestSeasonsQuery.data || sidebarSeasons.length === 0}
                   onChange={e => setContestSeason(e.target.value)}
@@ -2845,7 +2856,7 @@ export function CommunityBoard({
                           <optgroup label="진행 중 (LIVE)">
                             {sidebarSeasonGroups.running.map(s => (
                               <option key={s.id} value={String(s.id)}>
-                                {s.title}
+                                {formatSidebarSeasonLabel(s.title)}
                               </option>
                             ))}
                           </optgroup>
@@ -2854,7 +2865,7 @@ export function CommunityBoard({
                           <optgroup label="종료 · 정산 완료">
                             {sidebarSeasonGroups.finished.map(s => (
                               <option key={s.id} value={String(s.id)}>
-                                {s.title}
+                                {formatSidebarSeasonLabel(s.title)}
                               </option>
                             ))}
                           </optgroup>
@@ -2863,7 +2874,7 @@ export function CommunityBoard({
                           <optgroup label="참가 모집 중">
                             {sidebarSeasonGroups.recruitingOnly.map(s => (
                               <option key={s.id} value={String(s.id)}>
-                                {s.title}
+                                {formatSidebarSeasonLabel(s.title)}
                               </option>
                             ))}
                           </optgroup>

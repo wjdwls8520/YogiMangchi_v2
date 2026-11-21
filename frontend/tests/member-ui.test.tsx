@@ -63,7 +63,11 @@ import {
   markMemberViewedNews,
   sortNewsItems,
 } from "../src/features/member/components/news-feed";
-import { CommunityBoard, SharedPositionCard } from "../src/features/member/components/community-board";
+import {
+  CommunityBoard,
+  SharedPositionCard,
+  formatSidebarSeasonLabel,
+} from "../src/features/member/components/community-board";
 import type { SharedPositionSnapshot } from "../src/features/member/api/community-news";
 import {
   formatExchangeCompactPct,
@@ -4153,4 +4157,110 @@ test("native <select> exact box-model vertical centering, single-line truncation
     globalsCss,
     /\.member-shell \.member-round-select select\s*\{[\s\S]*?height:\s*46px;[\s\S]*?padding-top:\s*12px;[\s\S]*?padding-bottom:\s*12px;[\s\S]*?line-height:\s*20px;/,
   );
+});
+
+test("커뮤니티 사이드바 대회 시즌 셀렉트는 긴 제목을 말줄임해 화살표 여백을 보존하고 title로 전체 제목을 제공한다", () => {
+  assert.equal(
+    formatSidebarSeasonLabel("요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP"),
+    "요기망치 제2회 선물 실전 대회…",
+  );
+  assert.equal(
+    formatSidebarSeasonLabel("요기망치 제2회 선물 실전 대회·WINTER"),
+    "요기망치 제2회 선물 실전 대회…",
+  );
+  assert.equal(
+    formatSidebarSeasonLabel("요기망치 제2회 선물 실전 대회-WINTER"),
+    "요기망치 제2회 선물 실전 대회…",
+  );
+  assert.equal(formatSidebarSeasonLabel("  제3회 선물 대회  "), "제3회 선물 대회");
+  assert.equal(formatSidebarSeasonLabel("1234567890123456789"), "1234567890123456789");
+  assert.equal(formatSidebarSeasonLabel("12345678901234567890"), "123456789012345678…");
+
+  const client = new QueryClient();
+  const recruitingClient = new QueryClient();
+  try {
+    const runningSeason = {
+      id: 2,
+      title: "요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP",
+      description: "실시간 수익률 랭킹 대회",
+      seedMoney: "10000",
+      recruitmentStartAt: "2026-11-05T14:33:13Z",
+      recruitmentEndAt: "2026-11-24T14:33:13Z",
+      contestStartAt: "2026-11-08T14:33:13Z",
+      contestEndAt: "2026-11-24T14:33:13Z",
+      isPublic: true,
+      isCanceled: false,
+      settledAt: null,
+      displayStatus: "LIVE" as const,
+      statusLabel: "대회 진행중",
+      participantCount: 2,
+      applicantCount: 0,
+      pendingOrderCount: 0,
+      openPositionCount: 1,
+      createdAt: "2026-11-10T14:33:13Z",
+      updatedAt: "2026-11-10T14:33:13Z",
+    };
+    const finishedSeason = {
+      ...runningSeason,
+      id: 1,
+      title: "요기망치 제1회 선물 트레이딩 챌린지",
+      displayStatus: "FINISHED" as const,
+      statusLabel: "정산완료",
+      settledAt: "2026-11-03T14:33:13Z",
+    };
+    const recruitingSeason = {
+      ...runningSeason,
+      id: 3,
+      title: "제3회 봄 선물 챌린지",
+      displayStatus: "RECRUITING" as const,
+      statusLabel: "모집중",
+    };
+
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialContestSeasons={{
+            recruiting: [recruitingSeason],
+            running: [runningSeason],
+            finished: [finishedSeason],
+            seasons: [runningSeason, finishedSeason, recruitingSeason],
+          }}
+        />
+      </MemberProvider>,
+    );
+
+    assert.equal(
+      html.includes('aria-label="대회 시즌 선택" title="요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP"'),
+      true,
+    );
+    assert.equal(html.includes(">요기망치 제2회 선물 실전 대회…</option>"), true);
+    assert.equal(html.includes(">요기망치 제1회 선물 트레이딩 챌…</option>"), true);
+
+    const longRecruitingSeason = {
+      ...recruitingSeason,
+      id: 4,
+      title: "요기망치 제4회 선물 실전 모집 · SPRING CHAMPIONSHIP",
+    };
+    const recruitingOnlyHtml = renderToStaticMarkup(
+      <MemberProvider client={recruitingClient}>
+        <CommunityBoard
+          initialContestSeasons={{
+            recruiting: [recruitingSeason, longRecruitingSeason],
+            running: [],
+            finished: [],
+            seasons: [recruitingSeason, longRecruitingSeason],
+          }}
+        />
+      </MemberProvider>,
+    );
+    assert.equal(
+      recruitingOnlyHtml.includes('aria-label="대회 시즌 선택" title="제3회 봄 선물 챌린지"'),
+      true,
+    );
+    assert.equal(recruitingOnlyHtml.includes(">제3회 봄 선물 챌린지</option>"), true);
+    assert.equal(recruitingOnlyHtml.includes(">요기망치 제4회 선물 실전 모집…</option>"), true);
+  } finally {
+    client.clear();
+    recruitingClient.clear();
+  }
 });
