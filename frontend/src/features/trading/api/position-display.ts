@@ -101,3 +101,40 @@ export function stopLossEstimate(position: Pick<Position, "side" | "entryPrice" 
     return { grossPnl, estimatedRoe, estimatedFee, warning };
   } catch { return null; }
 }
+export function takeProfitRoePreset(position: Pick<Position, "side" | "entryPrice" | "quantity" | "margin">, profitPercent: number, precision = 8) {
+  if (!Number.isInteger(profitPercent) || profitPercent <= 0 || profitPercent > 10000 || !Number.isInteger(precision) || precision < 0 || precision > 18) return "";
+  try {
+    const entry = scaled(position.entryPrice), qty = scaled(position.quantity), margin = scaled(position.margin);
+    if (entry <= BigInt(0) || qty <= BigInt(0) || margin <= BigInt(0)) return "";
+    const targetProfit = (margin * BigInt(profitPercent)) / BigInt(100);
+    const priceDelta = (targetProfit * SCALE) / qty;
+    const rawTarget = position.side === "LONG" ? entry + priceDelta : entry - priceDelta;
+    if (rawTarget <= BigInt(0)) return "";
+    const divisor = BigInt(10) ** BigInt(30 - precision);
+    const rounded = (rawTarget + divisor / BigInt(2)) / divisor;
+    const result = unitsDecimal(rounded, precision);
+    return validLimitPrice(result) ? result : "";
+  } catch { return ""; }
+}
+export function takeProfitEstimate(position: Pick<Position, "side" | "entryPrice" | "quantity" | "margin">, takeProfitPrice: string, markPrice?: string | null) {
+  const trimmed = takeProfitPrice.trim();
+  if (!validLimitPrice(trimmed)) return null;
+  try {
+    const target = decimalUnits(trimmed), entry = decimalUnits(position.entryPrice), qty = decimalUnits(position.quantity), margin = decimalUnits(position.margin);
+    if (qty <= BigInt(0) || margin <= BigInt(0)) return null;
+    const scale18 = BigInt("1000000000000000000");
+    const diff = position.side === "LONG" ? target - entry : entry - target;
+    const grossPnl = signed(diff * qty, 36);
+    const estimatedRoe = signed((diff * qty * BigInt(100)) / margin, 18);
+    const feeDenominator = scale18 * BigInt(10000);
+    const estimatedFee = unitsDecimal((target * qty * BigInt(5) + feeDenominator - BigInt(1)) / feeDenominator, 18);
+    let warning: string | null = null;
+    if (markPrice && validSizingPrice(markPrice)) {
+      const markRelation = comparePrices(trimmed, markPrice);
+      if (position.side === "LONG" ? markRelation <= 0 : markRelation >= 0) {
+        warning = "LONG 익절가는 현재 Mark 위(SHORT는 현재 Mark 아래)로 입력해 주세요.";
+      }
+    }
+    return { grossPnl, estimatedRoe, estimatedFee, warning };
+  } catch { return null; }
+}

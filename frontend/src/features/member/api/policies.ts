@@ -1,7 +1,8 @@
 import { ContentApiError, contentJson } from "./client";
 
 export type PolicyType = "TERMS" | "PRIVACY";
-export type PolicyDocument = { type: PolicyType; version: string; documentStatus: "DEVELOPMENT_DRAFT"; sha256: string; text: string };
+export type PolicyDocumentStatus = "DEVELOPMENT_DRAFT" | "PUBLISHED";
+export type PolicyDocument = { type: PolicyType; version: string; documentStatus: PolicyDocumentStatus; sha256: string; text: string };
 export type Policy = { type: PolicyType; version: string; required: boolean; accepted: boolean; lastAcceptedVersion: string | null; lastAgreedAt: string | null; lastAcceptedAt?: string | null; documentUrl: string };
 export type PolicyState = { policies: Policy[]; reconsentRequired: boolean };
 export type PolicyBundle = { state: PolicyState; documents: Record<PolicyType, PolicyDocument> };
@@ -29,11 +30,12 @@ export async function readPolicies(origin: string, signal: AbortSignal, transpor
   const documents = {} as Record<PolicyType, PolicyDocument>;
   await Promise.all(state.policies.map(async p => {
     const d = object(await contentJson(origin, p.documentUrl.slice("/api/v1".length), { signal }, transport));
-    if (d.type !== p.type || d.version !== p.version || d.documentStatus !== "DEVELOPMENT_DRAFT" || typeof d.text !== "string" || !d.text.length || d.text.length > 100000
+    const docStatus = d.documentStatus === "PUBLISHED" || d.documentStatus === "DEVELOPMENT_DRAFT" ? d.documentStatus : null;
+    if (d.type !== p.type || d.version !== p.version || !docStatus || typeof d.text !== "string" || !d.text.length || d.text.length > 100000
       || typeof d.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(d.sha256)) return fail();
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(d.text)))).map(v => v.toString(16).padStart(2, "0")).join("");
     if (hash !== d.sha256 || signal.aborted) return fail();
-    documents[p.type] = { type: p.type, version: p.version, documentStatus: d.documentStatus, text: d.text, sha256: d.sha256 };
+    documents[p.type] = { type: p.type, version: p.version, documentStatus: docStatus, text: d.text, sha256: d.sha256 };
   }));
   return { state, documents };
 }

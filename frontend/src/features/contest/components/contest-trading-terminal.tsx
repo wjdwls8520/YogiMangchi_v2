@@ -41,65 +41,21 @@ interface ContestSeasonTerminalMeta {
   dotColor: string;
 }
 
-const SEASON_TERMINAL_CATALOG: Record<number, ContestSeasonTerminalMeta> = {
-  202602: {
-    seasonId: 202602,
-    title: "2026 정규 시즌 2 선물 수익률 대회",
-    period: "2026.11.01 ~ 2026.11.30",
-    remainingLabel: "종료까지 20일 14시간 남음",
-    walletStatus: "ACTIVE",
-    seedMoney: "10,000.00 USDT",
-    contestEquity: "13,480.50 USDT",
-    availableMargin: "8,920.00 USDT",
-    seasonRoi: "+34.81%",
-    liveRank: "4위 / 186명",
-    dotColor: "#0058FF",
-  },
-  202603: {
-    seasonId: 202603,
-    title: "2026 연말 메이저 코인 단기 스프린트",
-    period: "2026.11.05 ~ 2026.11.20",
-    remainingLabel: "종료까지 10일 09시간 남음",
-    walletStatus: "ACTIVE",
-    seedMoney: "10,000.00 USDT",
-    contestEquity: "11,125.00 USDT",
-    availableMargin: "7,400.00 USDT",
-    seasonRoi: "+11.25%",
-    liveRank: "12위 / 94명",
-    dotColor: "#10B981",
-  },
-  202601: {
-    seasonId: 202601,
-    title: "2026 정규 시즌 1 선물 수익률 대회",
-    period: "2026.10.01 ~ 2026.10.31",
-    remainingLabel: "시즌 종료 · 정산 확정 완료",
-    walletStatus: "SETTLED",
-    seedMoney: "10,000.00 USDT",
-    contestEquity: "16,240.00 USDT",
-    availableMargin: "0.00 USDT",
-    seasonRoi: "+62.40%",
-    liveRank: "최종 5위 / 240명",
-    dotColor: "#9CA3AF",
-  },
-};
-
-const SEASON_DOT_PALETTE = ["#0058FF", "#8B5CF6", "#10B981", "#F59E0B", "#EC4899", "#06B6D4"];
+const SEASON_DOT_PALETTE = ["#0058FF", "#0EA5E9", "#0ECB81", "#F59E0B", "#F6465D", "#06B6D4"];
 
 function resolveContestTerminalMeta(seasonIdInput: number | string): ContestSeasonTerminalMeta {
   const numericId = Number(seasonIdInput);
-  const safeId = Number.isFinite(numericId) && numericId > 0 ? numericId : 202602;
-  const matched = SEASON_TERMINAL_CATALOG[safeId];
-  if (matched) return matched;
+  const safeId = Number.isFinite(numericId) && numericId > 0 ? numericId : 0;
   return {
     seasonId: safeId,
-    title: `2026 정규 시즌 #${safeId} 선물 수익률 대회`,
-    period: "2026.11.01 ~ 2026.11.30",
-    remainingLabel: "시즌 진행 중",
+    title: safeId > 0 ? `대회 시즌 #${safeId}` : "대회 시즌",
+    period: "일정 확인 중…",
+    remainingLabel: "시즌 정보 불러오는 중",
     walletStatus: "ACTIVE",
-    seedMoney: "10,000.00 USDT",
-    contestEquity: "10,000.00 USDT",
-    availableMargin: "10,000.00 USDT",
-    seasonRoi: "0.00%",
+    seedMoney: "—",
+    contestEquity: "—",
+    availableMargin: "—",
+    seasonRoi: "—",
     liveRank: "집계 중",
     dotColor: SEASON_DOT_PALETTE[safeId % SEASON_DOT_PALETTE.length] ?? "#0058FF",
   };
@@ -214,6 +170,7 @@ export function ContestTradingSubheader({
             fetchContestSeasonSummary(targetSeasonId, cred.accessToken, {
               signal: controller.signal,
             }),
+            true,
           )
           .then(summary => {
             if (summary && summary.season && summary.participation) {
@@ -316,9 +273,9 @@ export function ContestTradingSubheader({
               className={cn(
                 "font-black whitespace-nowrap",
                 meta.seasonRoi.startsWith("-")
-                  ? "text-blue-400"
+                  ? "text-[#F6465D]"
                   : meta.seasonRoi.startsWith("+")
-                    ? "text-red-400"
+                    ? "text-[#0ECB81]"
                     : "text-gray-300",
               )}
             >

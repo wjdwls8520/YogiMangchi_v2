@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberShell } from "./member-views";
 import { useMember } from "./member-provider";
+import { useOptionalNotificationCenter } from "../notifications/notification-context";
 import { ContentApiError, contentJson, contentMessage, contentOrigin } from "../api/client";
 import { parseProfile } from "../api/contracts";
 import {
@@ -237,9 +238,9 @@ export function SharedPositionCard({
   const isNegative = snapshot.roePct.trim().startsWith("-") || snapshot.pnlUsdt.trim().startsWith("-");
   const hasNonZero = /[1-9]/.test(snapshot.roePct) || /[1-9]/.test(snapshot.pnlUsdt);
   const pnlColorClass = isNegative
-    ? "text-[#1763B6]"
+    ? "text-[#F6465D]"
     : hasNonZero && snapshot.positive
-      ? "text-[#E12343]"
+      ? "text-[#0ECB81]"
       : "text-gray-600";
   const normalizedEntry = formatSnapshotPrice(snapshot.entryPrice);
   const normalizedMark = formatSnapshotPrice(snapshot.markPrice);
@@ -263,7 +264,7 @@ export function SharedPositionCard({
           <span
             className={`shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-black ${
               snapshot.side === "LONG"
-                ? "bg-[#2EBD85]/10 text-[#2EBD85]"
+                ? "bg-[#0ECB81]/10 text-[#0ECB81]"
                 : "bg-[#F6465D]/10 text-[#F6465D]"
             }`}
           >
@@ -301,7 +302,7 @@ export function SharedPositionCard({
 
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-gray-400">
         <span>실제 자금을 사용하지 않는 모의투자 포지션 공유 스냅샷입니다.</span>
-        <Link href="/trading" className="font-bold text-[#0058FF] hover:underline">
+        <Link href={`/trading?symbol=${snapshot.symbol}`} className="font-bold text-[#0058FF] hover:underline">
           {snapshot.pair} 모의투자 하러가기 →
         </Link>
       </div>
@@ -408,6 +409,13 @@ export function CommunityBoard({
     postId?: number;
     title: string;
   } | null>(null);
+  const [reportModalError, setReportModalError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<
+    | { kind: "POST"; postId: number; title: string }
+    | { kind: "COMMENT"; postId: number; commentId: number }
+    | null
+  >(null);
+  const notifCenter = useOptionalNotificationCenter();
   const [selectedReasonCode, setSelectedReasonCode] = useState<string>(V1_REPORT_REASONS[0].code);
   const [selectedReportReason, setSelectedReportReason] = useState<string>(
     V1_REPORT_REASONS[0].description,
@@ -440,7 +448,12 @@ export function CommunityBoard({
       const results: SharedPositionSnapshot[] = [];
       try {
         const portfolio = parsePublicMemberPortfolio(
-          await tradingJson(tradingBase, `portfolios/members/${snapshot.memberId}`, { signal }),
+          await session.authorized(cred =>
+            tradingJson(tradingBase, `portfolios/members/${snapshot.memberId}`, {
+              token: cred.accessToken,
+              signal,
+            }),
+          ),
         );
         if (portfolio.accountExists) {
           for (const pos of portfolio.positions) {
@@ -808,9 +821,6 @@ export function CommunityBoard({
 
   function requireReadyMember(): boolean {
     if (snapshot.phase !== "ready") {
-      if (typeof window !== "undefined" && typeof window.alert === "function") {
-        window.alert("로그인 이후 사용할 수 있습니다.");
-      }
       setFeedback("로그인 이후 사용할 수 있습니다.");
       return false;
     }
@@ -1049,6 +1059,7 @@ export function CommunityBoard({
       );
     },
     onSuccess: (_data, variables) => {
+      setReportModalError(null);
       setFeedback(
         `신고가 접수되었습니다 (${variables.type === "POST" ? "게시글" : "댓글"} #${variables.id}: ${variables.reason})`,
       );
@@ -1065,7 +1076,11 @@ export function CommunityBoard({
         });
       }
     },
-    onError: error => setFeedback(contentMessage(error)),
+    onError: error => {
+      const msg = contentMessage(error);
+      setReportModalError(msg);
+      setFeedback(msg);
+    },
   });
 
   const cancelReportMutation = useMutation({
@@ -1363,6 +1378,11 @@ export function CommunityBoard({
     }
   }
 
+  const loadMorePostsRef = useRef(loadMorePosts);
+  useEffect(() => {
+    loadMorePostsRef.current = loadMorePosts;
+  });
+
   useEffect(() => {
     if (typeof window === "undefined" || isDetailView || !hasNext || nextCursorId === null) return;
     const node = loadMoreSentinelRef.current;
@@ -1370,14 +1390,14 @@ export function CommunityBoard({
     const observer = new window.IntersectionObserver(
       entries => {
         if (entries.some(entry => entry.isIntersecting)) {
-          void loadMorePosts();
+          void loadMorePostsRef.current();
         }
       },
       { rootMargin: "240px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  });
+  }, [isDetailView, hasNext, nextCursorId]);
 
   const highestPostId = items.reduce((max, item) => (item.id > max ? item.id : max), 0);
   useEffect(() => {
@@ -1547,6 +1567,11 @@ export function CommunityBoard({
     }
   }
 
+  const loadMoreCommentsRef = useRef(loadMoreComments);
+  useEffect(() => {
+    loadMoreCommentsRef.current = loadMoreComments;
+  });
+
   useEffect(() => {
     if (
       typeof window === "undefined" ||
@@ -1561,14 +1586,14 @@ export function CommunityBoard({
     const observer = new window.IntersectionObserver(
       entries => {
         if (entries.some(entry => entry.isIntersecting)) {
-          void loadMoreComments();
+          void loadMoreCommentsRef.current();
         }
       },
       { rootMargin: "200px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  });
+  }, [activePostId, commentsHasNext, commentsNextCursorId]);
 
   const rootComments = comments.filter(item => item.parentCommentId === null);
   const repliesByParent = new Map<number, CommunityComment[]>();
@@ -1814,9 +1839,12 @@ export function CommunityBoard({
 
             {/* 인스타그램 스타일 실시간 '새 게시글 보기' 플로팅 토스트 팝업 (피드 전용, 레이아웃 자리 미차지) */}
             <div ref={feedTopRef} className="scroll-mt-24" />
-            {!isDetailView && !isEditingMode && pendingNewPostsCount > 0 && (
+            {!isDetailView &&
+              !isEditingMode &&
+              pendingNewPostsCount > 0 &&
+              !(notifCenter && notifCenter.toasts.length > 0) && (
               <div
-                className="pointer-events-none fixed left-1/2 top-20 z-40 -translate-x-1/2"
+                className="pointer-events-none fixed left-1/2 top-20 z-30 -translate-x-1/2"
                 role="status"
                 aria-live="polite"
               >
@@ -1867,7 +1895,7 @@ export function CommunityBoard({
                             </span>
                             {post.symbolTag && (
                               <Link
-                                href="/trading"
+                                href={`/trading?symbol=${post.symbolTag}`}
                                 className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-[#0058FF]"
                               >
                                 #{post.symbolTag}
@@ -1912,7 +1940,13 @@ export function CommunityBoard({
                                 type="button"
                                 className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-100 cursor-pointer"
                                 onClick={() => {
-                                  if (requireReadyMember()) deletePostMutation.mutate(post.id);
+                                  if (requireReadyMember()) {
+                                    setPendingDelete({
+                                      kind: "POST",
+                                      postId: post.id,
+                                      title: post.title,
+                                    });
+                                  }
                                 }}
                                 disabled={deletePostMutation.isPending}
                               >
@@ -2302,7 +2336,8 @@ export function CommunityBoard({
                                             className="rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-600 transition-colors hover:bg-red-100 cursor-pointer disabled:opacity-60"
                                             onClick={() => {
                                               if (requireReadyMember()) {
-                                                deleteCommentMutation.mutate({
+                                                setPendingDelete({
+                                                  kind: "COMMENT",
                                                   postId: post.id,
                                                   commentId: comment.id,
                                                 });
@@ -2517,7 +2552,8 @@ export function CommunityBoard({
                                                       className="rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-600 transition-colors hover:bg-red-100 cursor-pointer disabled:opacity-60"
                                                       onClick={() => {
                                                         if (requireReadyMember()) {
-                                                          deleteCommentMutation.mutate({
+                                                          setPendingDelete({
+                                                            kind: "COMMENT",
                                                             postId: post.id,
                                                             commentId: reply.id,
                                                           });
@@ -2917,10 +2953,10 @@ export function CommunityBoard({
                         const isNeg = roi.trim().startsWith("-");
                         const isZero = !/[1-9]/.test(roi);
                         const roiColor = isNeg
-                          ? "text-blue-600"
+                          ? "text-[#F6465D]"
                           : isZero
                             ? "text-gray-600"
-                            : "text-red-500";
+                            : "text-[#0ECB81]";
                         const rankBadgeClass =
                           entry.rank === 1
                             ? "bg-[#0058FF] text-white"
@@ -3161,11 +3197,22 @@ export function CommunityBoard({
       {/* V1 ReportModal (신고 모달) */}
       <DimModal
         open={reportTarget !== null}
-        onClose={() => setReportTarget(null)}
+        onClose={() => {
+          setReportModalError(null);
+          setReportTarget(null);
+        }}
         title={reportTarget?.type === "REPLY" ? "댓글 신고하기" : "게시글 신고하기"}
         subtitle="신고 사유를 선택해 주세요. 허위 신고 시 활동이 제한될 수 있습니다."
       >
         <form className="space-y-3" onSubmit={handleReportSubmit}>
+          {reportModalError && (
+            <div
+              role="alert"
+              className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-600"
+            >
+              {reportModalError}
+            </div>
+          )}
           <div className="space-y-2">
             {reportReasons.map(reason => (
               <label
@@ -3191,7 +3238,14 @@ export function CommunityBoard({
             ))}
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <V1Button variant="gray" size="sm" onClick={() => setReportTarget(null)}>
+            <V1Button
+              variant="gray"
+              size="sm"
+              onClick={() => {
+                setReportModalError(null);
+                setReportTarget(null);
+              }}
+            >
               취소
             </V1Button>
             <V1Button type="submit" variant="red" size="sm" disabled={reportMutation.isPending}>
@@ -3199,6 +3253,57 @@ export function CommunityBoard({
             </V1Button>
           </div>
         </form>
+      </DimModal>
+
+      {/* 삭제 확인 모달 (게시글 · 댓글) */}
+      <DimModal
+        open={pendingDelete !== null}
+        onClose={() => {
+          if (!deletePostMutation.isPending && !deleteCommentMutation.isPending) {
+            setPendingDelete(null);
+          }
+        }}
+        title={pendingDelete?.kind === "POST" ? "게시글을 삭제할까요?" : "댓글을 삭제할까요?"}
+        subtitle="삭제된 내용은 되돌릴 수 없습니다."
+        maxWidth="420px"
+        footer={
+          <div className="flex justify-end gap-2">
+            <V1Button
+              variant="gray"
+              size="sm"
+              disabled={deletePostMutation.isPending || deleteCommentMutation.isPending}
+              onClick={() => setPendingDelete(null)}
+            >
+              취소
+            </V1Button>
+            <V1Button
+              variant="red"
+              size="sm"
+              disabled={deletePostMutation.isPending || deleteCommentMutation.isPending}
+              onClick={() => {
+                if (!pendingDelete) return;
+                if (pendingDelete.kind === "POST") {
+                  deletePostMutation.mutate(pendingDelete.postId, {
+                    onSettled: () => setPendingDelete(null),
+                  });
+                } else {
+                  deleteCommentMutation.mutate(
+                    { postId: pendingDelete.postId, commentId: pendingDelete.commentId },
+                    { onSettled: () => setPendingDelete(null) },
+                  );
+                }
+              }}
+            >
+              {deletePostMutation.isPending || deleteCommentMutation.isPending ? "삭제 중…" : "삭제 확인"}
+            </V1Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-gray-600">
+          {pendingDelete?.kind === "POST"
+            ? `“${pendingDelete.title}” 게시글을 삭제하시겠습니까?`
+            : "작성한 댓글을 삭제하시겠습니까?"}
+        </p>
       </DimModal>
     </MemberShell>
   );

@@ -24,7 +24,17 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
   const [bookSelection, setBookSelection] = useState<BookSelection>();
   const [symbolSearch,setSymbolSearch]=useState("");
   const searchInput=useRef<HTMLInputElement>(null);
-  const [accountView, setAccountView] = useState<AccountView>("positions");
+  const [accountView, setAccountView] = useState<AccountView>(() => {
+    if (typeof window === "undefined") return "positions";
+    const tab = new URLSearchParams(window.location.search).get("tab")?.toLowerCase();
+    if (tab === "orders" || tab === "history" || tab === "fills" || tab === "positions") return tab;
+    return "positions";
+  });
+  const [requestedSymbolParam] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const raw = new URLSearchParams(window.location.search).get("symbol")?.trim().toUpperCase();
+    return raw ? raw.replace(/USDT$/i, "") : null;
+  });
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheet = useRef<HTMLDialogElement>(null);
   const sheetTrigger = useRef<HTMLButtonElement>(null);
@@ -68,6 +78,9 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     return () => { disposed = true; controller?.abort(); clearTimeout(timeout); clearTimeout(retry); };
   }, [catalogRevision]);
   const selected = catalog.symbols.find((entry) => entry.id === selectedId)
+    ?? (requestedSymbolParam
+      ? catalog.symbols.find((entry) => entry.symbol.toUpperCase() === requestedSymbolParam)
+      : undefined)
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
   const positionIds = JSON.stringify([
     ...new Set(

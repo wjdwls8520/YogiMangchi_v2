@@ -62,9 +62,9 @@ function formatSignedPct(raw: string): string {
 
 function publicPnlColor(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed.startsWith("-")) return "text-blue-600";
+  if (trimmed.startsWith("-")) return "text-[#F6465D]";
   if (!/[1-9]/.test(trimmed)) return "text-gray-500";
-  return "text-red-500";
+  return "text-[#0ECB81]";
 }
 
 function formatPublicKstDate(value: string): string {
@@ -87,7 +87,6 @@ export function PublicMember({ memberId }: { memberId: number }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mainTab, setMainTab] = useState<"mock-assets" | "contest-assets" | "portfolio" | "community">("portfolio");
-  const [ledgerTab, setLedgerTab] = useState<"positions" | "pnl" | "orders" | "trades" | "open-orders">("positions");
   const [contestTab, setContestTab] = useState<"live" | "ended">("live");
   const [portfolioTab, setPortfolioTab] = useState<"mock" | "contest">("mock");
   const [communityTab, setCommunityTab] = useState<
@@ -151,14 +150,30 @@ export function PublicMember({ memberId }: { memberId: number }) {
     getNextPageParam: page => (page.hasNext ? (page.nextCursorId ?? undefined) : undefined),
   });
 
-  // [T-1] 공개 포트폴리오 조회 (누구나 조회 가능)
+  // [T-1] 공개 포트폴리오 조회 (로그인 시 본인/관리자 판별을 위해 Bearer JWT 전달)
   const publicPortfolioQuery = useQuery({
-    queryKey: ["member", "public-portfolio", memberId, tradingBase, snapshot.generation],
+    queryKey: ["member", "public-portfolio", memberId, tradingBase, snapshot.phase, snapshot.generation],
     enabled: memberId > 0 && !isMemberNotFound,
-    queryFn: async ({ signal }) =>
-      parsePublicMemberPortfolio(
+    queryFn: async ({ signal }) => {
+      if (snapshot.phase === "ready") {
+        try {
+          return parsePublicMemberPortfolio(
+            await session.authorized(cred =>
+              tradingJson(tradingBase, `portfolios/members/${memberId}`, {
+                token: cred.accessToken,
+                signal,
+              }),
+              true,
+            ),
+          );
+        } catch {
+          // Fallback to public anonymous read if token fails transiently
+        }
+      }
+      return parsePublicMemberPortfolio(
         await tradingJson(tradingBase, `portfolios/members/${memberId}`, { signal }),
-      ),
+      );
+    },
   });
 
   const isOwner =
@@ -171,6 +186,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
       isOwner
         ? session.authorized(cred =>
             fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
+            true,
           )
         : fetchPublicMemberContestSeasons(memberId, { baseUrl: tradingBase, signal }),
   });
@@ -298,6 +314,11 @@ export function PublicMember({ memberId }: { memberId: number }) {
             ? memberLikedCommentsInfinite
             : ownerReportsInfinite;
 
+  const fetchNextCommunityRef = useRef(activeCommunityInfinite.fetchNextPage);
+  useEffect(() => {
+    fetchNextCommunityRef.current = activeCommunityInfinite.fetchNextPage;
+  });
+
   useEffect(() => {
     if (
       typeof window === "undefined" ||
@@ -312,14 +333,19 @@ export function PublicMember({ memberId }: { memberId: number }) {
     const observer = new window.IntersectionObserver(
       entries => {
         if (entries.some(entry => entry.isIntersecting)) {
-          void activeCommunityInfinite.fetchNextPage();
+          void fetchNextCommunityRef.current();
         }
       },
       { rootMargin: "200px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  });
+  }, [
+    mainTab,
+    communityTab,
+    activeCommunityInfinite.hasNextPage,
+    activeCommunityInfinite.isFetchingNextPage,
+  ]);
 
   async function changeFollow() {
     if (active.current || snapshot.phase !== "ready" || !summary.data || summary.data.mine) return;
@@ -393,38 +419,56 @@ export function PublicMember({ memberId }: { memberId: number }) {
   const displayNickname = currentProfile?.nickname ?? `트레이더 #${memberId}`;
 
   const portfolioResolved = publicPortfolioQuery.isSuccess;
+  const isPortfolioPrivate = Boolean(
+    publicPortfolioQuery.data && !publicPortfolioQuery.data.portfolioPublic && !isOwner,
+  );
   const livePortfolio =
-    publicPortfolioQuery.data && publicPortfolioQuery.data.accountExists
+    publicPortfolioQuery.data &&
+    publicPortfolioQuery.data.accountExists &&
+    !isPortfolioPrivate
       ? publicPortfolioQuery.data
       : null;
 
-  const assetSummary = livePortfolio
+  const assetSummary = isPortfolioPrivate
     ? {
-        title: `${displayNickname}님의 모의투자`,
-        totalAsset: `${formatDecimal(livePortfolio.wallet.totalEquity)} USDT`,
-        cashBalance: `${formatDecimal(livePortfolio.wallet.availableBalance)} USDT`,
-        totalBuyAmount: `${formatDecimal(livePortfolio.wallet.usedMargin)} USDT`,
-        totalCoinValue: `${formatDecimal(livePortfolio.wallet.balance)} USDT`,
-        totalProfit: formatSignedUsdt(livePortfolio.wallet.totalPnl),
-        totalRoi: formatSignedPct(livePortfolio.wallet.totalRoiPct),
-        isPositive:
-          !livePortfolio.wallet.totalPnl.trim().startsWith("-") &&
-          /[1-9]/.test(livePortfolio.wallet.totalPnl),
-        isNegative: livePortfolio.wallet.totalPnl.trim().startsWith("-"),
-        unit: "USDT",
-      }
-    : {
-        title: `${displayNickname}님의 모의투자`,
-        totalAsset: "0.00 USDT",
-        cashBalance: "0.00 USDT",
-        totalBuyAmount: "0.00 USDT",
-        totalCoinValue: "0.00 USDT",
-        totalProfit: "0.00 USDT",
-        totalRoi: "0.00%",
+        title: `${displayNickname}님의 모의투자 (비공개)`,
+        totalAsset: "비공개",
+        cashBalance: "비공개",
+        totalBuyAmount: "비공개",
+        totalCoinValue: "비공개",
+        totalProfit: "비공개",
+        totalRoi: "비공개",
         isPositive: false,
         isNegative: false,
         unit: "USDT",
-      };
+      }
+    : livePortfolio
+      ? {
+          title: `${displayNickname}님의 모의투자`,
+          totalAsset: `${formatDecimal(livePortfolio.wallet.totalEquity)} USDT`,
+          cashBalance: `${formatDecimal(livePortfolio.wallet.availableBalance)} USDT`,
+          totalBuyAmount: `${formatDecimal(livePortfolio.wallet.usedMargin)} USDT`,
+          totalCoinValue: `${formatDecimal(livePortfolio.wallet.balance)} USDT`,
+          totalProfit: formatSignedUsdt(livePortfolio.wallet.totalPnl),
+          totalRoi: formatSignedPct(livePortfolio.wallet.totalRoiPct),
+          isPositive:
+            !livePortfolio.wallet.totalPnl.trim().startsWith("-") &&
+            /[1-9]/.test(livePortfolio.wallet.totalPnl),
+          isNegative: livePortfolio.wallet.totalPnl.trim().startsWith("-"),
+          unit: "USDT",
+        }
+      : {
+          title: `${displayNickname}님의 모의투자`,
+          totalAsset: "0.00 USDT",
+          cashBalance: "0.00 USDT",
+          totalBuyAmount: "0.00 USDT",
+          totalCoinValue: "0.00 USDT",
+          totalProfit: "0.00 USDT",
+          totalRoi: "0.00%",
+          isPositive: false,
+          isNegative: false,
+          unit: "USDT",
+        };
 
   const livePosts = memberPostsInfinite.data
     ? memberPostsInfinite.data.pages.flatMap(p => p.items)
@@ -676,27 +720,28 @@ export function PublicMember({ memberId }: { memberId: number }) {
                   </div>
 
                   {effectiveTab === "mock-assets" && isOwner && (
-                    <V1FolderTabs
-                      tabs={[
-                        { id: "positions", label: "포지션 현황" },
-                        { id: "pnl", label: "손익현황" },
-                        { id: "orders", label: "주문내역" },
-                        { id: "trades", label: "거래내역" },
-                        { id: "open-orders", label: "미체결내역" },
-                      ]}
-                      activeId={ledgerTab}
-                      onChange={id =>
-                        setLedgerTab(id as "positions" | "pnl" | "orders" | "trades" | "open-orders")
-                      }
-                    >
-                      <div className="py-6 text-xs font-bold text-gray-600">
-                        내 모의투자 자산 원장을 확인합니다. 상세 주문·체결 원장 필터 및 회차 초기화는{" "}
-                        <Link href="/me" className="text-[#0058FF] underline">
-                          마이페이지
-                        </Link>
-                        에서 관리할 수 있습니다.
+                    <div className="rounded-2xl border border-gray-200 bg-white p-6 space-y-4">
+                      <div>
+                        <h3 className="text-base font-black text-gray-900">내 모의투자 상세 자산 원장</h3>
+                        <p className="mt-1 text-xs leading-relaxed text-gray-500">
+                          포지션 현황, 실현 손익, 주문·체결 이력 필터 및 새 회차 재시작 기능은 마이페이지 자산 탭에서 관리할 수 있습니다.
+                        </p>
                       </div>
-                    </V1FolderTabs>
+                      <div className="flex flex-wrap gap-2">
+                        <Link
+                          href="/me?tab=mock-assets"
+                          className="inline-flex h-10 items-center justify-center rounded-xl bg-[#0058FF] px-5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+                        >
+                          마이페이지 자산 원장 열기 →
+                        </Link>
+                        <Link
+                          href="/me/settings"
+                          className="inline-flex h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
+                        >
+                          포트폴리오 공개 설정
+                        </Link>
+                      </div>
+                    </div>
                   )}
 
                   {effectiveTab === "contest-assets" && isOwner && (
@@ -756,6 +801,22 @@ export function PublicMember({ memberId }: { memberId: number }) {
                       onChange={id => setPortfolioTab(id as "mock" | "contest")}
                     >
                       {portfolioTab === "mock" ? (
+                        isPortfolioPrivate ? (
+                          <div
+                            data-portfolio-private="true"
+                            className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 bg-[#F9FAFB] px-6 py-14 text-center"
+                          >
+                            <span className="inline-flex rounded-full bg-gray-200 px-3 py-1 text-[11px] font-extrabold text-gray-700">
+                              비공개 설정됨
+                            </span>
+                            <p className="mt-1 text-sm font-black text-gray-900">
+                              비공개 포트폴리오입니다
+                            </p>
+                            <p className="max-w-md text-xs text-gray-500">
+                              {displayNickname}님이 모의투자 포트폴리오를 비공개로 설정했습니다. 보유 포지션과 수익률 내역은 표시되지 않습니다.
+                            </p>
+                          </div>
+                        ) : (
                         <div className="space-y-6">
                           {publicPortfolioQuery.isError && (
                             <div
@@ -787,12 +848,12 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
                               <h3 className="text-sm font-black text-gray-900">롱 / 숏 비율</h3>
                               <div className="mt-3 flex justify-between text-xs font-bold">
-                                <span className="text-red-500">LONG {formatExchangeCompactPct(longRatioPct)}</span>
-                                <span className="text-blue-600">SHORT {formatExchangeCompactPct(shortRatioPct)}</span>
+                                <span className="text-[#0ECB81]">LONG {formatExchangeCompactPct(longRatioPct)}</span>
+                                <span className="text-[#F6465D]">SHORT {formatExchangeCompactPct(shortRatioPct)}</span>
                               </div>
                               <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-gray-200">
-                                <div className="h-full bg-red-500" style={{ width: `${longRatioPct}%` }} />
-                                <div className="h-full bg-blue-600" style={{ width: `${shortRatioPct}%` }} />
+                                <div className="h-full bg-[#0ECB81]" style={{ width: `${longRatioPct}%` }} />
+                                <div className="h-full bg-[#F6465D]" style={{ width: `${shortRatioPct}%` }} />
                               </div>
                             </div>
                           </div>
@@ -850,7 +911,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                       </td>
                                       <td
                                         className={`px-4 py-3 font-bold ${
-                                          pos.side === "LONG" ? "text-red-500" : "text-blue-600"
+                                          pos.side === "LONG" ? "text-[#0ECB81]" : "text-[#F6465D]"
                                         }`}
                                       >
                                         {pos.side}
@@ -899,6 +960,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             </div>
                           )}
                         </div>
+                        )
                       ) : liveContestSeasons.length > 0 || pastContestSeasons.length > 0 ? (
                         <div className="space-y-6">
                           {liveContestSeasons.length > 0 && (

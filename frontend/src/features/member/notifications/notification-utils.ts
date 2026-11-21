@@ -15,7 +15,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   CONTEST: "대회",
   COMMUNITY: "커뮤니티",
   FOLLOW: "팔로우",
-  REPORT: "신고",
+  REPORT: "신고·제재",
+  SUPPORT: "고객센터",
 };
 
 const SIDE_LABELS: Record<string, string> = {
@@ -30,6 +31,8 @@ const ORDER_TYPE_LABELS: Record<string, string> = {
   LIMIT: "지정가",
   STOP_MARKET: "손절",
   STOP_LOSS: "손절",
+  TAKE_PROFIT_MARKET: "익절",
+  TAKE_PROFIT: "익절",
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -39,11 +42,16 @@ const TYPE_LABELS: Record<string, string> = {
   CONTEST_APPLICATION_APPROVED: "대회 신청 승인",
   CONTEST_APPLICATION_REJECTED: "대회 신청 반려",
   CONTEST_SEASON_SETTLED: "대회 정산 완료",
+  CONTEST_SEASON_CANCELED: "대회 시즌 취소",
   POST_COMMENT_CREATED: "게시글 댓글",
   REPLY_COMMENT_CREATED: "답글·멘션",
   POST_LIKED: "게시글 좋아요",
   REPLY_LIKED: "댓글 좋아요",
   FOLLOW_CREATED: "팔로우",
+  REPORT_RESOLVED: "신고 처리 완료",
+  REPORT_DISMISSED: "신고 기각",
+  CONTENT_MODERATED: "콘텐츠 제재 안내",
+  SUPPORT_INQUIRY_ANSWERED: "1:1 문의 답변",
 };
 
 export function makeNotificationUid(source: NotificationSource, notificationId: number): string {
@@ -254,6 +262,9 @@ function getGroupedLikeCount(notification: NotificationItem): number | null {
 }
 
 function getOrderTypeLabel(notification: NotificationItem): string | null {
+  const reason = getPayloadString(notification.payload, "reason");
+  if (reason === "TAKE_PROFIT") return "익절";
+  if (reason === "STOP_LOSS") return "손절";
   const rawOrderType = getPayloadString(notification.payload, "orderType", "type");
   if (!rawOrderType) return null;
   return ORDER_TYPE_LABELS[rawOrderType] ?? rawOrderType;
@@ -371,40 +382,24 @@ export function getNotificationTradeMeta(notification: NotificationItem): {
 export function getNotificationTradeToneStyles(tone: NotificationTradeTone) {
   switch (tone) {
     case "buy":
-      return {
-        accent: "bg-[#E12343]",
-        dot: "bg-[#E12343]",
-        unreadSurface: "bg-[#E12343]/[0.03]",
-        highlightSurface: "bg-[#E12343]/[0.08]",
-        badge: "bg-[#E12343]/10 text-[#E12343]",
-        icon: "bg-[#E12343]/10 text-[#E12343]",
-      } as const;
-    case "sell":
-      return {
-        accent: "bg-[#1763B6]",
-        dot: "bg-[#1763B6]",
-        unreadSurface: "bg-[#1763B6]/[0.03]",
-        highlightSurface: "bg-[#1763B6]/[0.08]",
-        badge: "bg-[#1763B6]/10 text-[#1763B6]",
-        icon: "bg-[#1763B6]/10 text-[#1763B6]",
-      } as const;
     case "long":
       return {
-        accent: "bg-[#2EBD85]",
-        dot: "bg-[#2EBD85]",
-        unreadSurface: "bg-[#2EBD85]/[0.03]",
-        highlightSurface: "bg-[#2EBD85]/[0.08]",
-        badge: "bg-[#2EBD85]/10 text-[#2EBD85]",
-        icon: "bg-[#2EBD85]/10 text-[#2EBD85]",
+        accent: "bg-[#0ECB81]",
+        dot: "bg-[#0ECB81]",
+        unreadSurface: "bg-[#0ECB81]/[0.04]",
+        highlightSurface: "bg-[#0ECB81]/[0.1]",
+        badge: "bg-[#0ECB81]/12 text-[#0ECB81]",
+        icon: "bg-[#0ECB81]/12 text-[#0ECB81]",
       } as const;
+    case "sell":
     case "short":
       return {
         accent: "bg-[#F6465D]",
         dot: "bg-[#F6465D]",
-        unreadSurface: "bg-[#F6465D]/[0.03]",
-        highlightSurface: "bg-[#F6465D]/[0.08]",
-        badge: "bg-[#F6465D]/10 text-[#F6465D]",
-        icon: "bg-[#F6465D]/10 text-[#F6465D]",
+        unreadSurface: "bg-[#F6465D]/[0.04]",
+        highlightSurface: "bg-[#F6465D]/[0.1]",
+        badge: "bg-[#F6465D]/12 text-[#F6465D]",
+        icon: "bg-[#F6465D]/12 text-[#F6465D]",
       } as const;
     case "warning":
       return {
@@ -528,6 +523,35 @@ export function formatNotificationTitle(notification: NotificationItem): string 
         ? `${groupedActorLabel}이 내 댓글을 좋아합니다.`
         : `${actorName}님이 내 댓글을 좋아합니다.`;
     }
+    case "CONTEST_SEASON_CANCELED":
+    case "NOTIFICATION_CONTEST_SEASON_CANCELED": {
+      const seasonTitle = getPayloadString(notification.payload, "seasonTitle", "title") ?? "대회";
+      return `[${seasonTitle}] 대회 시즌이 취소되었습니다.`;
+    }
+    case "REPORT_RESOLVED": {
+      const titleSummary = summarizeText(getPayloadString(notification.payload, "title"));
+      return titleSummary
+        ? `접수하신 신고("${titleSummary}")가 검토 완료 처리되었습니다.`
+        : "접수하신 신고가 검토 완료 처리되었습니다.";
+    }
+    case "REPORT_DISMISSED": {
+      const titleSummary = summarizeText(getPayloadString(notification.payload, "title"));
+      return titleSummary
+        ? `접수하신 신고("${titleSummary}")가 반려(기각)되었습니다.`
+        : "접수하신 신고가 반려(기각)되었습니다.";
+    }
+    case "CONTENT_MODERATED": {
+      const titleSummary = summarizeText(getPayloadString(notification.payload, "title"));
+      return titleSummary
+        ? `작성하신 콘텐츠("${titleSummary}")가 운영 정책에 따라 조치되었습니다.`
+        : "작성하신 콘텐츠가 운영 정책에 따라 조치되었습니다.";
+    }
+    case "SUPPORT_INQUIRY_ANSWERED": {
+      const titleSummary = summarizeText(getPayloadString(notification.payload, "title"));
+      return titleSummary
+        ? `1:1 문의 "${titleSummary}"에 답변이 등록되었습니다.`
+        : "등록하신 1:1 문의에 답변이 등록되었습니다.";
+    }
     case "FOLLOW_CREATED":
       return `${actorName}님이 나를 팔로우했습니다.`;
     default:
@@ -610,6 +634,27 @@ export function formatNotificationDescription(notification: NotificationItem): s
   ) {
     const reason = getPayloadString(notification.payload, "rejectReason", "reason", "message");
     return reason ? `사유: ${reason}` : "신청 정보를 다시 확인해주세요.";
+  }
+
+  if (
+    type === "CONTEST_SEASON_CANCELED" ||
+    type === "NOTIFICATION_CONTEST_SEASON_CANCELED"
+  ) {
+    const reason = getPayloadString(notification.payload, "reason", "message");
+    return reason ?? "대회 시즌이 취소되어 진행 중인 신청·주문·포지션이 정리되었습니다.";
+  }
+
+  if (type === "REPORT_RESOLVED" || type === "REPORT_DISMISSED" || type === "CONTENT_MODERATED") {
+    const note = getPayloadString(notification.payload, "resolutionNote", "reason", "message");
+    if (note) return note;
+    if (type === "REPORT_RESOLVED") return "신고해주신 내용을 검토하여 조치를 완료했습니다.";
+    if (type === "REPORT_DISMISSED") return "운영 기준 검토 결과 위반 사항이 확인되지 않았습니다.";
+    return "커뮤니티 이용 정책 위반 신고로 인해 해당 콘텐츠가 숨김/삭제 처리되었습니다.";
+  }
+
+  if (type === "SUPPORT_INQUIRY_ANSWERED") {
+    const preview = summarizeText(getPayloadString(notification.payload, "replyPreview"), 60);
+    return preview ? `답변: "${preview}"` : "고객센터에서 운영팀 답변을 확인해 주세요.";
   }
 
   return "";
@@ -731,6 +776,43 @@ export function getNotificationDetailFields(
         createDetailField("반려 사유", reason),
       ].filter((f): f is NotificationDetailField => f !== null);
     }
+    case "CONTEST_SEASON_CANCELED":
+    case "NOTIFICATION_CONTEST_SEASON_CANCELED": {
+      const seasonTitle = getPayloadString(notification.payload, "seasonTitle", "title");
+      const reason = getPayloadString(notification.payload, "reason", "message");
+      return [
+        createDetailField("대회명", seasonTitle),
+        createDetailField("상태", "시즌 취소"),
+        createDetailField("안내", reason),
+      ].filter((f): f is NotificationDetailField => f !== null);
+    }
+    case "REPORT_RESOLVED":
+    case "REPORT_DISMISSED":
+    case "CONTENT_MODERATED": {
+      const title = getPayloadString(notification.payload, "title");
+      const note = getPayloadString(notification.payload, "resolutionNote");
+      const statusLabel =
+        type === "REPORT_RESOLVED"
+          ? "신고 처리 완료"
+          : type === "REPORT_DISMISSED"
+            ? "신고 기각"
+            : "콘텐츠 제재";
+      return [
+        createDetailField("대상", title),
+        createDetailField("처리 결과", statusLabel),
+        createDetailField("운영 메모", note),
+      ].filter((f): f is NotificationDetailField => f !== null);
+    }
+    case "SUPPORT_INQUIRY_ANSWERED": {
+      const title = getPayloadString(notification.payload, "title");
+      const inquiryCategory = getPayloadString(notification.payload, "inquiryCategory");
+      const replyPreview = getPayloadString(notification.payload, "replyPreview");
+      return [
+        createDetailField("문의 유형", inquiryCategory),
+        createDetailField("문의 제목", title),
+        createDetailField("답변 요약", replyPreview),
+      ].filter((f): f is NotificationDetailField => f !== null);
+    }
     default:
       return [createDetailField("내용", rawContent)].filter(
         (f): f is NotificationDetailField => f !== null,
@@ -771,15 +853,40 @@ export function getNotificationListTabValue(
   return "COMMUNITY";
 }
 
+export function isTradingTerminalPath(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  return (
+    pathname.startsWith("/trading") ||
+    (pathname.startsWith("/contest/") && pathname.endsWith("/trading"))
+  );
+}
+
+export function shouldSuppressToastOnPath(
+  pathname: string | null | undefined,
+  toast: Pick<NotificationItem, "type">,
+): boolean {
+  if (!isTradingTerminalPath(pathname)) return false;
+  const t = toast.type;
+  return (
+    t.includes("ORDER_COMPLETED") ||
+    t.includes("ORDER_CANCELED") ||
+    t.includes("LIQUIDATION_COMPLETED")
+  );
+}
+
 export function getNotificationNavigationTarget(
   notification: NotificationItem,
 ): NotificationNavigationTarget | null {
   const type = notification.type;
+  const seasonIdRaw = getPayloadNumericValue(notification.payload, "seasonId");
+  const seasonId = seasonIdRaw !== null && seasonIdRaw > 0 ? Math.trunc(seasonIdRaw) : null;
 
   if (type.includes("ORDER_COMPLETED") || type.includes("LIQUIDATION_COMPLETED")) {
     if (notification.category === "CONTEST") {
       return {
-        href: "/me?tab=contest-assets",
+        href: seasonId
+          ? `/me?tab=contest-assets&seasonId=${seasonId}`
+          : "/me?tab=contest-assets",
         label: "대회 자산·내역으로 이동",
       };
     }
@@ -791,20 +898,53 @@ export function getNotificationNavigationTarget(
 
   if (type === "CONTEST_SEASON_SETTLED") {
     return {
-      href: "/me?tab=contest-assets&contestSubTab=finished",
+      href: seasonId
+        ? `/me?tab=contest-assets&contestSubTab=finished&seasonId=${seasonId}`
+        : "/me?tab=contest-assets&contestSubTab=finished",
       label: "최종 순위·정산 확인",
     };
   }
 
   if (
     type === "CONTEST_APPLICATION_APPROVED" ||
-    type === "CONTEST_APPLICATION_REJECTED" ||
     type === "CONTEST_APPROVED" ||
-    type === "CONTEST_REJECTED"
+    type === "NOTIFICATION_CONTEST_APPLICATION_APPROVED"
   ) {
     return {
-      href: "/contest",
-      label: "대회 페이지로 이동",
+      href: seasonId ? `/contest/${seasonId}/trading` : "/contest",
+      label: seasonId ? "대회 거래소로 이동" : "대회 페이지로 이동",
+    };
+  }
+
+  if (
+    type === "CONTEST_APPLICATION_REJECTED" ||
+    type === "CONTEST_REJECTED" ||
+    type === "NOTIFICATION_CONTEST_APPLICATION_REJECTED" ||
+    type === "CONTEST_SEASON_CANCELED" ||
+    type === "NOTIFICATION_CONTEST_SEASON_CANCELED"
+  ) {
+    return {
+      href: seasonId ? `/me?tab=contest-assets&seasonId=${seasonId}` : "/contest",
+      label: "대회 내역 확인",
+    };
+  }
+
+  if (
+    type === "REPORT_RESOLVED" ||
+    type === "REPORT_DISMISSED" ||
+    type === "CONTENT_MODERATED"
+  ) {
+    const postId = getPayloadNumericValue(notification.payload, "postId", "targetPostId");
+    return {
+      href: postId !== null && postId > 0 ? `/community/all/${Math.trunc(postId)}` : "/community",
+      label: postId !== null && postId > 0 ? "해당 게시글 확인" : "커뮤니티로 이동",
+    };
+  }
+
+  if (type === "SUPPORT_INQUIRY_ANSWERED") {
+    return {
+      href: "/support",
+      label: "1:1 문의 답변 확인",
     };
   }
 

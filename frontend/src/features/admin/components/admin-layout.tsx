@@ -11,7 +11,7 @@ import {
   V1IconShield,
 } from "../../member/components/v1-ui";
 
-export type AdminSectionKey = "contest" | "users" | "community" | "reports";
+export type AdminSectionKey = "contest" | "users" | "community" | "reports" | "ops";
 
 interface AdminNavTabItem {
   key: AdminSectionKey;
@@ -25,6 +25,7 @@ const ADMIN_NAV_TABS: AdminNavTabItem[] = [
   { key: "users", label: "회원 관리", href: "/admin/users", ready: true },
   { key: "community", label: "커뮤니티 관리", href: "/admin/community", ready: true },
   { key: "reports", label: "신고 관리", href: "/admin/reports", ready: true },
+  { key: "ops", label: "시스템 운영", href: "/admin/ops", ready: true },
 ];
 
 export function AdminHeader({
@@ -75,7 +76,8 @@ export function AdminHeader({
               (tab.key === "contest" && pathname?.startsWith("/admin/contest")) ||
               (tab.key === "users" && pathname?.startsWith("/admin/users")) ||
               (tab.key === "community" && pathname?.startsWith("/admin/community")) ||
-              (tab.key === "reports" && pathname?.startsWith("/admin/reports"));
+              (tab.key === "reports" && pathname?.startsWith("/admin/reports")) ||
+              (tab.key === "ops" && pathname?.startsWith("/admin/ops"));
 
             return (
               <Link
@@ -131,7 +133,8 @@ export function AdminHeader({
             (tab.key === "contest" && pathname?.startsWith("/admin/contest")) ||
             (tab.key === "users" && pathname?.startsWith("/admin/users")) ||
             (tab.key === "community" && pathname?.startsWith("/admin/community")) ||
-            (tab.key === "reports" && pathname?.startsWith("/admin/reports"));
+            (tab.key === "reports" && pathname?.startsWith("/admin/reports")) ||
+            (tab.key === "ops" && pathname?.startsWith("/admin/ops"));
           return (
             <Link
               key={tab.key}

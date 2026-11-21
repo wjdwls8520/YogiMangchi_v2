@@ -363,6 +363,39 @@ export interface NotificationSseCallbacks {
   onStatus: (source: NotificationSource, status: NotificationStatusDto) => void;
 }
 
+export function isNotificationStatusEventName(eventName: string): boolean {
+  return eventName === "STATUS" || eventName === "NOTIFICATION_STATUS";
+}
+
+export function dispatchNotificationSseEvent(
+  source: NotificationSource,
+  eventName: string,
+  rawData: string,
+  callbacks: NotificationSseCallbacks,
+): void {
+  if (!rawData || eventName === "CONNECTED" || eventName === "HEARTBEAT") {
+    return;
+  }
+  try {
+    const parsed = JSON.parse(rawData) as unknown;
+    if (isNotificationStatusEventName(eventName)) {
+      callbacks.onStatus(source, parseStatusDto(parsed));
+      return;
+    }
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as Record<string, unknown>).notificationId === "number"
+    ) {
+      callbacks.onNotification(
+        normalizeRawNotification(source, parsed as RawNotificationDto),
+      );
+    }
+  } catch {
+    // Ignore malformed keepalive frames
+  }
+}
+
 export function startNotificationSseSubscription(
   source: NotificationSource,
   session: MemberSession,
@@ -399,27 +432,7 @@ export function startNotificationSseSubscription(
     if (eventId) {
       lastEventId = eventId;
     }
-    if (!rawData || eventName === "CONNECTED" || eventName === "HEARTBEAT") {
-      return;
-    }
-    try {
-      const parsed = JSON.parse(rawData) as unknown;
-      if (eventName === "NOTIFICATION_STATUS") {
-        callbacks.onStatus(source, parseStatusDto(parsed));
-        return;
-      }
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        typeof (parsed as Record<string, unknown>).notificationId === "number"
-      ) {
-        callbacks.onNotification(
-          normalizeRawNotification(source, parsed as RawNotificationDto),
-        );
-      }
-    } catch {
-      // Ignore malformed keepalive frames
-    }
+    dispatchNotificationSseEvent(source, eventName, rawData, callbacks);
   };
 
   const runLoop = async () => {

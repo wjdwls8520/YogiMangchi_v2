@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { V1IconClose } from "./v1-ui";
 
 interface ScrollLockTargetWindow {
@@ -25,6 +26,15 @@ let activeLockCount = 0;
 let savedScrollY = 0;
 let compensatedPaddingRight = false;
 let previousPaddingRight = "";
+const activeModalStack: string[] = [];
+
+export function getActiveDimModalStack(): readonly string[] {
+  return [...activeModalStack];
+}
+
+export function resetDimModalStackForTest() {
+  activeModalStack.length = 0;
+}
 
 export function lockBodyScroll(
   win: ScrollLockTargetWindow | undefined = typeof window !== "undefined" ? window : undefined,
@@ -154,22 +164,32 @@ export function DimModal({
   maxWidth?: string;
 }) {
   const titleId = useId();
+  const modalId = useId();
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useDimScrollLock(open);
 
   useEffect(() => {
     if (!open || typeof window === "undefined") return;
+    activeModalStack.push(modalId);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
+      if (event.key !== "Escape") return;
+      if (activeModalStack[activeModalStack.length - 1] !== modalId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCloseRef.current();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      const index = activeModalStack.lastIndexOf(modalId);
+      if (index >= 0) activeModalStack.splice(index, 1);
+    };
+  }, [open, modalId]);
 
   if (!open) return null;
 
-  return (
+  const modalNode = (
     <div
       className="ym-dim-backdrop is-open"
       data-dim-modal="open"
@@ -202,4 +222,9 @@ export function DimModal({
       </div>
     </div>
   );
+
+  if (typeof document !== "undefined" && document.body) {
+    return createPortal(modalNode, document.body);
+  }
+  return modalNode;
 }

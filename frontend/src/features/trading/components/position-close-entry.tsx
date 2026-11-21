@@ -83,15 +83,29 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
     {layout==="row"&&!fullAvailable && <p className="order-input-hint">청산 예약 중 · 전체 청산은 예약 취소 후 가능합니다.</p>}
     {layout==="row" ? <dialog ref={partialDialog} id={`${prefix}-partial`} className="position-close-dialog position-partial-dialog" aria-modal="true" aria-labelledby={`${prefix}-partial-title`}
       onCancel={event=>{if(action.pending)event.preventDefault();}} onClose={()=>{setPartialOpen(false);partialTrigger.current?.focus({preventScroll:true});}}>
-      <h2 id={`${prefix}-partial-title`}>{symbol} <span data-side={position.side}>{position.side}</span> 부분 청산</h2>
+      <header className="ym-modal-header">
+        <h2 id={`${prefix}-partial-title`}>{symbol} <span data-side={position.side}>{position.side}</span> 부분 청산</h2>
+        <button type="button" className="ym-modal-close" aria-label="닫기" disabled={action.pending} onClick={()=>partialDialog.current?.close()}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+      </header>
       {editor}{confirmation}
     </dialog> : editor}
     {!partialOpen && confirmation}
     {result && <p role="status" className="order-input-hint">{result}</p>}
-    <dialog ref={dialog} id={`${prefix}-full`} className="position-close-dialog" aria-modal="true" aria-labelledby={`${prefix}-full-title`} onCancel={event=>{if(action.pending)event.preventDefault();}} onClose={()=>fullTrigger.current?.focus({preventScroll:true})}>
-      <h2 id={`${prefix}-full-title`}>{symbol} {position.side} 전체 청산</h2>
-      <p>보유 수량 {formatQuantity(position.quantity)} 시장가 전량 청산</p>
-      <p>현재 Mark {formatMarketPrice(valuation.mark)} · 미실현 손익 {formatDecimal(valuation.pnl)} USDT</p>
+    <dialog ref={dialog} id={`${prefix}-full`} className="position-close-dialog ym-exchange-modal" aria-modal="true" aria-labelledby={`${prefix}-full-title`} onCancel={event=>{if(action.pending)event.preventDefault();}} onClose={()=>fullTrigger.current?.focus({preventScroll:true})}>
+      <header className="ym-modal-header">
+        <h2 id={`${prefix}-full-title`}>{symbol} {position.side} 전체 청산</h2>
+        <button type="button" className="ym-modal-close" aria-label="닫기" disabled={action.pending} onClick={()=>dialog.current?.close()}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+      </header>
+      <p className="ym-modal-subtle">보유 수량 {formatQuantity(position.quantity)} 시장가 전량 청산</p>
+      <p className="ym-modal-subtle mt-1">현재 Mark {formatMarketPrice(valuation.mark)} · 미실현 손익 {formatDecimal(valuation.pnl)} USDT</p>
       {(warning??action.error??fullIssue) && <p role="alert" className="order-warning">{warning??action.error??fullIssue}</p>}
       <div className="guest-dialog-actions"><button type="button" className="guest-cancel" disabled={action.pending} onClick={()=>dialog.current?.close()}>취소</button><button className="guest-start-button" type="button" disabled={action.pending||(!action.unconfirmed&&(action.blocked||!!fullIssue))} onClick={()=>void execute(true)}>{action.pending ? "처리 중…" : action.unconfirmed ? "원래 청산 요청 재전송" : "전체 청산 확인"}</button></div>
     </dialog>

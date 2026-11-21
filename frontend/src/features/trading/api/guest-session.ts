@@ -4,6 +4,13 @@ import { mutationRequest, mutationStillUnconfirmed, type TradingCommand } from "
 import { leveragePath, parseLeverage, validLeverage } from "./leverage-contract";
 import type { QuoteRequest } from "./quote";
 import { parseStopLoss, stopLossRequest, type StopLossCommand } from "./stop-loss-contract";
+import {
+  parseCancelAllOrdersResponse,
+  parseCloseAllPositionsResponse,
+  parseTakeProfit,
+  takeProfitRequest,
+  type TakeProfitCommand,
+} from "./take-profit-contract";
 import { parseOrder } from "./orders";
 import { decimalUnits } from "./order-input";
 import { comparePrices } from "../market/price-format";
@@ -351,7 +358,7 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         } catch { if (mode === "guest" && snapshot.generation === generation) { credential = null; publish("anonymous"); } }
       });
     },
-    async read(path: `account/positions/${number}/stop-loss` | `account/orders/${number}` | `account/events?afterId=${number | string}&limit=${number}` | "account/recovery" | `account/performance/symbols?${string}` | "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage?side=${"LONG" | "SHORT"}`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
+    async read(path: `account/positions/${number}/stop-loss` | `account/positions/${number}/take-profit` | `account/orders/${number}` | `account/events?afterId=${number | string}&limit=${number}` | `account/events?afterId=${number | string}&limit=${number}&latest=true` | "account/recovery" | `account/performance/symbols?${string}` | "account/summary" | "account/orders/pending" | `account/orders?${string}` | `account/fills?${string}` | `account/positions/history?${string}` | `account/rounds${string}` | "account/orders/quote" | `account/symbols/${number}/leverage?side=${"LONG" | "SHORT"}`, expected: SessionSnapshot, signal: AbortSignal, quote?: QuoteRequest) {
       const current = credential;
       const sentToken = current?.accessToken;
       if (retrying || !current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
@@ -473,6 +480,64 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
         });
       } catch (error) {
         if (error instanceof TradingApiError && error.status === 401) invalidate(current,sentToken);
+        throw error;
+      } finally { writes--; }
+    },
+    async writeTakeProfit(command: TakeProfitCommand, expected: SessionSnapshot, key: string) {
+      if (retrying) throw new TradingApiError(409, undefined, "TRADING_BUSY");
+      const current = credential, sentToken = current?.accessToken;
+      if (current && !usable(current)) invalidate(current, sentToken);
+      if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      if (!/^[A-Za-z0-9_-]{8,100}$/.test(key)) throw new TradingApiError(400, undefined, "INVALID_IDEMPOTENCY_KEY");
+      const request = takeProfitRequest(command);
+      writes++;
+      try {
+        const value = await tradingJson(origin, resolvePath(request.path), {
+          token: sentToken,
+          method: request.method,
+          body: request.body,
+          idempotencyKey: key,
+        }, transport);
+        if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+        return parseTakeProfit(value, command.positionId);
+      } catch (error) {
+        if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
+        throw error;
+      } finally { writes--; }
+    },
+    async cancelAllOrders(expected: SessionSnapshot) {
+      if (retrying) throw new TradingApiError(409, undefined, "TRADING_BUSY");
+      const current = credential, sentToken = current?.accessToken;
+      if (current && !usable(current)) invalidate(current, sentToken);
+      if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      writes++;
+      try {
+        const value = await tradingJson(origin, resolvePath("account/orders/cancel-all"), {
+          token: sentToken,
+          method: "POST",
+        }, transport);
+        if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+        return parseCancelAllOrdersResponse(value);
+      } catch (error) {
+        if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
+        throw error;
+      } finally { writes--; }
+    },
+    async closeAllPositions(expected: SessionSnapshot) {
+      if (retrying) throw new TradingApiError(409, undefined, "TRADING_BUSY");
+      const current = credential, sentToken = current?.accessToken;
+      if (current && !usable(current)) invalidate(current, sentToken);
+      if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      writes++;
+      try {
+        const value = await tradingJson(origin, resolvePath("account/positions/close-all"), {
+          token: sentToken,
+          method: "POST",
+        }, transport);
+        if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+        return parseCloseAllPositionsResponse(value);
+      } catch (error) {
+        if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       } finally { writes--; }
     },

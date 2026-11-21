@@ -38,7 +38,7 @@ export function SiteFooter() {
             </Link>
           </li>
           <li>
-            <Link href="/community/all" className={linkClass}>
+            <Link href="/support" className={linkClass}>
               고객센터
             </Link>
           </li>

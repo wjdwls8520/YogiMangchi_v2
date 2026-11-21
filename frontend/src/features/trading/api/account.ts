@@ -1,5 +1,6 @@
 import { decimal, id, instant, invalidContract, list, nullable, record, text } from "./contracts";
 import { parseStopLoss } from "./stop-loss-contract";
+import { parseTakeProfit } from "./take-profit-contract";
 import { marginMode, transitionStatus } from "./margin";
 import type { TradingSymbol } from "../market/catalog";
 
@@ -13,7 +14,9 @@ export function parsePosition(value: unknown) {
   if (liquidationPriceStatus.startsWith("ESTIMATED_") && (liquidationPrice === null || liquidationPriceAsOf === null || !/^[0-9.]+$/.test(liquidationPrice) || !/[1-9]/.test(liquidationPrice))) return invalidContract();
   if (!liquidationPriceStatus.startsWith("ESTIMATED_") && liquidationPrice !== null) return invalidContract();
   return {
-    stopLoss: row.stopLoss === undefined ? undefined : parseStopLoss(row.stopLoss, id(row.id), id(row.tradingSymbolId), row.side), marginMode: marginMode(row.marginMode), openedMarginMode: text(row.openedMarginMode), liquidationPrice, liquidationPriceStatus, liquidationPriceAsOf,
+    stopLoss: row.stopLoss === undefined ? undefined : parseStopLoss(row.stopLoss, id(row.id), id(row.tradingSymbolId), row.side),
+    takeProfit: row.takeProfit === undefined || row.takeProfit === null ? undefined : parseTakeProfit(row.takeProfit, id(row.id), id(row.tradingSymbolId), row.side),
+    marginMode: marginMode(row.marginMode), openedMarginMode: text(row.openedMarginMode), liquidationPrice, liquidationPriceStatus, liquidationPriceAsOf,
     id: id(row.id), tradingSymbolId: id(row.tradingSymbolId), side: row.side,
     quantity: decimal(row.quantity), reservedCloseQuantity: decimal(row.reservedCloseQuantity),
     freeCloseQuantity: decimal(row.freeCloseQuantity), entryPrice: decimal(row.entryPrice),

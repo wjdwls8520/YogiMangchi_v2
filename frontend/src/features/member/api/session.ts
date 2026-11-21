@@ -1,6 +1,34 @@
 import { ContentApiError, contentJson } from "./client";
+import { TradingApiError } from "../../trading/api/client";
 import { parseAccess, parseCsrf, parseWithdrawal, type MemberAccess, type MemberRole } from "./contracts";
 import { memberTabVisible } from "./activity";
+
+export const REFRESH_PENDING_TTL_MS = 60_000;
+
+function isUnauthorizedApiError(error: unknown): boolean {
+  return (error instanceof ContentApiError && error.status === 401)
+    || (error instanceof TradingApiError && error.status === 401);
+}
+
+function hasActiveRefreshPending(
+  storage: Pick<Storage, "getItem" | "removeItem"> | null,
+  key: string,
+  currentNow: number,
+): boolean {
+  const raw = storage?.getItem(key);
+  if (!raw) return false;
+  if (raw === "pending") return true;
+  try {
+    const parsed = JSON.parse(raw) as { status?: unknown; at?: unknown };
+    if (typeof parsed.at === "number" && Number.isFinite(parsed.at) && currentNow - parsed.at > REFRESH_PENDING_TTL_MS) {
+      storage?.removeItem(key);
+      return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 export type MemberSnapshot = { phase: "loading" | "anonymous" | "authenticating" | "ready" | "ending" | "withdrawing" | "recovering" | "error";
   memberId: number | null; nickname: string; expiresAt: string | null; generation: number; role?: MemberRole; recovery?: { retryable: boolean; retryAt: number; uncertain: boolean }; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
@@ -119,20 +147,32 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
     refreshFlight = lock(async () => {
       if (snapshot.generation !== generation) throw new DOMException("Session changed", "AbortError");
       requireVisible();
-      try { marker = pendingStorage(); if (marker?.getItem(pendingKey)) { blockedByPending = true; throw new ContentApiError(0); } }
-      catch (error) { blockedByPending = true; throw error; }
+      try {
+        marker = pendingStorage();
+        if (hasActiveRefreshPending(marker, pendingKey, now())) {
+          blockedByPending = true;
+          throw new ContentApiError(0);
+        }
+      } catch (error) { blockedByPending = true; throw error; }
       const csrf = parseCsrf(await contentJson(origin, "/auth/csrf", {}, transport));
       if (snapshot.generation !== generation) throw new DOMException("Session changed", "AbortError");
       requireVisible();
-      marker?.setItem(pendingKey, "pending"); ownsMarker = true;
+      marker?.setItem(pendingKey, JSON.stringify({ status: "pending", at: now() })); ownsMarker = true;
       rotationStarted = true;
       accept(await contentJson(origin, "/auth/refresh", {method:"POST", csrf}, transport), generation);
       marker?.removeItem(pendingKey); ownsMarker = false;
       refreshRequired = false;
     }).catch(error => {
       if (snapshot.generation === generation && !(error instanceof DOMException && error.name === "AbortError")) {
-        if (error instanceof ContentApiError && error.status === 401) { if (ownsMarker) marker?.removeItem(pendingKey); clear("anonymous"); }
-        else {
+        const isInitialAnonymousCsrfFailure =
+          !access && snapshot.memberId === null
+          && error instanceof ContentApiError
+          && error.status === 403
+          && (error.code === "CSRF_INVALID" || error.code === "CSRF_REQUIRED");
+        if ((error instanceof ContentApiError && error.status === 401) || isInitialAnonymousCsrfFailure) {
+          if (ownsMarker) marker?.removeItem(pendingKey);
+          clear("anonymous");
+        } else {
           // Only a pre-rotation failure or the documented no-consumption 503 is safe to retry.
           const safe = !blockedByPending && (!rotationStarted || clearRefreshPending(error));
           if (safe && ownsMarker) { marker?.removeItem(pendingKey); ownsMarker = false; }
@@ -174,7 +214,7 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
       if (!valid()) throw new DOMException("Session changed", "AbortError");
       return result;
     } catch (error) {
-      if (error instanceof ContentApiError && error.status === 401 && valid()) {
+      if (isUnauthorizedApiError(error) && valid()) {
         if (access === current) { accessRejected = true; await refresh(); }
         if (retryRead && valid() && access) {
           try {
@@ -182,7 +222,7 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
             if (!valid()) throw new DOMException("Session changed", "AbortError");
             return result;
           } catch (nextError) {
-            if (nextError instanceof ContentApiError && nextError.status === 401 && valid()) clear("anonymous");
+            if (isUnauthorizedApiError(nextError) && valid()) clear("anonymous");
             throw nextError;
           }
         }
@@ -261,6 +301,27 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
       logoutFlight = lock(async () => {
         if (snapshot.generation !== generation) throw new DOMException("Session changed", "AbortError");
         await cookie("/auth/logout"); if (snapshot.generation === generation) { pendingStorage()?.removeItem(pendingKey); clear("anonymous"); }
+      })
+        .catch(error => { if (snapshot.generation === generation) clear("error"); throw error; })
+        .finally(() => { logoutFlight = null; });
+      return logoutFlight;
+    },
+    logoutAll() {
+      if (logoutFlight) return logoutFlight;
+      withdrawalAccess = null;
+      const currentAccess = access;
+      if (!currentAccess || snapshot.phase !== "ready") {
+        return Promise.reject(new ContentApiError(401));
+      }
+      clear("ending");
+      const generation = snapshot.generation;
+      logoutFlight = lock(async () => {
+        if (snapshot.generation !== generation) throw new DOMException("Session changed", "AbortError");
+        await contentJson(origin, "/auth/logout-all", { method: "POST", access: currentAccess.accessToken }, transport);
+        if (snapshot.generation === generation) {
+          pendingStorage()?.removeItem(pendingKey);
+          clear("anonymous");
+        }
       })
         .catch(error => { if (snapshot.generation === generation) clear("error"); throw error; })
         .finally(() => { logoutFlight = null; });

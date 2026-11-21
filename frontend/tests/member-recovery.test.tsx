@@ -79,7 +79,7 @@ test("an abandoned rotation is fenced across a new page/session without storing 
  await assert.rejects(b.restore());assert.equal(calls,2);assert.equal(b.getSnapshot().recovery?.uncertain,true);
  finish(json({memberId:1,nickname:"회원",tokenType:"Bearer",accessToken:"header.payload.token",expiresIn:900,expiresAt:new Date(epoch+900000).toISOString()}));
  await assert.rejects(pending,{name:"AbortError"});assert.equal(values.size,1);
- assert.deepEqual([...values.values()],["pending"]);assert.doesNotMatch(JSON.stringify([...values]),/header\.payload|csrf|memberId/);
+ assert.deepEqual([...values.values()],[JSON.stringify({status:"pending",at:epoch})]);assert.doesNotMatch(JSON.stringify([...values]),/header\.payload|csrf|memberId/);
 });
 
 test("documented no-consumption503 releases the shared marker; successful login starts a new safe family",async()=>{

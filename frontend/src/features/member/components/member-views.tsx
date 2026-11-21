@@ -42,7 +42,6 @@ export function MemberShell({
 }
 
 export function MemberLoginView({ google, kakao }: { google: string; kakao: string }) {
-  const [rememberSession, setRememberSession] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
   return (
@@ -83,15 +82,9 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
       </div>
 
       <div className="ym-login-option-box mt-5 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 sm:flex-nowrap">
-        <label className="ym-custom-check flex cursor-pointer items-center gap-2">
-          <input
-            type="checkbox"
-            name="rememberSession"
-            checked={rememberSession}
-            onChange={event => setRememberSession(event.currentTarget.checked)}
-          />
-          <span className="sm:whitespace-nowrap">로그인 상태 유지</span>
-        </label>
+        <span className="text-[11px] font-medium text-gray-400">
+          HttpOnly 보안 세션으로 안전하게 인증됩니다.
+        </span>
         <button
           type="button"
           className="ym-text-link-btn shrink-0 whitespace-nowrap font-bold text-[#0058FF] hover:underline"

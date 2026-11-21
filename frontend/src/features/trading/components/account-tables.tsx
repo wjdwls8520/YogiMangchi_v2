@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { knownOrderReason, orderReason } from "../api/order-reason";
 import { orderStatusLabel, parseOrder, type TradingOrder } from "../api/orders";
 import { formatDecimal, pnlTrend, symbolLabel, type Position } from "../api/account";
@@ -10,7 +11,12 @@ import { TableQuantity } from "./table-quantity";
 import { TradingTable, type TradingRow } from "./trading-table";
 import { CancelOrderButton } from "./account-actions";
 import { PositionStopLoss } from "./position-stop-loss";
+import { PositionTakeProfit } from "./position-take-profit";
 import { PositionCloseEntry } from "./position-close-entry";
+import { useTradingNotices } from "./trading-notices";
+import { tradingKeys } from "../api/query-keys";
+import { mutationMessage } from "../api/mutation-request";
+import { useTradingAdmission } from "../api/recovery";
 import { comparePrices, formatMarketPrice } from "../market/price-format";
 import { useOptionalSelectedMarket, usePositionMarkets } from "./selected-market-provider";
 import { positionValuation } from "../api/position-display";
@@ -126,64 +132,238 @@ export function OrderSnapshotDetail({
   );
 }
 
+function CloseAllPositionsButton({ count }: { count: number }) {
+  const guest = useOptionalGuestSession();
+  const client = useQueryClient();
+  const notices = useTradingNotices();
+  const admission = useTradingAdmission();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!guest || count === 0) return null;
+  const { session, snapshot } = guest;
+
+  async function confirmCloseAll() {
+    if (pending || snapshot.phase !== "ready" || !admission.trade) return;
+    setPending(true);
+    setError(null);
+    try {
+      const result = await session.closeAllPositions(snapshot);
+      dialog.current?.close();
+      notices.push({
+        kind: "success",
+        title: "전체 포지션 청산 완료",
+        message: `${result.closedCount}개 포지션이 시장가로 청산되었습니다.`,
+      });
+      void client.invalidateQueries({ queryKey: tradingKeys.account(snapshot) });
+    } catch (err) {
+      setError(mutationMessage(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="batch-action-bar">
+      <button
+        ref={trigger}
+        type="button"
+        className="batch-action-danger"
+        disabled={snapshot.phase !== "ready" || snapshot.retrying || !admission.trade || pending}
+        onClick={() => {
+          setError(null);
+          dialog.current?.showModal();
+        }}
+      >
+        전체 청산 ({count})
+      </button>
+      <dialog
+        ref={dialog}
+        className="position-close-dialog ym-exchange-modal"
+        aria-modal="true"
+        aria-labelledby="close-all-positions-title"
+        onCancel={(event) => {
+          if (pending) event.preventDefault();
+        }}
+        onClose={() => {
+          setError(null);
+          trigger.current?.focus({ preventScroll: true });
+        }}
+      >
+        <header className="ym-modal-header">
+          <h2 id="close-all-positions-title">전체 포지션 시장가 청산</h2>
+          <button type="button" className="ym-modal-close" aria-label="닫기" disabled={pending} onClick={() => dialog.current?.close()}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+        </header>
+        <p className="ym-modal-subtle">
+          보유 중인 모든 오픈 포지션 {count}건의 예약 청산 주문을 취소하고, 현재 서버 Mark Price 기준으로 즉시 시장가 청산합니다.
+        </p>
+        {error && <p role="alert" className="ym-modal-alert mt-3">{error}</p>}
+        <div className="ym-modal-footer mt-4">
+          <button type="button" className="ym-modal-btn-confirm" disabled={pending} onClick={() => void confirmCloseAll()}>
+            {pending ? "청산 중…" : "전체 청산 확인"}
+          </button>
+          <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={() => dialog.current?.close()}>
+            취소
+          </button>
+        </div>
+      </dialog>
+    </div>
+  );
+}
+
+function CancelAllOrdersButton({ count }: { count: number }) {
+  const guest = useOptionalGuestSession();
+  const client = useQueryClient();
+  const notices = useTradingNotices();
+  const admission = useTradingAdmission();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!guest || count === 0) return null;
+  const { session, snapshot } = guest;
+
+  async function confirmCancelAll() {
+    if (pending || snapshot.phase !== "ready" || !admission.cancel) return;
+    setPending(true);
+    setError(null);
+    try {
+      const result = await session.cancelAllOrders(snapshot);
+      dialog.current?.close();
+      notices.push({
+        kind: "success",
+        title: "미체결 주문 전체 취소 완료",
+        message: `${result.canceledCount}건의 미체결 주문이 취소되었습니다.`,
+      });
+      void client.invalidateQueries({ queryKey: tradingKeys.account(snapshot) });
+    } catch (err) {
+      setError(mutationMessage(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="batch-action-bar">
+      <button
+        ref={trigger}
+        type="button"
+        className="batch-action-warning"
+        disabled={snapshot.phase !== "ready" || snapshot.retrying || !admission.cancel || pending}
+        onClick={() => {
+          setError(null);
+          dialog.current?.showModal();
+        }}
+      >
+        전체 취소 ({count})
+      </button>
+      <dialog
+        ref={dialog}
+        className="position-close-dialog ym-exchange-modal"
+        aria-modal="true"
+        aria-labelledby="cancel-all-orders-title"
+        onCancel={(event) => {
+          if (pending) event.preventDefault();
+        }}
+        onClose={() => {
+          setError(null);
+          trigger.current?.focus({ preventScroll: true });
+        }}
+      >
+        <header className="ym-modal-header">
+          <h2 id="cancel-all-orders-title">미체결 주문 전체 취소</h2>
+          <button type="button" className="ym-modal-close" aria-label="닫기" disabled={pending} onClick={() => dialog.current?.close()}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+        </header>
+        <p className="ym-modal-subtle">
+          현재 대기 중인 미체결 주문 {count}건을 모두 취소하고 예약된 증거금·청산 수량을 해제합니다.
+        </p>
+        {error && <p role="alert" className="ym-modal-alert mt-3">{error}</p>}
+        <div className="ym-modal-footer mt-4">
+          <button type="button" className="ym-modal-btn-confirm" disabled={pending} onClick={() => void confirmCancelAll()}>
+            {pending ? "취소 중…" : "전체 취소 확인"}
+          </button>
+          <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={() => dialog.current?.close()}>
+            닫기
+          </button>
+        </div>
+      </dialog>
+    </div>
+  );
+}
+
 export function PositionTable({ positions, symbols }: { positions: readonly Position[]; symbols: readonly TradingSymbol[] }) {
   const prices = usePositionMarkets();
   return (
-    <TradingTable
-      caption="보유 포지션"
-      variant="positions"
-      columns={[
-        { key: "symbol", label: "Symbol" },
-        { key: "side", label: "Side" },
-        { key: "size", label: "Quantity" },
-        { key: "entry", label: "Entry Price" },
-        { key: "mark", label: "Mark Price" },
-        { key: "liquidation", label: "Liq. Price" },
-        { key: "margin", label: "Margin" },
-        { key: "pnl", label: "Unrealized PnL · ROE" },
-        { key: "action", label: "Close" },
-        { key: "stopLoss", label: "Stop Loss" },
-      ]}
-      rows={positions.map((position) => {
-        const valuation = positionValuation(position, prices[position.tradingSymbolId]);
-        return {
-          id: String(position.id),
-          cells: {
-            symbol: (
-              <span className="table-stack">
-                <strong>{symbolLabel(position.tradingSymbolId, symbols)}</strong>
-                <small>{position.marginMode === "ISOLATED" ? "Isolated" : "담보 전환 필요"}</small>
-              </span>
-            ),
-            side: side(position.side, position.leverage),
-            size: (
-              <span className="table-stack">
-                {quantity(position.quantity, position.tradingSymbolId, symbols, position.entryPrice)}
-                <small>청산 예약: {formatEditableDecimal(position.reservedCloseQuantity) || "0"} · 포지션 #{position.id}</small>
-              </span>
-            ),
-            entry: price(position.entryPrice, position.tradingSymbolId, symbols),
-            mark: <span title={valuation.mark ? "최신 WS Mark · 참고" : "시세 만료 또는 수신 대기"}>{price(valuation.mark, position.tradingSymbolId, symbols)}</span>,
-            liquidation: <LiquidationPrice value={position.liquidationPrice} status={position.liquidationPriceStatus} asOf={position.liquidationPriceAsOf} fresh={!!valuation.mark} />,
-            margin: formatDecimal(position.margin),
-            pnl: (
-              <span className="table-stack" data-trend={pnlTrend(valuation.pnl)}>
-                {formatDecimal(valuation.pnl)} USDT
-                <small>{formatDecimal(valuation.roe)}%</small>
-              </span>
-            ),
-            action: <PositionCloseEntry position={position} symbol={symbolLabel(position.tradingSymbolId, symbols)} layout="row" />,
-            stopLoss: (
-              <PositionStopLoss
-                position={position}
-                symbol={symbolLabel(position.tradingSymbolId, symbols)}
-                priceTickSize={symbols.find((s) => s.id === position.tradingSymbolId)?.priceTickSize}
-              />
-            ),
-          },
-        };
-      })}
-    />
+    <>
+      <CloseAllPositionsButton count={positions.length} />
+      <TradingTable
+        caption="보유 포지션"
+        variant="positions"
+        columns={[
+          { key: "symbol", label: "Symbol" },
+          { key: "side", label: "Side" },
+          { key: "size", label: "Quantity" },
+          { key: "entry", label: "Entry Price" },
+          { key: "mark", label: "Mark Price" },
+          { key: "liquidation", label: "Liq. Price" },
+          { key: "margin", label: "Margin" },
+          { key: "pnl", label: "Unrealized PnL · ROE" },
+          { key: "action", label: "Close" },
+          { key: "stopLoss", label: "TP / SL" },
+        ]}
+        rows={positions.map((position) => {
+          const valuation = positionValuation(position, prices[position.tradingSymbolId]);
+          const symLabel = symbolLabel(position.tradingSymbolId, symbols);
+          const tick = symbols.find((s) => s.id === position.tradingSymbolId)?.priceTickSize;
+          return {
+            id: String(position.id),
+            cells: {
+              symbol: (
+                <span className="table-stack">
+                  <strong>{symLabel}</strong>
+                  <small>{position.marginMode === "ISOLATED" ? "Isolated" : "담보 전환 필요"}</small>
+                </span>
+              ),
+              side: side(position.side, position.leverage),
+              size: (
+                <span className="table-stack">
+                  {quantity(position.quantity, position.tradingSymbolId, symbols, position.entryPrice)}
+                  <small>청산 예약: {formatEditableDecimal(position.reservedCloseQuantity) || "0"} · 포지션 #{position.id}</small>
+                </span>
+              ),
+              entry: price(position.entryPrice, position.tradingSymbolId, symbols),
+              mark: <span title={valuation.mark ? "최신 WS Mark · 참고" : "시세 만료 또는 수신 대기"}>{price(valuation.mark, position.tradingSymbolId, symbols)}</span>,
+              liquidation: <LiquidationPrice value={position.liquidationPrice} status={position.liquidationPriceStatus} asOf={position.liquidationPriceAsOf} fresh={!!valuation.mark} />,
+              margin: formatDecimal(position.margin),
+              pnl: (
+                <span className="table-stack" data-trend={pnlTrend(valuation.pnl)}>
+                  {formatDecimal(valuation.pnl)} USDT
+                  <small>{formatDecimal(valuation.roe)}%</small>
+                </span>
+              ),
+              action: <PositionCloseEntry position={position} symbol={symLabel} layout="row" />,
+              stopLoss: (
+                <div className="position-tpsl-actions">
+                  <PositionTakeProfit position={position} symbol={symLabel} priceTickSize={tick} />
+                  <PositionStopLoss position={position} symbol={symLabel} priceTickSize={tick} />
+                </div>
+              ),
+            },
+          };
+        })}
+      />
+    </>
   );
 }
 
@@ -564,26 +744,29 @@ function PendingOrderInteractiveBody({
   });
 
   return (
-    <TradingTable
-      caption="미체결 주문"
-      variant="orders"
-      columns={[
-        { key: "orderId", label: "Order #" },
-        { key: "symbol", label: "Symbol" },
-        { key: "side", label: "Side" },
-        { key: "requestedLeverage", label: "Req. Lev." },
-        { key: "type", label: "Type / Action" },
-        { key: "quantity", label: "Quantity" },
-        { key: "price", label: "Limit Price" },
-        { key: "reservedMargin", label: "Reserved Margin" },
-        { key: "reservedFee", label: "Reserved Fee" },
-        { key: "feeRate", label: "Fee Rate" },
-        { key: "status", label: "Status" },
-        { key: "time", label: "Created · KST" },
-        { key: "action", label: "Modify / Cancel" },
-      ]}
-      rows={rows}
-    />
+    <>
+      <CancelAllOrdersButton count={orders.length} />
+      <TradingTable
+        caption="미체결 주문"
+        variant="orders"
+        columns={[
+          { key: "orderId", label: "Order #" },
+          { key: "symbol", label: "Symbol" },
+          { key: "side", label: "Side" },
+          { key: "requestedLeverage", label: "Req. Lev." },
+          { key: "type", label: "Type / Action" },
+          { key: "quantity", label: "Quantity" },
+          { key: "price", label: "Limit Price" },
+          { key: "reservedMargin", label: "Reserved Margin" },
+          { key: "reservedFee", label: "Reserved Fee" },
+          { key: "feeRate", label: "Fee Rate" },
+          { key: "status", label: "Status" },
+          { key: "time", label: "Created · KST" },
+          { key: "action", label: "Modify / Cancel" },
+        ]}
+        rows={rows}
+      />
+    </>
   );
 }
 

@@ -66,10 +66,32 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const recoveringQuoteNotice = useRef<number | null>(null);
   const [preparing,setPreparing] = useState(false);
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
-  const [stored, setForm] = useState<Form>({ identity, scope: 0, symbolId: null, type: "MARKET", side: "LONG", leverage: 1, quantity: "", limitPrice: "", ratio: 0 });
+  const [stored, setForm] = useState<Form>(() => {
+    let initialSide: "LONG" | "SHORT" = "LONG";
+    if (typeof window !== "undefined") {
+      const sideParam = new URLSearchParams(window.location.search).get("side")?.toUpperCase();
+      if (sideParam === "SHORT" || sideParam === "LONG") initialSide = sideParam;
+    }
+    return { identity, scope: 0, symbolId: null, type: "MARKET", side: initialSide, leverage: 1, quantity: "", limitPrice: "", ratio: 0 };
+  });
+  const initialLeverageAppliedRef = useRef(false);
   const longLeverage = useSymbolLeverage(symbol?.id ?? null, "LONG"), shortLeverage = useSymbolLeverage(symbol?.id ?? null, "SHORT");
   const leverageState = stored.side === "LONG" ? longLeverage : shortLeverage;
   const leverage = leverageState.data?.leverage ?? 1;
+  useEffect(() => {
+    if (initialLeverageAppliedRef.current || typeof window === "undefined" || !leverageState.ready || !leverageState.data) return;
+    const raw = new URLSearchParams(window.location.search).get("leverage");
+    if (!raw) {
+      initialLeverageAppliedRef.current = true;
+      return;
+    }
+    const parsed = Number.parseInt(raw, 10);
+    const maxLev = leverageState.data.maxLeverage ?? 100;
+    initialLeverageAppliedRef.current = true;
+    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= maxLev && parsed !== leverageState.data.leverage) {
+      void leverageState.change(parsed);
+    }
+  }, [leverageState]);
   const [seenBookSelection, setSeenBookSelection] = useState(bookSelection);
   const [serverWarning, setServerWarning] = useState<{ side: OpenForm["side"]; issue: OrderIssue } | null>(null);
   const switched = stored.symbolId !== (symbol?.id ?? null) || stored.identity !== identity;
@@ -216,8 +238,11 @@ function OpenOrderPanel({active}:{active:boolean}) {
     const commandForm = formForSide({ ...form, quantity: directQuantity }, side, submitLeverage);
     const issue = preflightOrder(commandForm, side, ready, latestMark, availableBalance);
     if (issue && !(sameSideOpen && form.ratio > 0 && (issue.kind === "balance" || issue.kind === "minimum"))) {
-      if (issue.kind !== "minimum") setServerWarning({ side, issue });
-      notices.push({kind:"error",title:"주문을 제출할 수 없습니다",message:issue.message});
+      if (issue.kind !== "minimum") {
+        setServerWarning({ side, issue });
+      } else {
+        notices.push({ kind: "error", title: "주문을 제출할 수 없습니다", message: issue.message });
+      }
       return;
     }
     if (!symbol) return;
@@ -228,7 +253,6 @@ function OpenOrderPanel({active}:{active:boolean}) {
       if (availableBalance != null && withFee && decimalUnits(withFee.totalRequired) > decimalUnits(availableBalance)) {
         const feeBalanceIssue = balanceIssue(form.type);
         setServerWarning({ side, issue: feeBalanceIssue });
-        notices.push({ kind: "error", title: "주문을 제출할 수 없습니다", message: feeBalanceIssue.message });
         return;
       }
       submitting.current = true;
@@ -370,7 +394,9 @@ function OpenOrderPanel({active}:{active:boolean}) {
       {form.quantity && !validQuantity(quantity) && !(form.type === "LIMIT" && quantity === "0" && !validLimitPrice(price)) && <p role="alert" className="order-input-hint">수량은 0보다 커야 하며 소수점은 8자리까지 지원합니다.</p>}
       {form.type === "LIMIT" && form.limitPrice && !validLimitPrice(price) && <p role="alert" className="order-input-hint">양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.</p>}
       {account.data && !isolatedReady(account.data.wallet) && <p role="alert" className="order-warning">담보 방식 전환 완료 후 주문할 수 있습니다.</p>}
-      {!ready && (account.data?.status === "BANKRUPT" ? <p role="alert" className="order-warning">{snapshot.contestSeasonId ? "현재 대회 회차 잔고가 모두 소진되어 추가 진입할 수 없습니다." : "현재 회차 잔고가 소진되었습니다. 자산 · 종목 성과에서 새 회차를 시작할 수 있습니다."}</p> : <p role="status" className="order-input-hint">최신 시세 수신 대기 중…</p>)}
+      {!ready && (account.data?.status === "BANKRUPT"
+        ? <p role="alert" className="order-warning">{snapshot.contestSeasonId ? "현재 대회 회차 잔고가 모두 소진되어 추가 진입할 수 없습니다." : "현재 회차 잔고가 소진되었습니다. 자산 · 종목 성과에서 새 회차를 시작할 수 있습니다."}</p>
+        : <p role="status" className="order-input-hint">{!mark ? "최신 시세 수신 대기 중…" : account.error ? "계정 상태를 확인하지 못했습니다." : !account.data ? "계정 상태 확인 중…" : !leverageState.ready ? "레버리지 설정 확인 중…" : "주문 준비 상태를 확인 중…"}</p>)}
       <div className="order-actions" role="group" aria-label="포지션 진입">
         {(["LONG", "SHORT"] as const).map((side) => <div key={side}>
           <button type="button" disabled={!ready || !valid || submitLocked || !(side === "LONG" ? longLeverage : shortLeverage).ready} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{(side === "LONG" ? longLeverage : shortLeverage).data ? `${(side === "LONG" ? longLeverage : shortLeverage).data!.leverage}×` : "—"} · {action.pending || preparing ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>

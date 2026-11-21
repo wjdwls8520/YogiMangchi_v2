@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   cn,
   V1IconBell,
@@ -12,6 +13,8 @@ import {
   formatNotificationRelativeTime,
   getNotificationTradeToneStyles,
   isCommentNotification,
+  isTradingTerminalPath,
+  shouldSuppressToastOnPath,
 } from "./notification-utils";
 
 export interface NotificationToastStackProps {
@@ -25,17 +28,26 @@ export function NotificationToastStack({
   onDismiss,
   onSelectToast,
 }: NotificationToastStackProps) {
-  if (toasts.length === 0) {
+  const pathname = usePathname();
+  const isTradingRoute = isTradingTerminalPath(pathname);
+  const visibleToasts = toasts.filter(toast => !shouldSuppressToastOnPath(pathname, toast));
+
+  if (visibleToasts.length === 0) {
     return null;
   }
 
   return (
     <div
       data-notification-toast-stack="true"
-      data-toast-position="top-center"
-      className="pointer-events-none fixed left-1/2 top-[72px] z-[65] flex w-[calc(100vw-2rem)] max-w-[384px] -translate-x-1/2 flex-col gap-2.5"
+      data-toast-position={isTradingRoute ? "bottom-right" : "top-center"}
+      className={cn(
+        "pointer-events-none fixed z-[65] flex w-[calc(100vw-2rem)] max-w-[384px] flex-col gap-2.5",
+        isTradingRoute
+          ? "bottom-5 right-4 sm:right-6"
+          : "left-1/2 top-[72px] -translate-x-1/2",
+      )}
     >
-      {toasts.map(toast => {
+      {visibleToasts.map(toast => {
         const toneStyles = getNotificationTradeToneStyles(toast.tradeTone);
         const showCommentIcon = isCommentNotification(toast);
 
@@ -43,7 +55,12 @@ export function NotificationToastStack({
           <div className="min-w-0 flex-1 text-left">
             <div className="flex items-center justify-between gap-2.5">
               <div className="flex min-w-0 items-center gap-2">
-                <p className="truncate text-xs font-extrabold text-gray-900">
+                <p
+                  className={cn(
+                    "truncate text-xs font-extrabold",
+                    isTradingRoute ? "text-gray-100" : "text-gray-900",
+                  )}
+                >
                   새 알림
                 </p>
                 {toast.tradeSideLabel ? (
@@ -57,17 +74,32 @@ export function NotificationToastStack({
                   </span>
                 ) : null}
               </div>
-              <span className="shrink-0 text-[11px] font-medium tabular-nums text-gray-400">
+              <span
+                className={cn(
+                  "shrink-0 text-[11px] font-medium tabular-nums",
+                  isTradingRoute ? "text-gray-400" : "text-gray-400",
+                )}
+              >
                 {formatNotificationRelativeTime(toast.createdAt)}
               </span>
             </div>
 
-            <p className="mt-1 text-left text-[13px] font-bold leading-5 text-gray-900">
+            <p
+              className={cn(
+                "mt-1 text-left text-[13px] font-bold leading-5",
+                isTradingRoute ? "text-gray-100" : "text-gray-900",
+              )}
+            >
               {toast.title}
             </p>
 
             {toast.description ? (
-              <div className="mt-1 flex items-start gap-1.5 text-left text-xs leading-5 text-gray-500">
+              <div
+                className={cn(
+                  "mt-1 flex items-start gap-1.5 text-left text-xs leading-5",
+                  isTradingRoute ? "text-gray-400" : "text-gray-500",
+                )}
+              >
                 {showCommentIcon ? (
                   <V1IconCornerDownRight className="mt-[3px] h-3.5 w-3.5 shrink-0" />
                 ) : null}
@@ -81,7 +113,12 @@ export function NotificationToastStack({
           <div
             key={toast.id}
             data-notification-toast={toast.type}
-            className="pointer-events-auto relative overflow-hidden rounded-2xl border border-gray-200 bg-white/95 shadow-[0_16px_40px_rgba(15,23,42,0.16)] backdrop-blur-md"
+            className={cn(
+              "pointer-events-auto relative overflow-hidden rounded-2xl border backdrop-blur-md",
+              isTradingRoute
+                ? "border-[#2B3139] bg-[#161A1E]/95 text-gray-100"
+                : "border-gray-200 bg-white/95 text-gray-900",
+            )}
             role="status"
             aria-live="polite"
           >
@@ -114,7 +151,12 @@ export function NotificationToastStack({
               <button
                 type="button"
                 onClick={() => onDismiss(toast.id)}
-                className="shrink-0 rounded-full p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 cursor-pointer"
+                className={cn(
+                  "shrink-0 rounded-full p-1.5 transition-colors cursor-pointer",
+                  isTradingRoute
+                    ? "text-gray-400 hover:bg-white/10 hover:text-gray-200"
+                    : "text-gray-400 hover:bg-gray-100 hover:text-gray-700",
+                )}
                 aria-label="알림 토스트 닫기"
               >
                 <V1IconClose className="h-4 w-4" />

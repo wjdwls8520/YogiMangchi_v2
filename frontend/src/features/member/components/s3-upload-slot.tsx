@@ -26,9 +26,11 @@ function formatBytes(bytes: number): string {
 
 function UploadLimitAlertModal({
   error,
+  maxFiles,
   onClose,
 }: {
   error: string | null;
+  maxFiles?: number;
   onClose: () => void;
 }) {
   return (
@@ -56,7 +58,9 @@ function UploadLimitAlertModal({
             <li>• 일반 이미지(JPG, PNG, WEBP): 장당 최대 5MB</li>
             <li>• 움짤(GIF): 장당 최대 3MB</li>
             <li>• 동영상(MP4, MOV 등): 업로드 불가</li>
-            <li>• 최대 첨부 장수: 게시글당 4장</li>
+            {typeof maxFiles === "number" && (
+              <li>• 최대 첨부 장수: 현재 최대 {maxFiles}장</li>
+            )}
           </ul>
         </div>
 
@@ -259,6 +263,8 @@ export function CommunityImageUploadSlot({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [inspectedFile, setInspectedFile] = useState<SelectedS3File | null>(null);
+  const allowedMax = Math.max(0, Math.min(10, maxFiles));
 
   function reportError(message: string) {
     setError(message);
@@ -270,14 +276,11 @@ export function CommunityImageUploadSlot({
     setError(null);
     if (picked.length === 0) return;
 
-    const allowedMax = Math.max(0, Math.min(4, maxFiles));
     const next: SelectedS3File[] = [...files];
     for (const file of picked) {
       if (next.length >= allowedMax) {
         reportError(
-          allowedMax < 4
-            ? `기존 이미지를 포함해 게시글당 최대 4장까지 첨부할 수 있습니다. (추가 가능 ${allowedMax}장)`
-            : "이미지는 게시글당 최대 4장까지 첨부할 수 있습니다.",
+          `이미지는 현재 최대 ${allowedMax}장까지 첨부할 수 있습니다.`,
         );
         break;
       }
@@ -327,27 +330,36 @@ export function CommunityImageUploadSlot({
     if (target?.previewUrl.startsWith("blob:")) {
       URL.revokeObjectURL(target.previewUrl);
     }
+    if (inspectedFile?.id === id) setInspectedFile(null);
     onChange(files.filter(item => item.id !== id));
+  }
+
+  function handleInspect(file: SelectedS3File) {
+    if (onInspectImage) {
+      onInspectImage(file);
+    } else {
+      setInspectedFile(file);
+    }
   }
 
   return (
     <div className="ym-s3-community-slot" data-s3-slot="community-post-images">
       <div className="ym-s3-community-bar">
         <label
-          htmlFor={Math.max(0, Math.min(4, maxFiles)) > 0 ? inputId : undefined}
-          aria-disabled={files.length >= Math.max(0, Math.min(4, maxFiles))}
+          htmlFor={allowedMax > 0 ? inputId : undefined}
+          aria-disabled={files.length >= allowedMax}
           className={`ym-file-trigger-inline whitespace-nowrap shrink-0 ${
-            files.length >= Math.max(0, Math.min(4, maxFiles)) ? "opacity-50" : "cursor-pointer"
+            files.length >= allowedMax ? "opacity-50" : "cursor-pointer"
           }`}
         >
-          + 차트·포지션 이미지 첨부 ({files.length}/{Math.max(0, Math.min(4, maxFiles))})
+          + 차트·포지션 이미지 첨부 ({files.length}/{allowedMax})
         </label>
         <input
           ref={fileInputRef}
           id={inputId}
           type="file"
           multiple
-          disabled={files.length >= Math.max(0, Math.min(4, maxFiles))}
+          disabled={files.length >= allowedMax}
           accept="image/jpeg,image/png,image/webp,image/gif"
           className="sr-only"
           onChange={handleSelect}
@@ -366,7 +378,37 @@ export function CommunityImageUploadSlot({
         </div>
       )}
 
-      <UploadLimitAlertModal error={modalError} onClose={() => setModalError(null)} />
+      <UploadLimitAlertModal error={modalError} maxFiles={allowedMax} onClose={() => setModalError(null)} />
+
+      <DimModal
+        open={inspectedFile !== null}
+        onClose={() => setInspectedFile(null)}
+        title={inspectedFile?.name ?? "첨부 이미지 미리보기"}
+        subtitle={
+          inspectedFile
+            ? `${formatBytes(inspectedFile.sizeBytes)} · ${inspectedFile.mimeType}`
+            : undefined
+        }
+        maxWidth="760px"
+        footer={
+          <V1Button type="button" variant="gray" size="sm" onClick={() => setInspectedFile(null)}>
+            닫기
+          </V1Button>
+        }
+      >
+        {inspectedFile?.previewUrl ? (
+          <div className="flex justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={inspectedFile.previewUrl}
+              alt={inspectedFile.name}
+              className="ym-lightbox-img"
+            />
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">미리보기 이미지를 표시할 수 없습니다.</p>
+        )}
+      </DimModal>
 
       {files.length > 0 && (
         <ul className="ym-s3-thumb-grid" aria-label="첨부 이미지 미리보기">
@@ -375,7 +417,7 @@ export function CommunityImageUploadSlot({
               <button
                 type="button"
                 className="ym-s3-thumb-preview"
-                onClick={() => onInspectImage?.(item)}
+                onClick={() => handleInspect(item)}
                 title="클릭하여 원본 크기로 보기"
               >
                 {item.previewUrl ? (

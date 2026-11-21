@@ -1,7 +1,17 @@
 import Link from "next/link";
 import type { MemberSnapshot } from "../../member/api/session";
 
-export function MemberTradingPrompt({ member, retry, retryConsents }: { member: MemberSnapshot; retry: () => void; retryConsents: () => void }) {
+export function MemberTradingPrompt({
+  member,
+  retry,
+  retryConsents,
+  onContinueGuest,
+}: {
+  member: MemberSnapshot;
+  retry: () => void;
+  retryConsents: () => void;
+  onContinueGuest?: () => void;
+}) {
   const consent = member.phase === "ready" ? member.consentStatus : undefined;
   const failed = consent === "unavailable" || member.phase === "error";
   const recovering = member.phase === "recovering" || !!member.recovery;
@@ -11,7 +21,8 @@ export function MemberTradingPrompt({ member, retry, retryConsents }: { member: 
     : member.phase === "withdrawing" ? "탈퇴 진행 상태를 확인 중입니다."
     : failed ? "로그인 상태를 확인하지 못했습니다." : "회원 로그인 상태를 확인하는 중입니다."}</p>
     {consent === "required" && <Link className="guest-start-button" href="/account#policy-consents">필수 정책 확인·동의</Link>}
-    {failed && <button className="account-refresh" onClick={consent === "unavailable" ? retryConsents : retry}>다시 확인</button>}
+    {failed && <button type="button" className="account-refresh" onClick={consent === "unavailable" ? retryConsents : retry}>다시 확인</button>}
     {recovering && <Link className="account-refresh" href="/login">세션 상태·로그인 확인</Link>}
+    {recovering && onContinueGuest && <button type="button" className="guest-start-button" onClick={onContinueGuest}>게스트로 모의투자 시작</button>}
   </div>;
 }
