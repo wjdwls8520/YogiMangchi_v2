@@ -286,22 +286,32 @@ public class ContentNotificationService {
     }
 
     @Transactional(timeout = 3)
-    public void deleteReadNotifications(Long memberId) {
+    public int deleteReadNotifications(Long memberId) {
         requireActiveMember(memberId);
         Long lastCheckedId = queryLastCheckedId(memberId);
+        int deleted;
         if (lastCheckedId == null) {
-            return;
+            jdbc.update(
+                    "delete from content.notification_group_state g "
+                            + "using content.notification n "
+                            + "where g.notification_id = n.id and g.receiver_member_id = ? and n.is_read = true",
+                    memberId);
+            deleted = jdbc.update(
+                    "delete from content.notification where receiver_member_id = ? and is_read = true",
+                    memberId);
+        } else {
+            jdbc.update(
+                    "delete from content.notification_group_state g "
+                            + "using content.notification n "
+                            + "where g.notification_id = n.id and g.receiver_member_id = ? and n.is_read = true and n.id <= ?",
+                    memberId, lastCheckedId);
+            deleted = jdbc.update(
+                    "delete from content.notification where receiver_member_id = ? and is_read = true and id <= ?",
+                    memberId, lastCheckedId);
         }
-        jdbc.update(
-                "delete from content.notification_group_state g "
-                        + "using content.notification n "
-                        + "where g.notification_id = n.id and g.receiver_member_id = ? and n.is_read = true and n.id <= ?",
-                memberId, lastCheckedId);
-        jdbc.update(
-                "delete from content.notification where receiver_member_id = ? and is_read = true and id <= ?",
-                memberId, lastCheckedId);
         NotificationStatusResponse updatedStatus = queryStatusInternal(memberId);
         afterCommit(() -> sse.sendStatus(memberId, updatedStatus));
+        return deleted;
     }
 
     @Transactional(timeout = 3)
@@ -880,7 +890,7 @@ public class ContentNotificationService {
             String inquiryCategory,
             String title,
             String adminReply) {
-        if (memberId == null || !isMemberActive(memberId)) {
+        if (memberId == null || !isMemberActiveOrSuspended(memberId)) {
             return null;
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -1049,6 +1059,17 @@ public class ContentNotificationService {
                 Boolean.class,
                 memberId);
         return Boolean.TRUE.equals(active);
+    }
+
+    private boolean isMemberActiveOrSuspended(Long memberId) {
+        if (memberId == null || memberId <= 0) {
+            return false;
+        }
+        Boolean allowed = jdbc.queryForObject(
+                "select exists(select 1 from content.member where id = ? and status in ('ACTIVE', 'SUSPENDED'))",
+                Boolean.class,
+                memberId);
+        return Boolean.TRUE.equals(allowed);
     }
 
     private void requireActiveMember(Long memberId) {

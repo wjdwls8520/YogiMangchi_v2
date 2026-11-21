@@ -166,7 +166,7 @@ public class AuthService {
         }
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
         members.lockById(memberId)
-                .filter(m -> m.getStatus() == Member.Status.ACTIVE)
+                .filter(m -> m.getStatus() == Member.Status.ACTIVE || m.getStatus() == Member.Status.SUSPENDED)
                 .orElseThrow(AuthFailure::unauthorized);
         return sessions.revokeMember(memberId, now());
     }

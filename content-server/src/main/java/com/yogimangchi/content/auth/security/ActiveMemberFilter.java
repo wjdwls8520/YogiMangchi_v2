@@ -56,13 +56,19 @@ public class ActiveMemberFilter extends OncePerRequestFilter {
 
             MemberState state = rows.get(0);
             String status = state.status();
-            if ("SUSPENDED".equals(status) || "BANNED".equals(status)) {
+            if ("BANNED".equals(status)) {
+                ApiErrors.write(response, 403, "MEMBER_BANNED");
+                return;
+            }
+            boolean suspendedAllowed = "SUSPENDED".equals(status)
+                    && isSuspendedAllowedRequest(request.getMethod(), path);
+            if ("SUSPENDED".equals(status) && !suspendedAllowed) {
                 ApiErrors.write(response, 403, "MEMBER_SUSPENDED");
                 return;
             }
 
             boolean withdrawalEndpoint = path.equals("/api/v1/members/me/withdrawal");
-            if (!"ACTIVE".equals(status) && !withdrawalEndpoint) {
+            if (!"ACTIVE".equals(status) && !withdrawalEndpoint && !suspendedAllowed) {
                 ApiErrors.write(response, 401, "MEMBER_NOT_ACTIVE");
                 return;
             }
@@ -81,6 +87,19 @@ public class ActiveMemberFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(enriched);
         }
         chain.doFilter(request, response);
+    }
+
+    private static boolean isSuspendedAllowedRequest(String method, String path) {
+        if ("GET".equalsIgnoreCase(method)) {
+            return path.equals("/api/v1/members/me")
+                    || path.equals("/api/v1/support/inquiries/me");
+        }
+        if ("POST".equalsIgnoreCase(method)) {
+            return path.equals("/api/v1/support/inquiries")
+                    || path.equals("/api/v1/auth/logout")
+                    || path.equals("/api/v1/auth/logout-all");
+        }
+        return false;
     }
 
     private static boolean isAdminOnlyPath(String path) {

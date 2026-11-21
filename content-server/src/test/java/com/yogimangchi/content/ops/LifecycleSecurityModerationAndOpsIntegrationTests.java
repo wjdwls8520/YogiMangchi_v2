@@ -76,8 +76,16 @@ class LifecycleSecurityModerationAndOpsIntegrationTests extends TestEnvironment 
                 .andExpect(jsonPath("$.status").value("SUSPENDED"))
                 .andExpect(jsonPath("$.suspendedReason").value("반복 스팸 도배 위반"));
 
-        // Suspended member blocked in ActiveMemberFilter with 403 MEMBER_SUSPENDED
+        // Suspended member CAN read own profile (/members/me) and submit/read support appeals,
+        // while STILL blocked with 403 MEMBER_SUSPENDED on community/profile-edit/notification endpoints.
         mvc.perform(get("/api/v1/members/me").header("Authorization", targetBearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUSPENDED"))
+                .andExpect(jsonPath("$.suspendedReason").value("반복 스팸 도배 위반"));
+        mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", targetBearer)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":\"FREE\",\"title\":\"정지중작성시도\",\"content\":\"차단되어야함\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("MEMBER_SUSPENDED"));
 

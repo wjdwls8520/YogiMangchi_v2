@@ -160,6 +160,18 @@ public class AdminCommunityController {
                 .build();
     }
 
+    @PostMapping("/replies/{replyId:[0-9]+}/restore")
+    @Operation(summary = "Restore a soft-deleted community reply/comment by admin")
+    public ResponseEntity<Void> restoreReply(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long replyId) {
+        Long adminId = Long.valueOf(jwt.getSubject());
+        adminCommunityService.restoreReply(adminId, replyId);
+        return ResponseEntity.noContent()
+                .cacheControl(CacheControl.noStore())
+                .build();
+    }
+
     @GetMapping("/reports")
     @Operation(summary = "List community post and comment reports for admin moderation with status and 9-reason filters")
     public ResponseEntity<AdminCommunityService.AdminReportPageResponse> listReports(

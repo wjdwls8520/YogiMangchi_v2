@@ -113,6 +113,9 @@ public class MemberProfiles {
                 member.getProfileMessage(),
                 s3.sanitizeProfileImageUrl(member.getProfileImgUrl()),
                 member.getRole().name(),
+                member.getStatus().name(),
+                member.getSuspendedAt(),
+                member.getSuspendedReason(),
                 member.getCreatedAt());
     }
 

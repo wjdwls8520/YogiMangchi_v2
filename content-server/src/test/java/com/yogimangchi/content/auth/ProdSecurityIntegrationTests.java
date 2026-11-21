@@ -3,6 +3,7 @@ package com.yogimangchi.content.auth;
 import com.yogimangchi.content.auth.dto.SignupRequest;
 import com.yogimangchi.content.auth.oauth.VerifiedIdentity;
 import com.yogimangchi.content.auth.service.AuthService;
+import com.yogimangchi.content.community.CommunityS3Service;
 import com.yogimangchi.content.member.entity.OAuthIdentity.Provider;
 import com.yogimangchi.content.support.*;
 import jakarta.servlet.http.Cookie;
@@ -13,8 +14,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -26,9 +29,16 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 class ProdSecurityIntegrationTests extends TestEnvironment {
     @Autowired MockMvc mvc;
     @Autowired AuthService auth;
+    @Autowired Environment env;
+    @Autowired CommunityS3Service s3;
     @Test void productionHidesSwaggerAndSetsHostOnlySecureRefreshCookie() throws Exception {
         mvc.perform(get("/v3/api-docs")).andExpect(status().isUnauthorized());
         mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isUnauthorized());
+        assertThat(env.getProperty("content.s3.enabled", Boolean.class)).isFalse();
+        assertThat(env.getProperty("content.s3.public-base-url", "")).doesNotContain("localhost");
+        assertThat(s3.isRealS3Configured()).isFalse();
+        assertThat(s3.sanitizePostFileUrl("https://example-bucket.s3.ap-northeast-2.amazonaws.com/legacy.png"))
+                .doesNotContain("localhost");
         var id=new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"prod-test@example.test",Instant.now().plusSeconds(300));
         var login=auth.signup(id,new SignupRequest("prodtest",true,true,"","ym-terms-v2","ym-privacy-v2"));
         mvc.perform(post("/api/v1/auth/refresh").with(csrf()).cookie(new Cookie("CONTENT_REFRESH",login.refresh())))

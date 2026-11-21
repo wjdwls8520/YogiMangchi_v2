@@ -27,11 +27,22 @@ public class CommunityController {
     private final CommunityService community;
     private final CommunityUxSseService uxSse;
     private final CommunityS3Service s3;
+    private final TradingPositionVerifier positionVerifier;
 
     public CommunityController(CommunityService community, CommunityUxSseService uxSse, CommunityS3Service s3) {
+        this(community, uxSse, s3, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public CommunityController(
+            CommunityService community,
+            CommunityUxSseService uxSse,
+            CommunityS3Service s3,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TradingPositionVerifier positionVerifier) {
         this.community = community;
         this.uxSse = uxSse;
         this.s3 = s3;
+        this.positionVerifier = positionVerifier;
     }
 
     @GetMapping("/api/v1/community/local-media/{*mediaKey}")
@@ -105,9 +116,12 @@ public class CommunityController {
     public ResponseEntity<CommunityService.CommunityPostResponse> createPostJson(
             @AuthenticationPrincipal Jwt jwt,
             @RequestBody(required = false) CommunityService.CreatePostRequest body) {
+        Long memberId = Long.valueOf(jwt.getSubject());
+        TradingPositionVerifier.VerificationResult verifiedPosition = verifySharedPosition(
+                memberId, jwt, body == null ? null : body.sharedPosition());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .cacheControl(CacheControl.noStore())
-                .body(community.createPost(Long.valueOf(jwt.getSubject()), body, List.of()));
+                .body(community.createPost(memberId, body, List.of(), verifiedPosition));
     }
 
     @PostMapping(value = "/api/v1/community/posts", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -122,6 +136,7 @@ public class CommunityController {
             @RequestParam(required = false) String sharedPosition,
             @RequestPart(name = "request", required = false) CommunityService.CreatePostRequest requestPart,
             @RequestPart(name = "files", required = false) List<MultipartFile> files) {
+        Long memberId = Long.valueOf(jwt.getSubject());
         CommunityService.CreatePostRequest effective = requestPart != null
                 ? requestPart
                 : new CommunityService.CreatePostRequest(
@@ -130,9 +145,11 @@ public class CommunityController {
                         title,
                         content,
                         community.parseSharedPositionJson(sharedPosition));
+        TradingPositionVerifier.VerificationResult verifiedPosition = verifySharedPosition(
+                memberId, jwt, effective.sharedPosition());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .cacheControl(CacheControl.noStore())
-                .body(community.createPost(Long.valueOf(jwt.getSubject()), effective, files));
+                .body(community.createPost(memberId, effective, files, verifiedPosition));
     }
 
     @PatchMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -143,9 +160,14 @@ public class CommunityController {
             @PathVariable Long postId,
             @AuthenticationPrincipal Jwt jwt,
             @RequestBody(required = false) CommunityService.UpdatePostRequest body) {
+        Long memberId = Long.valueOf(jwt.getSubject());
+        TradingPositionVerifier.VerificationResult verifiedPosition =
+                (body != null && !Boolean.TRUE.equals(body.clearSharedPosition()))
+                        ? verifySharedPosition(memberId, jwt, body.sharedPosition())
+                        : null;
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(community.updatePost(Long.valueOf(jwt.getSubject()), postId, body, List.of()));
+                .body(community.updatePost(memberId, postId, body, List.of(), verifiedPosition));
     }
 
     @PatchMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -164,6 +186,7 @@ public class CommunityController {
             @RequestParam(required = false) List<Long> deleteFileIds,
             @RequestPart(name = "request", required = false) CommunityService.UpdatePostRequest requestPart,
             @RequestPart(name = "files", required = false) List<MultipartFile> files) {
+        Long memberId = Long.valueOf(jwt.getSubject());
         boolean explicitClear = Boolean.TRUE.equals(clearSharedPosition)
                 || (sharedPosition != null && (sharedPosition.isBlank() || "null".equalsIgnoreCase(sharedPosition.strip())));
         CommunityService.UpdatePostRequest effective = requestPart != null
@@ -176,9 +199,13 @@ public class CommunityController {
                         explicitClear ? null : community.parseSharedPositionJson(sharedPosition),
                         deleteFileIds,
                         explicitClear ? Boolean.TRUE : null);
+        TradingPositionVerifier.VerificationResult verifiedPosition =
+                !Boolean.TRUE.equals(effective.clearSharedPosition())
+                        ? verifySharedPosition(memberId, jwt, effective.sharedPosition())
+                        : null;
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(community.updatePost(Long.valueOf(jwt.getSubject()), postId, effective, files));
+                .body(community.updatePost(memberId, postId, effective, files, verifiedPosition));
     }
 
     @DeleteMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -485,6 +512,17 @@ public class CommunityController {
             }
         }
         return "SPAM";
+    }
+
+    private TradingPositionVerifier.VerificationResult verifySharedPosition(
+            Long memberId,
+            Jwt jwt,
+            CommunityService.SharedPositionSnapshot snapshot) {
+        if (snapshot == null || positionVerifier == null) {
+            return null;
+        }
+        String tokenValue = jwt == null ? null : jwt.getTokenValue();
+        return positionVerifier.verify(memberId, tokenValue, snapshot);
     }
 
     private static Long viewerId(Jwt jwt) {

@@ -221,7 +221,7 @@ public class CommunityS3Service {
             return rawUrl;
         }
         if (s3Client == null && isExternalAwsUrl(rawUrl)) {
-            String base = normalizedPublicBaseUrl != null ? normalizedPublicBaseUrl : "http://localhost:8080";
+            String base = normalizedPublicBaseUrl != null ? normalizedPublicBaseUrl : "";
             return base + "/api/v1/community/local-media/placeholder.svg";
         }
         return rawUrl;

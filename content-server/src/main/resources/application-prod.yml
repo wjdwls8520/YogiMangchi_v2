@@ -41,3 +41,8 @@ content:
     secure-cookies: true
   oauth:
     enabled: ${CONTENT_OAUTH_ENABLED:true}
+  s3:
+    enabled: ${CONTENT_S3_ENABLED:false}
+    public-base-url: ${CONTENT_S3_PUBLIC_BASE_URL:}
+    bucket: ${S3_BUCKET:}
+    region: ${S3_REGION:ap-northeast-2}

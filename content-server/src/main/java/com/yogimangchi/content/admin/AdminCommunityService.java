@@ -41,8 +41,27 @@ public class AdminCommunityService {
             Instant createdAt,
             Instant updatedAt,
             Long authorId,
-            String authorNickname
-    ) { }
+            String authorNickname,
+            String authorStatus
+    ) {
+        public AdminPostDto(
+                Long postId,
+                String category,
+                String title,
+                String content,
+                long viewCount,
+                long likeCount,
+                long replyCount,
+                long reportCount,
+                String deleteYn,
+                Instant createdAt,
+                Instant updatedAt,
+                Long authorId,
+                String authorNickname) {
+            this(postId, category, title, content, viewCount, likeCount, replyCount, reportCount,
+                    deleteYn, createdAt, updatedAt, authorId, authorNickname, null);
+        }
+    }
 
     public record AdminPostCursorResponse(
             List<AdminPostDto> content,
@@ -61,8 +80,25 @@ public class AdminCommunityService {
             Long postId,
             String postTitle,
             Long authorId,
-            String authorNickname
-    ) { }
+            String authorNickname,
+            String authorStatus
+    ) {
+        public AdminReplyDto(
+                Long replyId,
+                String content,
+                long likeCount,
+                long reportCount,
+                String deleteYn,
+                Instant createdAt,
+                Instant updatedAt,
+                Long postId,
+                String postTitle,
+                Long authorId,
+                String authorNickname) {
+            this(replyId, content, likeCount, reportCount, deleteYn, createdAt, updatedAt,
+                    postId, postTitle, authorId, authorNickname, null);
+        }
+    }
 
     public record AdminReplyCursorResponse(
             List<AdminReplyDto> content,
@@ -79,17 +115,44 @@ public class AdminCommunityService {
             String targetContent,
             Long targetAuthorId,
             String targetAuthorNickname,
+            String targetAuthorStatus,
             String targetDeleteYn,
             long targetReportCount,
             Long reporterId,
             String reporterNickname,
+            String reporterStatus,
             String reasonType,
             String reportStatus,
             Instant resolvedAt,
             Long resolvedByMemberId,
             String resolutionNote,
             Instant createdAt
-    ) { }
+    ) {
+        public AdminReportDto(
+                String reportKey,
+                String targetType,
+                Long targetId,
+                Long postId,
+                String postTitle,
+                String targetContent,
+                Long targetAuthorId,
+                String targetAuthorNickname,
+                String targetDeleteYn,
+                long targetReportCount,
+                Long reporterId,
+                String reporterNickname,
+                String reasonType,
+                String reportStatus,
+                Instant resolvedAt,
+                Long resolvedByMemberId,
+                String resolutionNote,
+                Instant createdAt) {
+            this(reportKey, targetType, targetId, postId, postTitle, targetContent,
+                    targetAuthorId, targetAuthorNickname, null, targetDeleteYn, targetReportCount,
+                    reporterId, reporterNickname, null, reasonType, reportStatus,
+                    resolvedAt, resolvedByMemberId, resolutionNote, createdAt);
+        }
+    }
 
     public record AdminReportPageResponse(
             List<AdminReportDto> content,
@@ -163,7 +226,11 @@ public class AdminCommunityService {
         if ("ACTIVE".equals(normalizedAuthorStatus)) {
             sql.append(" and m.status = 'ACTIVE'");
         } else if ("WITHDRAWN".equals(normalizedAuthorStatus)) {
-            sql.append(" and m.status <> 'ACTIVE'");
+            sql.append(" and m.status in ('WITHDRAWN', 'WITHDRAWING')");
+        } else if ("SUSPENDED".equals(normalizedAuthorStatus)) {
+            sql.append(" and m.status = 'SUSPENDED'");
+        } else if ("BANNED".equals(normalizedAuthorStatus)) {
+            sql.append(" and m.status = 'BANNED'");
         }
 
         if (title != null && !title.isBlank()) {
@@ -180,7 +247,7 @@ public class AdminCommunityService {
 
         if (authorNickname != null && !authorNickname.isBlank()) {
             String escaped = escapeLike(authorNickname.trim());
-            sql.append(" and (case when m.status = 'ACTIVE' and m.nickname is not null then m.nickname else ? end) ilike ? escape '\\'");
+            sql.append(" and (case when m.status not in ('WITHDRAWN', 'WITHDRAWING') and m.nickname is not null then m.nickname else ? end) ilike ? escape '\\'");
             params.add(CommunityService.WITHDRAWN_AUTHOR_NICKNAME);
             params.add("%" + escaped + "%");
         }
@@ -303,7 +370,11 @@ public class AdminCommunityService {
         if ("ACTIVE".equals(normalizedAuthorStatus)) {
             sql.append(" and m.status = 'ACTIVE'");
         } else if ("WITHDRAWN".equals(normalizedAuthorStatus)) {
-            sql.append(" and m.status <> 'ACTIVE'");
+            sql.append(" and m.status in ('WITHDRAWN', 'WITHDRAWING')");
+        } else if ("SUSPENDED".equals(normalizedAuthorStatus)) {
+            sql.append(" and m.status = 'SUSPENDED'");
+        } else if ("BANNED".equals(normalizedAuthorStatus)) {
+            sql.append(" and m.status = 'BANNED'");
         }
 
         if (postTitle != null && !postTitle.isBlank()) {
@@ -326,7 +397,7 @@ public class AdminCommunityService {
 
         if (authorNickname != null && !authorNickname.isBlank()) {
             String escaped = escapeLike(authorNickname.trim());
-            sql.append(" and (case when m.status = 'ACTIVE' and m.nickname is not null then m.nickname else ? end) ilike ? escape '\\'");
+            sql.append(" and (case when m.status not in ('WITHDRAWN', 'WITHDRAWING') and m.nickname is not null then m.nickname else ? end) ilike ? escape '\\'");
             params.add(CommunityService.WITHDRAWN_AUTHOR_NICKNAME);
             params.add("%" + escaped + "%");
         }
@@ -396,6 +467,54 @@ public class AdminCommunityService {
                     "update content.community_post set comment_count = (select count(*) from content.community_comment where post_id = ? and status = 'ACTIVE') where id = ?",
                     existing.postId(), existing.postId());
             log.info("[AdminAudit] action=DELETE_REPLY adminId={} replyId={} postId={}", adminId, replyId, existing.postId());
+        }
+    }
+
+    @Transactional(timeout = 5)
+    public void restoreReply(Long adminId, Long replyId) {
+        if (replyId == null || replyId <= 0) {
+            throw new AuthFailure("COMMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+        }
+        jdbc.execute("SET LOCAL lock_timeout = '2s'");
+        requireAdmin(adminId);
+
+        List<CommentHierarchyRow> locked = jdbc.query(
+                "select id, post_id, member_id, parent_comment_id, content, status, deleted_at from content.community_comment where id = ? for update",
+                (rs, n) -> {
+                    long parentRaw = rs.getLong("parent_comment_id");
+                    Long parentId = rs.wasNull() ? null : parentRaw;
+                    return new CommentHierarchyRow(
+                            rs.getLong("id"),
+                            rs.getLong("post_id"),
+                            rs.getLong("member_id"),
+                            parentId,
+                            rs.getString("content"),
+                            rs.getString("status"),
+                            rs.getTimestamp("deleted_at"));
+                },
+                replyId);
+        if (locked.isEmpty()) {
+            throw new AuthFailure("COMMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+        }
+
+        CommentHierarchyRow existing = locked.get(0);
+        jdbc.queryForList("select id from content.community_post where id = ? for update", Long.class, existing.postId());
+
+        if (!"ACTIVE".equals(existing.status()) || existing.deletedAt() != null) {
+            jdbc.update(
+                    "update content.community_comment set status = 'ACTIVE', deleted_at = null, updated_at = now() where id = ?",
+                    replyId);
+            if (existing.parentCommentId() != null) {
+                jdbc.update(
+                        "update content.community_comment set reply_count = ("
+                                + "select count(*) from content.community_comment where parent_comment_id = ? and status = 'ACTIVE'"
+                                + ") where id = ?",
+                        existing.parentCommentId(), existing.parentCommentId());
+            }
+            jdbc.update(
+                    "update content.community_post set comment_count = (select count(*) from content.community_comment where post_id = ? and status = 'ACTIVE') where id = ?",
+                    existing.postId(), existing.postId());
+            log.info("[AdminAudit] action=RESTORE_REPLY adminId={} replyId={} postId={}", adminId, replyId, existing.postId());
         }
     }
 
@@ -751,7 +870,8 @@ public class AdminCommunityService {
         boolean deleted = deletedAt != null || "DELETED".equals(postStatus);
         String authorStatus = rs.getString("author_status");
         String rawNickname = rs.getString("author_nickname");
-        String displayNickname = "ACTIVE".equals(authorStatus) && rawNickname != null && !rawNickname.isBlank()
+        boolean authorWithdrawn = CommunityService.isWithdrawnStatus(authorStatus);
+        String displayNickname = !authorWithdrawn && rawNickname != null && !rawNickname.isBlank()
                 ? rawNickname
                 : CommunityService.WITHDRAWN_AUTHOR_NICKNAME;
         Timestamp createdTs = rs.getTimestamp("created_at");
@@ -770,7 +890,8 @@ public class AdminCommunityService {
                 createdTs == null ? null : createdTs.toInstant(),
                 updatedTs == null ? null : updatedTs.toInstant(),
                 rs.getLong("author_id"),
-                displayNickname);
+                displayNickname,
+                authorStatus);
     }
 
     private AdminReplyDto mapReply(ResultSet rs) throws SQLException {
@@ -779,7 +900,8 @@ public class AdminCommunityService {
         boolean deleted = deletedAt != null || "DELETED".equals(commentStatus);
         String authorStatus = rs.getString("author_status");
         String rawNickname = rs.getString("author_nickname");
-        String displayNickname = "ACTIVE".equals(authorStatus) && rawNickname != null && !rawNickname.isBlank()
+        boolean authorWithdrawn = CommunityService.isWithdrawnStatus(authorStatus);
+        String displayNickname = !authorWithdrawn && rawNickname != null && !rawNickname.isBlank()
                 ? rawNickname
                 : CommunityService.WITHDRAWN_AUTHOR_NICKNAME;
         Timestamp createdTs = rs.getTimestamp("created_at");
@@ -796,7 +918,8 @@ public class AdminCommunityService {
                 rs.getLong("post_id"),
                 rs.getString("post_title"),
                 rs.getLong("author_id"),
-                displayNickname);
+                displayNickname,
+                authorStatus);
     }
 
     private AdminReportDto mapReport(ResultSet rs) throws SQLException {
@@ -809,14 +932,16 @@ public class AdminCommunityService {
 
         String targetAuthorStatus = rs.getString("target_author_status");
         String rawTargetAuthorNickname = rs.getString("target_author_nickname");
-        String displayTargetAuthorNickname = "ACTIVE".equals(targetAuthorStatus)
+        boolean targetAuthorWithdrawn = CommunityService.isWithdrawnStatus(targetAuthorStatus);
+        String displayTargetAuthorNickname = !targetAuthorWithdrawn
                 && rawTargetAuthorNickname != null && !rawTargetAuthorNickname.isBlank()
                 ? rawTargetAuthorNickname
                 : CommunityService.WITHDRAWN_AUTHOR_NICKNAME;
 
         String reporterStatus = rs.getString("reporter_status");
         String rawReporterNickname = rs.getString("reporter_nickname");
-        String displayReporterNickname = "ACTIVE".equals(reporterStatus)
+        boolean reporterWithdrawn = CommunityService.isWithdrawnStatus(reporterStatus);
+        String displayReporterNickname = !reporterWithdrawn
                 && rawReporterNickname != null && !rawReporterNickname.isBlank()
                 ? rawReporterNickname
                 : CommunityService.WITHDRAWN_AUTHOR_NICKNAME;
@@ -835,10 +960,12 @@ public class AdminCommunityService {
                 rs.getString("target_content"),
                 rs.getLong("target_author_id"),
                 displayTargetAuthorNickname,
+                targetAuthorStatus,
                 targetDeleted ? "Y" : "N",
                 rs.getLong("target_report_count"),
                 reporterId,
                 displayReporterNickname,
+                reporterStatus,
                 rs.getString("reason_type"),
                 rs.getString("report_status"),
                 resolvedTs == null ? null : resolvedTs.toInstant(),
@@ -865,7 +992,11 @@ public class AdminCommunityService {
             return "ALL";
         }
         String upper = authorStatus.trim().toUpperCase(Locale.ROOT);
-        if ("ALL".equals(upper) || "ACTIVE".equals(upper) || "WITHDRAWN".equals(upper)) {
+        if ("ALL".equals(upper)
+                || "ACTIVE".equals(upper)
+                || "WITHDRAWN".equals(upper)
+                || "SUSPENDED".equals(upper)
+                || "BANNED".equals(upper)) {
             return upper;
         }
         throw invalidRequest();

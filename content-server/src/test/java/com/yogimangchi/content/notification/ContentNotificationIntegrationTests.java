@@ -32,6 +32,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ContentNotificationIntegrationTests extends TestEnvironment {
     @Autowired MockMvc mvc;
     @Autowired AuthService auth;
+    @Autowired ContentNotificationService notifications;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
 
@@ -193,6 +194,77 @@ class ContentNotificationIntegrationTests extends TestEnvironment {
         // SSE subscribe returns 200 OK
         mvc.perform(get("/api/v1/notifications/subscribe").header("Authorization", authorToken))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void deleteReadNotificationsDeletesIndividuallyReadRowsEvenWhenNeverChecked() throws Exception {
+        var author = signupWithPrefix("미체크");
+        var commenterA = signupWithPrefix("유저A");
+        var commenterB = signupWithPrefix("유저B");
+        String authorToken = "Bearer " + author.access().accessToken();
+        String tokenA = "Bearer " + commenterA.access().accessToken();
+        String tokenB = "Bearer " + commenterB.access().accessToken();
+        Long authorId = author.access().memberId();
+
+        // Create a post and generate 2 notifications for author without ever calling PUT /api/v1/notifications/check
+        JsonNode createdPost = json.readTree(mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", authorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":\"FREE\",\"title\":\"읽은알림삭제테스트\",\"content\":\"본문\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString());
+        long postId = createdPost.get("id").asLong();
+
+        mvc.perform(post("/api/v1/community/posts/" + postId + "/comments")
+                        .header("Authorization", tokenA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"첫 번째 댓글\"}"))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/community/posts/" + postId + "/comments")
+                        .header("Authorization", tokenB)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"두 번째 댓글\"}"))
+                .andExpect(status().isCreated());
+
+        // Confirm lastCheckedId is null (no notification_state row)
+        assertThat(jdbc.queryForObject(
+                "select count(*) from content.notification_state where member_id = ?",
+                Long.class, authorId)).isZero();
+
+        JsonNode initialList = json.readTree(mvc.perform(get("/api/v1/notifications")
+                        .header("Authorization", authorToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(initialList.get("content").size()).isEqualTo(2);
+        long readNotificationId = initialList.get("content").get(0).get("notificationId").asLong();
+        long unreadNotificationId = initialList.get("content").get(1).get("notificationId").asLong();
+
+        // Mark ONLY 1 notification read individually (never calling /check)
+        mvc.perform(put("/api/v1/notifications/" + readNotificationId + "/read")
+                        .header("Authorization", authorToken))
+                .andExpect(status().isNoContent());
+
+        // DELETE /api/v1/notifications/read MUST delete the 1 read row and preserve the 1 unread row
+        mvc.perform(delete("/api/v1/notifications/read")
+                        .header("Authorization", authorToken))
+                .andExpect(status().isNoContent());
+
+        JsonNode remainingList = json.readTree(mvc.perform(get("/api/v1/notifications")
+                        .header("Authorization", authorToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(remainingList.get("content").size()).isEqualTo(1);
+        assertThat(remainingList.get("content").get(0).get("notificationId").asLong()).isEqualTo(unreadNotificationId);
+        assertThat(remainingList.get("content").get(0).get("isRead").asBoolean()).isFalse();
+
+        // Mark the second notification read individually (still never calling /check) and verify service deleted count == 1
+        mvc.perform(put("/api/v1/notifications/" + unreadNotificationId + "/read")
+                        .header("Authorization", authorToken))
+                .andExpect(status().isNoContent());
+        assertThat(notifications.deleteReadNotifications(authorId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from content.notification where receiver_member_id = ?",
+                Long.class, authorId)).isZero();
     }
 
     private AuthService.Issued signupWithPrefix(String prefix) {

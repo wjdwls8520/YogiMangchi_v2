@@ -91,7 +91,7 @@ public class ContentNotificationController {
     }
 
     @DeleteMapping("/read")
-    @Operation(summary = "Delete read & checked notifications")
+    @Operation(summary = "Delete read notifications (all read if never checked, or read up to last checked ID)")
     public ResponseEntity<Void> deleteReadNotifications(@AuthenticationPrincipal Jwt jwt) {
         notifications.deleteReadNotifications(Long.valueOf(jwt.getSubject()));
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();

@@ -173,14 +173,12 @@ public class NewsController {
     }
 
     private static String clientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            int comma = xff.indexOf(',');
-            String first = (comma >= 0 ? xff.substring(0, comma) : xff).strip();
-            if (!first.isEmpty()) {
-                return first;
-            }
+        // Rely strictly on servlet remoteAddr (resolved by Spring's trusted forward-headers-strategy in prod).
+        // Never trust raw client-supplied X-Forwarded-For headers directly.
+        if (request == null) {
+            return "0.0.0.0";
         }
-        return Objects.toString(request.getRemoteAddr(), "0.0.0.0");
+        String remoteAddr = request.getRemoteAddr();
+        return (remoteAddr == null || remoteAddr.isBlank()) ? "0.0.0.0" : remoteAddr.strip();
     }
 }
