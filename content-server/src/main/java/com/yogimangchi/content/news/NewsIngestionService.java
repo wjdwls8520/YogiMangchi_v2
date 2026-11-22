@@ -1,12 +1,14 @@
 package com.yogimangchi.content.news;
 
 import com.yogimangchi.content.ops.OpsAlertService;
+import jakarta.annotation.PreDestroy;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -15,6 +17,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,8 +90,17 @@ public class NewsIngestionService {
     private final boolean collectorEnabled;
     private final int maxItemsPerFeed;
     private final int breakingRetentionHours;
+    private final long onDemandCooldownMs;
     private final HttpClient httpClient;
     private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
+    private final AtomicBoolean collectionInFlight = new AtomicBoolean(false);
+    private volatile Instant lastCollectionCompletedAt;
+    private volatile boolean closed;
+    private final ExecutorService onDemandExecutor = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "news-on-demand-refresh");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final Map<String, RssSourceStatus> sourceStatuses = new ConcurrentHashMap<>();
 
     public NewsIngestionService(
@@ -94,7 +109,17 @@ public class NewsIngestionService {
             boolean collectorEnabled,
             int maxItemsPerFeed,
             int breakingRetentionHours) {
-        this(jdbc, sse, null, collectorEnabled, maxItemsPerFeed, breakingRetentionHours);
+        this(jdbc, sse, null, collectorEnabled, maxItemsPerFeed, breakingRetentionHours, 60_000L);
+    }
+
+    public NewsIngestionService(
+            JdbcTemplate jdbc,
+            NewsSseService sse,
+            OpsAlertService opsAlert,
+            boolean collectorEnabled,
+            int maxItemsPerFeed,
+            int breakingRetentionHours) {
+        this(jdbc, sse, opsAlert, collectorEnabled, maxItemsPerFeed, breakingRetentionHours, 60_000L);
     }
 
     @Autowired
@@ -104,13 +129,15 @@ public class NewsIngestionService {
             @Autowired(required = false) OpsAlertService opsAlert,
             @Value("${content.news.collector.enabled:true}") boolean collectorEnabled,
             @Value("${content.news.collector.max-items-per-feed:8}") int maxItemsPerFeed,
-            @Value("${content.news.collector.breaking-retention-hours:6}") int breakingRetentionHours) {
+            @Value("${content.news.collector.breaking-retention-hours:6}") int breakingRetentionHours,
+            @Value("${content.news.collector.on-demand-cooldown-ms:60000}") long onDemandCooldownMs) {
         this.jdbc = jdbc;
         this.sse = sse;
         this.opsAlert = opsAlert;
         this.collectorEnabled = collectorEnabled;
         this.maxItemsPerFeed = Math.max(1, Math.min(25, maxItemsPerFeed));
         this.breakingRetentionHours = Math.max(1, Math.min(24, breakingRetentionHours));
+        this.onDemandCooldownMs = Math.max(1_000L, onDemandCooldownMs);
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(4))
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -120,6 +147,12 @@ public class NewsIngestionService {
                     feed.subCategory(), feed.section(), feed.defaultSourceName(),
                     null, null, 0, null, 0));
         }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        closed = true;
+        onDemandExecutor.shutdownNow();
     }
 
     public int getConsecutiveFailures() {
@@ -146,7 +179,53 @@ public class NewsIngestionService {
     }
 
     public int collectAllDefaultFeeds() {
-        return collectFeeds(DEFAULT_FEEDS);
+        if (closed || !collectionInFlight.compareAndSet(false, true)) {
+            return 0;
+        }
+        try {
+            return collectFeeds(DEFAULT_FEEDS);
+        } finally {
+            lastCollectionCompletedAt = Instant.now();
+            collectionInFlight.set(false);
+        }
+    }
+
+    /**
+     * Non-blocking on-demand refresh triggered when a user opens the news feed or SSE stream.
+     * Enforces single-flight execution and a cooldown window so repeated visits never overload RSS feeds.
+     */
+    public boolean triggerRefreshIfStale() {
+        return triggerRefreshIfStale(Clock.systemUTC(), () -> collectFeeds(DEFAULT_FEEDS));
+    }
+
+    boolean triggerRefreshIfStale(Clock clock, Runnable collectorTask) {
+        if (!collectorEnabled || closed) {
+            return false;
+        }
+        Instant now = clock.instant();
+        Instant lastCompleted = this.lastCollectionCompletedAt;
+        if (lastCompleted != null && Duration.between(lastCompleted, now).toMillis() < onDemandCooldownMs) {
+            return false;
+        }
+        if (!collectionInFlight.compareAndSet(false, true)) {
+            return false;
+        }
+        try {
+            onDemandExecutor.execute(() -> {
+                try {
+                    collectorTask.run();
+                } catch (RuntimeException ex) {
+                    log.warn("[NewsRSS] on-demand refresh failed cause={}", ex.getClass().getSimpleName());
+                } finally {
+                    lastCollectionCompletedAt = clock.instant();
+                    collectionInFlight.set(false);
+                }
+            });
+            return true;
+        } catch (RejectedExecutionException ignored) {
+            collectionInFlight.set(false);
+            return false;
+        }
     }
 
     int collectFeeds(List<FeedSource> feeds) {
