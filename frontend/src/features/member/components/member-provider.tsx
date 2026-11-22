@@ -47,7 +47,7 @@ export function useMember() {
   const context = useContext(Context);
   if (!context) throw new Error("MemberProvider required");
   const snapshot = useSyncExternalStore(context.session.subscribe, context.session.getSnapshot, context.session.getSnapshot);
-  return { ...context, snapshot };
+  return useMemo(() => ({ ...context, snapshot }), [context, snapshot]);
 }
 const noopSubscribe = () => () => {};
 const getInitialMember = () => initialMember;
@@ -58,7 +58,7 @@ export function useOptionalMember() {
     context ? context.session.getSnapshot : getInitialMember,
     context ? context.session.getSnapshot : getInitialMember,
   );
-  return context ? { ...context, snapshot } : null;
+  return useMemo(() => (context ? { ...context, snapshot } : null), [context, snapshot]);
 }
 export function MemberHeaderAction() {
   const { snapshot } = useMember();

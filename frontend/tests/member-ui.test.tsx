@@ -4538,3 +4538,25 @@ test("CommunityBoard SSE and latest-check handlers ignore malformed SSE frames a
     "malformed SSE catch block must not increment pendingNewPostsCount",
   );
 });
+
+test("V1Header /members/me sync avoids infinite re-fetch loop and member hooks memoize return value", () => {
+  const providerSource = fs.readFileSync(
+    path.join(process.cwd(), "src/features/member/components/member-provider.tsx"),
+    "utf8",
+  );
+  assert.match(providerSource, /return useMemo\(\(\) => \(\{ \.\.\.context, snapshot \}\), \[context, snapshot\]\);/);
+  assert.match(providerSource, /return useMemo\(\(\) => \(context \? \{ \.\.\.context, snapshot \} : null\), \[context, snapshot\]\);/);
+
+  const headerSource = fs.readFileSync(
+    path.join(process.cwd(), "src/features/member/components/v1-ui.tsx"),
+    "utf8",
+  );
+  const meEffect = headerSource.match(/useEffect\(\(\) => \{[\s\S]*?\.request\("\/members\/me"[\s\S]*?\}, \[[^\]]+\]\);/);
+  assert.ok(meEffect, "V1Header /members/me effect should exist");
+  assert.equal(
+    /\[[^\]]*\bmemberCtx\b[^\]]*\]/.test(meEffect[0]),
+    false,
+    "V1Header /members/me effect must not depend on the memberCtx wrapper object",
+  );
+  assert.match(meEffect[0], /verifiedSessionKeyRef\.current === sessionKey/);
+});

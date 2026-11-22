@@ -1064,30 +1064,44 @@ export function V1Header({
     phase === "ready" && memberCtx?.snapshot.memberId
       ? `${memberCtx.snapshot.memberId}:${memberCtx.snapshot.generation}`
       : null;
+  const memberSession = memberCtx?.session ?? null;
+  const memberId = memberCtx?.snapshot.memberId ?? null;
+  const generation = memberCtx?.snapshot.generation ?? 0;
+  const verifiedSessionKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (phase !== "ready" || !memberCtx || !sessionKey || role) {
+    if (phase !== "ready" || !memberSession || memberId === null || !sessionKey || role) {
+      if (phase !== "ready") {
+        verifiedSessionKeyRef.current = null;
+      }
+      return;
+    }
+    if (verifiedSessionKeyRef.current === sessionKey) {
       return;
     }
     const controller = new AbortController();
-    const memberId = memberCtx.snapshot.memberId!;
-    const generation = memberCtx.snapshot.generation;
-    void memberCtx.session
+    void memberSession
       .request("/members/me", { signal: controller.signal })
       .then(data => {
+        if (controller.signal.aborted) return;
+        verifiedSessionKeyRef.current = sessionKey;
         if (data && typeof data === "object") {
           const record = data as { role?: unknown; accountStatus?: unknown; status?: unknown; suspensionReason?: unknown; suspendedReason?: unknown };
           const rawRole = record.role;
           const resolved: MemberRole =
             rawRole === "ADMIN" || rawRole === "ROLE_ADMIN" ? "ADMIN" : "MEMBER";
-          setVerifiedRole({ key: sessionKey, role: resolved });
+          setVerifiedRole(prev =>
+            prev?.key === sessionKey && prev.role === resolved
+              ? prev
+              : { key: sessionKey, role: resolved },
+          );
           const nextHint: HeaderAuthHint = { loggedIn: true, role: resolved };
           writeHeaderAuthHint(nextHint);
-          memberCtx.session.setRole(resolved, memberId, generation);
+          memberSession.setRole(resolved, memberId, generation);
           const rawAccountStatus = typeof record.accountStatus === "string" ? record.accountStatus : typeof record.status === "string" ? record.status : undefined;
           if (rawAccountStatus) {
             const rawReason = typeof record.suspensionReason === "string" ? record.suspensionReason : typeof record.suspendedReason === "string" ? record.suspendedReason : null;
-            memberCtx.session.setAccountStatus(rawAccountStatus, rawReason, memberId, generation);
+            memberSession.setAccountStatus(rawAccountStatus, rawReason, memberId, generation);
           }
         }
       })
@@ -1095,7 +1109,7 @@ export function V1Header({
         // Ignore unverified role lookup errors in header
       });
     return () => controller.abort();
-  }, [phase, memberCtx, role, sessionKey]);
+  }, [phase, memberSession, memberId, generation, role, sessionKey]);
 
   const verifiedSessionRole =
     sessionKey !== null && verifiedRole?.key === sessionKey
