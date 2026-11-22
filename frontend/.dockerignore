@@ -1,0 +1,12 @@
+node_modules
+.next
+.test-build
+.git
+.gitignore
+.env
+.env.*
+coverage
+tests
+*.log
+README.md
+AGENTS.md
