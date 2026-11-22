@@ -50,5 +50,9 @@ trading:
 marketdata:
   clock:
     skew-check-enabled: true
+  overview:
+    interval-ms: ${MARKET_OVERVIEW_INTERVAL_MS:30000}
+  order-book:
+    local-direct: ${MARKET_ORDER_BOOK_LOCAL_DIRECT:true}
   websocket:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS}

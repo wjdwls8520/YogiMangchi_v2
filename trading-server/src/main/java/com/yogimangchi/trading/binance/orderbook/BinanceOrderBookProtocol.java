@@ -13,16 +13,37 @@ import java.util.stream.Collectors;
 
 public final class BinanceOrderBookProtocol {
     private final Map<String, BinanceSubscriptionTarget> targets;
+    private final Map<String, Long> streamNameToSymbolId;
     private final ObjectMapper mapper;
 
     public BinanceOrderBookProtocol(List<BinanceSubscriptionTarget> targets, ObjectMapper mapper) {
         if (targets.isEmpty() || targets.size() > 128) throw new IllegalArgumentException("Invalid subscription size");
         this.targets = targets.stream().collect(Collectors.toUnmodifiableMap(BinanceSubscriptionTarget::providerSymbol, Function.identity()));
         if (this.targets.keySet().stream().anyMatch(symbol -> !symbol.matches("[A-Z0-9]{1,40}"))) throw new IllegalArgumentException("Invalid provider symbol");
+        this.streamNameToSymbolId = targets.stream().collect(Collectors.toUnmodifiableMap(
+                target -> streamName(target.providerSymbol()), BinanceSubscriptionTarget::tradingSymbolId));
         this.mapper = mapper;
     }
 
     public static String streamName(String symbol) { return symbol.toLowerCase(Locale.ROOT) + "@depth20@500ms"; }
+
+    /**
+     * Lightweight target symbol lookup directly from Binance's combined-stream envelope
+     * without Jackson tree parsing or BigDecimal allocation.
+     */
+    public OptionalLong resolveTargetSymbolId(String message) {
+        if (message == null || message.isEmpty() || message.length() > 65_536) return OptionalLong.empty();
+        int keyIdx = message.indexOf("\"stream\"");
+        if (keyIdx < 0 || keyIdx > 128) return OptionalLong.empty();
+        int colonIdx = message.indexOf(':', keyIdx + 8);
+        if (colonIdx < 0) return OptionalLong.empty();
+        int startQuote = message.indexOf('"', colonIdx + 1);
+        if (startQuote < 0) return OptionalLong.empty();
+        int endQuote = message.indexOf('"', startQuote + 1);
+        if (endQuote < 0 || endQuote - startQuote > 80) return OptionalLong.empty();
+        Long symbolId = streamNameToSymbolId.get(message.substring(startQuote + 1, endQuote));
+        return symbolId != null ? OptionalLong.of(symbolId) : OptionalLong.empty();
+    }
     public URI uri() {
         return URI.create("wss://fstream.binance.com/public/stream?streams="
                 + targets.keySet().stream().sorted().map(BinanceOrderBookProtocol::streamName).collect(Collectors.joining("/")));

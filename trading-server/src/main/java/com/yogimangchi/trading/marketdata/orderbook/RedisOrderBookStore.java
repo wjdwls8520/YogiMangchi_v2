@@ -7,9 +7,13 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.LongFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -41,10 +45,13 @@ public class RedisOrderBookStore implements AutoCloseable {
             """, Long.class);
     private final StringRedisTemplate redis;
     private final ObjectMapper mapper;
+    private final boolean localDirect;
     private final RedisMessageListenerContainer subscriber = new RedisMessageListenerContainer();
     private final ArrayBlockingQueue<OrderBookSnapshot> pending = new ArrayBlockingQueue<>(128);
     private final CopyOnWriteArrayList<Consumer<OrderBookSnapshot>> listeners = new CopyOnWriteArrayList<>();
     private final Map<Long, OrderBookSnapshot> delivered = new LinkedHashMap<>();
+    private final ConcurrentHashMap<Long, OrderBookSnapshot> localSnapshots = new ConcurrentHashMap<>();
+    private volatile LongFunction<Optional<OrderBookSnapshot>> lazyResolver;
     private final ScheduledExecutorService publisher = Executors.newSingleThreadScheduledExecutor(task -> daemon(task, "orderbook-redis"));
     private final ThreadPoolExecutor delivery = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(128), task -> daemon(task, "orderbook-fanout"), new ThreadPoolExecutor.DiscardOldestPolicy());
@@ -52,18 +59,33 @@ public class RedisOrderBookStore implements AutoCloseable {
     private long retryAfter;
 
     public RedisOrderBookStore(RedisConnectionFactory connections, ObjectMapper mapper) {
-        redis = new StringRedisTemplate(connections); this.mapper = mapper;
-        subscriber.setConnectionFactory(connections);
-        subscriber.setTaskExecutor(delivery);
-        subscriber.setRecoveryInterval(5000);
-        subscriber.setMaxSubscriptionRegistrationWaitingTime(1000);
-        subscriber.setErrorHandler(error -> log.debug("[Order book] subscriber unavailable: {}", error.getClass().getSimpleName()));
-        subscriber.addMessageListener((message, pattern) -> receive(new String(message.getBody(), StandardCharsets.UTF_8)), new ChannelTopic(CHANNEL));
+        this(connections, mapper, false);
+    }
+
+    @Autowired
+    public RedisOrderBookStore(
+            RedisConnectionFactory connections,
+            ObjectMapper mapper,
+            @Value("${marketdata.order-book.local-direct:true}") boolean localDirect) {
+        this.localDirect = localDirect;
+        this.mapper = mapper;
+        this.redis = new StringRedisTemplate(connections);
+        if (!localDirect) {
+            subscriber.setConnectionFactory(connections);
+            subscriber.setTaskExecutor(delivery);
+            subscriber.setRecoveryInterval(5000);
+            subscriber.setMaxSubscriptionRegistrationWaitingTime(1000);
+            subscriber.setErrorHandler(error -> log.debug("[Order book] subscriber unavailable: {}", error.getClass().getSimpleName()));
+            subscriber.addMessageListener((message, pattern) -> receive(new String(message.getBody(), StandardCharsets.UTF_8)), new ChannelTopic(CHANNEL));
+        }
     }
     public static String snapshotKey(long id) { return "trading:market:v1:orderbook:" + id; }
     public static String watermarkKey(long id) { return "trading:market:v1:orderbook-watermark:" + id; }
+    public boolean isLocalDirect() { return localDirect; }
+    public void setLazyResolver(LongFunction<Optional<OrderBookSnapshot>> lazyResolver) { this.lazyResolver = lazyResolver; }
 
     @PostConstruct public void start() {
+        if (localDirect) return;
         subscriber.afterPropertiesSet();
         publisher.scheduleWithFixedDelay(this::pump, 0, 50, TimeUnit.MILLISECONDS);
     }
@@ -71,11 +93,46 @@ public class RedisOrderBookStore implements AutoCloseable {
         listeners.add(listener); return () -> listeners.remove(listener);
     }
     public void accept(OrderBookSnapshot book) {
-        if (closed || !book.isFreshAt(Instant.now())) return;
+        if (closed || book == null || !book.isFreshAt(Instant.now())) return;
+        if (localDirect) {
+            var accepted = new AtomicBoolean();
+            localSnapshots.compute(book.tradingSymbolId(), (k, previous) -> {
+                if (book.newerThan(previous)) {
+                    accepted.set(true);
+                    return book;
+                }
+                return previous;
+            });
+            if (accepted.get()) {
+                try {
+                    delivery.execute(() -> dispatchLocal(book));
+                } catch (RejectedExecutionException ignored) { }
+            }
+            return;
+        }
         if (!pending.offer(book)) { pending.poll(); pending.offer(book); }
     }
     public Map<Long, OrderBookSnapshot> read(Set<Long> ids) {
         if (ids.isEmpty() || ids.size() > 32) return Map.of();
+        if (localDirect) {
+            Instant now = Instant.now();
+            var result = new HashMap<Long, OrderBookSnapshot>();
+            LongFunction<Optional<OrderBookSnapshot>> resolver = this.lazyResolver;
+            for (Long id : ids) {
+                OrderBookSnapshot book = localSnapshots.get(id);
+                if ((book == null || !book.isFreshAt(now)) && resolver != null) {
+                    Optional<OrderBookSnapshot> resolved = resolver.apply(id);
+                    if (resolved != null && resolved.isPresent() && resolved.get().isFreshAt(now)) {
+                        OrderBookSnapshot fresh = resolved.get();
+                        book = localSnapshots.merge(id, fresh, (prev, incoming) -> incoming.newerThan(prev) ? incoming : prev);
+                    }
+                }
+                if (book != null && book.isFreshAt(now)) {
+                    result.put(id, book);
+                }
+            }
+            return Map.copyOf(result);
+        }
         try {
             List<Long> ordered = ids.stream().sorted().toList();
             List<String> values = redis.opsForValue().multiGet(ordered.stream().map(RedisOrderBookStore::snapshotKey).toList());
@@ -89,6 +146,12 @@ public class RedisOrderBookStore implements AutoCloseable {
             }
             return Map.copyOf(result);
         } catch (RuntimeException failure) { return Map.of(); }
+    }
+    private void dispatchLocal(OrderBookSnapshot book) {
+        if (closed || !book.isFreshAt(Instant.now())) return;
+        for (var listener : listeners) {
+            try { listener.accept(book); } catch (RuntimeException failure) { log.debug("[Order book] listener failed"); }
+        }
     }
     private void pump() {
         if (closed || System.nanoTime() < retryAfter) return;
@@ -123,8 +186,8 @@ public class RedisOrderBookStore implements AutoCloseable {
     }
     private static Thread daemon(Runnable task, String name) { var thread = new Thread(task, name); thread.setDaemon(true); return thread; }
     @PreDestroy @Override public void close() {
-        closed = true; pending.clear(); listeners.clear(); publisher.shutdownNow();
-        try { subscriber.destroy(); }
+        closed = true; pending.clear(); listeners.clear(); localSnapshots.clear(); publisher.shutdownNow();
+        try { if (!localDirect) subscriber.destroy(); }
         catch (Exception failure) { log.debug("[Order book] subscriber shutdown failed"); }
         finally { delivery.shutdownNow(); }
     }
