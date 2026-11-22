@@ -12,6 +12,7 @@ try {
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   agentRules: false,
+  output: process.env.NEXT_OUTPUT_STANDALONE === "true" ? "standalone" : undefined,
   async headers() {
     return [{ source: "/:path*", headers: [{ key: "X-Yogimangchi-Frontend-Revision", value: revision }] }];
   },
