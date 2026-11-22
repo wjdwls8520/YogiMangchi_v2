@@ -4,13 +4,16 @@ import com.yogimangchi.content.community.CommunityS3Service;
 import com.yogimangchi.content.community.CommunityService;
 import com.yogimangchi.content.error.AuthFailure;
 import com.yogimangchi.content.notification.ContentNotificationService;
+import com.yogimangchi.content.ops.AdminAuditLogService;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -182,19 +185,29 @@ public class AdminCommunityService {
     private final JdbcTemplate jdbc;
     private final CommunityS3Service s3;
     private final ContentNotificationService notifications;
+    private final AdminAuditLogService auditLogs;
 
     public AdminCommunityService(JdbcTemplate jdbc, CommunityS3Service s3) {
-        this(jdbc, s3, null);
+        this(jdbc, s3, null, null);
+    }
+
+    public AdminCommunityService(
+            JdbcTemplate jdbc,
+            CommunityS3Service s3,
+            ContentNotificationService notifications) {
+        this(jdbc, s3, notifications, null);
     }
 
     @Autowired
     public AdminCommunityService(
             JdbcTemplate jdbc,
             CommunityS3Service s3,
-            @Autowired(required = false) ContentNotificationService notifications) {
+            @Autowired(required = false) ContentNotificationService notifications,
+            @Autowired(required = false) AdminAuditLogService auditLogs) {
         this.jdbc = jdbc;
         this.s3 = s3;
         this.notifications = notifications;
+        this.auditLogs = auditLogs;
     }
 
     @Transactional(readOnly = true, timeout = 5)
@@ -295,16 +308,13 @@ public class AdminCommunityService {
 
         PostStatusRow existing = locked.get(0);
         if ("ACTIVE".equals(existing.status()) || existing.deletedAt() == null) {
-            List<String> keys = jdbc.queryForList(
-                    "delete from content.community_post_file where post_id = ? returning s3_key",
-                    String.class,
-                    postId);
-            if (!keys.isEmpty()) {
-                s3.registerAfterCommitDelete(keys);
-            }
+            // Preserve community_post_file rows & media on soft-delete so restorePost() restores attachments intact.
+            // Permanent attachment purge runs in ContentRetentionCleanupService after 30 days.
             jdbc.update(
                     "update content.community_post set status = 'DELETED', deleted_at = coalesce(deleted_at, now()), updated_at = now() where id = ?",
                     postId);
+            recordAudit(adminId, "DELETE_POST", "COMMUNITY_POST", String.valueOf(postId),
+                    "게시글 숨김(소프트 삭제)", Map.of("postId", postId, "authorMemberId", existing.memberId()));
             log.info("[AdminAudit] action=DELETE_POST adminId={} postId={}", adminId, postId);
         }
     }
@@ -335,6 +345,8 @@ public class AdminCommunityService {
             jdbc.update(
                     "update content.community_post set status = 'ACTIVE', deleted_at = null, updated_at = now() where id = ?",
                     postId);
+            recordAudit(adminId, "RESTORE_POST", "COMMUNITY_POST", String.valueOf(postId),
+                    "삭제된 게시글 복구", Map.of("postId", postId, "authorMemberId", existing.memberId()));
             log.info("[AdminAudit] action=RESTORE_POST adminId={} postId={}", adminId, postId);
         }
     }
@@ -466,6 +478,8 @@ public class AdminCommunityService {
             jdbc.update(
                     "update content.community_post set comment_count = (select count(*) from content.community_comment where post_id = ? and status = 'ACTIVE') where id = ?",
                     existing.postId(), existing.postId());
+            recordAudit(adminId, "DELETE_REPLY", "COMMUNITY_COMMENT", String.valueOf(replyId),
+                    "댓글 숨김(소프트 삭제)", Map.of("replyId", replyId, "postId", existing.postId()));
             log.info("[AdminAudit] action=DELETE_REPLY adminId={} replyId={} postId={}", adminId, replyId, existing.postId());
         }
     }
@@ -514,6 +528,8 @@ public class AdminCommunityService {
             jdbc.update(
                     "update content.community_post set comment_count = (select count(*) from content.community_comment where post_id = ? and status = 'ACTIVE') where id = ?",
                     existing.postId(), existing.postId());
+            recordAudit(adminId, "RESTORE_REPLY", "COMMUNITY_COMMENT", String.valueOf(replyId),
+                    "삭제된 댓글 복구", Map.of("replyId", replyId, "postId", existing.postId()));
             log.info("[AdminAudit] action=RESTORE_REPLY adminId={} replyId={} postId={}", adminId, replyId, existing.postId());
         }
     }
@@ -741,6 +757,8 @@ public class AdminCommunityService {
                         reporterId, "DISMISSED", "COMMENT", targetId, row.postId(), row.content(), note);
             }
         }
+        recordAudit(adminId, "DISMISS_REPORT", "COMMUNITY_REPORT", normalizedType + ":" + targetId + ":" + reporterId,
+                "단건 신고 기각", Map.of("targetType", normalizedType, "targetId", targetId, "reporterId", reporterId, "resolutionNote", note));
         log.info("[AdminAudit] action=DISMISS_REPORT adminId={} targetType={} targetId={} reporterId={}",
                 adminId, normalizedType, targetId, reporterId);
     }
@@ -809,6 +827,10 @@ public class AdminCommunityService {
                             post.memberId(), "POST", targetId, targetId, post.title(), note);
                 }
             }
+            recordAudit(adminId, deleteTarget ? "RESOLVE_REPORT" : "DISMISS_REPORT", "COMMUNITY_POST", String.valueOf(targetId),
+                    "신고 게시글 처리 (" + normalizedAction + ")",
+                    Map.of("targetType", "POST", "targetId", targetId, "moderationAction", normalizedAction,
+                            "updatedReports", pendingReporters.size(), "resolutionNote", note));
             log.info("[AdminAudit] action=MODERATE_REPORTED_TARGET adminId={} targetType=POST targetId={} moderationAction={} updatedReports={}",
                     adminId, targetId, normalizedAction, pendingReporters.size());
         } else {
@@ -859,8 +881,24 @@ public class AdminCommunityService {
                             comment.memberId(), "COMMENT", targetId, comment.postId(), comment.content(), note);
                 }
             }
+            recordAudit(adminId, deleteTarget ? "RESOLVE_REPORT" : "DISMISS_REPORT", "COMMUNITY_COMMENT", String.valueOf(targetId),
+                    "신고 댓글 처리 (" + normalizedAction + ")",
+                    Map.of("targetType", "COMMENT", "targetId", targetId, "moderationAction", normalizedAction,
+                            "updatedReports", pendingReporters.size(), "resolutionNote", note));
             log.info("[AdminAudit] action=MODERATE_REPORTED_TARGET adminId={} targetType=COMMENT targetId={} moderationAction={} updatedReports={}",
                     adminId, targetId, normalizedAction, pendingReporters.size());
+        }
+    }
+
+    private void recordAudit(
+            Long adminId,
+            String action,
+            String targetType,
+            String targetId,
+            String summary,
+            Map<String, Object> detail) {
+        if (auditLogs != null) {
+            auditLogs.record(adminId, action, targetType, targetId, summary, detail);
         }
     }
 

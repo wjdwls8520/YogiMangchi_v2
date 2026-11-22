@@ -32,12 +32,19 @@ public class Member {
     }
     public Long getId() { return id; }
     public void beginWithdrawal() {
-        if(status==Status.ACTIVE) status=Status.WITHDRAWING;
+        if(status==Status.ACTIVE || status==Status.SUSPENDED) status=Status.WITHDRAWING;
     }
     public void suspend(Instant now,String reason) {
         if(status!=Status.ACTIVE && status!=Status.SUSPENDED)
             throw new IllegalStateException("Only ACTIVE or SUSPENDED members can be suspended");
         this.status=Status.SUSPENDED;
+        this.suspendedAt=java.util.Objects.requireNonNull(now);
+        this.suspendedReason=reason;
+    }
+    public void ban(Instant now,String reason) {
+        if(status==Status.WITHDRAWN)
+            throw new IllegalStateException("Withdrawn members cannot be banned");
+        this.status=Status.BANNED;
         this.suspendedAt=java.util.Objects.requireNonNull(now);
         this.suspendedReason=reason;
     }

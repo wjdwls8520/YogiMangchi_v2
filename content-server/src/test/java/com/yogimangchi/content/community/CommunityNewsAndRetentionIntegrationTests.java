@@ -362,8 +362,10 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("FILE_VIDEO_NOT_ALLOWED"));
 
+        byte[] oversizedGifBytes = new byte[3 * 1024 * 1024 + 1024];
+        System.arraycopy(new byte[]{'G', 'I', 'F', '8', '9', 'a'}, 0, oversizedGifBytes, 0, 6);
         var oversizedGifFile = new MockMultipartFile(
-                "files", "huge-anim.gif", "image/gif", new byte[3 * 1024 * 1024 + 1024]);
+                "files", "huge-anim.gif", "image/gif", oversizedGifBytes);
         mvc.perform(multipart("/api/v1/community/posts")
                         .file(oversizedGifFile)
                         .param("category", "POSITION")
@@ -373,8 +375,10 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("GIF_FILE_TOO_LARGE"));
 
+        byte[] oversizedPngBytes = new byte[5 * 1024 * 1024 + 1024];
+        System.arraycopy(new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, 0, oversizedPngBytes, 0, 8);
         var oversizedPngFile = new MockMultipartFile(
-                "files", "huge-chart.png", "image/png", new byte[5 * 1024 * 1024 + 1024]);
+                "files", "huge-chart.png", "image/png", oversizedPngBytes);
         mvc.perform(multipart("/api/v1/community/posts")
                         .file(oversizedPngFile)
                         .param("category", "POSITION")
@@ -384,7 +388,9 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("IMAGE_FILE_TOO_LARGE"));
 
-        var smallGifFile = new MockMultipartFile("files", "crash-meme.gif", "image/gif", new byte[1024]);
+        byte[] smallGifBytes = new byte[1024];
+        System.arraycopy(new byte[]{'G', 'I', 'F', '8', '9', 'a'}, 0, smallGifBytes, 0, 6);
+        var smallGifFile = new MockMultipartFile("files", "crash-meme.gif", "image/gif", smallGifBytes);
         var gifCreatedBody = mvc.perform(multipart("/api/v1/community/posts")
                         .file(smallGifFile)
                         .param("category", "FREE")
@@ -405,14 +411,17 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         assertThat(gifFileKey).startsWith("community/post/").endsWith(".gif");
         assertThat(s3.isSimulatedKeyPresent(gifFileKey)).isTrue();
 
+        // Soft-deleting a post preserves its attachments for 30 days so admin restorePost() keeps images intact
         mvc.perform(delete("/api/v1/community/posts/" + gifPostId)
                         .header("Authorization", authorBearer))
                 .andExpect(status().isNoContent());
-        assertThat(s3.isSimulatedKeyPresent(gifFileKey)).isFalse();
+        assertThat(s3.isSimulatedKeyPresent(gifFileKey)).isTrue();
 
         // 4. Create multipart post with 2 images and a shared position snapshot
-        var img1 = new MockMultipartFile("files", "chart-1.png", "image/png", new byte[]{10, 20, 30, 40});
-        var img2 = new MockMultipartFile("files", "chart-2.jpg", "image/jpeg", new byte[]{50, 60, 70, 80, 90});
+        var img1 = new MockMultipartFile("files", "chart-1.png", "image/png",
+                new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2});
+        var img2 = new MockMultipartFile("files", "chart-2.jpg", "image/jpeg",
+                new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 1, 2});
         String sharedPosJson = json.writeValueAsString(new CommunityService.SharedPositionSnapshot(
                 "pos-btc-long-1",
                 "비트코인 무기한",
@@ -460,7 +469,8 @@ class CommunityNewsAndRetentionIntegrationTests extends TestEnvironment {
         assertThat(s3.isSimulatedKeyPresent(firstFileKey)).isTrue();
 
         // 5. Update multipart post: delete first image and attach a new WebP image
-        var img3 = new MockMultipartFile("files", "updated-chart.webp", "image/webp", new byte[]{1, 3, 5, 7, 9});
+        var img3 = new MockMultipartFile("files", "updated-chart.webp", "image/webp",
+                new byte[]{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 1, 2});
         mvc.perform(multipart(org.springframework.http.HttpMethod.PATCH, "/api/v1/community/posts/" + postId)
                         .file(img3)
                         .param("title", "BTC 25배 롱 포지션 수익 인증 (차트 교체)")

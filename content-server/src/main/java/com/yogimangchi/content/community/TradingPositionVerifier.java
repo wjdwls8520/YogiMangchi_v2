@@ -2,6 +2,7 @@ package com.yogimangchi.content.community;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yogimangchi.content.ops.RequestIdMdcFilter;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
@@ -126,6 +127,7 @@ public class TradingPositionVerifier {
                 .timeout(requestTimeout)
                 .header("Authorization", "Bearer " + bearerToken)
                 .header("Accept", "application/json")
+                .header(RequestIdMdcFilter.HEADER_NAME, RequestIdMdcFilter.currentOrGenerate())
                 .GET()
                 .build();
         HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
@@ -232,6 +234,7 @@ public class TradingPositionVerifier {
             HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + "/api/v1/symbols"))
                     .timeout(Duration.ofMillis(Math.min(800L, requestTimeout.toMillis())))
                     .header("Accept", "application/json")
+                    .header(RequestIdMdcFilter.HEADER_NAME, RequestIdMdcFilter.currentOrGenerate())
                     .GET()
                     .build();
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());

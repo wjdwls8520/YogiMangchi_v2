@@ -36,6 +36,11 @@ class ProdSecurityIntegrationTests extends TestEnvironment {
         mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isUnauthorized());
         assertThat(env.getProperty("content.s3.enabled", Boolean.class)).isFalse();
         assertThat(env.getProperty("content.s3.public-base-url", "")).doesNotContain("localhost");
+        assertThat(env.getProperty("server.forward-headers-strategy", "")).isEqualTo("native");
+        assertThat(env.getProperty("server.tomcat.remoteip.internal-proxies", "")).isNotBlank();
+        assertThat(env.getProperty("spring.datasource.hikari.maximum-pool-size", Integer.class)).isEqualTo(10);
+        assertThat(env.getProperty("spring.datasource.hikari.minimum-idle", Integer.class)).isEqualTo(2);
+        assertThat(env.getProperty("spring.datasource.hikari.leak-detection-threshold", Long.class)).isEqualTo(10000L);
         assertThat(s3.isRealS3Configured()).isFalse();
         assertThat(s3.sanitizePostFileUrl("https://example-bucket.s3.ap-northeast-2.amazonaws.com/legacy.png"))
                 .doesNotContain("localhost");

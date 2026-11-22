@@ -1,8 +1,11 @@
 package com.yogimangchi.content.news;
 
+import com.yogimangchi.content.auth.security.ContentEndpointRateLimiter;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Objects;
+import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -21,12 +24,24 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RestController
 @RequestMapping(value = "/api/v1/news", produces = "application/json")
 public class NewsController {
+    private static final Pattern SAFE_ANON_VIEWER_ID = Pattern.compile("^[A-Za-z0-9_-]{8,64}$");
+
     private final NewsService news;
     private final NewsSseService sse;
+    private final ContentEndpointRateLimiter rateLimiter;
 
     public NewsController(NewsService news, NewsSseService sse) {
+        this(news, sse, null);
+    }
+
+    @Autowired
+    public NewsController(
+            NewsService news,
+            NewsSseService sse,
+            @Autowired(required = false) ContentEndpointRateLimiter rateLimiter) {
         this.news = news;
         this.sse = sse;
+        this.rateLimiter = rateLimiter;
     }
 
     @GetMapping
@@ -65,16 +80,28 @@ public class NewsController {
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(
             summary = "Subscribe to real-time news SSE stream",
-            description = "Public SSE stream emitting CONNECTED, NEWS_CREATED, and NEWS_REACTION_UPDATED events."
+            description = "Public SSE stream emitting CONNECTED, NEWS_CREATED, and NEWS_REACTION_UPDATED events. Max 5 concurrent connections per IP."
     )
-    public SseEmitter stream() {
-        return sse.subscribe();
+    public SseEmitter stream(HttpServletRequest request) {
+        Runnable release = rateLimiter != null ? rateLimiter.acquireSseSlot(clientIp(request)) : null;
+        try {
+            SseEmitter emitter = sse.subscribe();
+            if (rateLimiter != null && release != null) {
+                rateLimiter.bindSseRelease(emitter, release);
+            }
+            return emitter;
+        } catch (RuntimeException ex) {
+            if (release != null) {
+                release.run();
+            }
+            throw ex;
+        }
     }
 
     @GetMapping("/{newsId:[0-9]+}")
     @Operation(
             summary = "Read a single news article",
-            description = "Public. Idempotently increments viewCount (once per member account when authenticated, or once per KST day per anonymous viewer key/IP+UA when unauthenticated) unless countView=false. Includes userReaction."
+            description = "Public. Idempotently increments viewCount (once per member account when authenticated, or once per KST day per sanitized X-Anon-Viewer-Id or IP+UA when unauthenticated) unless countView=false. Includes userReaction."
     )
     public ResponseEntity<NewsService.NewsItemResponse> get(
             @PathVariable Long newsId,
@@ -102,6 +129,9 @@ public class NewsController {
             @RequestParam(required = false) String viewerKey,
             @RequestHeader(value = "X-Anon-Viewer-Id", required = false) String anonViewerHeader,
             HttpServletRequest request) {
+        if (rateLimiter != null) {
+            rateLimiter.checkNewsInteraction(clientIp(request));
+        }
         Long memberId = viewerMemberId(jwt);
         String anonViewerKey = resolveAnonViewerKey(anonViewerHeader, viewerKey, request);
         String actorKey = resolveReactionActorKey(jwt, request);
@@ -121,6 +151,9 @@ public class NewsController {
             @RequestParam(required = false) String reaction,
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest request) {
+        if (rateLimiter != null) {
+            rateLimiter.checkNewsInteraction(clientIp(request));
+        }
         String effective = (body != null && body.reaction() != null && !body.reaction().isBlank())
                 ? body.reaction()
                 : reaction;
@@ -151,18 +184,17 @@ public class NewsController {
         return "anon:" + NewsService.sha256Hex(ip + "|" + ua);
     }
 
-    private static String resolveAnonViewerKey(
+    static String resolveAnonViewerKey(
             String anonViewerHeader,
             String viewerKey,
             HttpServletRequest request) {
-        String candidate = null;
-        if (anonViewerHeader != null && !anonViewerHeader.isBlank()) {
-            candidate = anonViewerHeader.strip();
-        } else if (viewerKey != null && !viewerKey.isBlank()) {
-            candidate = viewerKey.strip();
+        String sanitizedHeader = sanitizeAnonViewerId(anonViewerHeader);
+        if (sanitizedHeader != null) {
+            return "hdr:" + sanitizedHeader;
         }
-        if (candidate != null && !candidate.isEmpty()) {
-            return candidate.length() > 128 ? candidate.substring(0, 128) : candidate;
+        String sanitizedParam = sanitizeAnonViewerId(viewerKey);
+        if (sanitizedParam != null) {
+            return "hdr:" + sanitizedParam;
         }
         if (request == null) {
             return "anonymous-default";
@@ -172,8 +204,16 @@ public class NewsController {
         return ip + "|" + ua;
     }
 
+    private static String sanitizeAnonViewerId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String trimmed = raw.strip();
+        return SAFE_ANON_VIEWER_ID.matcher(trimmed).matches() ? trimmed : null;
+    }
+
     private static String clientIp(HttpServletRequest request) {
-        // Rely strictly on servlet remoteAddr (resolved by Spring's trusted forward-headers-strategy in prod).
+        // Rely strictly on servlet remoteAddr (resolved by Spring's trusted native forward-headers-strategy in prod).
         // Never trust raw client-supplied X-Forwarded-For headers directly.
         if (request == null) {
             return "0.0.0.0";

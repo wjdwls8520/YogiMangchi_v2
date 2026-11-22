@@ -89,15 +89,17 @@ class LifecycleSecurityModerationAndOpsIntegrationTests extends TestEnvironment 
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("MEMBER_SUSPENDED"));
 
-        // Refresh sessions were revoked and OAuth flow/login are blocked with 403 MEMBER_SUSPENDED
+        // Refresh sessions were revoked, while OAuth flow allows suspended member to authenticate into a restricted appeal session
         assertThat(jdbc.queryForObject(
                 "select count(*) from content.refresh_session where member_id = ? and status = 'ACTIVE'",
                 Long.class, targetId)).isZero();
         var proofSession = new MockHttpSession();
         proofSession.setAttribute(VerifiedIdentity.SESSION_KEY, targetProof);
         mvc.perform(get("/api/v1/auth/flow").session(proofSession))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("MEMBER_SUSPENDED"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("LOGIN_READY"))
+                .andExpect(jsonPath("$.accountStatus").value("SUSPENDED"))
+                .andExpect(jsonPath("$.suspensionReason").value("반복 스팸 도배 위반"));
 
         // Unsuspend restores ACTIVE
         mvc.perform(post("/api/v1/admin/members/" + targetId + "/unsuspend")
@@ -207,10 +209,14 @@ class LifecycleSecurityModerationAndOpsIntegrationTests extends TestEnvironment 
         var post2 = community.createPost(author.access().memberId(), new CommunityService.CreatePostRequest("MARKET", "SOL", "신고제재테스트글", "본문2"));
         assertThat(post1.viewCount()).isZero();
 
-        mvc.perform(get("/api/v1/community/posts/" + post1.id()))
+        // Same daily anonymous viewer reloads do NOT inflate viewCount; distinct viewers increment cleanly
+        mvc.perform(get("/api/v1/community/posts/" + post1.id()).header("X-Anon-Viewer-Id", "anon_viewer_001"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.viewCount").value(1));
-        mvc.perform(get("/api/v1/community/posts/" + post1.id()))
+        mvc.perform(get("/api/v1/community/posts/" + post1.id()).header("X-Anon-Viewer-Id", "anon_viewer_001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.viewCount").value(1));
+        mvc.perform(get("/api/v1/community/posts/" + post1.id()).header("X-Anon-Viewer-Id", "anon_viewer_002"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.viewCount").value(2));
 
@@ -223,7 +229,7 @@ class LifecycleSecurityModerationAndOpsIntegrationTests extends TestEnvironment 
         mvc.perform(post("/api/v1/admin/community/posts/" + post1.id() + "/restore")
                         .header("Authorization", adminBearer))
                 .andExpect(status().isNoContent());
-        mvc.perform(get("/api/v1/community/posts/" + post1.id()))
+        mvc.perform(get("/api/v1/community/posts/" + post1.id()).header("Authorization", reporterBearer))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.viewCount").value(3));
 
