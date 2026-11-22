@@ -20,11 +20,13 @@ RUN ./gradlew bootJar --no-daemon -x test \
 
 FROM eclipse-temurin:17-jre-alpine AS runtime
 
-RUN apk add --no-cache curl \
+RUN apk add --no-cache curl tzdata \
     && addgroup -S app \
     && adduser -S app -G app \
     && mkdir -p /app /var/log/yogimangchi \
     && chown -R app:app /app /var/log/yogimangchi
+
+ENV TZ=Asia/Seoul
 
 WORKDIR /app
 
