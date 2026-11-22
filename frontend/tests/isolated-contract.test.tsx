@@ -214,7 +214,8 @@ test("OrderSnapshotDetail fetches account/orders/{orderId} and renders refreshed
     assert.doesNotMatch(amendDialog.split(">")[0], /\sopen(?:=|\s|$)/);
     assert.match(amendDialog, /aria-modal="true"/);
     assert.match(amendDialog, />주문 수정</);
-    assert.match(amendDialog, />닫기</);
+    assert.match(amendDialog, /aria-label="닫기"/);
+    assert.match(amendDialog, />취소<\/button><button type="submit" class="ym-modal-btn-confirm">주문 수정<\/button>/);
     const pendingOutsideDialog = pendingHtml.replace(/<dialog\b[\s\S]*?<\/dialog>/g, "");
     assert.doesNotMatch(pendingOutsideDialog, /<form|<input/, "no inline inputs inside table row to prevent double-click cancel hazards");
     assert.match(pendingOutsideDialog, /aria-haspopup="dialog"/);

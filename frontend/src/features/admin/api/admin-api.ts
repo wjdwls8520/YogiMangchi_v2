@@ -47,8 +47,65 @@ export interface AdminMembersPageResponse {
   totalCount: number;
   activeCount: number;
   suspendedCount: number;
+  bannedCount: number;
   withdrawnCount: number;
   content: AdminMemberDto[];
+  nextCursorId: number | null;
+  hasNext: boolean;
+}
+
+export interface AdminBannedOAuthIdentityDto {
+  id: number;
+  provider: string;
+  providerSubjectHash: string;
+  originalMemberId: number | null;
+  reason: string | null;
+  bannedByAdminId: number | null;
+  bannedByAdminNickname: string | null;
+  bannedAt: string | null;
+}
+
+export interface AdminBannedOAuthPageResponse {
+  totalCount: number;
+  page: number;
+  size: number;
+  items: AdminBannedOAuthIdentityDto[];
+  nextCursorId: number | null;
+  hasNext: boolean;
+}
+
+export interface ContentAdminAuditLogDto {
+  id: number;
+  adminMemberId: number;
+  adminNickname: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  summary: string | null;
+  detailJson: string | null;
+  requestId: string | null;
+  createdAt: string | null;
+}
+
+export interface ContentAdminAuditLogPage {
+  items: ContentAdminAuditLogDto[];
+  nextCursorId: number | null;
+  hasNext: boolean;
+}
+
+export interface TradingAdminAuditLogDto {
+  id: number;
+  adminMemberId: number;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  detail: string | null;
+  requestId: string | null;
+  createdAt: string | null;
+}
+
+export interface TradingAdminAuditLogPage {
+  items: TradingAdminAuditLogDto[];
   nextCursorId: number | null;
   hasNext: boolean;
 }
@@ -155,24 +212,115 @@ export interface OpsErrorEntry {
   uri: string | null;
   requestId: string | null;
   rootCause: string | null;
+  topAppFrame?: string | null;
+}
+
+export interface OpsAlertDispatchEntry {
+  key: string | null;
+  severity: string | null;
+  title: string | null;
+  status: string | null;
+  httpStatus: number | null;
+  dispatchedAt: string | null;
+  message: string | null;
+}
+
+export interface OpsAlertSummary {
+  configured: boolean;
+  targetType: string | null;
+  cooldownSeconds: number;
+  recentDispatches: OpsAlertDispatchEntry[];
+}
+
+export interface OpsErrorMetrics {
+  last5m5xx: number;
+  last1h5xx: number;
+  total5xx: number;
+  total429: number;
+  total409: number;
+  criticalErrors: OpsErrorEntry[];
+  recentErrors: OpsErrorEntry[];
+}
+
+export interface ContentRssSourceStatus {
+  name: string;
+  section: string | null;
+  subCategory: string | null;
+  healthy: boolean;
+  consecutiveFailures: number;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastError: string | null;
+  lastIngestedCount: number;
+}
+
+export interface ContentS3FailedTask {
+  id: number;
+  objectKey: string;
+  attemptCount: number;
+  lastError: string | null;
+  updatedAt: string | null;
+}
+
+export interface ContentOutboxStuckDetail {
+  kind: string;
+  id: number;
+  target: string;
+  attemptCount: number;
+  lastError: string | null;
+  updatedAt: string | null;
+}
+
+export interface ClientErrorEntry {
+  occurredAt: string | null;
+  route: string | null;
+  message: string;
+  digest: string | null;
+  requestId: string | null;
+  userAgent: string | null;
 }
 
 export interface ContentOpsSummary {
   generatedAt: string | null;
   db: { up: boolean; latencyMs: number };
+  dbLatencyMs: number;
+  runtime: {
+    heapUsedMb: number;
+    heapMaxMb: number;
+    heapUsagePct: number;
+    uptimeSeconds: number;
+    activeProfiles: string[];
+  } | null;
+  hikari: {
+    active: number;
+    idle: number;
+    total: number;
+    threadsAwaiting: number;
+    maxPoolSize: number;
+  } | null;
   newsIngestion: {
     live: boolean;
     collectorEnabled: boolean;
     lastCollectedAt: string | null;
     consecutiveFailures: number;
   };
+  rssSources: ContentRssSourceStatus[];
+  s3Storage: {
+    mode: string;
+    pendingCleanupCount: number;
+    failedCleanupCount: number;
+    recentFailedTasks: ContentS3FailedTask[];
+  } | null;
   outbox: {
     pendingWithdrawals: number;
     stuckWithdrawals: number;
     pendingProvisions: number;
     stuckProvisions: number;
+    pendingSuspensions: number;
+    stuckSuspensions: number;
     pendingS3Cleanup: number;
     failedS3Cleanup: number;
+    stuckDetails: ContentOutboxStuckDetail[];
   };
   openSupportInquiries: number;
   activeSse: {
@@ -180,7 +328,10 @@ export interface ContentOpsSummary {
     communitySse: number;
     notificationSse: number;
   };
+  alerts: OpsAlertSummary | null;
+  errorMetrics: OpsErrorMetrics | null;
   recentErrors: OpsErrorEntry[];
+  clientErrors: ClientErrorEntry[];
 }
 
 export interface TradingRiskHoldItem {
@@ -205,6 +356,12 @@ export interface TradingWorkerMeasurements {
   admissionDeferrals: number;
 }
 
+export interface TradingLedgerMismatchDetail {
+  accountId: number;
+  failedChecks: string[];
+  checkedAt: string | null;
+}
+
 export interface TradingOpsSummary {
   status: {
     engineStatus: string;
@@ -227,12 +384,83 @@ export interface TradingOpsSummary {
     heldCount: number;
   };
   ledgerMismatches: number;
+  ledgerMismatchDetails: TradingLedgerMismatchDetail[];
+  lastReconciliationAt: string | null;
   activeWebSockets: {
     market: number;
     trading: number;
   };
+  sse: {
+    tradingNotificationSseCount: number;
+  } | null;
+  runtime: {
+    heapUsedMb: number;
+    heapMaxMb: number;
+    heapUsagePercent: number;
+    uptimeSeconds: number;
+    activeThreads: number;
+    buildVersion: string | null;
+    buildTime: string | null;
+  } | null;
+  hikari: {
+    active: number;
+    idle: number;
+    total: number;
+    max: number;
+    pending: number;
+  } | null;
+  dbLatencyMs: number | null;
+  redis: {
+    status: string;
+    latencyMs: number | null;
+    gapSequence: number | null;
+  } | null;
+  binance: {
+    markState: string;
+    markReconnectCount: number;
+    markLastTickAgeMs: number | null;
+    markLastDisconnectReason: string | null;
+    orderBookConnected: boolean;
+    orderBookReconnectCount: number;
+    orderBookLastDisconnectReason: string | null;
+  } | null;
+  marketOverview: {
+    healthy: boolean;
+    staleGroupCount: number;
+    lastError: string | null;
+  } | null;
+  errorMetrics: OpsErrorMetrics | null;
+  alerts: OpsAlertSummary | null;
+  criticalErrors: OpsErrorEntry[];
   recentErrors: OpsErrorEntry[];
   capturedAt: string | null;
+}
+
+export interface OpsOutboxRetryResult {
+  rearmedWithdrawals: number;
+  rearmedProvisions: number;
+  rearmedSuspensions: number;
+  rearmedS3Tasks: number;
+  totalRearmed: number;
+}
+
+export interface OpsTestAlertResult {
+  enabled: boolean;
+  targetType: string | null;
+  status: string;
+  httpStatus: number | null;
+  message: string | null;
+  dispatchedAt: string | null;
+}
+
+export interface TradingReconcileNowResult {
+  checkedCount: number;
+  matchedCount: number;
+  mismatchCount: number;
+  unverifiedCount: number;
+  deferredCount: number;
+  mismatches: TradingLedgerMismatchDetail[];
+  completedAt: string | null;
 }
 
 export interface TradingHoldReleaseResult {
@@ -450,7 +678,7 @@ function parseAdminReport(raw: unknown): AdminReportDto {
 export async function fetchAdminMembers(
   token: string,
   params: {
-    status?: "ALL" | "ACTIVE" | "SUSPENDED" | "WITHDRAWN";
+    status?: "ALL" | "ACTIVE" | "SUSPENDED" | "BANNED" | "WITHDRAWN";
     role?: "ALL" | "ADMIN" | "MEMBER";
     memberId?: number | null;
     nickname?: string;
@@ -483,11 +711,123 @@ export async function fetchAdminMembers(
     totalCount: asNumber(r.totalCount),
     activeCount: asNumber(r.activeCount),
     suspendedCount: asNumber(r.suspendedCount),
+    bannedCount: asNumber(r.bannedCount),
     withdrawnCount: asNumber(r.withdrawnCount),
     content: asArray(r.content, parseAdminMember),
     nextCursorId: asNullableNumber(r.nextCursorId),
     hasNext: asBoolean(r.hasNext),
   };
+}
+
+export function parseAdminBannedOAuthPage(raw: unknown): AdminBannedOAuthPageResponse {
+  const r = asRecord(raw);
+  return {
+    totalCount: asNumber(r.totalCount),
+    page: asNumber(r.page),
+    size: asNumber(r.size, 20),
+    items: asArray(r.items, item => {
+      const row = asRecord(item);
+      return {
+        id: asNumber(row.id),
+        provider: asString(row.provider, "-"),
+        providerSubjectHash: asString(row.providerSubjectHash, "-"),
+        originalMemberId: asNullableNumber(row.originalMemberId),
+        reason: asNullableString(row.reason),
+        bannedByAdminId: asNullableNumber(row.bannedByAdminId),
+        bannedByAdminNickname: asNullableString(row.bannedByAdminNickname),
+        bannedAt: asNullableString(row.bannedAt),
+      };
+    }),
+    nextCursorId: asNullableNumber(r.nextCursorId),
+    hasNext: asBoolean(r.hasNext),
+  };
+}
+
+export async function fetchAdminBannedOAuthIdentities(
+  token: string,
+  params: {
+    provider?: "ALL" | "GOOGLE" | "KAKAO";
+    keyword?: string;
+    cursorId?: number | null;
+    size?: number;
+  } = {},
+  options?: AdminRequestOptions,
+): Promise<AdminBannedOAuthPageResponse> {
+  const search = new URLSearchParams();
+  if (params.provider && params.provider !== "ALL") search.set("provider", params.provider);
+  if (params.keyword?.trim()) search.set("keyword", params.keyword.trim());
+  if (params.cursorId != null && Number.isFinite(params.cursorId)) {
+    search.set("cursorId", String(params.cursorId));
+  }
+  search.set("size", String(params.size ?? 20));
+  const raw = await requestAdminJson(`/api/v1/admin/banned-oauth-identities?${search.toString()}`, {
+    method: "GET",
+    token,
+    ...options,
+  });
+  return parseAdminBannedOAuthPage(raw);
+}
+
+export async function unbanAdminOAuthIdentity(
+  token: string,
+  id: number,
+  options?: AdminRequestOptions,
+): Promise<void> {
+  await requestAdminJson(`/api/v1/admin/banned-oauth-identities/${id}`, {
+    method: "DELETE",
+    token,
+    ...options,
+  });
+}
+
+export function parseContentAdminAuditLogs(raw: unknown): ContentAdminAuditLogPage {
+  const r = asRecord(raw);
+  return {
+    items: asArray(r.items, item => {
+      const row = asRecord(item);
+      return {
+        id: asNumber(row.id),
+        adminMemberId: asNumber(row.adminMemberId),
+        adminNickname: asNullableString(row.adminNickname),
+        action: asString(row.action, "-"),
+        targetType: asNullableString(row.targetType),
+        targetId: asNullableString(row.targetId),
+        summary: asNullableString(row.summary),
+        detailJson: asNullableString(row.detailJson),
+        requestId: asNullableString(row.requestId),
+        createdAt: asNullableString(row.createdAt),
+      };
+    }),
+    nextCursorId: asNullableNumber(r.nextCursorId),
+    hasNext: asBoolean(r.hasNext),
+  };
+}
+
+export async function fetchContentAdminAuditLogs(
+  token: string,
+  params: {
+    cursorId?: number | null;
+    size?: number;
+    action?: string;
+    adminMemberId?: number | null;
+  } = {},
+  options?: AdminRequestOptions,
+): Promise<ContentAdminAuditLogPage> {
+  const search = new URLSearchParams();
+  if (params.cursorId != null && Number.isFinite(params.cursorId)) {
+    search.set("cursorId", String(params.cursorId));
+  }
+  search.set("size", String(params.size ?? 20));
+  if (params.action?.trim()) search.set("action", params.action.trim());
+  if (params.adminMemberId != null && Number.isFinite(params.adminMemberId)) {
+    search.set("adminMemberId", String(params.adminMemberId));
+  }
+  const raw = await requestAdminJson(`/api/v1/admin/audit-logs?${search.toString()}`, {
+    method: "GET",
+    token,
+    ...options,
+  });
+  return parseContentAdminAuditLogs(raw);
 }
 
 export async function suspendAdminMember(
@@ -770,6 +1110,43 @@ function parseOpsErrorEntry(raw: unknown): OpsErrorEntry {
     uri: asNullableString(r.uri),
     requestId: asNullableString(r.requestId),
     rootCause: asNullableString(r.rootCause),
+    topAppFrame: asNullableString(r.topAppFrame),
+  };
+}
+
+function parseOpsAlertSummary(raw: unknown): OpsAlertSummary | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = asRecord(raw);
+  return {
+    configured: asBoolean(r.configured, false),
+    targetType: asNullableString(r.targetType),
+    cooldownSeconds: asNumber(r.cooldownSeconds),
+    recentDispatches: asArray(r.recentDispatches, item => {
+      const row = asRecord(item);
+      return {
+        key: asNullableString(row.key),
+        severity: asNullableString(row.severity),
+        title: asNullableString(row.title),
+        status: asNullableString(row.status),
+        httpStatus: asNullableNumber(row.httpStatus),
+        dispatchedAt: asNullableString(row.dispatchedAt),
+        message: asNullableString(row.message),
+      };
+    }),
+  };
+}
+
+function parseOpsErrorMetrics(raw: unknown): OpsErrorMetrics | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = asRecord(raw);
+  return {
+    last5m5xx: asNumber(r.last5m5xx),
+    last1h5xx: asNumber(r.last1h5xx),
+    total5xx: asNumber(r.total5xx),
+    total429: asNumber(r.total429),
+    total409: asNumber(r.total409),
+    criticalErrors: asArray(r.criticalErrors, parseOpsErrorEntry),
+    recentErrors: asArray(r.recentErrors, parseOpsErrorEntry),
   };
 }
 
@@ -779,25 +1156,102 @@ export function parseContentOpsSummary(raw: unknown): ContentOpsSummary {
   const news = asRecord(r.newsIngestion);
   const outbox = asRecord(r.outbox);
   const sse = asRecord(r.activeSse);
+  const rt =
+    r.runtime && typeof r.runtime === "object" && !Array.isArray(r.runtime)
+      ? asRecord(r.runtime)
+      : null;
+  const hik =
+    r.hikari && typeof r.hikari === "object" && !Array.isArray(r.hikari)
+      ? asRecord(r.hikari)
+      : null;
+  const s3 =
+    r.s3Storage && typeof r.s3Storage === "object" && !Array.isArray(r.s3Storage)
+      ? asRecord(r.s3Storage)
+      : null;
   return {
     generatedAt: asNullableString(r.generatedAt),
     db: {
       up: asBoolean(db.up, false),
       latencyMs: asNumber(db.latencyMs),
     },
+    dbLatencyMs: asNumber(r.dbLatencyMs, asNumber(db.latencyMs)),
+    runtime: rt
+      ? {
+          heapUsedMb: asNumber(rt.heapUsedMb),
+          heapMaxMb: asNumber(rt.heapMaxMb),
+          heapUsagePct: asNumber(rt.heapUsagePct ?? rt.heapUsagePercent),
+          uptimeSeconds: asNumber(rt.uptimeSeconds),
+          activeProfiles: Array.isArray(rt.activeProfiles)
+            ? rt.activeProfiles.map(p => asString(p)).filter(Boolean)
+            : [],
+        }
+      : null,
+    hikari: hik
+      ? {
+          active: asNumber(hik.active),
+          idle: asNumber(hik.idle),
+          total: asNumber(hik.total),
+          threadsAwaiting: asNumber(hik.threadsAwaiting ?? hik.pending),
+          maxPoolSize: asNumber(hik.maxPoolSize ?? hik.max),
+        }
+      : null,
     newsIngestion: {
       live: asBoolean(news.live, false),
       collectorEnabled: asBoolean(news.collectorEnabled, false),
       lastCollectedAt: asNullableString(news.lastCollectedAt),
       consecutiveFailures: asNumber(news.consecutiveFailures),
     },
+    rssSources: asArray(r.rssSources, item => {
+      const row = asRecord(item);
+      return {
+        name: asString(row.name, "-"),
+        section: asNullableString(row.section),
+        subCategory: asNullableString(row.subCategory),
+        healthy: asBoolean(row.healthy, false),
+        consecutiveFailures: asNumber(row.consecutiveFailures),
+        lastSuccessAt: asNullableString(row.lastSuccessAt),
+        lastFailureAt: asNullableString(row.lastFailureAt),
+        lastError: asNullableString(row.lastError),
+        lastIngestedCount: asNumber(row.lastIngestedCount),
+      };
+    }),
+    s3Storage: s3
+      ? {
+          mode: asString(s3.mode, "UNKNOWN"),
+          pendingCleanupCount: asNumber(s3.pendingCleanupCount),
+          failedCleanupCount: asNumber(s3.failedCleanupCount),
+          recentFailedTasks: asArray(s3.recentFailedTasks, item => {
+            const row = asRecord(item);
+            return {
+              id: asNumber(row.id),
+              objectKey: asString(row.objectKey, "-"),
+              attemptCount: asNumber(row.attemptCount),
+              lastError: asNullableString(row.lastError),
+              updatedAt: asNullableString(row.updatedAt),
+            };
+          }),
+        }
+      : null,
     outbox: {
       pendingWithdrawals: asNumber(outbox.pendingWithdrawals),
       stuckWithdrawals: asNumber(outbox.stuckWithdrawals),
       pendingProvisions: asNumber(outbox.pendingProvisions),
       stuckProvisions: asNumber(outbox.stuckProvisions),
+      pendingSuspensions: asNumber(outbox.pendingSuspensions),
+      stuckSuspensions: asNumber(outbox.stuckSuspensions),
       pendingS3Cleanup: asNumber(outbox.pendingS3Cleanup),
       failedS3Cleanup: asNumber(outbox.failedS3Cleanup),
+      stuckDetails: asArray(outbox.stuckDetails, item => {
+        const row = asRecord(item);
+        return {
+          kind: asString(row.kind, "OUTBOX"),
+          id: asNumber(row.id),
+          target: asString(row.target, "-"),
+          attemptCount: asNumber(row.attemptCount),
+          lastError: asNullableString(row.lastError),
+          updatedAt: asNullableString(row.updatedAt),
+        };
+      }),
     },
     openSupportInquiries: asNumber(r.openSupportInquiries),
     activeSse: {
@@ -805,7 +1259,20 @@ export function parseContentOpsSummary(raw: unknown): ContentOpsSummary {
       communitySse: asNumber(sse.communitySse),
       notificationSse: asNumber(sse.notificationSse),
     },
+    alerts: parseOpsAlertSummary(r.alerts),
+    errorMetrics: parseOpsErrorMetrics(r.errorMetrics),
     recentErrors: asArray(r.recentErrors, parseOpsErrorEntry),
+    clientErrors: asArray(r.clientErrors, item => {
+      const row = asRecord(item);
+      return {
+        occurredAt: asNullableString(row.occurredAt),
+        route: asNullableString(row.route),
+        message: asString(row.message, "-"),
+        digest: asNullableString(row.digest),
+        requestId: asNullableString(row.requestId),
+        userAgent: asNullableString(row.userAgent),
+      };
+    }),
   };
 }
 
@@ -819,6 +1286,30 @@ export function parseTradingOpsSummary(raw: unknown): TradingOpsSummary {
   const rawWm =
     r.workerMeasurements && typeof r.workerMeasurements === "object" && !Array.isArray(r.workerMeasurements)
       ? (r.workerMeasurements as Record<string, unknown>)
+      : null;
+  const rt =
+    r.runtime && typeof r.runtime === "object" && !Array.isArray(r.runtime)
+      ? asRecord(r.runtime)
+      : null;
+  const hik =
+    r.hikari && typeof r.hikari === "object" && !Array.isArray(r.hikari)
+      ? asRecord(r.hikari)
+      : null;
+  const red =
+    r.redis && typeof r.redis === "object" && !Array.isArray(r.redis)
+      ? asRecord(r.redis)
+      : null;
+  const bin =
+    r.binance && typeof r.binance === "object" && !Array.isArray(r.binance)
+      ? asRecord(r.binance)
+      : null;
+  const sseObj =
+    r.sse && typeof r.sse === "object" && !Array.isArray(r.sse)
+      ? asRecord(r.sse)
+      : null;
+  const mo =
+    r.marketOverview && typeof r.marketOverview === "object" && !Array.isArray(r.marketOverview)
+      ? asRecord(r.marketOverview)
       : null;
 
   return {
@@ -866,10 +1357,75 @@ export function parseTradingOpsSummary(raw: unknown): TradingOpsSummary {
       heldCount: asNumber(pending.heldCount),
     },
     ledgerMismatches: asNumber(r.ledgerMismatches),
+    ledgerMismatchDetails: asArray(r.ledgerMismatchDetails, item => {
+      const row = asRecord(item);
+      return {
+        accountId: asNumber(row.accountId),
+        failedChecks: Array.isArray(row.failedChecks)
+          ? row.failedChecks.map(c => asString(c)).filter(Boolean)
+          : [],
+        checkedAt: asNullableString(row.checkedAt),
+      };
+    }),
+    lastReconciliationAt: asNullableString(r.lastReconciliationAt),
     activeWebSockets: {
       market: asNumber(ws.market),
       trading: asNumber(ws.trading),
     },
+    sse: sseObj
+      ? {
+          tradingNotificationSseCount: asNumber(sseObj.tradingNotificationSseCount),
+        }
+      : null,
+    runtime: rt
+      ? {
+          heapUsedMb: asNumber(rt.heapUsedMb),
+          heapMaxMb: asNumber(rt.heapMaxMb),
+          heapUsagePercent: asNumber(rt.heapUsagePercent ?? rt.heapUsagePct),
+          uptimeSeconds: asNumber(rt.uptimeSeconds),
+          activeThreads: asNumber(rt.activeThreads),
+          buildVersion: asNullableString(rt.buildVersion),
+          buildTime: asNullableString(rt.buildTime),
+        }
+      : null,
+    hikari: hik
+      ? {
+          active: asNumber(hik.active),
+          idle: asNumber(hik.idle),
+          total: asNumber(hik.total),
+          max: asNumber(hik.max ?? hik.maxPoolSize),
+          pending: asNumber(hik.pending ?? hik.threadsAwaiting),
+        }
+      : null,
+    dbLatencyMs: asNullableNumber(r.dbLatencyMs),
+    redis: red
+      ? {
+          status: asString(red.status, "UNKNOWN"),
+          latencyMs: asNullableNumber(red.latencyMs),
+          gapSequence: asNullableNumber(red.gapSequence),
+        }
+      : null,
+    binance: bin
+      ? {
+          markState: asString(bin.markState, "UNKNOWN"),
+          markReconnectCount: asNumber(bin.markReconnectCount),
+          markLastTickAgeMs: asNullableNumber(bin.markLastTickAgeMs),
+          markLastDisconnectReason: asNullableString(bin.markLastDisconnectReason),
+          orderBookConnected: asBoolean(bin.orderBookConnected, false),
+          orderBookReconnectCount: asNumber(bin.orderBookReconnectCount),
+          orderBookLastDisconnectReason: asNullableString(bin.orderBookLastDisconnectReason),
+        }
+      : null,
+    marketOverview: mo
+      ? {
+          healthy: asBoolean(mo.healthy, false),
+          staleGroupCount: asNumber(mo.staleGroupCount),
+          lastError: asNullableString(mo.lastError),
+        }
+      : null,
+    errorMetrics: parseOpsErrorMetrics(r.errorMetrics),
+    alerts: parseOpsAlertSummary(r.alerts),
+    criticalErrors: asArray(r.criticalErrors, parseOpsErrorEntry),
     recentErrors: asArray(r.recentErrors, parseOpsErrorEntry),
     capturedAt: asNullableString(r.capturedAt),
   };
@@ -914,6 +1470,192 @@ export async function retryFailedS3Cleanup(
   });
   const r = asRecord(raw);
   return { retriedCount: asNumber(r.retriedCount) };
+}
+
+export async function retryAdminContentOutbox(
+  token: string,
+  options?: AdminRequestOptions,
+): Promise<OpsOutboxRetryResult> {
+  const raw = await requestAdminJson("/api/v1/admin/ops/outbox/retry", {
+    method: "POST",
+    token,
+    ...options,
+  });
+  const r = asRecord(raw);
+  return {
+    rearmedWithdrawals: asNumber(r.rearmedWithdrawals),
+    rearmedProvisions: asNumber(r.rearmedProvisions),
+    rearmedSuspensions: asNumber(r.rearmedSuspensions),
+    rearmedS3Tasks: asNumber(r.rearmedS3Tasks),
+    totalRearmed: asNumber(r.totalRearmed),
+  };
+}
+
+function parseTestAlertResult(raw: unknown): OpsTestAlertResult {
+  const r = asRecord(raw);
+  return {
+    enabled: asBoolean(r.enabled, false),
+    targetType: asNullableString(r.targetType),
+    status: asString(r.status, "UNKNOWN"),
+    httpStatus: asNullableNumber(r.httpStatus),
+    message: asNullableString(r.message),
+    dispatchedAt: asNullableString(r.dispatchedAt),
+  };
+}
+
+export async function sendContentTestAlert(
+  token: string,
+  options?: AdminRequestOptions,
+): Promise<OpsTestAlertResult> {
+  const raw = await requestAdminJson("/api/v1/admin/ops/test-alert", {
+    method: "POST",
+    token,
+    ...options,
+  });
+  return parseTestAlertResult(raw);
+}
+
+async function requestTradingAdminJson(
+  path: string,
+  options: {
+    method?: "GET" | "POST" | "PATCH" | "DELETE";
+    token: string;
+    body?: object;
+  } & AdminRequestOptions,
+): Promise<unknown> {
+  const base = tradingOrigin(options.origin ?? resolveTradingOrigin());
+  const transport = options.transport ?? fetch;
+  try {
+    const response = await transport(`${base}${path}`, {
+      method: options.method ?? "GET",
+      credentials: "omit",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.any([
+        AbortSignal.timeout(10_000),
+        ...(options.signal ? [options.signal] : []),
+      ]),
+      headers: {
+        Authorization: `Bearer ${options.token}`,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    if (!response.ok) {
+      let body: unknown;
+      let code: string | undefined;
+      try {
+        body = await response.json();
+        const rec = asRecord(body);
+        if (typeof rec.code === "string") code = rec.code;
+      } catch {
+        // Ignore non-JSON error body
+      }
+      throw new TradingApiError(
+        response.status,
+        undefined,
+        code,
+        undefined,
+        undefined,
+        undefined,
+        extractRequestId(body, response),
+      );
+    }
+    if (response.status === 204) return null;
+    const text = await response.text();
+    if (!text.trim()) return null;
+    return JSON.parse(text);
+  } catch (error) {
+    if (options.signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
+    if (error instanceof TradingApiError) throw error;
+    throw new TradingApiError(0);
+  }
+}
+
+export async function sendTradingTestAlert(
+  token: string,
+  options?: AdminRequestOptions,
+): Promise<OpsTestAlertResult> {
+  const raw = await requestTradingAdminJson("/api/v1/trading/admin/ops/test-alert", {
+    method: "POST",
+    token,
+    ...options,
+  });
+  return parseTestAlertResult(raw);
+}
+
+export async function reconcileTradingLedgerNow(
+  token: string,
+  body?: { accountId?: number; limit?: number },
+  options?: AdminRequestOptions,
+): Promise<TradingReconcileNowResult> {
+  const raw = await requestTradingAdminJson("/api/v1/trading/admin/ops/reconcile-now", {
+    method: "POST",
+    token,
+    body: body ?? {},
+    ...options,
+  });
+  const r = asRecord(raw);
+  return {
+    checkedCount: asNumber(r.checkedCount),
+    matchedCount: asNumber(r.matchedCount),
+    mismatchCount: asNumber(r.mismatchCount),
+    unverifiedCount: asNumber(r.unverifiedCount),
+    deferredCount: asNumber(r.deferredCount),
+    mismatches: asArray(r.mismatches, item => {
+      const row = asRecord(item);
+      return {
+        accountId: asNumber(row.accountId),
+        failedChecks: Array.isArray(row.failedChecks)
+          ? row.failedChecks.map(c => asString(c)).filter(Boolean)
+          : [],
+        checkedAt: asNullableString(row.checkedAt),
+      };
+    }),
+    completedAt: asNullableString(r.completedAt),
+  };
+}
+
+export function parseTradingAdminAuditLogs(raw: unknown): TradingAdminAuditLogPage {
+  const r = asRecord(raw);
+  return {
+    items: asArray(r.items, item => {
+      const row = asRecord(item);
+      return {
+        id: asNumber(row.id),
+        adminMemberId: asNumber(row.adminMemberId),
+        action: asString(row.action, "-"),
+        targetType: asNullableString(row.targetType),
+        targetId: asNullableString(row.targetId),
+        detail: asNullableString(row.detail),
+        requestId: asNullableString(row.requestId),
+        createdAt: asNullableString(row.createdAt),
+      };
+    }),
+    nextCursorId: asNullableNumber(r.nextCursorId),
+    hasNext: asBoolean(r.hasNext),
+  };
+}
+
+export async function fetchTradingAdminAuditLogs(
+  token: string,
+  params: { cursorId?: number | null; size?: number } = {},
+  options?: AdminRequestOptions,
+): Promise<TradingAdminAuditLogPage> {
+  const search = new URLSearchParams();
+  if (params.cursorId != null && Number.isFinite(params.cursorId)) {
+    search.set("cursorId", String(params.cursorId));
+  }
+  search.set("size", String(params.size ?? 20));
+  const raw = await requestTradingAdminJson(
+    `/api/v1/trading/admin/audit-logs?${search.toString()}`,
+    {
+      method: "GET",
+      token,
+      ...options,
+    },
+  );
+  return parseTradingAdminAuditLogs(raw);
 }
 
 export function parseAdminTradingSymbol(raw: unknown): AdminTradingSymbolDto {
@@ -1139,6 +1881,7 @@ export async function fetchAdminSupportInquiries(
   params: {
     status?: SupportInquiryFilterStatus;
     category?: string;
+    keyword?: string;
     cursorId?: number | null;
     size?: number;
   } = {},
@@ -1147,6 +1890,7 @@ export async function fetchAdminSupportInquiries(
   const search = new URLSearchParams();
   search.set("status", params.status ?? "ALL");
   if (params.category?.trim()) search.set("category", params.category.trim());
+  if (params.keyword?.trim()) search.set("keyword", params.keyword.trim());
   if (params.cursorId != null && Number.isFinite(params.cursorId)) {
     search.set("cursorId", String(params.cursorId));
   }

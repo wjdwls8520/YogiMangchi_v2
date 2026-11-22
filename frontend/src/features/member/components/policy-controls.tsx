@@ -16,9 +16,17 @@ export function PublicPolicyPage({ type }: { type: PolicyType }) {
   const policies = usePolicies();
   if (policies.isPending) {
     return (
-      <p role="status" className="member-message">
-        약관 원문을 불러오는 중입니다.
-      </p>
+      <div role="status" aria-label="약관 원문을 불러오는 중입니다." className="space-y-4">
+        <span className="sr-only">약관 원문을 불러오는 중입니다.</span>
+        <div className="h-12 w-full rounded-xl bg-gray-100" />
+        <div className="h-6 w-48 rounded-lg bg-gray-100" />
+        <div className="space-y-2.5 rounded-xl border border-gray-200 bg-[#F8F9FB] p-5">
+          <div className="h-4 w-2/3 rounded bg-gray-200/70" />
+          <div className="h-4 w-full rounded bg-gray-200/70" />
+          <div className="h-4 w-11/12 rounded bg-gray-200/70" />
+          <div className="h-4 w-3/4 rounded bg-gray-200/70" />
+        </div>
+      </div>
     );
   }
   return (

@@ -2,6 +2,7 @@ import { ContentApiError, contentOrigin } from "../api/client";
 import type { MemberSession } from "../api/session";
 import { tradingOrigin } from "../../trading/api/client";
 import { DEFAULT_TRADING_API_BASE_URL } from "../../contest/api/contest-client";
+import { extractRequestId } from "../../../lib/request-id";
 import type {
   NotificationItem,
   NotificationListTabValue,
@@ -14,6 +15,17 @@ import {
   mergeNotificationsByUid,
   normalizeRawNotification,
 } from "./notification-utils";
+
+export class NotificationApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly requestId?: string,
+    readonly code?: string,
+  ) {
+    super("알림 요청을 처리하지 못했습니다.");
+    this.name = "NotificationApiError";
+  }
+}
 
 export interface DualCursorState {
   contentCursorId: number | null;
@@ -99,10 +111,20 @@ async function tradingNotificationRequest(
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
     if (response.status === 401) {
-      throw new ContentApiError(401, "INVALID_ACCESS_TOKEN");
+      throw new ContentApiError(401, "INVALID_ACCESS_TOKEN", extractRequestId(null, response));
     }
     if (!response.ok) {
-      throw new Error(`Trading notification HTTP ${response.status}`);
+      let body: unknown = null;
+      try {
+        body = await response.json();
+      } catch {
+        body = null;
+      }
+      const code =
+        body && typeof body === "object" && typeof (body as Record<string, unknown>).code === "string"
+          ? String((body as Record<string, unknown>).code)
+          : undefined;
+      throw new NotificationApiError(response.status, extractRequestId(body, response), code);
     }
     if (response.status === 204) return null;
     const text = await response.text();
@@ -114,6 +136,7 @@ export async function fetchUnifiedNotificationStatus(
   session: MemberSession,
   options: {
     tradingBaseUrl?: string;
+    skipTrading?: boolean;
     signal?: AbortSignal;
     transport?: typeof fetch;
   } = {},
@@ -124,11 +147,13 @@ export async function fetchUnifiedNotificationStatus(
 }> {
   const [contentRes, tradingRes] = await Promise.allSettled([
     session.request("/notifications/status", { signal: options.signal }),
-    tradingNotificationRequest(session, "/status", {
-      baseUrl: options.tradingBaseUrl,
-      signal: options.signal,
-      transport: options.transport,
-    }),
+    options.skipTrading
+      ? Promise.resolve(null)
+      : tradingNotificationRequest(session, "/status", {
+          baseUrl: options.tradingBaseUrl,
+          signal: options.signal,
+          transport: options.transport,
+        }),
   ]);
 
   const content =
@@ -162,6 +187,7 @@ export async function fetchUnifiedNotifications(
     read?: boolean;
     cursors?: Partial<DualCursorState>;
     tradingBaseUrl?: string;
+    skipTrading?: boolean;
     signal?: AbortSignal;
     transport?: typeof fetch;
   } = {},
@@ -170,9 +196,10 @@ export async function fetchUnifiedNotifications(
   const size = options.size ?? 20;
 
   const shouldFetchContent =
-    (tab === "ALL" || tab === "COMMUNITY") &&
+    (tab === "ALL" || tab === "COMMUNITY" || tab === "SUPPORT") &&
     (options.cursors?.contentHasNext !== false);
   const shouldFetchTrading =
+    !options.skipTrading &&
     (tab === "ALL" || tab === "MOCK" || tab === "CONTEST") &&
     (options.cursors?.tradingHasNext !== false);
 
@@ -242,15 +269,17 @@ export async function fetchUnifiedNotifications(
 
 export async function checkUnifiedNotifications(
   session: MemberSession,
-  options: { tradingBaseUrl?: string; transport?: typeof fetch } = {},
+  options: { tradingBaseUrl?: string; skipTrading?: boolean; transport?: typeof fetch } = {},
 ): Promise<void> {
   await Promise.allSettled([
     session.request("/notifications/check", { method: "PUT" }),
-    tradingNotificationRequest(session, "/check", {
-      baseUrl: options.tradingBaseUrl,
-      method: "PUT",
-      transport: options.transport,
-    }),
+    options.skipTrading
+      ? Promise.resolve(null)
+      : tradingNotificationRequest(session, "/check", {
+          baseUrl: options.tradingBaseUrl,
+          method: "PUT",
+          transport: options.transport,
+        }),
   ]);
 }
 
@@ -282,7 +311,7 @@ export async function markSelectedUnifiedNotificationsRead(
     .filter(i => i.source === "TRADING")
     .map(i => i.notificationId);
 
-  await Promise.allSettled([
+  const results = await Promise.allSettled([
     contentIds.length > 0
       ? session.request("/notifications/read", {
           method: "PUT",
@@ -298,34 +327,44 @@ export async function markSelectedUnifiedNotificationsRead(
         })
       : Promise.resolve(null),
   ]);
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 export async function markAllUnifiedNotificationsRead(
   session: MemberSession,
-  options: { tradingBaseUrl?: string; transport?: typeof fetch } = {},
+  options: { tradingBaseUrl?: string; skipTrading?: boolean; transport?: typeof fetch } = {},
 ): Promise<void> {
-  await Promise.allSettled([
+  const results = await Promise.allSettled([
     session.request("/notifications/read-all", { method: "PUT" }),
-    tradingNotificationRequest(session, "/read-all", {
-      baseUrl: options.tradingBaseUrl,
-      method: "PUT",
-      transport: options.transport,
-    }),
+    options.skipTrading
+      ? Promise.resolve(null)
+      : tradingNotificationRequest(session, "/read-all", {
+          baseUrl: options.tradingBaseUrl,
+          method: "PUT",
+          transport: options.transport,
+        }),
   ]);
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 export async function deleteReadUnifiedNotifications(
   session: MemberSession,
-  options: { tradingBaseUrl?: string; transport?: typeof fetch } = {},
+  options: { tradingBaseUrl?: string; skipTrading?: boolean; transport?: typeof fetch } = {},
 ): Promise<void> {
-  await Promise.allSettled([
+  const results = await Promise.allSettled([
     session.request("/notifications/read", { method: "DELETE" }),
-    tradingNotificationRequest(session, "/read", {
-      baseUrl: options.tradingBaseUrl,
-      method: "DELETE",
-      transport: options.transport,
-    }),
+    options.skipTrading
+      ? Promise.resolve(null)
+      : tradingNotificationRequest(session, "/read", {
+          baseUrl: options.tradingBaseUrl,
+          method: "DELETE",
+          transport: options.transport,
+        }),
   ]);
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 export async function deleteSelectedUnifiedNotifications(
@@ -340,7 +379,7 @@ export async function deleteSelectedUnifiedNotifications(
     .filter(i => i.source === "TRADING")
     .map(i => i.notificationId);
 
-  await Promise.allSettled([
+  const results = await Promise.allSettled([
     contentIds.length > 0
       ? session.request("/notifications", {
           method: "DELETE",
@@ -356,6 +395,8 @@ export async function deleteSelectedUnifiedNotifications(
         })
       : Promise.resolve(null),
   ]);
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 export interface NotificationSseCallbacks {
@@ -454,10 +495,18 @@ export function startNotificationSseSubscription(
           },
         });
         if (res.status === 401) {
-          throw new ContentApiError(401, "INVALID_ACCESS_TOKEN");
+          throw new ContentApiError(401, "INVALID_ACCESS_TOKEN", extractRequestId(null, res));
+        }
+        if (res.status === 403) {
+          throw new NotificationApiError(403, extractRequestId(null, res), "ACCESS_DENIED");
         }
         return res;
       }, true);
+
+      if (response.status === 401 || response.status === 403) {
+        stopped = true;
+        return;
+      }
 
       if (!response.ok || !response.body) {
         scheduleReconnect();
@@ -513,7 +562,15 @@ export function startNotificationSseSubscription(
       if (!stopped) {
         scheduleReconnect();
       }
-    } catch {
+    } catch (error) {
+      const status =
+        error instanceof ContentApiError || error instanceof NotificationApiError
+          ? error.status
+          : null;
+      if (status === 401 || status === 403 || session.getSnapshot().phase !== "ready") {
+        stopped = true;
+        return;
+      }
       if (!stopped) {
         scheduleReconnect();
       }

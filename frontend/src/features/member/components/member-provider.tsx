@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Link from "next/link";
 import { ContentApiError, contentMessage, contentOrigin } from "../api/client";
 import { createMemberSession, initialMember, type MemberSession } from "../api/session";
-import { MemberRecoveryStatus } from "./member-recovery-status";
 import { MemberConsentGate } from "./member-consents";
 import { bindMemberActivity } from "../api/activity";
 import { NotificationCenterProvider } from "../notifications/notification-context";
@@ -31,7 +30,7 @@ export function MemberProvider({ children, session: provided, client: providedCl
       }
       previous = next;
     });
-    const activity = bindMemberActivity(session, document, window, window.location.pathname === "/auth/callback");
+    const activity = bindMemberActivity(session, document, window, window.location.pathname === "/auth/callback", true);
     if (typeof BroadcastChannel !== "undefined") {
       const messages = channel.current = new BroadcastChannel(`yogimangchi:member:${origin()}`);
       messages.onmessage = event => {
@@ -42,7 +41,7 @@ export function MemberProvider({ children, session: provided, client: providedCl
     }
     return () => { unsubscribe(); activity.stop(); channel.current?.close(); channel.current = null; };
   }, [session, client]);
-  return <QueryClientProvider client={client}><Context.Provider value={context}><MemberRecoveryStatus /><MemberConsentGate><NotificationCenterProvider>{children}</NotificationCenterProvider></MemberConsentGate></Context.Provider></QueryClientProvider>;
+  return <QueryClientProvider client={client}><Context.Provider value={context}><MemberConsentGate headless><NotificationCenterProvider>{children}</NotificationCenterProvider></MemberConsentGate></Context.Provider></QueryClientProvider>;
 }
 export function useMember() {
   const context = useContext(Context);
@@ -79,8 +78,12 @@ export function MemberLogout() {
   const [error, setError] = useState<string | null>(null);
   async function logout() {
     setError(null);
-    const request = session.logout(); announce("ended");
-    try { await request; } catch (error) { setError(contentMessage(error)); }
+    try {
+      await session.logout();
+      announce("ended");
+    } catch (error) {
+      setError(contentMessage(error));
+    }
   }
   return <div><button className="member-secondary" type="button" disabled={snapshot.phase === "ending"} onClick={() => void logout()}>{snapshot.phase === "ending" ? "로그아웃 중…" : "로그아웃"}</button>{error && <p className="member-message" role="alert">로그아웃 완료를 확인하지 못했습니다. {error}</p>}</div>;
 }

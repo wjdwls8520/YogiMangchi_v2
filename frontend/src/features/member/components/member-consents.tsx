@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMember } from "./member-provider";
 import { usePolicies, PolicyConsentControl } from "./policy-controls";
-import { sanitizePolicyDisplayText } from "./policy-content";
+import { PolicyMarkdownBody } from "./policy-content";
 import { acceptance, parsePolicyState, type ConsentSelection } from "../api/policies";
 import { ContentApiError, contentMessage, contentRecovery } from "../api/client";
 import { MemberErrorActions } from "./member-error-actions";
@@ -26,20 +26,22 @@ function formatAgreedAtKst(agreedAt: string | null | undefined): string {
   })} KST`;
 }
 
-function useOwnConsents() {
+function useOwnConsents(options?: { backgroundPoll?: boolean }) {
   const { session, snapshot } = useMember();
+  const isSuspended = snapshot.accountStatus === "SUSPENDED";
+  const allowPoll = options?.backgroundPoll !== false && !isSuspended;
   return useQuery({
     queryKey: ["member", "consents", snapshot.memberId, snapshot.generation],
     enabled: snapshot.phase === "ready",
     queryFn: async ({ signal }) =>
       parsePolicyState(await session.request("/members/me/consents", { signal })),
-    refetchInterval: 30_000,
+    refetchInterval: allowPoll ? 30_000 : false,
   });
 }
 
-export function MemberConsentGate({ children }: { children: ReactNode }) {
+export function MemberConsentGate({ children, headless = false }: { children: ReactNode; headless?: boolean }) {
   const { session, snapshot } = useMember();
-  const query = useOwnConsents();
+  const query = useOwnConsents({ backgroundPoll: true });
 
   useEffect(() => {
     if (snapshot.phase !== "ready" || !snapshot.memberId) return;
@@ -58,7 +60,7 @@ export function MemberConsentGate({ children }: { children: ReactNode }) {
 
   return (
     <>
-      {snapshot.phase === "ready" && (query.isError || query.data?.reconsentRequired) && (
+      {!headless && snapshot.phase === "ready" && snapshot.accountStatus !== "SUSPENDED" && (query.isError || query.data?.reconsentRequired) && (
         <aside
           className="member-consent-banner flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 bg-blue-50/90 px-6 py-2.5 text-xs font-medium text-gray-800"
           aria-label="필수 정책 동의 상태"
@@ -233,9 +235,7 @@ export function MemberConsents() {
                       {document && (
                         <details>
                           <summary>{label} 전문 보기</summary>
-                          <pre className="policy-original">
-                            {sanitizePolicyDisplayText(document.text)}
-                          </pre>
+                          <PolicyMarkdownBody text={document.text} />
                         </details>
                       )}
                     </li>

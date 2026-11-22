@@ -7,6 +7,7 @@ export type NotificationCategory =
   | "FOLLOW"
   | "REPORT"
   | "SUPPORT"
+  | "ACCOUNT"
   | (string & {});
 
 export type NotificationTradeTone =
@@ -68,7 +69,7 @@ export interface NotificationNavigationTarget {
   label: string;
 }
 
-export type NotificationListTabValue = "ALL" | "MOCK" | "CONTEST" | "COMMUNITY";
+export type NotificationListTabValue = "ALL" | "MOCK" | "CONTEST" | "COMMUNITY" | "SUPPORT";
 
 export interface NotificationToastItem {
   id: string;

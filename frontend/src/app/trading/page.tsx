@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
+import { TradingPageClient } from "@/features/trading/components/trading-page-client";
 import { TradingWorkspace } from "@/features/trading/components/trading-workspace";
 
 export const metadata: Metadata = {
@@ -9,5 +11,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 export default function TradingPage() {
-  return <TradingWorkspace />;
+  return (
+    <Suspense fallback={<TradingWorkspace />}>
+      <TradingPageClient />
+    </Suspense>
+  );
 }

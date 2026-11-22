@@ -28,6 +28,7 @@ import {
   type CommunityCategory,
   type CommunityComment,
   type CommunityPost,
+  type CommunityPostFile,
   type CommunityPostPage,
   type CommunityReportReason,
   type CommunitySort,
@@ -393,8 +394,10 @@ export function CommunityBoard({
   const { origin, session, snapshot } = useMember();
   const queryClient = useQueryClient();
 
-  const [v1Tab, setV1Tab] = useState<"all" | "best" | "latest">(initialV1Tab);
-  const [sort, setSort] = useState<CommunitySort>(initialV1Tab === "best" ? "POPULAR" : "LATEST");
+  const [v1Tab, setV1Tab] = useState<"all" | "best">(initialV1Tab === "best" ? "best" : "all");
+  const [sort, setSort] = useState<CommunitySort>(
+    initialV1Tab === "best" ? "WEEKLY_POPULAR" : "LATEST",
+  );
   const [category, setCategory] = useState<"" | CommunityCategory>(initialCategory);
   const [symbolTag, setSymbolTag] = useState<string>("");
   const [searchInput, setSearchInput] = useState("");
@@ -416,6 +419,15 @@ export function CommunityBoard({
   });
   const [editDeleteFileIds, setEditDeleteFileIds] = useState<number[]>([]);
   const [editNewImages, setEditNewImages] = useState<SelectedS3File[]>([]);
+  const [editClearSharedPosition, setEditClearSharedPosition] = useState(false);
+  const [lightboxState, setLightboxState] = useState<{
+    files: CommunityPostFile[];
+    index: number;
+  } | null>(null);
+  const autoLoadCommentPagesRef = useRef<{ hash: string; pages: number }>({
+    hash: "",
+    pages: 0,
+  });
 
 
   const [editingComment, setEditingComment] = useState<CommunityComment | null>(null);
@@ -515,11 +527,13 @@ export function CommunityBoard({
       const results: SharedPositionSnapshot[] = [];
       try {
         const portfolio = parsePublicMemberPortfolio(
-          await session.authorized(cred =>
-            tradingJson(tradingBase, `portfolios/members/${snapshot.memberId}`, {
-              token: cred.accessToken,
-              signal,
-            }),
+          await session.authorized(
+            cred =>
+              tradingJson(tradingBase, `portfolios/members/${snapshot.memberId}`, {
+                token: cred.accessToken,
+                signal,
+              }),
+            true,
           ),
         );
         if (portfolio.accountExists) {
@@ -553,8 +567,9 @@ export function CommunityBoard({
       }
 
       try {
-        const myContest = await session.authorized(cred =>
-          fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
+        const myContest = await session.authorized(
+          cred => fetchMyContestSeasons(cred.accessToken, { baseUrl: tradingBase, signal }),
+          true,
         );
         const liveSeasons = myContest.participatingSeasons.filter(
           item => item.displayStatus === "LIVE",
@@ -563,12 +578,14 @@ export function CommunityBoard({
           const symbols = parseSymbols(await marketSymbolsJson(tradingBase, signal));
           for (const season of liveSeasons) {
             try {
-              const rawSummary = (await session.authorized(cred =>
-                tradingJson(
-                  tradingBase,
-                  `contest/seasons/${season.seasonId}/account/summary`,
-                  { token: cred.accessToken, signal },
-                ),
+              const rawSummary = (await session.authorized(
+                cred =>
+                  tradingJson(
+                    tradingBase,
+                    `contest/seasons/${season.seasonId}/account/summary`,
+                    { token: cred.accessToken, signal },
+                  ),
+                true,
               )) as Record<string, unknown>;
               const accId =
                 typeof rawSummary.accountId === "number" ? rawSummary.accountId : null;
@@ -893,36 +910,6 @@ export function CommunityBoard({
         : undefined,
   });
 
-  useEffect(() => {
-    if (
-      typeof window === "undefined" ||
-      activePostId === null ||
-      !commentsQuery.data?.items?.length
-    ) {
-      return;
-    }
-    const hash = window.location.hash;
-    const match = /^#comment-(\d+)$/.exec(hash);
-    if (!match) return;
-    const commentId = Number(match[1]);
-    const targetId = `comment-${commentId}`;
-    let clearTimer: number | null = null;
-    const frame = window.requestAnimationFrame(() => {
-      const el = document.getElementById(targetId);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        setHighlightedCommentId(commentId);
-        clearTimer = window.setTimeout(() => {
-          setHighlightedCommentId(prev => (prev === commentId ? null : prev));
-        }, 3500);
-      }
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      if (clearTimer !== null) window.clearTimeout(clearTimer);
-    };
-  }, [activePostId, commentsQuery.data?.items]);
-
   const reportReasonsQuery = useQuery({
     queryKey: ["community-report-reasons", origin],
     enabled: reportTarget !== null,
@@ -940,6 +927,7 @@ export function CommunityBoard({
     setEditingPost(null);
     setEditDeleteFileIds([]);
     setEditNewImages([]);
+    setEditClearSharedPosition(false);
   }
 
   function isOwnComment(target: CommunityComment): boolean {
@@ -1088,7 +1076,10 @@ export function CommunityBoard({
         }),
       );
     },
-    onSuccess: (_updated, variables) => {
+    onSuccess: (updated, variables) => {
+      setExtraPosts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+      setPrependedPosts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+      setLatestCheckedItems(prev => prev.map(p => (p.id === updated.id ? updated : p)));
       if (variables.clearSharedPosition) {
         setSharedPositionsByPostId(prev => {
           const next = { ...prev };
@@ -1099,6 +1090,7 @@ export function CommunityBoard({
       setEditingPost(null);
       setEditDeleteFileIds([]);
       setEditNewImages([]);
+      setEditClearSharedPosition(false);
 
       showSuccessFeedback("게시글이 수정되었습니다.");
       void queryClient.invalidateQueries({ queryKey: ["community-posts", origin] });
@@ -1286,7 +1278,14 @@ export function CommunityBoard({
           },
         }),
       ),
-    onSuccess: (_data, variables) => {
+    onSuccess: (created, variables) => {
+      setExtraComments(prev => {
+        if (prev.length === 0) return prev;
+        if (prev.some(c => c.id === created.id) || serverComments.some(c => c.id === created.id)) {
+          return prev;
+        }
+        return [...prev, created];
+      });
       setReplyParentId(null);
       setReplyTargetCommentId(null);
       setReplyTargetMemberId(null);
@@ -1363,10 +1362,10 @@ export function CommunityBoard({
   }
 
   function handleV1TabChange(nextValue: string) {
-    const nextTab = (nextValue as "all" | "best" | "latest") || "all";
+    const nextTab: "all" | "best" = nextValue === "best" ? "best" : "all";
     setV1Tab(nextTab);
     if (nextTab === "best") {
-      setSort("POPULAR");
+      setSort("WEEKLY_POPULAR");
     } else {
       setSort("LATEST");
     }
@@ -1454,8 +1453,7 @@ export function CommunityBoard({
       symbolTag: rawSymbol,
       title,
       content,
-      sharedPosition: editingPost.sharedPosition,
-      clearSharedPosition: false,
+      clearSharedPosition: editClearSharedPosition,
       deleteFileIds: editDeleteFileIds,
       files: editNewImages,
     });
@@ -1579,8 +1577,10 @@ export function CommunityBoard({
     visiblePostIdsRef.current = new Set(items.map(item => item.id));
   }, [items]);
 
+  const isLiveLatestFeed = !isDetailView && sort === "LATEST" && keyword.trim().length === 0;
+
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !isLiveLatestFeed) return;
     let cancelled = false;
 
     let es: EventSource | null = null;
@@ -1753,7 +1753,7 @@ export function CommunityBoard({
       if (es) es.close();
       window.clearInterval(timer);
     };
-  }, [origin, session, snapshot, category, symbolTag]);
+  }, [origin, session, snapshot, category, symbolTag, isLiveLatestFeed]);
 
   async function handleLoadNewPosts() {
     queuedPostIdsRef.current.clear();
@@ -1876,6 +1876,68 @@ export function CommunityBoard({
     return () => observer.disconnect();
   }, [activePostId, commentsHasNext, commentsNextCursorId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || activePostId === null || comments.length === 0) {
+      return;
+    }
+    const hash = window.location.hash;
+    const match = /^#comment-(\d+)$/.exec(hash);
+    if (!match) return;
+    const commentId = Number(match[1]);
+    const found = comments.some(item => item.id === commentId);
+    if (!found) {
+      if (commentsHasNext && commentsNextCursorId !== null && !loadingMoreComments) {
+        if (autoLoadCommentPagesRef.current.hash !== hash) {
+          autoLoadCommentPagesRef.current = { hash, pages: 0 };
+        }
+        if (autoLoadCommentPagesRef.current.pages < 5) {
+          autoLoadCommentPagesRef.current.pages += 1;
+          void loadMoreCommentsRef.current();
+        }
+      }
+      return;
+    }
+    const targetId = `comment-${commentId}`;
+    let clearTimer: number | null = null;
+    const frame = window.requestAnimationFrame(() => {
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightedCommentId(commentId);
+        clearTimer = window.setTimeout(() => {
+          setHighlightedCommentId(prev => (prev === commentId ? null : prev));
+        }, 3500);
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (clearTimer !== null) window.clearTimeout(clearTimer);
+    };
+  }, [activePostId, comments, commentsHasNext, commentsNextCursorId, loadingMoreComments]);
+
+  useEffect(() => {
+    if (!lightboxState || typeof window === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setLightboxState(prev =>
+          prev && prev.files.length > 1
+            ? { ...prev, index: (prev.index - 1 + prev.files.length) % prev.files.length }
+            : prev,
+        );
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setLightboxState(prev =>
+          prev && prev.files.length > 1
+            ? { ...prev, index: (prev.index + 1) % prev.files.length }
+            : prev,
+        );
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [lightboxState]);
+
   const rootComments = comments.filter(item => item.parentCommentId === null);
   const repliesByParent = new Map<number, CommunityComment[]>();
   for (const item of comments) {
@@ -1924,7 +1986,7 @@ export function CommunityBoard({
             <p className="mt-1 text-sm font-medium text-gray-500">
               {isEditingMode
                 ? "작성한 게시글의 내용과 첨부 이미지를 수정합니다."
-                : "전체글, 주간 인기글, 최신글을 확인하고 모의투자 관점을 공유하세요."}
+                : "전체글과 주간 인기글을 확인하고 모의투자 관점을 공유하세요."}
             </p>
           </div>
           {!isEditingMode && (
@@ -1982,13 +2044,12 @@ export function CommunityBoard({
                 </Link>
               </div>
             ) : (
-              /* V1 CommunityTabs (전체글 | 주간 인기글 | 최신글) */
+              /* V1 CommunityTabs (전체글 | 주간 인기글) */
               <div className="rounded-2xl border border-gray-200 bg-white px-4 pt-2 pb-4">
                 <V1Tabs
                   tabs={[
                     { label: "전체글", value: "all" },
                     { label: "주간 인기글", value: "best" },
-                    { label: "최신글", value: "latest" },
                   ]}
                   activeTab={v1Tab}
                   onChange={handleV1TabChange}
@@ -2009,7 +2070,7 @@ export function CommunityBoard({
                           setCategory(event.currentTarget.value as "" | CommunityCategory);
                           resetFeedPagination();
                         }}
-                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF]"
                       >
                         {COMMUNITY_CATEGORIES.map(item => (
                           <option key={item.key || "ALL_CAT"} value={item.key}>
@@ -2030,7 +2091,7 @@ export function CommunityBoard({
                           setSymbolTag(event.currentTarget.value);
                           resetFeedPagination();
                         }}
-                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF]"
                       >
                         {SYMBOL_FILTER_TAGS.map(symbol => (
                           <option key={symbol || "ALL_SYM"} value={symbol}>
@@ -2048,14 +2109,15 @@ export function CommunityBoard({
                         aria-label="정렬 선택"
                         value={sort}
                         onChange={event => {
-                          const nextSort = event.currentTarget.value as "LATEST" | "POPULAR";
+                          const nextSort = event.currentTarget.value as CommunitySort;
                           setSort(nextSort);
-                          setV1Tab(nextSort === "POPULAR" ? "best" : "latest");
+                          setV1Tab(nextSort === "WEEKLY_POPULAR" || nextSort === "POPULAR" ? "best" : "all");
                           resetFeedPagination();
                         }}
-                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
+                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF]"
                       >
                         <option value="LATEST">최신글</option>
+                        <option value="WEEKLY_POPULAR">주간 인기글 (7일)</option>
                         <option value="POPULAR">인기글</option>
                       </select>
                     </label>
@@ -2067,7 +2129,7 @@ export function CommunityBoard({
                       <input
                         type="search"
                         name="keyword"
-                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-medium text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
+                        className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-medium text-gray-900 placeholder-gray-400 focus:border-[#0058FF]"
                         value={searchInput}
                         onChange={event => setSearchInput(event.currentTarget.value)}
                         placeholder="제목·본문 키워드 검색 (예: 롱, 손절, ETF)"
@@ -2092,14 +2154,41 @@ export function CommunityBoard({
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>{feedback.text}</span>
-                  {feedback.requestId && <RequestIdChip requestId={feedback.requestId} />}
+                  <div className="flex items-center gap-2">
+                    {feedback.requestId && <RequestIdChip requestId={feedback.requestId} />}
+                    <button
+                      type="button"
+                      onClick={() => setFeedback(null)}
+                      aria-label="알림 닫기"
+                      className="rounded-lg px-1.5 py-0.5 text-xs font-bold opacity-75 hover:opacity-100 cursor-pointer"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
 
             {isLoadingPosts && (
-              <div className="card rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-500" role="status">
-                커뮤니티 게시글을 불러오는 중입니다…
+              <div className="space-y-4" role="status" aria-live="polite" data-community-skeleton="true">
+                <span className="sr-only">커뮤니티 게시글을 불러오는 중입니다…</span>
+                {[1, 2, 3].map(idx => (
+                  <div
+                    key={idx}
+                    className="rounded-2xl border border-gray-200 bg-white p-5 space-y-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 animate-pulse rounded-full bg-gray-200" />
+                      <div className="space-y-1.5">
+                        <div className="h-3.5 w-28 animate-pulse rounded bg-gray-200" />
+                        <div className="h-3 w-20 animate-pulse rounded bg-gray-100" />
+                      </div>
+                    </div>
+                    <div className="h-4 w-3/4 animate-pulse rounded bg-gray-200" />
+                    <div className="h-3.5 w-full animate-pulse rounded bg-gray-100" />
+                    <div className="h-3.5 w-2/3 animate-pulse rounded bg-gray-100" />
+                  </div>
+                ))}
               </div>
             )}
 
@@ -2134,10 +2223,11 @@ export function CommunityBoard({
             <div ref={feedTopRef} className="scroll-mt-24" />
             {!isDetailView &&
               !isEditingMode &&
+              isLiveLatestFeed &&
               pendingNewPostsCount > 0 &&
               !(notifCenter && notifCenter.toasts.length > 0) && (
               <div
-                className="pointer-events-none fixed left-1/2 top-20 z-30 -translate-x-1/2"
+                className="pointer-events-none fixed left-1/2 top-20 z-[55] -translate-x-1/2"
                 role="status"
                 aria-live="polite"
               >
@@ -2214,12 +2304,13 @@ export function CommunityBoard({
                             <>
                               <button
                                 type="button"
-                                className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                                className="min-h-[40px] sm:min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
                                 onClick={() => {
                                   if (!requireReadyMember()) return;
                                   setEditingPost(post);
                                   setEditDeleteFileIds([]);
                                   setEditNewImages([]);
+                                  setEditClearSharedPosition(false);
                                   setEditingComment(null);
                                   setReplyParentId(null);
                                   setReplyTargetCommentId(null);
@@ -2231,7 +2322,7 @@ export function CommunityBoard({
                               </button>
                               <button
                                 type="button"
-                                className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-100 cursor-pointer"
+                                className="min-h-[40px] sm:min-h-0 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-100 cursor-pointer"
                                 onClick={() => {
                                   if (requireReadyMember()) {
                                     setPendingDelete({
@@ -2348,6 +2439,26 @@ export function CommunityBoard({
                             rows={3}
                           />
                         </label>
+                        {post.sharedPosition && (
+                          <div className="rounded-xl border border-gray-200 bg-white p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-xs font-bold text-gray-700">
+                                첨부된 포지션 스냅샷: {post.sharedPosition.pair} {post.sharedPosition.side}{" "}
+                                {post.sharedPosition.leverage}x ({post.sharedPosition.roePct})
+                                {editClearSharedPosition && (
+                                  <span className="ml-1.5 text-[#F6465D]">(저장 시 제거 예정)</span>
+                                )}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setEditClearSharedPosition(prev => !prev)}
+                                className="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
+                              >
+                                {editClearSharedPosition ? "제거 취소" : "첨부 포지션 제거"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         {post.files && post.files.length > 0 && (
                           <div className="space-y-1.5">
                             <span className="block text-xs font-bold text-gray-700">
@@ -2388,7 +2499,7 @@ export function CommunityBoard({
                           onChange={setEditNewImages}
                           maxFiles={Math.max(
                             0,
-                            4 - ((post.files?.length ?? 0) - editDeleteFileIds.length),
+                            10 - ((post.files?.length ?? 0) - editDeleteFileIds.length),
                           )}
                         />
                         <div className="flex items-center gap-2">
@@ -2452,20 +2563,29 @@ export function CommunityBoard({
                             aria-label="게시글 첨부 이미지"
                             data-post-files={post.id}
                           >
-                            {post.files.map(file => (
+                            {post.files.map((file, idx) => (
                               <li
                                 key={file.id}
                                 className="overflow-hidden rounded-xl border border-gray-200 bg-gray-50"
                               >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={file.url}
-                                  alt={file.originalName}
-                                  className="h-40 w-full object-cover"
-                                />
-                                <div className="truncate px-2.5 py-1.5 text-[11px] font-medium text-gray-500">
-                                  {file.originalName}
-                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setLightboxState({ files: post.files ?? [], index: idx })
+                                  }
+                                  aria-label={`${file.originalName} 크게 보기`}
+                                  className="block w-full text-left cursor-pointer hover:opacity-95"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={file.url}
+                                    alt={file.originalName}
+                                    className="h-40 w-full object-cover"
+                                  />
+                                  <div className="truncate px-2.5 py-1.5 text-[11px] font-medium text-gray-500">
+                                    {file.originalName}
+                                  </div>
+                                </button>
                               </li>
                             ))}
                           </ul>
@@ -2480,7 +2600,7 @@ export function CommunityBoard({
                         <button
                           type="button"
                           aria-disabled={!isLoggedIn}
-                          className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+                          className={`inline-flex min-h-[40px] sm:min-h-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
                             !isLoggedIn
                               ? "bg-gray-200 text-gray-400 cursor-default"
                               : post.likedByMe
@@ -2499,14 +2619,14 @@ export function CommunityBoard({
                         </button>
 
                         {isDetailView ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-1.5 text-xs font-bold text-[#0058FF]">
+                          <span className="inline-flex min-h-[40px] sm:min-h-0 items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-1.5 text-xs font-bold text-[#0058FF]">
                             <V1IconComment className="h-3.5 w-3.5" />
                             <span>댓글 {post.commentCount}</span>
                           </span>
                         ) : (
                           <Link
                             href={`/community/${v1Tab}/${post.id}`}
-                            className="inline-flex items-center gap-1.5 rounded-xl bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100"
+                            className="inline-flex min-h-[40px] sm:min-h-0 items-center gap-1.5 rounded-xl bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100"
                           >
                             <V1IconComment className="h-3.5 w-3.5" />
                             <span>댓글 {post.commentCount}</span>
@@ -3377,7 +3497,7 @@ export function CommunityBoard({
             </div>
           </aside>
         </div>
-        <div className="h-16 sm:h-0" aria-hidden="true" />
+        <div className="h-24 sm:h-4" aria-hidden="true" />
       </div>
 
       {/* V1 우측 하단 플로팅 글쓰기 버튼 (게시글 수정 화면에서는 숨김) */}
@@ -3537,6 +3657,7 @@ export function CommunityBoard({
           <CommunityImageUploadSlot
             files={modalImages}
             onChange={setModalImages}
+            maxFiles={10}
           />
           <div className="flex justify-end gap-2 pt-2">
             <V1Button variant="gray" size="sm" onClick={closeAndResetWriteModal}>
@@ -3664,6 +3785,71 @@ export function CommunityBoard({
             ? `“${pendingDelete.title}” 게시글을 삭제하시겠습니까?`
             : "작성한 댓글을 삭제하시겠습니까?"}
         </p>
+      </DimModal>
+      {/* 발행된 게시글 첨부 이미지 라이트박스 */}
+      <DimModal
+        open={lightboxState !== null}
+        onClose={() => setLightboxState(null)}
+        title={
+          lightboxState
+            ? lightboxState.files[lightboxState.index]?.originalName ?? "이미지 미리보기"
+            : "이미지 미리보기"
+        }
+        subtitle={
+          lightboxState && lightboxState.files.length > 0
+            ? `${lightboxState.index + 1} / ${lightboxState.files.length}`
+            : undefined
+        }
+        maxWidth="880px"
+        footer={
+          lightboxState && lightboxState.files.length > 1 ? (
+            <div className="flex items-center justify-between gap-2">
+              <V1Button
+                type="button"
+                variant="white"
+                size="sm"
+                onClick={() =>
+                  setLightboxState(prev =>
+                    prev
+                      ? {
+                          ...prev,
+                          index: (prev.index - 1 + prev.files.length) % prev.files.length,
+                        }
+                      : null,
+                  )
+                }
+              >
+                ← 이전 이미지
+              </V1Button>
+              <span className="text-xs font-bold tabular-nums text-gray-500">
+                {lightboxState.index + 1} / {lightboxState.files.length}
+              </span>
+              <V1Button
+                type="button"
+                variant="white"
+                size="sm"
+                onClick={() =>
+                  setLightboxState(prev =>
+                    prev ? { ...prev, index: (prev.index + 1) % prev.files.length } : null,
+                  )
+                }
+              >
+                다음 이미지 →
+              </V1Button>
+            </div>
+          ) : undefined
+        }
+      >
+        {lightboxState && lightboxState.files[lightboxState.index] && (
+          <div className="flex items-center justify-center rounded-xl bg-gray-950/90 p-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={lightboxState.files[lightboxState.index].url}
+              alt={lightboxState.files[lightboxState.index].originalName}
+              className="max-h-[70vh] w-auto max-w-full rounded-lg object-contain"
+            />
+          </div>
+        )}
       </DimModal>
     </MemberShell>
   );

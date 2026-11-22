@@ -1,8 +1,15 @@
 import { orderReason } from "./order-reason";
 import { mutationMessage, uncertainMutation, type TradingCommand } from "./mutation-request";
 import type { TradingOrder } from "./orders";
+import { getErrorRequestId } from "../../../lib/request-id";
 
-export type TradingNotice = { kind: "success" | "error" | "warning"; title: string; message: string; resultKey?: string };
+export type TradingNotice = {
+  kind: "success" | "error" | "warning";
+  title: string;
+  message: string;
+  resultKey?: string;
+  requestId?: string;
+};
 export const NOTICE_LIFETIME = 1500;
 export const NOTICE_ERROR_LIFETIME = 5000;
 
@@ -27,7 +34,13 @@ export function orderNotice(order: TradingOrder, command: TradingCommand): Tradi
   return { ...describeOrder(order, command), resultKey };
 }
 export function orderFailureNotice(error: unknown): TradingNotice {
-  return { kind: uncertainMutation(error) ? "warning" : "error", title: uncertainMutation(error) ? "주문 결과 확인이 필요합니다" : "주문이 실패하였습니다", message: mutationMessage(error) };
+  const requestId = getErrorRequestId(error);
+  return {
+    kind: uncertainMutation(error) ? "warning" : "error",
+    title: uncertainMutation(error) ? "주문 결과 확인이 필요합니다" : "주문이 실패하였습니다",
+    message: mutationMessage(error),
+    ...(requestId ? { requestId } : {}),
+  };
 }
 
 type NoticeEntry = TradingNotice & { id: number; identity: string };

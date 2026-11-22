@@ -515,7 +515,9 @@ export function PublicMember({ memberId }: { memberId: number }) {
                 nickname: displayNickname,
                 profileMsg: currentProfile?.profileMessage || "등록된 소개가 없습니다.",
                 profileImgUrl: currentProfile?.profileImgUrl,
-                role: "USER",
+                role: summary.data?.mine
+                  ? (snapshot.role === "ADMIN" ? "ADMIN" : "USER")
+                  : undefined,
                 followerCount: summary.data?.followerCount ?? 0,
                 followingCount: summary.data?.followingCount ?? 0,
               }}

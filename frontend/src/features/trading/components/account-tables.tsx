@@ -37,6 +37,8 @@ import {
 } from "../api/order-input";
 import { passiveLimitIssueForAction, validatePendingOrderAmend } from "../api/order-preflight";
 import { freshMarkPrice } from "../market/selected-market";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
+import { formatOrderTypeKr, formatPositionStatusKr } from "../../../lib/labels";
 
 function quantity(value: string, symbolId: number, symbols: readonly TradingSymbol[], referencePrice?: string | null) {
   return <TableQuantity value={value} referencePrice={referencePrice} unit={symbols.find((symbol) => symbol.id === symbolId)?.symbol} />;
@@ -141,6 +143,7 @@ function CloseAllPositionsButton({ count }: { count: number }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useDialogScrollLock(dialog, false, { canClose: () => !pending });
 
   if (!guest || count === 0) return null;
   const { session, snapshot } = guest;
@@ -205,11 +208,11 @@ function CloseAllPositionsButton({ count }: { count: number }) {
         </p>
         {error && <p role="alert" className="ym-modal-alert mt-3">{error}</p>}
         <div className="ym-modal-footer mt-4">
-          <button type="button" className="ym-modal-btn-confirm" disabled={pending} onClick={() => void confirmCloseAll()}>
-            {pending ? "청산 중…" : "전체 청산 확인"}
-          </button>
           <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={() => dialog.current?.close()}>
             취소
+          </button>
+          <button type="button" className="ym-modal-btn-confirm" disabled={pending} onClick={() => void confirmCloseAll()}>
+            {pending ? "청산 중…" : "전체 청산 확인"}
           </button>
         </div>
       </dialog>
@@ -226,6 +229,7 @@ function CancelAllOrdersButton({ count }: { count: number }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useDialogScrollLock(dialog, false, { canClose: () => !pending });
 
   if (!guest || count === 0) return null;
   const { session, snapshot } = guest;
@@ -290,11 +294,11 @@ function CancelAllOrdersButton({ count }: { count: number }) {
         </p>
         {error && <p role="alert" className="ym-modal-alert mt-3">{error}</p>}
         <div className="ym-modal-footer mt-4">
+          <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={() => dialog.current?.close()}>
+            취소
+          </button>
           <button type="button" className="ym-modal-btn-confirm" disabled={pending} onClick={() => void confirmCancelAll()}>
             {pending ? "취소 중…" : "전체 취소 확인"}
-          </button>
-          <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={() => dialog.current?.close()}>
-            닫기
           </button>
         </div>
       </dialog>
@@ -378,7 +382,7 @@ export function PendingOrderAmend({
 }) {
   const { snapshot } = useOptionalGuestSession()!;
   const summary = useTradingSummary();
-  const amendAction = useTradingMutation();
+  const amendAction = useTradingMutation(undefined, undefined, { suppressErrorNotice: true });
   const selectedMarket = useOptionalSelectedMarket();
   const positionPrices = usePositionMarkets();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -387,6 +391,7 @@ export function PendingOrderAmend({
   const [draftQty, setDraftQty] = useState(() => formatEditableDecimal(order.quantity));
   const [draftPrice, setDraftPrice] = useState(() => formatEditableDecimal(order.limitPrice));
   const [localError, setLocalError] = useState<string | null>(null);
+  useDialogScrollLock(dialog, false, { canClose: () => !amendAction.pending });
 
   const unit = symbolMeta?.symbol ?? symbol.split(" /")[0] ?? "수량";
   const isClose = order.action === "CLOSE";
@@ -680,15 +685,15 @@ export function PendingOrderAmend({
           )}
 
           <div className="ym-modal-footer">
+            <button type="button" className="ym-modal-btn-cancel" disabled={amendAction.pending} onClick={closeDialog}>
+              취소
+            </button>
             <button
               type="submit"
               className="ym-modal-btn-confirm"
               disabled={amendAction.pending || (!amendAction.unconfirmed && Boolean(liveIssue))}
             >
               {amendAction.pending ? "처리 중…" : amendAction.unconfirmed ? "수정 요청 재전송" : "주문 수정"}
-            </button>
-            <button type="button" className="ym-modal-btn-cancel" disabled={amendAction.pending} onClick={closeDialog}>
-              닫기
             </button>
           </div>
         </form>
@@ -718,8 +723,8 @@ function PendingOrderInteractiveBody({
         requestedLeverage: `×${order.requestedLeverage}`,
         type: (
           <span className="table-stack">
-            {order.type}
-            <small>{order.action}</small>
+            {formatOrderTypeKr(order.type)}
+            <small>{order.action === "OPEN" ? "진입" : order.action === "CLOSE" ? "청산" : "강제청산"}</small>
           </span>
         ),
         quantity: quantity(order.quantity, order.tradingSymbolId, symbols, order.limitPrice),
@@ -858,8 +863,8 @@ export function OrderHistoryTable({ orders, symbols }: { orders: readonly Tradin
           requestedLeverage: `×${order.requestedLeverage}`,
           type: (
             <span className="table-stack">
-              {order.type}
-              <small>{order.action === "LIQUIDATE" ? "강제청산" : order.action}</small>
+              {formatOrderTypeKr(order.type)}
+              <small>{order.action === "LIQUIDATE" ? "강제청산" : order.action === "CLOSE" ? "청산" : "진입"}</small>
             </span>
           ),
           quantity: quantity(order.quantity, order.tradingSymbolId, symbols, order.fill?.price ?? order.limitPrice),
@@ -931,13 +936,13 @@ export function FillHistoryTable({ fills, symbols }: { fills: readonly FillHisto
               </small>
             </span>
           ),
-          type: fill.type,
+          type: formatOrderTypeKr(fill.type),
           quantity: quantity(fill.quantity, fill.tradingSymbolId, symbols, fill.price),
           price: price(fill.price, fill.tradingSymbolId, symbols),
           gross: <span data-trend={pnlTrend(fill.realizedPnl)}>{formatDecimal(fill.realizedPnl)} USDT</span>,
           fee: `${formatDecimal(fill.fee)} USDT`,
           settlement: `${formatDecimal(fill.settlementAdjustment)} USDT`,
-          marginMode: fill.marginMode,
+          marginMode: fill.marginMode === "ISOLATED" ? "격리" : fill.marginMode === "CROSS" ? "교차" : fill.marginMode,
           time: kst(fill.executedAt),
         },
       }))}
@@ -971,7 +976,7 @@ export function ClosedPositionTable({ positions, symbols }: { positions: readonl
         cells: {
           symbol: symbolLabel(position.tradingSymbolId, symbols),
           side: side(position.side, position.leverage),
-          status: position.status,
+          status: formatPositionStatusKr(position.status),
           quantity: quantity(position.initialQuantity, position.tradingSymbolId, symbols, position.entryPrice),
           entry: price(position.entryPrice, position.tradingSymbolId, symbols),
           exit: price(position.exitPrice, position.tradingSymbolId, symbols),
@@ -980,7 +985,7 @@ export function ClosedPositionTable({ positions, symbols }: { positions: readonl
           fees: `${formatDecimal(position.feesPaid)} USDT`,
           adjustment: `${formatDecimal(position.settlementAdjustment)} USDT`,
           net: <span data-trend={pnlTrend(position.netRealizedPnl)}>{formatDecimal(position.netRealizedPnl)} USDT</span>,
-          mode: `${position.openedMarginMode} / ${position.closingMarginMode}`,
+          mode: `${position.openedMarginMode === "ISOLATED" ? "격리" : position.openedMarginMode === "CROSS" ? "교차" : position.openedMarginMode} / ${position.closingMarginMode === "ISOLATED" ? "격리" : position.closingMarginMode === "CROSS" ? "교차" : position.closingMarginMode}`,
           opened: kst(position.openedAt),
           time: kst(position.closedAt),
         },

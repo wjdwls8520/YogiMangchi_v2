@@ -17,6 +17,9 @@ import {
   V1IconTrash,
   V1Tabs,
 } from "../components/v1-ui";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId } from "../../../lib/request-id";
+import { contentMessage } from "../api/client";
 import {
   fetchUnifiedNotifications,
   type DualCursorState,
@@ -49,6 +52,7 @@ const TABS: Array<{ label: string; value: NotificationListTabValue }> = [
   { label: "모의투자", value: "MOCK" },
   { label: "대회", value: "CONTEST" },
   { label: "커뮤니티", value: "COMMUNITY" },
+  { label: "고객지원·계정", value: "SUPPORT" },
 ];
 
 function filterByTab(
@@ -67,6 +71,7 @@ export function NotificationsPageView({
   const memberCtx = useOptionalMember();
   const notifCenter = useOptionalNotificationCenter();
   const phase = memberCtx?.snapshot.phase ?? "anonymous";
+  const isSuspended = memberCtx?.snapshot.accountStatus === "SUSPENDED";
   const session = memberCtx?.session ?? null;
 
   const [activeTab, setActiveTab] = useState<NotificationListTabValue>(initialTab);
@@ -79,6 +84,7 @@ export function NotificationsPageView({
   });
   const [isPageLoading, setIsPageLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [actionError, setActionError] = useState<{ message: string; requestId?: string } | null>(null);
   const [selectedUids, setSelectedUids] = useState<string[]>([]);
   const [expandedUids, setExpandedUids] = useState<string[]>([]);
 
@@ -98,6 +104,7 @@ export function NotificationsPageView({
       MOCK: 0,
       CONTEST: 0,
       COMMUNITY: 0,
+      SUPPORT: 0,
     };
     for (const item of mergedAllItems) {
       if (!item.isRead) {
@@ -107,6 +114,7 @@ export function NotificationsPageView({
     }
     return counts;
   }, [mergedAllItems]);
+  const effectiveAllUnreadCount = Math.max(notifCenter?.unreadCount ?? 0, tabUnreadCounts.ALL);
 
   const acknowledgeNewRef = useRef(notifCenter?.acknowledgeNew);
   useEffect(() => {
@@ -129,13 +137,19 @@ export function NotificationsPageView({
           tab: "ALL",
           size: PAGE_SIZE,
           tradingBaseUrl: DEFAULT_TRADING_API_BASE_URL,
+          skipTrading: isSuspended,
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
         setExtraItems(result.items);
         setCursors(result.cursors);
-      } catch {
-        // Fallback to items already in context
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setActionError({
+            message: contentMessage(err),
+            requestId: getErrorRequestId(err),
+          });
+        }
       } finally {
         if (!controller.signal.aborted) {
           setIsPageLoading(false);
@@ -144,22 +158,29 @@ export function NotificationsPageView({
     })();
 
     return () => controller.abort();
-  }, [phase, session]);
+  }, [phase, session, isSuspended]);
 
   const handleLoadMore = async () => {
     if (!session || isLoadingMore) return;
     const hasMore = cursors.contentHasNext || cursors.tradingHasNext;
     if (!hasMore) return;
     setIsLoadingMore(true);
+    setActionError(null);
     try {
       const next = await fetchUnifiedNotifications(session, {
         tab: "ALL",
         size: PAGE_SIZE,
         cursors,
         tradingBaseUrl: DEFAULT_TRADING_API_BASE_URL,
+        skipTrading: isSuspended,
       });
       setExtraItems(prev => mergeNotificationsByUid(prev, next.items));
       setCursors(next.cursors);
+    } catch (err) {
+      setActionError({
+        message: "이전 알림을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        requestId: getErrorRequestId(err),
+      });
     } finally {
       setIsLoadingMore(false);
     }
@@ -168,15 +189,22 @@ export function NotificationsPageView({
   const handleRefresh = async () => {
     if (!session || phase !== "ready") return;
     setIsPageLoading(true);
+    setActionError(null);
     try {
       await notifCenter?.refreshLatest();
       const fresh = await fetchUnifiedNotifications(session, {
         tab: "ALL",
         size: PAGE_SIZE,
         tradingBaseUrl: DEFAULT_TRADING_API_BASE_URL,
+        skipTrading: isSuspended,
       });
       setExtraItems(fresh.items);
       setCursors(fresh.cursors);
+    } catch (err) {
+      setActionError({
+        message: "알림 목록을 새로고침하지 못했습니다.",
+        requestId: getErrorRequestId(err),
+      });
     } finally {
       setIsPageLoading(false);
     }
@@ -218,42 +246,110 @@ export function NotificationsPageView({
   const handleMarkSelectedRead = async () => {
     const targets = filteredItems.filter(i => activeSelectedUids.includes(i.uid));
     if (targets.length === 0) return;
+    const prevExtra = extraItems;
+    const prevSelected = selectedUids;
+    setActionError(null);
     setExtraItems(prev =>
       prev.map(i => (activeSelectedUids.includes(i.uid) ? { ...i, isRead: true } : i)),
     );
-    await notifCenter?.markManyAsRead(targets);
     setSelectedUids([]);
+    try {
+      await notifCenter?.markManyAsRead(targets);
+    } catch (err) {
+      setExtraItems(prevExtra);
+      setSelectedUids(prevSelected);
+      setActionError({
+        message: "선택한 알림을 읽음 처리하지 못했습니다.",
+        requestId: getErrorRequestId(err),
+      });
+    }
   };
 
   const handleMarkAllRead = async () => {
+    const prevExtra = extraItems;
+    setActionError(null);
     setExtraItems(prev => prev.map(i => ({ ...i, isRead: true })));
-    await notifCenter?.markAllAsRead();
     setSelectedUids([]);
+    try {
+      await notifCenter?.markAllAsRead();
+    } catch (err) {
+      setExtraItems(prevExtra);
+      setActionError({
+        message: "모든 알림을 읽음 처리하지 못했습니다.",
+        requestId: getErrorRequestId(err),
+      });
+    }
   };
 
   const handleDeleteSelected = async () => {
     const targets = filteredItems.filter(i => activeSelectedUids.includes(i.uid));
     if (targets.length === 0) return;
+    const prevExtra = extraItems;
+    const prevSelected = selectedUids;
     const removeSet = new Set(targets.map(t => t.uid));
+    setActionError(null);
     setExtraItems(prev => prev.filter(i => !removeSet.has(i.uid)));
-    await notifCenter?.deleteMany(targets);
     setSelectedUids([]);
+    try {
+      await notifCenter?.deleteMany(targets);
+    } catch (err) {
+      setExtraItems(prevExtra);
+      setSelectedUids(prevSelected);
+      setActionError({
+        message: "선택한 알림을 삭제하지 못했습니다.",
+        requestId: getErrorRequestId(err),
+      });
+    }
+  };
+
+  const handleDeleteOne = async (item: NotificationItem) => {
+    const prevExtra = extraItems;
+    setActionError(null);
+    setExtraItems(prev => prev.filter(existing => existing.uid !== item.uid));
+    setSelectedUids(prev => prev.filter(uid => uid !== item.uid));
+    try {
+      await notifCenter?.deleteMany([item]);
+    } catch (err) {
+      setExtraItems(prevExtra);
+      setActionError({
+        message: "알림을 삭제하지 못했습니다.",
+        requestId: getErrorRequestId(err),
+      });
+    }
   };
 
   const handleDeleteRead = async () => {
+    const prevExtra = extraItems;
+    setActionError(null);
     setExtraItems(prev => prev.filter(i => !i.isRead));
-    await notifCenter?.deleteRead();
     setSelectedUids([]);
+    try {
+      await notifCenter?.deleteRead();
+    } catch (err) {
+      setExtraItems(prevExtra);
+      setActionError({
+        message: "읽은 알림을 삭제하지 못했습니다.",
+        requestId: getErrorRequestId(err),
+      });
+    }
   };
 
   const handleMarkOneRead = (item: NotificationItem) => {
     if (item.isRead) return;
+    const prevExtra = extraItems;
+    setActionError(null);
     setExtraItems(prev =>
       prev.map(existing =>
         existing.uid === item.uid ? { ...existing, isRead: true } : existing,
       ),
     );
-    void notifCenter?.markOneAsRead(item);
+    void notifCenter?.markOneAsRead(item).catch(err => {
+      setExtraItems(prevExtra);
+      setActionError({
+        message: "알림을 읽음 처리하지 못했습니다.",
+        requestId: getErrorRequestId(err),
+      });
+    });
   };
 
   const hasAnyUnread = mergedAllItems.some(i => !i.isRead);
@@ -274,9 +370,9 @@ export function NotificationsPageView({
               <h1 className="text-2xl font-black tracking-tight text-gray-900">
                 알림 내역
               </h1>
-              {tabUnreadCounts.ALL > 0 ? (
+              {effectiveAllUnreadCount > 0 ? (
                 <span className="inline-flex h-6 items-center rounded-full bg-[#0058FF] px-2.5 text-xs font-extrabold text-white">
-                  안 읽음 {formatNotificationCount(tabUnreadCounts.ALL)}
+                  안 읽음 {formatNotificationCount(effectiveAllUnreadCount)}
                 </span>
               ) : null}
             </div>
@@ -403,6 +499,25 @@ export function NotificationsPageView({
               </div>
             </div>
 
+            {actionError && (
+              <div
+                role="alert"
+                className="flex flex-wrap items-center justify-between gap-2 border-b border-red-100 bg-red-50 px-4 py-3 text-xs font-bold text-red-600 sm:px-6"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>{actionError.message}</span>
+                  {actionError.requestId && <RequestIdChip requestId={actionError.requestId} />}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActionError(null)}
+                  className="rounded-md px-2 py-1 text-[11px] font-bold text-red-600 hover:bg-red-100 cursor-pointer"
+                >
+                  닫기
+                </button>
+              </div>
+            )}
+
             {isPageLoading && filteredItems.length === 0 ? (
               <div className="space-y-3 p-6">
                 {Array.from({ length: 4 }).map((_, idx) => (
@@ -445,7 +560,7 @@ export function NotificationsPageView({
                   return (
                     <li
                       key={item.uid}
-                      id={`notification-${item.notificationId}`}
+                      id={`notification-${item.uid}`}
                       data-notification-page-item={item.uid}
                       className={cn(
                         "transition-colors",
@@ -548,6 +663,16 @@ export function NotificationsPageView({
                                 읽음 처리
                               </button>
                             ) : null}
+
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteOne(item)}
+                              aria-label={`${title} 알림 삭제`}
+                              className="inline-flex items-center gap-1 text-xs font-bold text-gray-400 transition-colors hover:text-red-600 cursor-pointer"
+                            >
+                              <V1IconTrash className="h-3.5 w-3.5" />
+                              <span>삭제</span>
+                            </button>
 
                             {target ? (
                               <Link

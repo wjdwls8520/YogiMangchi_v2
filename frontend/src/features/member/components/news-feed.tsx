@@ -14,6 +14,7 @@ import {
   V1IconNews,
   V1IconArrowUp,
   V1IconCalendar,
+  V1IconClose,
   V1IconSparkle,
   V1IconTrendUp,
   V1IconTrendDown,
@@ -80,7 +81,27 @@ function kstFullDateLabel(value?: string | null): string {
   return `${yyyy}년 ${month}월 ${day}일 ${weekday}`;
 }
 
-const USER_NEWS_REACTIONS_STORAGE_KEY = "yogimangchi:news-user-reactions:v1";
+export function resolveNewsServerFilter(
+  sectionTab: "BREAKING" | "NEWSROOM",
+  breakingSubTab: "ALL" | "COIN" | "ECONOMY",
+  newsroomTab: "ALL" | "CRYPTO" | "STOCKS" | "FX_RATES",
+): { section: "BREAKING" | "NEWSROOM"; subCategory?: string } {
+  if (sectionTab === "BREAKING") {
+    return {
+      section: "BREAKING",
+      subCategory:
+        breakingSubTab === "COIN"
+          ? "COIN_FLASH"
+          : breakingSubTab === "ECONOMY"
+            ? "ECONOMY_FLASH"
+            : undefined,
+    };
+  }
+  return {
+    section: "NEWSROOM",
+    subCategory: newsroomTab === "ALL" ? undefined : newsroomTab,
+  };
+}
 
 export function extractNewsConnectedLiveStatus(raw: unknown): NewsLiveStatus | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -226,7 +247,7 @@ export function getOrCreateAnonNewsViewerId(storage?: SimpleStorage): string {
   if (store) {
     try {
       const existing = store.getItem(ANON_NEWS_VIEWER_STORAGE_KEY);
-      if (existing && /^[A-Za-z0-9._:-]{8,64}$/.test(existing.trim())) {
+      if (existing && /^[A-Za-z0-9_-]{8,64}$/.test(existing.trim())) {
         return existing.trim();
       }
     } catch {
@@ -984,11 +1005,17 @@ export function NewsFeed({
 
   const activeSort: NewsSort = sectionTab === "NEWSROOM" ? newsroomSort : breakingSort;
   const effectiveSort: NewsSort | undefined = activeSort === "LATEST" ? undefined : activeSort;
+  const serverFilter = resolveNewsServerFilter(sectionTab, breakingSubTab, newsroomTab);
+  const initialSectionResolved = initialSection ?? "BREAKING";
+  const initialBreakingSubResolved = initialBreakingSubTab ?? "ALL";
+  const initialNewsroomTabResolved = initialNewsroomTab ?? "ALL";
 
   const query = useQuery({
     queryKey: [
       "public-news",
       origin,
+      serverFilter.section,
+      serverFilter.subCategory ?? "",
       category,
       symbolTag,
       submittedKeyword,
@@ -998,6 +1025,9 @@ export function NewsFeed({
     ],
     initialData:
       initialPage &&
+      sectionTab === initialSectionResolved &&
+      breakingSubTab === initialBreakingSubResolved &&
+      newsroomTab === initialNewsroomTabResolved &&
       category === initialCategory &&
       symbolTag === initialSymbolTag &&
       !submittedKeyword &&
@@ -1008,6 +1038,8 @@ export function NewsFeed({
       parseNewsPage(
         await readNewsPath(
           newsPath({
+            section: serverFilter.section,
+            subCategory: serverFilter.subCategory,
             category,
             symbolTag,
             keyword: submittedKeyword,
@@ -1049,6 +1081,8 @@ export function NewsFeed({
   const cachedDefaultPage = queryClient.getQueryData<NewsPage>([
     "public-news",
     origin,
+    serverFilter.section,
+    serverFilter.subCategory ?? "",
     category,
     symbolTag,
     submittedKeyword,
@@ -1194,6 +1228,8 @@ export function NewsFeed({
       const page = parseNewsPage(
         await readNewsPath(
           newsPath({
+            section: serverFilter.section,
+            subCategory: serverFilter.subCategory,
             category,
             symbolTag,
             keyword: submittedKeyword,
@@ -1278,9 +1314,6 @@ export function NewsFeed({
           if (!incomingNewsRef.current.some(item => item.id === parsed.id)) {
             incomingNewsRef.current = [parsed, ...incomingNewsRef.current];
           }
-          setPrependedNews(prev =>
-            prev.some(item => item.id === parsed.id) ? prev : [parsed, ...prev],
-          );
           if (isEconomyBreakingItem(parsed)) {
             setUnreadByAccount(prevMap => {
               const key = accountStorageKeyRef.current;
@@ -1463,41 +1496,20 @@ export function NewsFeed({
     }
   }
 
-  function persistReactionsMap(next: Record<number, "bull" | "bear" | null>) {
-    if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
-      try {
-        const compact: Record<number, "bull" | "bear"> = {};
-        for (const [k, v] of Object.entries(next)) {
-          if (v === "bull" || v === "bear") {
-            compact[Number(k)] = v;
-          }
-        }
-        window.localStorage.setItem(USER_NEWS_REACTIONS_STORAGE_KEY, JSON.stringify(compact));
-      } catch {
-        // Ignore storage quota error
-      }
-    }
-  }
-
   function toggleReaction(id: number, kind: "bull" | "bear") {
-    const existingItem = allItems.find(item => item.id === id);
+    const existingItem = allItems.find(item => item.id === id) ?? (selectedDetail?.id === id ? selectedDetail : undefined);
     const serverCurrent: "bull" | "bear" | null =
       existingItem?.userReaction === "BULL"
         ? "bull"
         : existingItem?.userReaction === "BEAR"
           ? "bear"
           : null;
-    setReactions(current => {
-      const effectiveCurrent = id in current ? current[id] : serverCurrent;
-      const next = { ...current };
-      if (effectiveCurrent === kind) {
-        next[id] = null;
-      } else {
-        next[id] = kind;
-      }
-      persistReactionsMap(next);
-      return next;
-    });
+    const previousOverride = id in reactions ? reactions[id] : undefined;
+    const effectiveCurrent = previousOverride !== undefined ? previousOverride : serverCurrent;
+    const optimisticNext: "bull" | "bear" | null = effectiveCurrent === kind ? null : kind;
+
+    setDetailError(null);
+    setReactions(current => ({ ...current, [id]: optimisticNext }));
     void (async () => {
       try {
         const body = { reaction: kind === "bull" ? "BULL" : "BEAR" };
@@ -1527,21 +1539,27 @@ export function NewsFeed({
           ...prev,
           [id]: { bullCount: res.bullCount, bearCount: res.bearCount },
         }));
-        setReactions(current => {
-          const next = { ...current };
-          if (res.userReaction === "BULL") {
-            next[id] = "bull";
-          } else if (res.userReaction === "BEAR") {
-            next[id] = "bear";
-          } else {
-            next[id] = null;
-          }
-          persistReactionsMap(next);
-          return next;
-        });
+        setReactions(current => ({
+          ...current,
+          [id]:
+            res.userReaction === "BULL"
+              ? "bull"
+              : res.userReaction === "BEAR"
+                ? "bear"
+                : null,
+        }));
         void queryClient.invalidateQueries({ queryKey: ["public-news-highlights", origin] });
-      } catch {
-        // Keep optimistic local reaction state if offline or in test mock
+      } catch (err) {
+        setReactions(current => {
+          const rolledBack = { ...current };
+          if (previousOverride === undefined) {
+            delete rolledBack[id];
+          } else {
+            rolledBack[id] = previousOverride;
+          }
+          return rolledBack;
+        });
+        setDetailError(contentMessage(err));
       }
     })();
   }
@@ -1658,7 +1676,10 @@ export function NewsFeed({
                 type="button"
                 role="tab"
                 aria-selected={sectionTab === "BREAKING"}
-                onClick={() => setSectionTab("BREAKING")}
+                onClick={() => {
+                  setSectionTab("BREAKING");
+                  resetPagination();
+                }}
                 className={`flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-left transition-colors ${
                   sectionTab === "BREAKING"
                     ? "bg-[#0058FF] text-white"
@@ -1675,7 +1696,7 @@ export function NewsFeed({
                       sectionTab === "BREAKING" ? "text-blue-100" : "text-gray-400"
                     }`}
                   >
-                    최근 6시간 실시간 속보
+                    최근 {retentionHours}시간 실시간 속보
                   </p>
                 </div>
                 <span
@@ -1708,7 +1729,10 @@ export function NewsFeed({
                 type="button"
                 role="tab"
                 aria-selected={sectionTab === "NEWSROOM"}
-                onClick={() => setSectionTab("NEWSROOM")}
+                onClick={() => {
+                  setSectionTab("NEWSROOM");
+                  resetPagination();
+                }}
                 className={`flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-left transition-colors ${
                   sectionTab === "NEWSROOM"
                     ? "bg-[#0058FF] text-white"
@@ -1784,7 +1808,7 @@ export function NewsFeed({
           <div ref={feedTopRef} className="scroll-mt-24" />
           {activeToastCount > 0 && !(notifCenter && notifCenter.toasts.length > 0) && (
             <div
-              className="pointer-events-none fixed left-1/2 top-20 z-30 -translate-x-1/2"
+              className="pointer-events-none fixed left-1/2 top-20 z-[55] -translate-x-1/2"
               role="status"
               aria-live="polite"
             >
@@ -1832,8 +1856,11 @@ export function NewsFeed({
                     type="button"
                     role="tab"
                     aria-selected={breakingSubTab === tab.key}
-                    onClick={() => setBreakingSubTab(tab.key)}
-                    className={`relative inline-flex items-center justify-center rounded-xl py-2 text-xs font-bold transition-colors sm:text-sm ${
+                    onClick={() => {
+                      setBreakingSubTab(tab.key);
+                      resetPagination();
+                    }}
+                    className={`relative inline-flex min-h-10 items-center justify-center rounded-xl py-2 text-xs font-bold transition-colors sm:text-sm ${
                       breakingSubTab === tab.key
                         ? "bg-white text-gray-900"
                         : "text-gray-500 hover:text-gray-800"
@@ -1956,24 +1983,26 @@ export function NewsFeed({
                         집계된 인기 속보가 아직 없습니다.
                       </div>
                     ) : (
-                      <ol className="space-y-3">
+                      <ol className="space-y-2">
                         {popularBreakingList.map(item => (
-                          <li
-                            key={item.rank}
-                            onClick={() => void inspectArticle(item.id, item.item)}
-                            className="flex cursor-pointer items-center justify-between gap-3 text-xs"
-                          >
-                            <div className="flex min-w-0 items-center gap-2.5">
-                              <span className="w-4 shrink-0 font-black text-gray-400">
-                                {item.rank}
+                          <li key={item.rank}>
+                            <button
+                              type="button"
+                              onClick={() => void inspectArticle(item.id, item.item)}
+                              className="flex min-h-9 w-full cursor-pointer items-center justify-between gap-3 rounded-lg px-1 py-1 text-left text-xs transition-colors hover:bg-gray-50"
+                            >
+                              <span className="flex min-w-0 items-center gap-2.5">
+                                <span className="w-4 shrink-0 font-black text-gray-400">
+                                  {item.rank}
+                                </span>
+                                <span className="truncate font-bold text-gray-800 hover:text-[#0058FF]">
+                                  {item.title}
+                                </span>
                               </span>
-                              <span className="truncate font-bold text-gray-800 hover:text-[#0058FF]">
-                                {item.title}
+                              <span className="shrink-0 text-[11px] font-medium text-gray-400">
+                                · {item.timeAgo}
                               </span>
-                            </div>
-                            <span className="shrink-0 text-[11px] font-medium text-gray-400">
-                              · {item.timeAgo}
-                            </span>
+                            </button>
                           </li>
                         ))}
                       </ol>
@@ -2101,7 +2130,7 @@ export function NewsFeed({
                   </button>
                 </div>
                 <span className="text-xs font-medium text-gray-400">
-                  최근 6시간 실시간 속보 · KST 기준
+                  최근 {retentionHours}시간 실시간 속보 · KST 기준
                 </span>
               </div>
             </>
@@ -2133,8 +2162,11 @@ export function NewsFeed({
                     type="button"
                     role="tab"
                     aria-selected={newsroomTab === tab.key}
-                    onClick={() => setNewsroomTab(tab.key)}
-                    className={`rounded-xl py-2 text-xs font-bold transition-colors sm:text-sm ${
+                    onClick={() => {
+                      setNewsroomTab(tab.key);
+                      resetPagination();
+                    }}
+                    className={`min-h-10 rounded-xl py-2 text-xs font-bold transition-colors sm:text-sm ${
                       newsroomTab === tab.key
                         ? "bg-white text-gray-900"
                         : "text-gray-500 hover:text-gray-800"
@@ -2269,9 +2301,16 @@ export function NewsFeed({
           </div>
 
           {query.isPending && (
-            <p role="status" className="member-message">
-              실시간 뉴스 피드를 불러오는 중입니다…
-            </p>
+            <div role="status" aria-busy="true" className="space-y-3 rounded-2xl border border-gray-200 bg-white p-5">
+              <span className="sr-only">실시간 뉴스 피드를 불러오는 중입니다…</span>
+              {[0, 1, 2, 3].map(idx => (
+                <div key={idx} className="space-y-2 border-b border-gray-100 pb-4 last:border-b-0 last:pb-0">
+                  <div className="h-3.5 w-24 rounded bg-gray-100" />
+                  <div className="h-5 w-4/5 rounded bg-gray-200/80" />
+                  <div className="h-3.5 w-full rounded bg-gray-100" />
+                </div>
+              ))}
+            </div>
           )}
           {query.isError && (
             <div role="alert" className="member-message flex flex-wrap items-center justify-between gap-2">
@@ -2291,9 +2330,20 @@ export function NewsFeed({
             </div>
           )}
           {detailError && (
-            <p role="alert" className="member-message">
-              {detailError}
-            </p>
+            <div
+              role="alert"
+              className="member-message flex items-center justify-between gap-2"
+            >
+              <span>{detailError}</span>
+              <button
+                type="button"
+                aria-label="오류 안내 닫기"
+                onClick={() => setDetailError(null)}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-black/5"
+              >
+                <V1IconClose className="h-3.5 w-3.5" />
+              </button>
+            </div>
           )}
 
           {!query.isPending && !query.isError && visibleItems.length === 0 && (
@@ -2348,20 +2398,23 @@ export function NewsFeed({
                           </time>
 
                           <div className="min-w-0 flex-1">
-                            <h3
-                              onClick={() => void inspectArticle(item.id, item)}
-                              className="cursor-pointer text-[15px] font-bold text-gray-900 hover:text-[#0058FF]"
-                            >
-                              <span className="align-middle">{item.title}</span>
-                              {isUnreadNewItem && (
-                                <span
-                                  data-news-new-badge={item.id}
-                                  aria-label="새로 등록된 뉴스"
-                                  className="relative -top-0.5 ml-1.5 inline-flex items-center justify-center rounded-md bg-[#F6465D] px-1.5 py-0.5 align-middle text-[10px] font-extrabold leading-none tracking-wider text-white uppercase"
-                                >
-                                  NEW
-                                </span>
-                              )}
+                            <h3 className="text-[15px] font-bold text-gray-900">
+                              <button
+                                type="button"
+                                onClick={() => void inspectArticle(item.id, item)}
+                                className="cursor-pointer text-left hover:text-[#0058FF]"
+                              >
+                                <span className="align-middle">{item.title}</span>
+                                {isUnreadNewItem && (
+                                  <span
+                                    data-news-new-badge={item.id}
+                                    aria-label="새로 등록된 뉴스"
+                                    className="relative -top-0.5 ml-1.5 inline-flex items-center justify-center rounded-md bg-[#F6465D] px-1.5 py-0.5 align-middle text-[10px] font-extrabold leading-none tracking-wider text-white uppercase"
+                                  >
+                                    NEW
+                                  </span>
+                                )}
+                              </button>
                             </h3>
                             <p className="mt-1.5 text-sm leading-relaxed text-gray-600">
                               {item.summary}
@@ -2396,9 +2449,12 @@ export function NewsFeed({
                               </span>
 
                               {item.symbolTag && (
-                                <span className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] font-extrabold text-gray-800">
+                                <Link
+                                  href={`/trading?symbol=${encodeURIComponent(item.symbolTag)}`}
+                                  className="inline-flex min-h-8 items-center rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-[11px] font-extrabold text-gray-800 transition-colors hover:border-[#0058FF] hover:text-[#0058FF]"
+                                >
                                   #{item.symbolTag}
-                                </span>
+                                </Link>
                               )}
 
                               {item.sourceUrl && (
@@ -2424,7 +2480,7 @@ export function NewsFeed({
                                   type="button"
                                   aria-pressed={userReaction === "bull"}
                                   onClick={() => toggleReaction(item.id, "bull")}
-                                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 transition-colors ${
+                                  className={`inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-0 items-center justify-center gap-1 rounded-lg px-2.5 py-1 transition-colors ${
                                     userReaction === "bull"
                                       ? "bg-emerald-50 text-[#0ECB81]"
                                       : "hover:bg-gray-100 hover:text-gray-700"
@@ -2437,7 +2493,7 @@ export function NewsFeed({
                                   type="button"
                                   aria-pressed={userReaction === "bear"}
                                   onClick={() => toggleReaction(item.id, "bear")}
-                                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 transition-colors ${
+                                  className={`inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-0 items-center justify-center gap-1 rounded-lg px-2.5 py-1 transition-colors ${
                                     userReaction === "bear"
                                       ? "bg-red-50 text-[#F6465D]"
                                       : "hover:bg-gray-100 hover:text-gray-700"
@@ -2519,20 +2575,23 @@ export function NewsFeed({
                               </span>
                             </div>
 
-                            <h3
-                              onClick={() => void inspectArticle(item.id, item)}
-                              className="mt-1.5 cursor-pointer text-base font-bold text-gray-900 hover:text-[#0058FF]"
-                            >
-                              <span className="align-middle">{item.title}</span>
-                              {isUnreadNewItem && (
-                                <span
-                                  data-news-new-badge={item.id}
-                                  aria-label="새로 등록된 뉴스"
-                                  className="relative -top-0.5 ml-1.5 inline-flex items-center justify-center rounded-md bg-[#F6465D] px-1.5 py-0.5 align-middle text-[10px] font-extrabold leading-none tracking-wider text-white uppercase"
-                                >
-                                  NEW
-                                </span>
-                              )}
+                            <h3 className="mt-1.5 text-base font-bold text-gray-900">
+                              <button
+                                type="button"
+                                onClick={() => void inspectArticle(item.id, item)}
+                                className="cursor-pointer text-left hover:text-[#0058FF]"
+                              >
+                                <span className="align-middle">{item.title}</span>
+                                {isUnreadNewItem && (
+                                  <span
+                                    data-news-new-badge={item.id}
+                                    aria-label="새로 등록된 뉴스"
+                                    className="relative -top-0.5 ml-1.5 inline-flex items-center justify-center rounded-md bg-[#F6465D] px-1.5 py-0.5 align-middle text-[10px] font-extrabold leading-none tracking-wider text-white uppercase"
+                                  >
+                                    NEW
+                                  </span>
+                                )}
+                              </button>
                             </h3>
                             <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-gray-600">
                               {cleanNewsroomExcerpt(
@@ -2552,14 +2611,32 @@ export function NewsFeed({
                               data-newsroom-hashtags="true"
                               className="mt-2.5 flex flex-wrap items-center gap-1.5"
                             >
-                              {hashtags.map(tag => (
-                                <span
-                                  key={tag}
-                                  className="rounded-md bg-blue-50/80 px-2 py-0.5 text-[11px] font-extrabold text-[#0058FF]"
-                                >
-                                  {tag}
-                                </span>
-                              ))}
+                              {hashtags.map(tag => {
+                                const cleaned = tag.replace(/^#/, "");
+                                const isSymbolChip = item.symbolTag && cleaned === item.symbolTag;
+                                return isSymbolChip ? (
+                                  <Link
+                                    key={tag}
+                                    href={`/trading?symbol=${encodeURIComponent(cleaned)}`}
+                                    className="rounded-md bg-blue-50/80 px-2 py-0.5 text-[11px] font-extrabold text-[#0058FF] hover:bg-blue-100"
+                                  >
+                                    {tag}
+                                  </Link>
+                                ) : (
+                                  <button
+                                    key={tag}
+                                    type="button"
+                                    onClick={() => {
+                                      setKeyword(cleaned);
+                                      setSubmittedKeyword(cleaned);
+                                      resetPagination();
+                                    }}
+                                    className="rounded-md bg-blue-50/80 px-2 py-0.5 text-[11px] font-extrabold text-[#0058FF] hover:bg-blue-100 cursor-pointer"
+                                  >
+                                    {tag}
+                                  </button>
+                                );
+                              })}
                             </div>
 
                             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
@@ -2580,7 +2657,7 @@ export function NewsFeed({
                               <button
                                 type="button"
                                 onClick={() => void inspectArticle(item.id, item)}
-                                className="font-bold text-gray-500 hover:text-gray-900"
+                                className="min-h-9 font-bold text-gray-500 hover:text-gray-900"
                               >
                                 뉴스 상세 모달 보기
                               </button>
@@ -2588,10 +2665,12 @@ export function NewsFeed({
                           </div>
 
                           {hasValidThumbnail ? (
-                            <div
+                            <button
+                              type="button"
                               data-s3-slot="news-thumbnail"
+                              aria-label={`${item.title} 상세 보기`}
                               onClick={() => void inspectArticle(item.id, item)}
-                              className="relative flex h-18 w-24 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-gray-100 sm:h-24 sm:w-36"
+                              className="relative flex h-18 w-24 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-gray-100 p-0 sm:h-24 sm:w-36"
                             >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
@@ -2602,7 +2681,7 @@ export function NewsFeed({
                                 }
                                 className="h-full w-full object-cover"
                               />
-                            </div>
+                            </button>
                           ) : null}
                         </article>
                       </li>
@@ -2648,15 +2727,24 @@ export function NewsFeed({
                 href={selectedDetail.sourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+                className="inline-flex h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-3.5 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-50"
               >
                 <span>원문 기사 보기</span>
                 <V1IconExternal className="ml-1 inline h-3 w-3" />
               </a>
             )}
+            {selectedDetail && (
+              <Link
+                href={`/trading?symbol=${encodeURIComponent(selectedDetail.symbolTag ?? "BTC")}`}
+                onClick={() => setSelectedDetail(null)}
+                className="inline-flex h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+              >
+                {selectedDetail.symbolTag ?? "BTC"} 모의투자 하러가기
+              </Link>
+            )}
             <button
               type="button"
-              className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 bg-gray-100 px-3.5 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200"
+              className="inline-flex h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 bg-gray-100 px-3.5 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200"
               onClick={() => setSelectedDetail(null)}
             >
               상세 닫기
@@ -2664,23 +2752,64 @@ export function NewsFeed({
           </div>
         }
       >
-        {selectedDetail && (
-          <div className="ym-modal-prose">
-            {selectedDetail.aiSummary && (
+        {selectedDetail && (() => {
+          const modalReaction =
+            selectedDetail.id in reactions
+              ? reactions[selectedDetail.id]
+              : selectedDetail.userReaction === "BULL"
+                ? "bull"
+                : selectedDetail.userReaction === "BEAR"
+                  ? "bear"
+                  : null;
+          const modalLive = liveReactions[selectedDetail.id];
+          const modalBull = modalLive?.bullCount ?? selectedDetail.bullCount ?? 0;
+          const modalBear = modalLive?.bearCount ?? selectedDetail.bearCount ?? 0;
+          return (
+            <div className="ym-modal-prose space-y-4">
+              {selectedDetail.aiSummary && (
+                <p>
+                  <strong>
+                    <V1IconSparkle className="mr-1 inline h-3.5 w-3.5" />
+                    <span>AI 분석:</span>
+                  </strong>{" "}
+                  {selectedDetail.aiSummary}
+                </p>
+              )}
               <p>
-                <strong>
-                  <V1IconSparkle className="mr-1 inline h-3.5 w-3.5" />
-                  <span>AI 분석:</span>
-                </strong>{" "}
-                {selectedDetail.aiSummary}
+                <strong>요약:</strong> {selectedDetail.summary}
               </p>
-            )}
-            <p>
-              <strong>요약:</strong> {selectedDetail.summary}
-            </p>
-            <p>{selectedDetail.content}</p>
-          </div>
-        )}
+              <p>{selectedDetail.content}</p>
+              <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+                <button
+                  type="button"
+                  aria-pressed={modalReaction === "bull"}
+                  onClick={() => toggleReaction(selectedDetail.id, "bull")}
+                  className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-bold transition-colors ${
+                    modalReaction === "bull"
+                      ? "border-[#0ECB81] bg-emerald-50 text-[#0ECB81]"
+                      : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  <V1IconTrendUp className="h-4 w-4" />
+                  <span>강세 {modalBull}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={modalReaction === "bear"}
+                  onClick={() => toggleReaction(selectedDetail.id, "bear")}
+                  className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-bold transition-colors ${
+                    modalReaction === "bear"
+                      ? "border-[#F6465D] bg-rose-50 text-[#F6465D]"
+                      : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  <V1IconTrendDown className="h-4 w-4" />
+                  <span>약세 {modalBear}</span>
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </DimModal>
     </MemberShell>
   );

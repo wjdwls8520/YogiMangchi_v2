@@ -13,6 +13,8 @@ import { formatEditableDecimal } from "../api/order-input";
 import { formatMarketPrice } from "../market/price-format";
 import type { StopLoss } from "../api/stop-loss-contract";
 import type { TakeProfit } from "../api/take-profit-contract";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
+import { formatOrderTypeKr, formatSideKr } from "../../../lib/labels";
 
 function kstTime(value: string) {
   return new Date(value).toLocaleString("sv-SE", {
@@ -61,11 +63,11 @@ export function eventHistoryDisplay(event: TradingEvent) {
   }
   const order = event.order;
   if (!order) return null;
-  if (event.type === "ORDER_PENDING") return { title: "주문이 접수되었습니다", detail: `${order.side} · ${order.type} · 주문 #${order.orderId} · ${orderStatusLabel(order.status)}` };
-  if (event.type === "ORDER_FILLED") return { title: "주문이 체결되었습니다", detail: `${order.side} · ${order.type} · 주문 #${order.orderId} · 수량 ${formatEditableDecimal(order.quantity)}` };
-  if (event.type === "ORDER_CANCELED") return { title: "주문이 취소되었습니다", detail: `${order.side} · ${order.type} · 주문 #${order.orderId} · ${orderStatusLabel(order.status)}` };
+  if (event.type === "ORDER_PENDING") return { title: "주문이 접수되었습니다", detail: `${formatSideKr(order.side)} · ${formatOrderTypeKr(order.type)} · 주문 #${order.orderId} · ${orderStatusLabel(order.status)}` };
+  if (event.type === "ORDER_FILLED") return { title: "주문이 체결되었습니다", detail: `${formatSideKr(order.side)} · ${formatOrderTypeKr(order.type)} · 주문 #${order.orderId} · 수량 ${formatEditableDecimal(order.quantity)}` };
+  if (event.type === "ORDER_CANCELED") return { title: "주문이 취소되었습니다", detail: `${formatSideKr(order.side)} · ${formatOrderTypeKr(order.type)} · 주문 #${order.orderId} · ${orderStatusLabel(order.status)}` };
   if (event.type === "ORDER_REJECTED") return { title: "주문이 거절되었습니다", detail: `${orderReason(order.reason)} 주문 #${order.orderId}` };
-  if (event.type === "POSITION_LIQUIDATED") return { title: "포지션이 강제청산되었습니다", detail: `${order.side} · 주문 #${order.orderId} · 체결 내역을 확인해 주세요.` };
+  if (event.type === "POSITION_LIQUIDATED") return { title: "포지션이 강제청산되었습니다", detail: `${formatSideKr(order.side)} · 주문 #${order.orderId} · 체결 내역을 확인해 주세요.` };
   return null;
 }
 
@@ -74,6 +76,7 @@ export function TradingEventStatus({ initialEvents, defaultOpen = false }: { ini
   const client = useQueryClient(), notices = useTradingNotices();
   const dialog = useRef<HTMLDialogElement>(null), trigger = useRef<HTMLButtonElement>(null);
   const [attempt, setAttempt] = useState(0), [state, setState] = useState<EventState>("syncing"), [open, setOpen] = useState(defaultOpen);
+  useDialogScrollLock(dialog, defaultOpen);
   const eventsQuery = useQuery({
     queryKey: [...tradingKeys.account(snapshot), "events-history"],
     enabled: open && snapshot.phase === "ready" && !snapshot.retrying,
@@ -136,7 +139,7 @@ export function TradingEventStatus({ initialEvents, defaultOpen = false }: { ini
       {!eventsQuery.isPending && !eventsQuery.isError && !committedEvents.length && <p className="ym-modal-subtle">표시할 최근 거래 알림이 없습니다.</p>}
       {committedEvents.length > 0 && <ul className="member-note max-h-[55dvh] space-y-2 overflow-y-auto pr-1">
         {committedEvents.map(({ event, title, detail }) => <li key={event.eventId} className="rounded-md border border-[#2B3139] bg-[#1E2329] p-2.5 text-xs text-[#EAECEF]">
-          <strong>{title}</strong> <span className="text-[#848E9C]">({event.type})</span> · {detail} · <time className="text-[#848E9C]" dateTime={event.occurredAt}>{kstTime(event.occurredAt)} KST</time>
+          <strong>{title}</strong> · {detail} · <time className="text-[#848E9C]" dateTime={event.occurredAt}>{kstTime(event.occurredAt)} KST</time>
         </li>)}
       </ul>}
       <div className="ym-modal-footer mt-4" style={{ gridTemplateColumns: "1fr" }}>

@@ -14,6 +14,7 @@ import { TradingEventStatus } from "./trading-event-status";
 import { emptyHistoryFilters, HistoryFilters } from "./history-filters";
 import { SymbolPerformance } from "./symbol-performance";
 import { MemberSimulation } from "./member-simulation";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
 
 export type AccountView = "positions" | "orders" | "history" | "fills";
 function HistoryMore({ hasMore, busy, error, onMore }: { hasMore: boolean; busy: boolean; error: boolean; onMore: () => void }) {
@@ -26,6 +27,7 @@ export function TradingAccountTabs({ activeTab = "positions", onSelect, symbols 
   const [auxiliary,setAuxiliary] = useState<"closed"|"portfolio"|null>(null);
   const extraDialog = useRef<HTMLDialogElement>(null);
   const extraTrigger = useRef<HTMLButtonElement|null>(null);
+  useDialogScrollLock(extraDialog, false);
   const [orderFilters, setOrderFilters] = useState({ ...emptyHistoryFilters });
   const [fillFilters, setFillFilters] = useState({ ...emptyHistoryFilters });
   const [closedFilters, setClosedFilters] = useState({ ...emptyHistoryFilters });

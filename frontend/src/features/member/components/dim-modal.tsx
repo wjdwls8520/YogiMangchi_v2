@@ -3,10 +3,12 @@
 import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { V1IconClose } from "./v1-ui";
+import { useFocusTrap } from "../../../lib/use-focus-trap";
 
 interface ScrollLockTargetWindow {
   scrollY: number;
   innerWidth?: number;
+  location?: { href?: string };
   scrollTo: (x: number, y: number) => void;
 }
 
@@ -24,6 +26,7 @@ interface ScrollLockTargetDocument {
 
 let activeLockCount = 0;
 let savedScrollY = 0;
+let savedLocationHref: string | null = null;
 let compensatedPaddingRight = false;
 let previousPaddingRight = "";
 interface OverlayEscapeEntry {
@@ -86,6 +89,7 @@ export function lockBodyScroll(
   if (!win || !doc) return 0;
   if (activeLockCount === 0) {
     savedScrollY = win.scrollY || doc.documentElement.scrollTop || 0;
+    savedLocationHref = typeof win.location?.href === "string" ? win.location.href : null;
     const scrollbarGap =
       typeof win.innerWidth === "number" && typeof doc.documentElement.clientWidth === "number"
         ? Math.max(0, win.innerWidth - doc.documentElement.clientWidth)
@@ -123,6 +127,9 @@ export function unlockBodyScroll(
   }
   if (activeLockCount === 0) {
     const restoreY = Number(doc.body.dataset.savedScrollY ?? savedScrollY) || 0;
+    const currentHref = typeof win.location?.href === "string" ? win.location.href : null;
+    const navigatedAway = savedLocationHref !== null && currentHref !== null && currentHref !== savedLocationHref;
+    savedLocationHref = null;
     delete doc.body.dataset.scrollLocked;
     delete doc.body.dataset.savedScrollY;
     doc.body.style.position = "";
@@ -138,8 +145,10 @@ export function unlockBodyScroll(
     }
     doc.documentElement.style.overflow = "";
     doc.documentElement.style.scrollbarWidth = "";
-    win.scrollTo(0, restoreY);
-    return restoreY;
+    if (!navigatedAway) {
+      win.scrollTo(0, restoreY);
+    }
+    return navigatedAway ? 0 : restoreY;
   }
   return savedScrollY;
 }
@@ -147,6 +156,7 @@ export function unlockBodyScroll(
 export function resetScrollLockForTest() {
   activeLockCount = 0;
   savedScrollY = 0;
+  savedLocationHref = null;
   compensatedPaddingRight = false;
   previousPaddingRight = "";
 }
@@ -161,25 +171,59 @@ export function useDimScrollLock(open: boolean) {
   }, [open]);
 }
 
-export function useDialogScrollLock(dialogRef: RefObject<HTMLDialogElement | null>, initialOpen = false) {
+export function useDialogScrollLock(
+  dialogRef: RefObject<HTMLDialogElement | null>,
+  initialOpen = false,
+  options?: { closeOnBackdrop?: boolean; canClose?: () => boolean; onBackdropClose?: () => void },
+) {
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
+
   useEffect(() => {
     const el = dialogRef.current;
     if (!el || typeof MutationObserver === "undefined") return;
     let locked = false;
+    let previousFocus: HTMLElement | null = null;
     const sync = () => {
       const isOpen = el.hasAttribute("open") || el.open;
       if (isOpen && !locked) {
         locked = true;
+        if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement && !el.contains(document.activeElement)) {
+          previousFocus = document.activeElement;
+        }
         lockBodyScroll();
       } else if (!isOpen && locked) {
         locked = false;
         unlockBodyScroll();
+        if (previousFocus && previousFocus.isConnected && typeof previousFocus.focus === "function") {
+          const toFocus = previousFocus;
+          previousFocus = null;
+          try {
+            toFocus.focus();
+          } catch {
+            // Ignore focus error
+          }
+        }
+      }
+    };
+    const handleBackdropClick = (event: MouseEvent) => {
+      if (optionsRef.current?.closeOnBackdrop === false) return;
+      if (event.target !== el) return;
+      if (optionsRef.current?.canClose && !optionsRef.current.canClose()) return;
+      if (optionsRef.current?.onBackdropClose) {
+        optionsRef.current.onBackdropClose();
+      } else if (el.open) {
+        el.close();
       }
     };
     sync();
+    el.addEventListener("click", handleBackdropClick);
     const observer = new MutationObserver(sync);
     observer.observe(el, { attributes: true, attributeFilter: ["open"] });
     return () => {
+      el.removeEventListener("click", handleBackdropClick);
       observer.disconnect();
       if (locked) {
         locked = false;
@@ -208,9 +252,11 @@ export function DimModal({
 }) {
   const titleId = useId();
   const modalId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useDimScrollLock(open);
+  useFocusTrap(open, panelRef);
 
   useEffect(() => {
     if (!open || typeof window === "undefined") return;
@@ -229,6 +275,7 @@ export function DimModal({
       onClick={onClose}
     >
       <div
+        ref={panelRef}
         className="ym-dim-panel"
         style={{ maxWidth }}
         onClick={event => event.stopPropagation()}

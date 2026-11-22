@@ -8,12 +8,14 @@ import { mutationMessage, mutationStillUnconfirmed, unconfirmedMutationMessage }
 
 import { useTradingAdmission } from "../api/recovery";
 import { useJournalResolution } from "../api/journal-resolution";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
 
 export function GuestRetry() {
   const admission = useTradingAdmission(), client = useQueryClient();
   const {session,snapshot}=useGuestSession();
   const dialog=useRef<HTMLDialogElement>(null),active=useRef(false);
   const [pending,setPending]=useState(false),[confirmation,setConfirmation]=useState<{accountId:number;key:string}|null>(null);
+  useDialogScrollLock(dialog, false, { canClose: () => !pending });
   const [error,setError]=useState<string|null>(null);
   const [completed,setCompleted]=useState<{accountId:number;message:string}|null>(null);
   const unresolved=confirmation?.accountId===snapshot.accountId ? confirmation : null;
@@ -53,7 +55,7 @@ export function GuestRetry() {
       <p>미체결 주문을 취소하고 모든 포지션을 종료한 뒤 모의 자금을 10,000 USDT로 초기화합니다.</p>
       <p>현재 계정 ID와 만료일, 레버리지 설정, 기존 거래 이력은 유지됩니다. 이 포지션 종료로 체결이나 손익이 새로 발생하지 않습니다.</p>
       {error&&<p role="alert" className="ym-modal-alert mt-3">{error}</p>}
-      <div className="ym-modal-footer mt-4"><button type="button" className="guest-cancel ym-modal-btn-cancel" disabled={pending} onClick={()=>dialog.current?.close()}>닫기</button><button type="button" className="guest-start-button ym-modal-btn-confirm" disabled={(!unresolved&&!admission.trade)||pending||snapshot.retrying} onClick={()=>void execute()}>{pending ? "처리 중…" : unresolved ? "원래 재도전 요청 재전송" : "모의 자금 초기화 확인"}</button></div>
+      <div className="ym-modal-footer mt-4"><button type="button" className="guest-cancel ym-modal-btn-cancel" disabled={pending} onClick={()=>dialog.current?.close()}>취소</button><button type="button" className="guest-start-button ym-modal-btn-confirm" disabled={(!unresolved&&!admission.trade)||pending||snapshot.retrying} onClick={()=>void execute()}>{pending ? "처리 중…" : unresolved ? "원래 재도전 요청 재전송" : "모의 자금 초기화 확인"}</button></div>
     </dialog>
   </div>;
 }

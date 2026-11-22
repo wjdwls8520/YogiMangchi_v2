@@ -71,7 +71,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
           Kakao로 계속하기
         </a>
         <a
-          className="member-primary login-button flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-5 text-sm font-bold text-gray-800 transition-colors hover:bg-gray-50"
+          className="ym-google-cta flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-5 text-sm font-bold text-gray-800 transition-colors hover:border-gray-400 hover:bg-gray-50"
           href={google}
         >
           <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-[10px] font-black text-[#0058FF]">
@@ -98,7 +98,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
         <p className="member-note break-keep text-xs leading-relaxed text-gray-400">
           최초 소셜 로그인 시 약관 동의 및 닉네임 설정 단계로 자동 연결됩니다.{" "}
           <br className="hidden sm:block" />
-          Guest 모의투자 기록은 회원 계정에 자동으로 합쳐지지 않습니다.
+          게스트 모의투자 기록은 회원 계정에 자동으로 합쳐지지 않습니다.
         </p>
         <Link href="/trading" className="ym-guest-return-link text-xs font-bold text-[#0058FF] hover:underline">
           게스트 모의투자로 바로 체험하기 →
@@ -109,7 +109,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
         title="소셜 로그인 및 계정 이용 안내"
-        subtitle="요기망치 회원 인증 및 Guest 계정 분리 정책"
+        subtitle="요기망치 회원 인증 및 게스트 계정 분리 정책"
         footer={
           <button type="button" className="login-button ym-btn-inline" onClick={() => setHelpOpen(false)}>
             확인
@@ -124,7 +124,7 @@ export function MemberLoginView({ google, kakao }: { google: string; kakao: stri
             <strong>2. 신규 가입 절차</strong> 처음 로그인하는 소셜 계정은 약관 동의 및 닉네임(1~8자) 설정 화면으로 자동 이동합니다.
           </p>
           <p>
-            <strong>3. 모의투자 자산 분리</strong> 비회원(Guest)으로 진행한 10,000 USDT 체험 기록과 회원 계정의 선물 모의투자 원장은 서로 독립적으로 관리됩니다.
+            <strong>3. 모의투자 자산 분리</strong> 비회원(게스트)으로 진행한 10,000 USDT 체험 기록과 회원 계정의 선물 모의투자 원장은 서로 독립적으로 관리됩니다.
           </p>
         </div>
       </DimModal>

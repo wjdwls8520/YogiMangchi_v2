@@ -30,7 +30,7 @@ export function canonicalJournalCommand(value:unknown):JournalCommand {
   try {
     const v=row(value); let result:JournalCommand;
     switch(v.kind) {
-      case "open": result={kind:"open",tradingSymbolId:positiveId(v.tradingSymbolId),type:text(v.type) as "MARKET"|"LIMIT",side:text(v.side) as "LONG"|"SHORT",quantity:text(v.quantity),leverage:typeof v.leverage==="number"?v.leverage:fail(),...(v.type==="LIMIT"?{limitPrice:text(v.limitPrice)}:{})};break;
+      case "open": result={kind:"open",tradingSymbolId:positiveId(v.tradingSymbolId),type:text(v.type) as "MARKET"|"LIMIT",side:text(v.side) as "LONG"|"SHORT",quantity:text(v.quantity),leverage:typeof v.leverage==="number"?v.leverage:fail(),...(v.type==="LIMIT"?{limitPrice:text(v.limitPrice)}:{}),...(v.type==="MARKET"&&v.stopLossPrice!==undefined?{stopLossPrice:text(v.stopLossPrice)}:{}),...(v.type==="MARKET"&&v.takeProfitPrice!==undefined?{takeProfitPrice:text(v.takeProfitPrice)}:{})};break;
       case "close": result={kind:"close",positionId:positiveId(v.positionId),...(v.quantity===undefined?{}:{quantity:text(v.quantity)})};break;
       case "limitClose": result={kind:"limitClose",positionId:positiveId(v.positionId),limitPrice:text(v.limitPrice),...(v.quantity===undefined?{}:{quantity:text(v.quantity)})};break;
       case "amend": result={kind:"amend",orderId:positiveId(v.orderId),quantity:text(v.quantity),limitPrice:text(v.limitPrice)};break;

@@ -75,6 +75,7 @@ type FollowMemberItem = {
 };
 
 export type MyPageMainTab = "mock-assets" | "contest-assets" | "portfolio" | "community";
+export type MyPageCommunityTab = "posts" | "replies" | "likedPosts" | "likedReplies" | "reports";
 type LedgerDetailTab = "holdings" | "pnl" | "orders" | "trades" | "open";
 type ContestSubTab = "live" | "finished";
 
@@ -249,12 +250,16 @@ export function MemberMyProfilePage({
   initialMainTab,
   initialDetailTab,
   initialContestSubTab,
+  initialSeasonId,
+  initialCommunityTab,
 }: {
   initialMainTab?: MyPageMainTab;
   initialDetailTab?: LedgerDetailTab;
   initialContestSubTab?: ContestSubTab;
+  initialSeasonId?: number;
+  initialCommunityTab?: MyPageCommunityTab;
 } = {}) {
-  const { origin, snapshot: member, session } = useMember();
+  const { origin, snapshot: member, session, announce } = useMember();
   const queryClient = useQueryClient();
   const isOwnAndLoggedIn = member.phase === "ready";
   const targetMemberId = isOwnAndLoggedIn ? (member.memberId ?? 0) : 0;
@@ -263,19 +268,31 @@ export function MemberMyProfilePage({
   const [selectedTab, setSelectedTab] = useState<MyPageMainTab | null>(initialMainTab ?? null);
   const [detailTab, setDetailTab] = useState<LedgerDetailTab>(initialDetailTab ?? "holdings");
   const [contestSubTab, setContestSubTab] = useState<ContestSubTab>(initialContestSubTab ?? "live");
+  const [highlightedSeasonId, setHighlightedSeasonId] = useState<number | null>(initialSeasonId ?? null);
+  const [communityTab, setCommunityTab] = useState<MyPageCommunityTab>(initialCommunityTab ?? "posts");
   const [syncedTabs, setSyncedTabs] = useState({
     initialMainTab,
     initialDetailTab,
     initialContestSubTab,
+    initialSeasonId,
+    initialCommunityTab,
   });
 
   // Sync URL query params into tab state when navigating via notification deep-links while already on /me
   if (
     syncedTabs.initialMainTab !== initialMainTab ||
     syncedTabs.initialDetailTab !== initialDetailTab ||
-    syncedTabs.initialContestSubTab !== initialContestSubTab
+    syncedTabs.initialContestSubTab !== initialContestSubTab ||
+    syncedTabs.initialSeasonId !== initialSeasonId ||
+    syncedTabs.initialCommunityTab !== initialCommunityTab
   ) {
-    setSyncedTabs({ initialMainTab, initialDetailTab, initialContestSubTab });
+    setSyncedTabs({
+      initialMainTab,
+      initialDetailTab,
+      initialContestSubTab,
+      initialSeasonId,
+      initialCommunityTab,
+    });
     if (initialMainTab !== undefined && syncedTabs.initialMainTab !== initialMainTab) {
       setSelectedTab(initialMainTab);
     }
@@ -288,11 +305,14 @@ export function MemberMyProfilePage({
     ) {
       setContestSubTab(initialContestSubTab);
     }
+    if (initialSeasonId !== undefined && syncedTabs.initialSeasonId !== initialSeasonId) {
+      setHighlightedSeasonId(initialSeasonId);
+    }
+    if (initialCommunityTab !== undefined && syncedTabs.initialCommunityTab !== initialCommunityTab) {
+      setCommunityTab(initialCommunityTab);
+    }
   }
   const [portfolioTab, setPortfolioTab] = useState<"mock" | "contest">("mock");
-  const [communityTab, setCommunityTab] = useState<
-    "posts" | "replies" | "likedPosts" | "likedReplies" | "reports"
-  >("posts");
   const [followModalType, setFollowModalType] = useState<"followers" | "followings" | null>(null);
   const [followOverrides, setFollowOverrides] = useState<Record<number, boolean>>({});
 
@@ -991,6 +1011,25 @@ export function MemberMyProfilePage({
     ? communityReportsInfinite.data.pages.flatMap(p => p.items)
     : [];
 
+  useEffect(() => {
+    if (!highlightedSeasonId || activeMainTab !== "contest-assets" || typeof document === "undefined") {
+      return;
+    }
+    const el = document.getElementById(`contest-season-card-${highlightedSeasonId}`);
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlightedSeasonId, activeMainTab, contestSubTab]);
+
+  async function handleMeLogout() {
+    try {
+      await session.logout();
+      announce("ended");
+    } catch {
+      // Logout error is reflected by session snapshot state
+    }
+  }
+
   return (
     <MemberShell
       title="마이페이지"
@@ -1030,7 +1069,7 @@ export function MemberMyProfilePage({
                     </Link>
                     <button
                       type="button"
-                      onClick={() => void session.logout()}
+                      onClick={() => void handleMeLogout()}
                       className="flex h-9 w-full items-center justify-center whitespace-nowrap rounded-xl bg-gray-100 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200"
                     >
                       로그아웃
@@ -1208,8 +1247,12 @@ export function MemberMyProfilePage({
                   {/* 회차 재시작 (MemberSimulation) 연동 */}
                   {member.consentStatus === "accepted" && (
                     <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4">
-                      <TradingDataProvider>
-                        <MemberSimulation />
+                      <TradingDataProvider suppressNotices>
+                        <MemberSimulation
+                          onRestartSuccess={() => {
+                            void queryClient.invalidateQueries({ queryKey: ["member"] });
+                          }}
+                        />
                       </TradingDataProvider>
                     </div>
                   )}
@@ -1663,7 +1706,7 @@ export function MemberMyProfilePage({
                                 <td className="px-4 py-3.5 text-right">{order.orderQuantity}</td>
                                 <td className="px-4 py-3.5 text-right whitespace-nowrap">
                                   <Link
-                                    href="/trading"
+                                    href={`/trading?symbol=${encodeURIComponent(order.symbol)}&tab=orders`}
                                     className="inline-flex shrink-0 whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100"
                                   >
                                     모의투자에서 취소
@@ -1712,7 +1755,13 @@ export function MemberMyProfilePage({
                           return (
                             <section
                               key={item.seasonId}
-                              className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-5 space-y-4"
+                              id={`contest-season-card-${item.seasonId}`}
+                              data-highlighted-season={highlightedSeasonId === item.seasonId ? "true" : undefined}
+                              className={`rounded-2xl border p-5 space-y-4 transition-colors ${
+                                highlightedSeasonId === item.seasonId
+                                  ? "border-[#0058FF] bg-blue-50/40 ring-2 ring-[#0058FF]/20"
+                                  : "border-gray-200 bg-[#F9FAFB]"
+                              }`}
                             >
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex flex-wrap items-center gap-2">
@@ -1828,7 +1877,22 @@ export function MemberMyProfilePage({
                             </thead>
                             <tbody className="divide-y divide-gray-100 bg-white">
                               {finishedContestSeasonsDisplay.map(season => (
-                                <tr key={season.seasonId} className="hover:bg-gray-50">
+                                <tr
+                                  key={season.seasonId}
+                                  id={`contest-season-card-${season.seasonId}`}
+                                  data-highlighted-season={
+                                    highlightedSeasonId !== null &&
+                                    String(highlightedSeasonId) === String(season.seasonId)
+                                      ? "true"
+                                      : undefined
+                                  }
+                                  className={
+                                    highlightedSeasonId !== null &&
+                                    String(highlightedSeasonId) === String(season.seasonId)
+                                      ? "bg-blue-50/60"
+                                      : "hover:bg-gray-50"
+                                  }
+                                >
                                   <td className="px-4 py-3.5">
                                     <div className="font-black text-gray-900">
                                       {season.seasonTitle}

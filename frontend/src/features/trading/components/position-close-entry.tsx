@@ -15,6 +15,7 @@ import { useMarketDetails, usePositionMarkets } from "./selected-market-provider
 import type { TradingOrder } from "../api/orders";
 import { orderReceiptLabel } from "../api/orders";
 import { orderReason } from "../api/order-reason";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
 
 export function PositionCloseEntry({position,symbol,layout="panel",active=true}:{position:Position;symbol:string;layout?:"panel"|"row";active?:boolean}) {
   const prefix=useId(),dialog=useRef<HTMLDialogElement>(null),fullTrigger=useRef<HTMLButtonElement>(null);
@@ -26,7 +27,9 @@ export function PositionCloseEntry({position,symbol,layout="panel",active=true}:
   const [type,setType]=useState<"MARKET"|"LIMIT">("MARKET");
   const [quantity,setQuantity]=useState(""),[limitPrice,setPrice]=useState(""),[ratio,setRatio]=useState(0);
   const [warning,setWarning]=useState<string|null>(null),[result,setResult]=useState<string|null>(null);
-  const action=useTradingMutation();
+  const action=useTradingMutation(undefined, undefined, { suppressErrorNotice: layout === "row" });
+  useDialogScrollLock(dialog, false, { canClose: () => !action.pending });
+  useDialogScrollLock(partialDialog, false, { canClose: () => !action.pending });
   const notices=useTradingNotices();
   const locked=snapshot.retrying||action.pending||action.unconfirmed||snapshot.phase!=="ready";
   const ready=!summary.error&&!action.blocked&&isolatedReady(summary.data?.wallet)&&position.marginMode==="ISOLATED"&&snapshot.phase==="ready"&&summary.data?.status==="ACTIVE";

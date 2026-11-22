@@ -56,7 +56,13 @@ export default async function NewsPage({
             ? "ALL"
             : undefined;
   const initialBreakingSort =
-    sortParam === "oldest" ? "OLDEST" : sortParam === "latest" ? "LATEST" : undefined;
+    sortParam === "popular"
+      ? "POPULAR"
+      : sortParam === "oldest"
+        ? "OLDEST"
+        : sortParam === "latest"
+          ? "LATEST"
+          : undefined;
   const initialNewsroomSort =
     sortParam === "popular"
       ? "POPULAR"

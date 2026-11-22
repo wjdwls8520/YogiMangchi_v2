@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   createAdminContestSeason,
+  deleteAdminContestSeason,
   fetchAdminContestSeasons,
   formatContestDateTime,
   formatContestSeedPlain,
@@ -15,6 +16,8 @@ import {
 } from "../../contest/api/contest-client";
 import { DimModal } from "../../member/components/dim-modal";
 import { useOptionalMember } from "../../member/components/member-provider";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
 import {
   cn,
   V1Button,
@@ -113,12 +116,16 @@ export function ContestCreateEditModal({
   open,
   mode,
   initialSeason,
+  saving = false,
+  externalError = null,
   onClose,
   onSave,
 }: {
   open: boolean;
   mode: "create" | "edit";
   initialSeason?: AdminContestSeasonRecord | null;
+  saving?: boolean;
+  externalError?: { text: string; requestId?: string } | null;
   onClose: () => void;
   onSave: (draft: ContestFormDraft) => void;
 }) {
@@ -186,19 +193,26 @@ export function ContestCreateEditModal({
   return (
     <DimModal
       open={open}
-      onClose={onClose}
+      onClose={() => {
+        if (!saving) onClose();
+      }}
       title={mode === "create" ? "새 대회 시즌 생성" : "대회 시즌 정보 수정"}
       subtitle="시즌별 독립 대회 지갑 시드머니와 모집·진행 일정을 설정합니다."
       maxWidth="640px"
     >
       <form onSubmit={handleSubmit} className="space-y-4 text-xs sm:text-sm">
-        {validationError ? (
-          <p
+        {(validationError || externalError) ? (
+          <div
             role="alert"
             className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700"
           >
-            {validationError}
-          </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>{validationError ?? externalError?.text}</span>
+              {!validationError && externalError?.requestId && (
+                <RequestIdChip requestId={externalError.requestId} />
+              )}
+            </div>
+          </div>
         ) : null}
 
         <div className="space-y-1.5">
@@ -318,11 +332,15 @@ export function ContestCreateEditModal({
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
-          <V1Button variant="white" size="sm" onClick={onClose}>
+          <V1Button variant="white" size="sm" disabled={saving} onClick={onClose}>
             취소
           </V1Button>
-          <V1Button type="submit" variant="blue" size="sm">
-            {mode === "create" ? "시즌 생성 완료" : "변경사항 저장"}
+          <V1Button type="submit" variant="blue" size="sm" disabled={saving}>
+            {saving
+              ? "저장 중…"
+              : mode === "create"
+                ? "시즌 생성 완료"
+                : "변경사항 저장"}
           </V1Button>
         </div>
       </form>
@@ -367,21 +385,36 @@ export function AdminContestList() {
   const generation = memberCtx?.snapshot.generation;
   const session = memberCtx?.session;
   const [seasons, setSeasons] = useState<AdminContestSeasonRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [totalServerSeasons, setTotalServerSeasons] = useState(0);
+  const [nextCursorId, setNextCursorId] = useState<number | null>(null);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState<{ text: string; requestId?: string } | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
-  const [visibleCount, setVisibleCount] = useState(5);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editingSeason, setEditingSeason] = useState<AdminContestSeasonRecord | null>(
     null,
   );
+  const [savingSeason, setSavingSeason] = useState(false);
+  const [formModalError, setFormModalError] = useState<{ text: string; requestId?: string } | null>(null);
+  const [togglingSeasonId, setTogglingSeasonId] = useState<number | null>(null);
   const [cancelTargetSeason, setCancelTargetSeason] =
     useState<AdminContestSeasonRecord | null>(null);
   const [cancelingSeasonId, setCancelingSeasonId] = useState<number | null>(null);
+  const [cancelModalError, setCancelModalError] = useState<{ text: string; requestId?: string } | null>(null);
+  const [deleteTargetSeason, setDeleteTargetSeason] =
+    useState<AdminContestSeasonRecord | null>(null);
+  const [deletingSeasonId, setDeletingSeasonId] = useState<number | null>(null);
+  const [deleteModalError, setDeleteModalError] = useState<{ text: string; requestId?: string } | null>(null);
   const [statusBanner, setStatusBanner] = useState<{
     kind: "success" | "error";
     text: string;
+    requestId?: string;
   } | null>(null);
+
+  const [settledQueryKey, setSettledQueryKey] = useState<string | null>(null);
+  const queryKey = `${generation ?? 0}:${reloadTick}`;
+  const isLoading = phase === "ready" && role === "ADMIN" && settledQueryKey !== queryKey;
 
   useEffect(() => {
     if (phase !== "ready" || role !== "ADMIN" || !session) {
@@ -389,29 +422,71 @@ export function AdminContestList() {
     }
     const controller = new AbortController();
     void session
-      .authorized(cred =>
-        fetchAdminContestSeasons({
-          token: cred.accessToken,
-          size: 50,
-          signal: controller.signal,
-        }),
+      .authorized(
+        cred =>
+          fetchAdminContestSeasons({
+            token: cred.accessToken,
+            size: 20,
+            signal: controller.signal,
+          }),
+        true,
       )
       .then(res => {
         setLoadError(null);
-        setIsLoading(false);
+        setSettledQueryKey(queryKey);
         if (res && Array.isArray(res.items)) {
           setSeasons(res.items.map(mapSeasonViewToAdminRecord));
+          setTotalServerSeasons(res.totalCount || res.items.length);
+          setNextCursorId(res.nextCursorId ?? null);
+          setHasNextPage(Boolean(res.hasNext));
         }
       })
-      .catch(() => {
+      .catch(error => {
         if (controller.signal.aborted) return;
-        setIsLoading(false);
+        setSettledQueryKey(queryKey);
         setSeasons([]);
-        setLoadError("대회 시즌 목록을 불러오지 못했습니다. 서버 연결 상태를 확인해 주세요.");
+        setLoadError({
+          text: "대회 시즌 목록을 불러오지 못했습니다. 서버 연결 상태를 확인해 주세요.",
+          requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+        });
       });
 
     return () => controller.abort();
-  }, [session, phase, role, generation, reloadTick]);
+  }, [session, phase, role, generation, reloadTick, queryKey]);
+
+  async function handleLoadMoreSeasons() {
+    if (!session || !hasNextPage || nextCursorId == null || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await session.authorized(
+        cred =>
+          fetchAdminContestSeasons({
+            token: cred.accessToken,
+            cursorId: nextCursorId,
+            size: 20,
+          }),
+        true,
+      );
+      if (res && Array.isArray(res.items)) {
+        const mapped = res.items.map(mapSeasonViewToAdminRecord);
+        setSeasons(prev => {
+          const seen = new Set(prev.map(s => s.id));
+          return [...prev, ...mapped.filter(s => !seen.has(s.id))];
+        });
+        setTotalServerSeasons(res.totalCount || totalServerSeasons);
+        setNextCursorId(res.nextCursorId ?? null);
+        setHasNextPage(Boolean(res.hasNext));
+      }
+    } catch (error) {
+      setStatusBanner({
+        kind: "error",
+        text: "추가 대회 시즌을 불러오지 못했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const recruitingCount = seasons.filter(
     s => s.progressState === "모집중" && s.isPublic && !s.isCancel,
@@ -422,14 +497,16 @@ export function AdminContestList() {
 
   async function handleToggleField(id: number, field: "isPublic" | "isCancel") {
     const target = seasons.find(item => item.id === id);
-    if (!target || !session) return;
+    if (!target || !session || togglingSeasonId !== null) return;
     if (field === "isCancel") {
       if (target.isCancel || Boolean(target.settledAt)) return;
+      setCancelModalError(null);
       setCancelTargetSeason(target);
       return;
     }
     const nextValue = !target[field];
     const patchBody = { isPublic: nextValue };
+    setTogglingSeasonId(id);
 
     try {
       const updatedView = await session.authorized(cred =>
@@ -451,7 +528,10 @@ export function AdminContestList() {
           error instanceof Error && error.message
             ? error.message
             : `시즌 #${id} 상태 변경에 실패했습니다.`,
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
+    } finally {
+      setTogglingSeasonId(null);
     }
   }
 
@@ -459,6 +539,7 @@ export function AdminContestList() {
     if (!cancelTargetSeason || !session || cancelingSeasonId !== null) return;
     const target = cancelTargetSeason;
     setCancelingSeasonId(target.id);
+    setCancelModalError(null);
     try {
       const updatedView = await session.authorized(cred =>
         patchAdminContestSeasonStatus(
@@ -477,20 +558,51 @@ export function AdminContestList() {
       }
       setCancelTargetSeason(null);
     } catch (error) {
-      setStatusBanner({
-        kind: "error",
+      setCancelModalError({
         text:
           error instanceof Error && error.message
             ? error.message
             : `시즌 #${target.id} 취소 처리에 실패했습니다.`,
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
     } finally {
       setCancelingSeasonId(null);
     }
   }
 
+  async function handleConfirmDeleteSeason() {
+    if (!deleteTargetSeason || !session || deletingSeasonId !== null) return;
+    const target = deleteTargetSeason;
+    setDeletingSeasonId(target.id);
+    setDeleteModalError(null);
+    try {
+      await session.authorized(cred =>
+        deleteAdminContestSeason(target.id, { token: cred.accessToken }),
+      );
+      setSeasons(prev => prev.filter(item => item.id !== target.id));
+      setTotalServerSeasons(prev => Math.max(0, prev - 1));
+      setDeleteTargetSeason(null);
+      setStatusBanner({
+        kind: "success",
+        text: `시즌 #${target.id} "${target.title}"이(가) 삭제되었습니다.`,
+      });
+    } catch (error) {
+      setDeleteModalError({
+        text:
+          error instanceof Error && error.message
+            ? error.message
+            : `시즌 #${target.id} 삭제에 실패했습니다. 참가자·거래 이력이 있는 시즌은 삭제할 수 없습니다.`,
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
+    } finally {
+      setDeletingSeasonId(null);
+    }
+  }
+
   async function handleCreateSeason(draft: ContestFormDraft) {
-    if (!session) return;
+    if (!session || savingSeason) return;
+    setSavingSeason(true);
+    setFormModalError(null);
     const payload = {
       title: draft.title,
       description: draft.description,
@@ -509,6 +621,7 @@ export function AdminContestList() {
       if (serverView) {
         const mapped = mapSeasonViewToAdminRecord(serverView);
         setSeasons(prev => [mapped, ...prev]);
+        setTotalServerSeasons(prev => prev + 1);
         setCreateModalOpen(false);
         setStatusBanner({
           kind: "success",
@@ -516,18 +629,22 @@ export function AdminContestList() {
         });
       }
     } catch (error) {
-      setStatusBanner({
-        kind: "error",
+      setFormModalError({
         text:
           error instanceof Error && error.message
             ? error.message
             : "새 대회 시즌 생성에 실패했습니다. 일정 순서 및 입력값을 확인해 주세요.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
+    } finally {
+      setSavingSeason(false);
     }
   }
 
   async function handleUpdateSeason(draft: ContestFormDraft) {
-    if (!editingSeason || !session) return;
+    if (!editingSeason || !session || savingSeason) return;
+    setSavingSeason(true);
+    setFormModalError(null);
     const targetId = editingSeason.id;
     const payload = {
       title: draft.title,
@@ -554,17 +671,19 @@ export function AdminContestList() {
         });
       }
     } catch (error) {
-      setStatusBanner({
-        kind: "error",
+      setFormModalError({
         text:
           error instanceof Error && error.message
             ? error.message
             : `시즌 #${targetId} 정보 수정에 실패했습니다.`,
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
+    } finally {
+      setSavingSeason(false);
     }
   }
 
-  const visibleSeasons = seasons.slice(0, visibleCount);
+  const visibleSeasons = seasons;
 
   return (
     <AdminShell activeSection="contest">
@@ -587,7 +706,10 @@ export function AdminContestList() {
             variant="blue"
             size="sm"
             data-admin-action="open-create-season"
-            onClick={() => setCreateModalOpen(true)}
+            onClick={() => {
+              setFormModalError(null);
+              setCreateModalOpen(true);
+            }}
           >
             <span>+ 새 대회 시즌 생성</span>
           </V1Button>
@@ -599,15 +721,15 @@ export function AdminContestList() {
             role="alert"
             className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3.5 text-xs sm:text-sm font-bold text-[#F6465D]"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <V1IconAlert className="h-4 w-4 shrink-0" />
-              <span>{loadError}</span>
+              <span>{loadError.text}</span>
+              {loadError.requestId ? <RequestIdChip requestId={loadError.requestId} /> : null}
             </div>
             <button
               type="button"
               onClick={() => {
                 setLoadError(null);
-                setIsLoading(true);
                 setReloadTick(t => t + 1);
               }}
               className="shrink-0 whitespace-nowrap rounded-lg border border-rose-200 bg-white px-3 py-1 text-xs font-bold text-[#F6465D] hover:bg-rose-100"
@@ -628,13 +750,16 @@ export function AdminContestList() {
                 : "border-blue-200 bg-blue-50 text-[#0058FF]",
             )}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {statusBanner.kind === "error" ? (
                 <V1IconAlert className="h-4 w-4 shrink-0" />
               ) : (
                 <V1IconCheck className="h-4 w-4 shrink-0" />
               )}
               <span>{statusBanner.text}</span>
+              {statusBanner.requestId ? (
+                <RequestIdChip requestId={statusBanner.requestId} />
+              ) : null}
             </div>
             <button
               type="button"
@@ -657,7 +782,7 @@ export function AdminContestList() {
             <div>
               <p className="text-xs font-bold text-gray-400">전체 대회 시즌</p>
               <p className="mt-1.5 text-3xl font-black text-gray-900 tabular-nums">
-                {seasons.length}
+                {totalServerSeasons}
               </p>
             </div>
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-[#0058FF]">
@@ -694,13 +819,13 @@ export function AdminContestList() {
         <section className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
           <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
             <h2 className="text-base font-black text-gray-900">대회 시즌 목록</h2>
-            <span className="text-xs font-bold text-gray-400">
-              총 {seasons.length}개 시즌
+            <span className="text-xs font-bold text-gray-400 tabular-nums">
+              총 {totalServerSeasons}개 시즌
             </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1220px] text-left text-xs">
+            <table className="w-full min-w-[1260px] text-left text-xs">
               <thead className="border-b border-gray-200 bg-[#F9FAFB] text-gray-500">
                 <tr>
                   <th className="w-[64px] px-3 py-3.5 font-bold whitespace-nowrap">시즌 ID</th>
@@ -717,12 +842,25 @@ export function AdminContestList() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={11} className="px-4 py-10 text-center font-bold text-gray-400">
-                      대회 시즌 목록을 불러오는 중입니다…
-                    </td>
-                  </tr>
+                {isLoading && visibleSeasons.length === 0 ? (
+                  Array.from({ length: 4 }).map((_, index) => (
+                    <tr key={`season-skeleton-${index}`} aria-hidden="true" className="animate-pulse">
+                      <td className="px-3 py-4"><div className="h-4 w-10 rounded bg-gray-100" /></td>
+                      <td className="px-3 py-4">
+                        <div className="h-4 w-40 rounded bg-gray-100" />
+                        <div className="mt-1.5 h-3 w-32 rounded bg-gray-100" />
+                      </td>
+                      <td className="px-2.5 py-4 text-center"><div className="mx-auto h-5 w-14 rounded-full bg-gray-100" /></td>
+                      <td className="px-2.5 py-4 text-center"><div className="mx-auto h-5 w-14 rounded-full bg-gray-100" /></td>
+                      <td className="px-2.5 py-4 text-center"><div className="mx-auto h-5 w-10 rounded-full bg-gray-100" /></td>
+                      <td className="px-2.5 py-4 text-center"><div className="mx-auto h-5 w-10 rounded-full bg-gray-100" /></td>
+                      <td className="px-3 py-4 text-right"><div className="ml-auto h-4 w-20 rounded bg-gray-100" /></td>
+                      <td className="px-2.5 py-4 text-center"><div className="mx-auto h-4 w-24 rounded bg-gray-100" /></td>
+                      <td className="px-2.5 py-4 text-center"><div className="mx-auto h-4 w-24 rounded bg-gray-100" /></td>
+                      <td className="px-2.5 py-4 text-center"><div className="mx-auto h-5 w-14 rounded-full bg-gray-100" /></td>
+                      <td className="px-3 py-4 text-center"><div className="mx-auto h-8 w-32 rounded-lg bg-gray-100" /></td>
+                    </tr>
+                  ))
                 ) : visibleSeasons.length === 0 ? (
                   <tr>
                     <td colSpan={11} className="px-4 py-10 text-center font-bold text-gray-400">
@@ -732,6 +870,7 @@ export function AdminContestList() {
                 ) : null}
                 {visibleSeasons.map(row => {
                   const displayStatus = resolveDisplayStatus(row);
+                  const isLockedSeason = row.isCancel || Boolean(row.settledAt);
                   const progressBadgeClass =
                     row.progressState === "모집중"
                       ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
@@ -792,7 +931,8 @@ export function AdminContestList() {
                       <td className="px-2.5 py-3.5 text-center whitespace-nowrap">
                         <AdminToggleSwitch
                           checked={row.isPublic}
-                          onChange={() => handleToggleField(row.id, "isPublic")}
+                          disabled={togglingSeasonId !== null || row.isCancel}
+                          onChange={() => void handleToggleField(row.id, "isPublic")}
                           label={`${row.title} 공개여부 토글`}
                         />
                       </td>
@@ -800,7 +940,7 @@ export function AdminContestList() {
                         <AdminToggleSwitch
                           checked={row.isCancel}
                           tone="rose"
-                          disabled={row.isCancel || Boolean(row.settledAt)}
+                          disabled={isLockedSeason || togglingSeasonId !== null}
                           onChange={() => void handleToggleField(row.id, "isCancel")}
                           label={`${row.title} 취소여부 토글`}
                         />
@@ -836,10 +976,26 @@ export function AdminContestList() {
                           <button
                             type="button"
                             data-admin-edit-season={row.id}
-                            onClick={() => setEditingSeason(row)}
-                            className="inline-flex h-8 shrink-0 whitespace-nowrap items-center justify-center rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                            disabled={isLockedSeason}
+                            onClick={() => {
+                              setFormModalError(null);
+                              setEditingSeason(row);
+                            }}
+                            className="inline-flex h-8 shrink-0 whitespace-nowrap items-center justify-center rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40 cursor-pointer"
                           >
                             수정
+                          </button>
+                          <button
+                            type="button"
+                            data-admin-delete-season={row.id}
+                            disabled={deletingSeasonId !== null}
+                            onClick={() => {
+                              setDeleteModalError(null);
+                              setDeleteTargetSeason(row);
+                            }}
+                            className="inline-flex h-8 shrink-0 whitespace-nowrap items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-2.5 text-xs font-bold text-[#F6465D] hover:bg-rose-100 disabled:opacity-40 cursor-pointer"
+                          >
+                            삭제
                           </button>
                           <Link
                             href={`/admin/contest/${row.id}`}
@@ -857,14 +1013,17 @@ export function AdminContestList() {
             </table>
           </div>
 
-          {visibleCount < seasons.length ? (
+          {hasNextPage ? (
             <div className="flex justify-center border-t border-gray-100 py-4">
               <V1Button
                 variant="white"
                 size="sm"
-                onClick={() => setVisibleCount(prev => prev + 5)}
+                disabled={loadingMore}
+                onClick={() => void handleLoadMoreSeasons()}
               >
-                대회 시즌 더보기 ({visibleCount}/{seasons.length})
+                {loadingMore
+                  ? "대회 시즌 불러오는 중…"
+                  : `대회 시즌 더보기 (${seasons.length}/${totalServerSeasons})`}
               </V1Button>
             </div>
           ) : null}
@@ -876,7 +1035,14 @@ export function AdminContestList() {
         <ContestCreateEditModal
           open={createModalOpen}
           mode="create"
-          onClose={() => setCreateModalOpen(false)}
+          saving={savingSeason}
+          externalError={formModalError}
+          onClose={() => {
+            if (!savingSeason) {
+              setFormModalError(null);
+              setCreateModalOpen(false);
+            }
+          }}
           onSave={handleCreateSeason}
         />
       ) : null}
@@ -887,7 +1053,14 @@ export function AdminContestList() {
           open={Boolean(editingSeason)}
           mode="edit"
           initialSeason={editingSeason}
-          onClose={() => setEditingSeason(null)}
+          saving={savingSeason}
+          externalError={formModalError}
+          onClose={() => {
+            if (!savingSeason) {
+              setFormModalError(null);
+              setEditingSeason(null);
+            }
+          }}
           onSave={handleUpdateSeason}
         />
       ) : null}
@@ -896,7 +1069,10 @@ export function AdminContestList() {
       <DimModal
         open={cancelTargetSeason !== null}
         onClose={() => {
-          if (cancelingSeasonId === null) setCancelTargetSeason(null);
+          if (cancelingSeasonId === null) {
+            setCancelModalError(null);
+            setCancelTargetSeason(null);
+          }
         }}
         title="대회 시즌 영구 취소 확인"
         subtitle={
@@ -910,7 +1086,10 @@ export function AdminContestList() {
               variant="white"
               size="sm"
               disabled={cancelingSeasonId !== null}
-              onClick={() => setCancelTargetSeason(null)}
+              onClick={() => {
+                setCancelModalError(null);
+                setCancelTargetSeason(null);
+              }}
             >
               돌아가기
             </V1Button>
@@ -936,6 +1115,79 @@ export function AdminContestList() {
               <li>현재 미체결 주문 {cancelTargetSeason.pendingOrderCount}건 · 오픈 포지션 {cancelTargetSeason.openPositionCount}건</li>
               <li>취소 완료 후에는 시즌을 다시 활성화할 수 없습니다.</li>
             </ul>
+            {cancelModalError ? (
+              <div
+                role="alert"
+                className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
+              >
+                <V1IconAlert className="h-4 w-4 shrink-0" />
+                <span>{cancelModalError.text}</span>
+                {cancelModalError.requestId ? (
+                  <RequestIdChip requestId={cancelModalError.requestId} />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </DimModal>
+
+      {/* 시즌 삭제 확인 모달 */}
+      <DimModal
+        open={deleteTargetSeason !== null}
+        onClose={() => {
+          if (deletingSeasonId === null) {
+            setDeleteModalError(null);
+            setDeleteTargetSeason(null);
+          }
+        }}
+        title="대회 시즌 삭제 확인"
+        subtitle={
+          deleteTargetSeason
+            ? `시즌 #${deleteTargetSeason.id} · ${deleteTargetSeason.title}`
+            : undefined
+        }
+        footer={
+          <div className="flex justify-end gap-2">
+            <V1Button
+              variant="white"
+              size="sm"
+              disabled={deletingSeasonId !== null}
+              onClick={() => {
+                setDeleteModalError(null);
+                setDeleteTargetSeason(null);
+              }}
+            >
+              취소
+            </V1Button>
+            <V1Button
+              variant="red"
+              size="sm"
+              data-admin-confirm="delete-season"
+              disabled={deletingSeasonId !== null}
+              onClick={() => void handleConfirmDeleteSeason()}
+            >
+              {deletingSeasonId !== null ? "삭제 처리 중…" : "시즌 영구 삭제"}
+            </V1Button>
+          </div>
+        }
+      >
+        {deleteTargetSeason ? (
+          <div className="space-y-3 text-xs sm:text-sm leading-relaxed text-gray-800">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 font-bold text-rose-800">
+              시즌 #{deleteTargetSeason.id} &quot;{deleteTargetSeason.title}&quot;을(를) 영구 삭제합니다. 신청자·참가자 또는 거래 이력이 존재하는 시즌은 서버 정책에 의해 삭제가 차단됩니다.
+            </div>
+            {deleteModalError ? (
+              <div
+                role="alert"
+                className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
+              >
+                <V1IconAlert className="h-4 w-4 shrink-0" />
+                <span>{deleteModalError.text}</span>
+                {deleteModalError.requestId ? (
+                  <RequestIdChip requestId={deleteModalError.requestId} />
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </DimModal>

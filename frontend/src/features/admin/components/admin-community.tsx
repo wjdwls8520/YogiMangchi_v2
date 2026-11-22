@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { DimModal } from "../../member/components/dim-modal";
 import { useOptionalMember } from "../../member/components/member-provider";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
 import {
   cn,
   V1IconAlert,
@@ -105,15 +107,20 @@ export function AdminCommunity() {
   const [replyNextCursor, setReplyNextCursor] = useState<number | null>(null);
   const [replyHasNext, setReplyHasNext] = useState(false);
 
+  const [settledListKey, setSettledListKey] = useState<string | null>(null);
+  const listQueryKey = `${generation ?? 0}:${subTab}:${reloadTick}:${JSON.stringify(subTab === "posts" ? appliedPostFilters : appliedReplyFilters)}`;
+  const loadingList = phase === "ready" && role === "ADMIN" && settledListKey !== listQueryKey;
   const [loadingMore, setLoadingMore] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ text: string; requestId?: string } | null>(null);
   const [actionToast, setActionToast] = useState<{
     kind: "success" | "error";
     text: string;
+    requestId?: string;
   } | null>(null);
 
   const [deletePostTarget, setDeletePostTarget] = useState<AdminPostDto | null>(null);
   const [deleteReplyTarget, setDeleteReplyTarget] = useState<AdminReplyDto | null>(null);
+  const [modalError, setModalError] = useState<{ text: string; requestId?: string } | null>(null);
   const [restoringPostId, setRestoringPostId] = useState<number | null>(null);
   const [restoringReplyId, setRestoringReplyId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -123,57 +130,71 @@ export function AdminCommunity() {
     const controller = new AbortController();
     if (subTab === "posts") {
       void session
-        .authorized(cred =>
-          fetchAdminCommunityPosts(
-            cred.accessToken,
-            appliedPostFilters.mode,
-            {
-              title: appliedPostFilters.title,
-              content: appliedPostFilters.content,
-              authorNickname: appliedPostFilters.authorNickname,
-              size: 10,
-            },
-            { signal: controller.signal },
-          ),
+        .authorized(
+          cred =>
+            fetchAdminCommunityPosts(
+              cred.accessToken,
+              appliedPostFilters.mode,
+              {
+                title: appliedPostFilters.title,
+                content: appliedPostFilters.content,
+                authorNickname: appliedPostFilters.authorNickname,
+                size: 10,
+              },
+              { signal: controller.signal },
+            ),
+          true,
         )
         .then(res => {
           setLoadError(null);
+          setSettledListKey(listQueryKey);
           setPosts(res.content);
           setPostNextCursor(res.nextCursorId);
           setPostHasNext(res.hasNext);
         })
-        .catch(() => {
+        .catch(error => {
           if (controller.signal.aborted) return;
-          setLoadError("게시글 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+          setSettledListKey(listQueryKey);
+          setLoadError({
+            text: "게시글 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+          });
         });
     } else {
       void session
-        .authorized(cred =>
-          fetchAdminCommunityReplies(
-            cred.accessToken,
-            appliedReplyFilters.mode,
-            {
-              postTitle: appliedReplyFilters.postTitle,
-              replyContent: appliedReplyFilters.replyContent,
-              authorNickname: appliedReplyFilters.authorNickname,
-              size: 10,
-            },
-            { signal: controller.signal },
-          ),
+        .authorized(
+          cred =>
+            fetchAdminCommunityReplies(
+              cred.accessToken,
+              appliedReplyFilters.mode,
+              {
+                postTitle: appliedReplyFilters.postTitle,
+                replyContent: appliedReplyFilters.replyContent,
+                authorNickname: appliedReplyFilters.authorNickname,
+                size: 10,
+              },
+              { signal: controller.signal },
+            ),
+          true,
         )
         .then(res => {
           setLoadError(null);
+          setSettledListKey(listQueryKey);
           setReplies(res.content);
           setReplyNextCursor(res.nextCursorId);
           setReplyHasNext(res.hasNext);
         })
-        .catch(() => {
+        .catch(error => {
           if (controller.signal.aborted) return;
-          setLoadError("댓글 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+          setSettledListKey(listQueryKey);
+          setLoadError({
+            text: "댓글 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+          });
         });
     }
     return () => controller.abort();
-  }, [subTab, appliedPostFilters, appliedReplyFilters, reloadTick, phase, role, generation, session]);
+  }, [subTab, appliedPostFilters, appliedReplyFilters, reloadTick, phase, role, generation, session, listQueryKey]);
 
   const handleApplySearch = () => {
     if (subTab === "posts") {
@@ -223,20 +244,26 @@ export function AdminCommunity() {
     if (phase !== "ready" || !session) return;
     setLoadingMore(true);
     try {
-      const res = await session.authorized(cred =>
-        fetchAdminCommunityPosts(cred.accessToken, appliedPostFilters.mode, {
-          title: appliedPostFilters.title,
-          content: appliedPostFilters.content,
-          authorNickname: appliedPostFilters.authorNickname,
-          cursorId: postNextCursor,
-          size: 10,
-        }),
+      const res = await session.authorized(
+        cred =>
+          fetchAdminCommunityPosts(cred.accessToken, appliedPostFilters.mode, {
+            title: appliedPostFilters.title,
+            content: appliedPostFilters.content,
+            authorNickname: appliedPostFilters.authorNickname,
+            cursorId: postNextCursor,
+            size: 10,
+          }),
+        true,
       );
       setPosts(prev => [...prev, ...res.content]);
       setPostNextCursor(res.nextCursorId);
       setPostHasNext(res.hasNext);
-    } catch {
-      setActionToast({ kind: "error", text: "추가 게시글 목록을 불러오지 못했습니다." });
+    } catch (error) {
+      setActionToast({
+        kind: "error",
+        text: "추가 게시글 목록을 불러오지 못했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
     } finally {
       setLoadingMore(false);
     }
@@ -247,20 +274,26 @@ export function AdminCommunity() {
     if (phase !== "ready" || !session) return;
     setLoadingMore(true);
     try {
-      const res = await session.authorized(cred =>
-        fetchAdminCommunityReplies(cred.accessToken, appliedReplyFilters.mode, {
-          postTitle: appliedReplyFilters.postTitle,
-          replyContent: appliedReplyFilters.replyContent,
-          authorNickname: appliedReplyFilters.authorNickname,
-          cursorId: replyNextCursor,
-          size: 10,
-        }),
+      const res = await session.authorized(
+        cred =>
+          fetchAdminCommunityReplies(cred.accessToken, appliedReplyFilters.mode, {
+            postTitle: appliedReplyFilters.postTitle,
+            replyContent: appliedReplyFilters.replyContent,
+            authorNickname: appliedReplyFilters.authorNickname,
+            cursorId: replyNextCursor,
+            size: 10,
+          }),
+        true,
       );
       setReplies(prev => [...prev, ...res.content]);
       setReplyNextCursor(res.nextCursorId);
       setReplyHasNext(res.hasNext);
-    } catch {
-      setActionToast({ kind: "error", text: "추가 댓글 목록을 불러오지 못했습니다." });
+    } catch (error) {
+      setActionToast({
+        kind: "error",
+        text: "추가 댓글 목록을 불러오지 못했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
     } finally {
       setLoadingMore(false);
     }
@@ -269,11 +302,11 @@ export function AdminCommunity() {
   const handleConfirmDeletePost = async () => {
     if (!deletePostTarget || deleting) return;
     if (phase !== "ready" || !session) {
-      setActionToast({ kind: "error", text: "관리자 인증 세션이 필요합니다." });
-      setDeletePostTarget(null);
+      setModalError({ text: "관리자 인증 세션이 필요합니다." });
       return;
     }
     setDeleting(true);
+    setModalError(null);
     try {
       const target = deletePostTarget;
       await session.authorized(cred =>
@@ -285,8 +318,11 @@ export function AdminCommunity() {
       });
       setDeletePostTarget(null);
       setReloadTick(prev => prev + 1);
-    } catch {
-      setActionToast({ kind: "error", text: "게시글 삭제 처리에 실패했습니다." });
+    } catch (error) {
+      setModalError({
+        text: "게시글 삭제 처리에 실패했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
     } finally {
       setDeleting(false);
     }
@@ -341,11 +377,11 @@ export function AdminCommunity() {
   const handleConfirmDeleteReply = async () => {
     if (!deleteReplyTarget || deleting) return;
     if (phase !== "ready" || !session) {
-      setActionToast({ kind: "error", text: "관리자 인증 세션이 필요합니다." });
-      setDeleteReplyTarget(null);
+      setModalError({ text: "관리자 인증 세션이 필요합니다." });
       return;
     }
     setDeleting(true);
+    setModalError(null);
     try {
       const target = deleteReplyTarget;
       await session.authorized(cred =>
@@ -357,8 +393,11 @@ export function AdminCommunity() {
       });
       setDeleteReplyTarget(null);
       setReloadTick(prev => prev + 1);
-    } catch {
-      setActionToast({ kind: "error", text: "댓글 삭제 처리에 실패했습니다." });
+    } catch (error) {
+      setModalError({
+        text: "댓글 삭제 처리에 실패했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
     } finally {
       setDeleting(false);
     }
@@ -423,9 +462,10 @@ export function AdminCommunity() {
             role="alert"
             className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-[#F6465D]"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <V1IconAlert className="h-4 w-4 shrink-0" />
-              <span>{loadError}</span>
+              <span>{loadError.text}</span>
+              {loadError.requestId && <RequestIdChip requestId={loadError.requestId} />}
             </div>
             <button
               type="button"
@@ -450,13 +490,14 @@ export function AdminCommunity() {
                 : "border-blue-200 bg-blue-50/80 text-[#0058FF]",
             )}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {actionToast.kind === "error" ? (
                 <V1IconAlert className="h-4 w-4 shrink-0" />
               ) : (
                 <V1IconCheck className="h-4 w-4 shrink-0" />
               )}
               <span>{actionToast.text}</span>
+              {actionToast.requestId && <RequestIdChip requestId={actionToast.requestId} />}
             </div>
             <button
               type="button"
@@ -610,7 +651,15 @@ export function AdminCommunity() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {posts.length === 0 ? (
+                  {loadingList && posts.length === 0 ? (
+                    [1, 2, 3, 4].map(idx => (
+                      <tr key={`post-sk-${idx}`}>
+                        <td colSpan={8} className="px-4 py-3.5">
+                          <div className="h-5 w-full animate-pulse rounded bg-gray-100" />
+                        </td>
+                      </tr>
+                    ))
+                  ) : posts.length === 0 ? (
                     <tr>
                       <td
                         colSpan={8}
@@ -739,7 +788,15 @@ export function AdminCommunity() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {replies.length === 0 ? (
+                  {loadingList && replies.length === 0 ? (
+                    [1, 2, 3, 4].map(idx => (
+                      <tr key={`reply-sk-${idx}`}>
+                        <td colSpan={8} className="px-4 py-3.5">
+                          <div className="h-5 w-full animate-pulse rounded bg-gray-100" />
+                        </td>
+                      </tr>
+                    ))
+                  ) : replies.length === 0 ? (
                     <tr>
                       <td
                         colSpan={8}
@@ -848,12 +905,23 @@ export function AdminCommunity() {
         <DimModal
           open={deletePostTarget !== null}
           onClose={() => {
-            if (!deleting) setDeletePostTarget(null);
+            if (!deleting) {
+              setModalError(null);
+              setDeletePostTarget(null);
+            }
           }}
           title="게시글 삭제 확인"
         >
           {deletePostTarget ? (
             <div className="space-y-4">
+              {modalError ? (
+                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>{modalError.text}</span>
+                    {modalError.requestId && <RequestIdChip requestId={modalError.requestId} />}
+                  </div>
+                </div>
+              ) : null}
               <p className="text-xs leading-relaxed text-gray-600">
                 게시글 <strong className="font-black text-gray-900">#{deletePostTarget.postId} ({deletePostTarget.title})</strong> 항목을 삭제 처리하시겠습니까?
               </p>
@@ -861,7 +929,10 @@ export function AdminCommunity() {
                 <button
                   type="button"
                   disabled={deleting}
-                  onClick={() => setDeletePostTarget(null)}
+                  onClick={() => {
+                    setModalError(null);
+                    setDeletePostTarget(null);
+                  }}
                   className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   취소
@@ -883,12 +954,23 @@ export function AdminCommunity() {
         <DimModal
           open={deleteReplyTarget !== null}
           onClose={() => {
-            if (!deleting) setDeleteReplyTarget(null);
+            if (!deleting) {
+              setModalError(null);
+              setDeleteReplyTarget(null);
+            }
           }}
           title="댓글 삭제 확인"
         >
           {deleteReplyTarget ? (
             <div className="space-y-4">
+              {modalError ? (
+                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>{modalError.text}</span>
+                    {modalError.requestId && <RequestIdChip requestId={modalError.requestId} />}
+                  </div>
+                </div>
+              ) : null}
               <p className="text-xs leading-relaxed text-gray-600">
                 댓글 <strong className="font-black text-gray-900">#{deleteReplyTarget.replyId}</strong> 항목을 삭제 처리하시겠습니까?
               </p>
@@ -896,7 +978,10 @@ export function AdminCommunity() {
                 <button
                   type="button"
                   disabled={deleting}
-                  onClick={() => setDeleteReplyTarget(null)}
+                  onClick={() => {
+                    setModalError(null);
+                    setDeleteReplyTarget(null);
+                  }}
                   className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   취소

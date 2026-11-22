@@ -330,7 +330,7 @@ export function ContestTradingTerminal({
     <TradingDataProvider key={meta.seasonId} contestSeasonId={meta.seasonId}>
       <a
         href="#contest-trading-main"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-10 focus:bg-terminal-panel focus:px-4 focus:py-3"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:bg-terminal-panel focus:px-4 focus:py-3"
       >
         대회 트레이딩 본문으로 바로가기
       </a>

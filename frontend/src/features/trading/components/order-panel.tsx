@@ -40,22 +40,45 @@ import { RecoveryStatus } from "./recovery-status";
 import { GuestRetry } from "./guest-retry";
 
 type Form = OpenForm & { identity: string; scope: number };
-export function OrderPanel() {
+export function OrderPanel({
+  urlSide = null,
+  urlLeverage = null,
+}: {
+  urlSide?: "LONG" | "SHORT" | null;
+  urlLeverage?: number | null;
+} = {}) {
   const [intent,setIntent]=useState<"open"|"close">("open");
   const {snapshot}=useGuestSession(),account=useTradingSummary();
   const member = useMember(), access = useGuestAccess();
-  if (isAnonymousOrderEntry(member.snapshot, snapshot)) return <AnonymousOrderPanel onGuest={access.open} storageError={snapshot.phase === "error"} />;
+  if (isAnonymousOrderEntry(member.snapshot, snapshot)) {
+    return (
+      <AnonymousOrderPanel
+        onGuest={access.open}
+        storageError={snapshot.phase === "error"}
+        initialSide={urlSide}
+        initialLeverage={urlLeverage}
+      />
+    );
+  }
   return <section className="order-panel trading-section" aria-labelledby="order-heading">
     <h2 id="order-heading" className="sr-only">주문</h2>
     <TradingNavigation label="주문 목적" prefix="order" activeId={intent} onSelect={value=>{if(value==="open"||value==="close")setIntent(value);}} className="order-intent-tabs" tabs={[{id:"open",label:"진입 · Open",controls:"order-open-panel"},{id:"close",label:"청산 · Close",controls:"order-close-panel"}]}/>
     {snapshot.phase === "ready" && <RecoveryStatus />}
-    <div id="order-open-panel" role="tabpanel" aria-labelledby="order-open-tab" hidden={intent!=="open"}><OpenOrderPanel active={intent==="open"}/></div>
+    <div id="order-open-panel" role="tabpanel" aria-labelledby="order-open-tab" hidden={intent!=="open"}><OpenOrderPanel active={intent==="open"} urlSide={urlSide} urlLeverage={urlLeverage} /></div>
     <div id="order-close-panel" role="tabpanel" aria-labelledby="order-close-tab" hidden={intent!=="close"}><CloseOrderPanel active={intent==="close"}/></div>
     {snapshot.phase === "ready" && account.data && <WalletOverview wallet={account.data.wallet} stale={account.stale} />}
     <GuestRetry />
   </section>;
 }
-function OpenOrderPanel({active}:{active:boolean}) {
+function OpenOrderPanel({
+  active,
+  urlSide = null,
+  urlLeverage = null,
+}: {
+  active: boolean;
+  urlSide?: "LONG" | "SHORT" | null;
+  urlLeverage?: number | null;
+}) {
   const { symbol, market, bookSelection } = useSelectedMarket();
   const { session, snapshot } = useGuestSession();
   const account = useTradingSummary();
@@ -65,40 +88,48 @@ function OpenOrderPanel({active}:{active:boolean}) {
   const preflightRequest = useRef<AbortController | null>(null);
   const recoveringQuoteNotice = useRef<number | null>(null);
   const [preparing,setPreparing] = useState(false);
+  const [tpSlOpen, setTpSlOpen] = useState(false);
+  const [entryTakeProfit, setEntryTakeProfit] = useState("");
+  const [entryStopLoss, setEntryStopLoss] = useState("");
+  const [tpSlError, setTpSlError] = useState<string | null>(null);
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
-  const [stored, setForm] = useState<Form>(() => {
-    let initialSide: "LONG" | "SHORT" = "LONG";
-    if (typeof window !== "undefined") {
-      const sideParam = new URLSearchParams(window.location.search).get("side")?.toUpperCase();
-      if (sideParam === "SHORT" || sideParam === "LONG") initialSide = sideParam;
-    }
-    return { identity, scope: 0, symbolId: null, type: "MARKET", side: initialSide, leverage: 1, quantity: "", limitPrice: "", ratio: 0 };
-  });
-  const initialLeverageAppliedRef = useRef(false);
+  const [stored, setForm] = useState<Form>(() => ({
+    identity,
+    scope: 0,
+    symbolId: null,
+    type: "MARKET",
+    side: urlSide === "SHORT" ? "SHORT" : "LONG",
+    leverage: 1,
+    quantity: "",
+    limitPrice: "",
+    ratio: 0,
+  }));
+  const appliedUrlSideRef = useRef<string | null>(urlSide);
+  const appliedUrlLeverageRef = useRef<number | null>(null);
   const longLeverage = useSymbolLeverage(symbol?.id ?? null, "LONG"), shortLeverage = useSymbolLeverage(symbol?.id ?? null, "SHORT");
   const leverageState = stored.side === "LONG" ? longLeverage : shortLeverage;
   const leverage = leverageState.data?.leverage ?? 1;
   useEffect(() => {
-    if (initialLeverageAppliedRef.current || typeof window === "undefined" || !leverageState.ready || !leverageState.data) return;
-    const raw = new URLSearchParams(window.location.search).get("leverage");
-    if (!raw) {
-      initialLeverageAppliedRef.current = true;
-      return;
+    if (urlSide && urlSide !== appliedUrlSideRef.current) {
+      appliedUrlSideRef.current = urlSide;
+      setForm(prev => (prev.side === urlSide ? prev : { ...prev, side: urlSide }));
     }
-    const parsed = Number.parseInt(raw, 10);
+  }, [urlSide]);
+  useEffect(() => {
+    if (!urlLeverage || appliedUrlLeverageRef.current === urlLeverage || !leverageState.ready || !leverageState.data) return;
     const maxLev = leverageState.data.maxLeverage ?? 100;
-    initialLeverageAppliedRef.current = true;
-    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= maxLev && parsed !== leverageState.data.leverage) {
-      void leverageState.change(parsed);
+    appliedUrlLeverageRef.current = urlLeverage;
+    if (Number.isInteger(urlLeverage) && urlLeverage >= 1 && urlLeverage <= maxLev && urlLeverage !== leverageState.data.leverage) {
+      void leverageState.change(urlLeverage);
     }
-  }, [leverageState]);
+  }, [urlLeverage, leverageState]);
   const [seenBookSelection, setSeenBookSelection] = useState(bookSelection);
   const [serverWarning, setServerWarning] = useState<{ side: OpenForm["side"]; issue: OrderIssue } | null>(null);
   const switched = stored.symbolId !== (symbol?.id ?? null) || stored.identity !== identity;
   const scope = stored.scope + (switched ? 1 : 0);
   const form: Form = { ...formForSide(switched ? { ...formForSymbol(stored, symbol?.id ?? null), quantity: "", limitPrice: "", ratio: 0 } : stored, stored.side, leverage), identity, scope };
   // Commit the reset, so switching A -> B -> A cannot resurrect A's old inputs.
-  if (switched) { setForm(form); setServerWarning(null); }
+  if (switched) { setForm(form); setServerWarning(null); setEntryTakeProfit(""); setEntryStopLoss(""); setTpSlError(null); }
   useEffect(() => () => { sizingRequest.current?.abort(); preflightRequest.current?.abort(); }, [identity,symbol?.id]);
   const action = useTradingMutation(
     (issue, command, requestSession) => {
@@ -112,6 +143,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
         void (command.side === "LONG" ? longLeverage : shortLeverage).refresh();
       }
     },
+    { suppressErrorNotice: true },
   );
   const mark = freshMarkPrice(market);
   const ready = !account.error && isolatedReady(account.data?.wallet) && leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
@@ -214,10 +246,28 @@ function OpenOrderPanel({active}:{active:boolean}) {
   function complete(order: TradingOrder | null) {
     if (!order || (order.status !== "FILLED" && order.status !== "PENDING")) return;
     setForm((current) => current.scope === scope && current.symbolId === order.tradingSymbolId ? { ...current, quantity: "", ratio: 0 } : current);
+    setEntryTakeProfit("");
+    setEntryStopLoss("");
+    setTpSlError(null);
   }
   async function submit(side: "LONG" | "SHORT") {
     const targetLeverageState = side === "LONG" ? longLeverage : shortLeverage;
     if (submitLocked || targetLeverageState.blocked() || !targetLeverageState.data || submitting.current) return;
+    setTpSlError(null);
+    const trimmedTp = form.type === "MARKET" && tpSlOpen ? entryTakeProfit.trim() : "";
+    const trimmedSl = form.type === "MARKET" && tpSlOpen ? entryStopLoss.trim() : "";
+    if (trimmedTp && !validLimitPrice(trimmedTp)) {
+      setTpSlError("익절(TP) 가격은 양수로 입력해 주세요.");
+      return;
+    }
+    if (trimmedSl && !validLimitPrice(trimmedSl)) {
+      setTpSlError("손절(SL) 가격은 양수로 입력해 주세요.");
+      return;
+    }
+    const tpSlFields = {
+      ...(trimmedTp ? { takeProfitPrice: trimmedTp } : {}),
+      ...(trimmedSl ? { stopLossPrice: trimmedSl } : {}),
+    };
     const submitLeverage = targetLeverageState.data.leverage;
     const latestMark = freshMarkPrice(market)?.decimal;
     const sameSideOpen = Boolean(
@@ -238,11 +288,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
     const commandForm = formForSide({ ...form, quantity: directQuantity }, side, submitLeverage);
     const issue = preflightOrder(commandForm, side, ready, latestMark, availableBalance);
     if (issue && !(sameSideOpen && form.ratio > 0 && (issue.kind === "balance" || issue.kind === "minimum"))) {
-      if (issue.kind !== "minimum") {
-        setServerWarning({ side, issue });
-      } else {
-        notices.push({ kind: "error", title: "주문을 제출할 수 없습니다", message: issue.message });
-      }
+      setServerWarning({ side, issue });
       return;
     }
     if (!symbol) return;
@@ -264,7 +310,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
           side,
           quantity: directQuantity,
           leverage: submitLeverage,
-          ...(form.type === "LIMIT" ? { limitPrice: price } : {}),
+          ...(form.type === "LIMIT" ? { limitPrice: price } : tpSlFields),
         }));
       } finally {
         submitting.current = false;
@@ -284,7 +330,7 @@ function OpenOrderPanel({active}:{active:boolean}) {
       }
       if (value.leverage!==submitLeverage) { await targetLeverageState.refresh(); notices.push({kind:"warning",title:"레버리지를 확인해 주세요",message:"서버 설정을 다시 조회했습니다. 확인 후 직접 주문해 주세요."}); return; }
       complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity: value.quantity,
-        leverage: value.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
+        leverage: value.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : tpSlFields) }));
     } catch(error) {
       if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
       reportAdmissionRejection(client, snapshot, error);
@@ -386,6 +432,54 @@ function OpenOrderPanel({active}:{active:boolean}) {
             <OrderChoices legend="비율 선택" name="ratio-preset" selected={String(form.ratio)} disabled={ratioDisabled} onChange={(value) => void selectRatio(Number(value))} choices={[25, 50, 75, 100].map((value) => ({ value: String(value), label: `${value}%` }))} />
             {!canSize && <p role="status" className="order-input-hint">{sizingUnavailable(form.type,price,ready,availableBalance)}</p>}
           </div>
+          {form.type === "MARKET" && (
+            <div className="col-span-2 rounded-lg border border-terminal-line bg-terminal-header/40 px-2.5 py-2" data-entry-tpsl-box="true">
+              <label className="flex cursor-pointer items-center justify-between gap-2 text-xs font-semibold text-terminal-secondary">
+                <span className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={tpSlOpen}
+                    disabled={locked}
+                    onChange={(event) => {
+                      const next = event.currentTarget.checked;
+                      setTpSlOpen(next);
+                      setTpSlError(null);
+                      if (!next) {
+                        setEntryTakeProfit("");
+                        setEntryStopLoss("");
+                      }
+                    }}
+                    className="h-3.5 w-3.5 accent-[#F0B90B]"
+                  />
+                  <span>진입 시 TP/SL 설정</span>
+                </span>
+                <span className="text-[11px] font-normal text-terminal-muted">선택 · Mark 기준</span>
+              </label>
+              {tpSlOpen && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <OrderInput
+                    id="entry-take-profit"
+                    label="익절가 (TP)"
+                    unit="USDT"
+                    placeholder="선택 입력"
+                    value={entryTakeProfit}
+                    disabled={locked}
+                    onChange={(value) => { setTpSlError(null); setEntryTakeProfit(value); }}
+                  />
+                  <OrderInput
+                    id="entry-stop-loss"
+                    label="손절가 (SL)"
+                    unit="USDT"
+                    placeholder="선택 입력"
+                    value={entryStopLoss}
+                    disabled={locked}
+                    onChange={(value) => { setTpSlError(null); setEntryStopLoss(value); }}
+                  />
+                </div>
+              )}
+              {tpSlError && <p role="alert" className="order-warning mt-1.5">{tpSlError}</p>}
+            </div>
+          )}
           <dl className="order-estimates"><div><dt>주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>필요 증거금</dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>예상 수수료</dt><dd>{formatDecimal(estimate?.estimatedFee)} USDT</dd></div><div><dt>합계</dt><dd>{formatDecimal(estimate?.totalRequired)} USDT</dd></div></dl>
         </div>
       </div>

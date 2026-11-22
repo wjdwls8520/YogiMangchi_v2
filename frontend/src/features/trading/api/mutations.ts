@@ -55,7 +55,11 @@ export function syncOrderIntoPendingCache(client: QueryClient, session: SessionS
   });
 }
 
-export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
+export function useTradingMutation(
+  onRejected?: Rejected,
+  onFailed?: Failed,
+  options?: { suppressErrorNotice?: boolean },
+) {
   const { session, snapshot } = useGuestSession();
   const client = useQueryClient();
   const admission = useTradingAdmission();
@@ -77,8 +81,16 @@ export function useTradingMutation(onRejected?: Rejected, onFailed?: Failed) {
     onError: (error, request) => {
       if (!isCurrent(request.session)) return;
       reportAdmissionRejection(client, request.session, error);
-      if (intent.getUnconfirmed(request.session)) notices.push({kind:"warning",title:"주문 결과가 미확정입니다",message:unconfirmedMutationMessage});
-      else { effects.onError(error, request); notices.push(orderFailureNotice(error)); }
+      if (intent.getUnconfirmed(request.session)) {
+        if (!options?.suppressErrorNotice) {
+          notices.push({kind:"warning",title:"주문 결과가 미확정입니다",message:unconfirmedMutationMessage});
+        }
+      } else {
+        effects.onError(error, request);
+        if (!options?.suppressErrorNotice) {
+          notices.push(orderFailureNotice(error));
+        }
+      }
     },
   });
   const sameIdentity = (value: SessionSnapshot) => value.accountId === snapshot.accountId && value.generation === snapshot.generation;

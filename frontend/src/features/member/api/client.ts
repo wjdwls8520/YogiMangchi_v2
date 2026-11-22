@@ -1,8 +1,14 @@
 import { extractRequestId } from "../../../lib/request-id";
 
 export class ContentApiError extends Error {
-  constructor(readonly status: number, readonly code?: string, readonly requestId?: string) {
-    super("회원 요청을 처리하지 못했습니다."); this.name = "ContentApiError";
+  constructor(
+    readonly status: number,
+    readonly code?: string,
+    readonly requestId?: string,
+    readonly retryAfterSeconds?: number,
+  ) {
+    super("회원 요청을 처리하지 못했습니다.");
+    this.name = "ContentApiError";
   }
 }
 const codes = new Set([
@@ -11,7 +17,21 @@ const codes = new Set([
   "POLICY_VERSION_OR_CONSENT_INVALID", "POLICY_VERSION_CHANGED", "REQUIRED_CONSENT_MISSING", "POLICY_VERSION_REQUIRED",
   "LOGIN_PROOF_REQUIRED", "LOGIN_PROOF_EXPIRED", "CSRF_INVALID", "CSRF_REQUIRED", "PROFILE_MESSAGE_UPDATE_REQUIRED", "RESOURCE_ALREADY_EXISTS", "RESOURCE_NOT_FOUND", "INQUIRY_NOT_FOUND",
   "FILE_VIDEO_NOT_ALLOWED", "FILE_TYPE_NOT_ALLOWED", "GIF_FILE_TOO_LARGE", "IMAGE_FILE_TOO_LARGE", "FILE_TOTAL_SIZE_EXCEEDED", "FILE_COUNT_EXCEEDED",
+  "RATE_LIMITED", "REPORT_ALREADY_RESOLVED", "INQUIRY_ALREADY_CLOSED", "INQUIRY_EDIT_NOT_ALLOWED",
 ]);
+
+function parseRetryAfterSeconds(response?: Pick<Response, "headers"> | null): number | undefined {
+  const raw = response?.headers?.get?.("Retry-After");
+  if (!raw) return undefined;
+  const seconds = Number(raw.trim());
+  if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds);
+  const dateMs = Date.parse(raw);
+  if (Number.isFinite(dateMs)) {
+    const diff = Math.ceil((dateMs - Date.now()) / 1000);
+    if (diff > 0) return diff;
+  }
+  return undefined;
+}
 
 export function contentRecovery(error: unknown): "policies" | "login" | "state" | "csrf" | null {
   if (!(error instanceof ContentApiError)) return null;
@@ -35,7 +55,7 @@ export function oauthUrl(origin: string, provider: "google" | "kakao") {
 export async function contentJson(origin: string, path: string, options: {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; access?: string; csrf?: string; anonViewerId?: string; body?: object | FormData; signal?: AbortSignal;
 } = {}, transport: typeof fetch = fetch): Promise<unknown> {
-  if (!/^\/(?:auth\/(?:csrf|flow|signup|login\/complete|refresh|logout|logout-all)|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?|notifications(?:\/(?:status|check|read|read-all|[0-9]+(?:\/read)?))?|news(?:\/(?:highlights|stream|[0-9]+(?:\/(?:reactions|views))?))?|support\/inquiries(?:\/me)?|community\/(?:posts(?:\/latest-check|\/[0-9]+(?:\/(?:likes|reports|comments(?:\/[0-9]+(?:\/(?:likes|reports))?)?))?)?|comments\/[0-9]+(?:\/(?:likes|reports))?|report-reasons|ux\/subscribe\/feed))(?:\?[^#]*)?$/.test(path)
+  if (!/^\/(?:auth\/(?:csrf|flow|session-probe|signup|login\/complete|refresh|logout|logout-all)|ops\/client-errors|policies\/(?:current|(?:TERMS|PRIVACY)\/[A-Za-z0-9._-]+)|members(?:\/[^?#]*)?|notifications(?:\/(?:status|check|read|read-all|[0-9]+(?:\/read)?))?|news(?:\/(?:highlights|stream|[0-9]+(?:\/(?:reactions|views))?))?|support\/inquiries(?:\/(?:me|[0-9]+(?:\/close)?))?|community\/(?:posts(?:\/latest-check|\/[0-9]+(?:\/(?:likes|reports|comments(?:\/[0-9]+(?:\/(?:likes|reports))?)?))?)?|comments\/[0-9]+(?:\/(?:likes|reports))?|report-reasons|ux\/subscribe\/feed))(?:\?[^#]*)?$/.test(path)
     || path.includes("..") || path.includes("\\")) throw new ContentApiError(400);
   const cookie = path.startsWith("/auth/") || path === "/members/me/withdrawal";
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
@@ -60,9 +80,16 @@ export async function contentJson(origin: string, path: string, options: {
         if (typeof value === "string" && codes.has(value)) code = value;
       } catch { /* Preserve the HTTP status when an error body is unreadable. */ }
       const requestId = extractRequestId(body, response);
-      throw new ContentApiError(response.status, code, requestId);
+      const retryAfterSeconds = response.status === 429 ? parseRetryAfterSeconds(response) : undefined;
+      throw new ContentApiError(response.status, code, requestId, retryAfterSeconds);
     }
-    if (response.status === 204) return null;
+    if (response.status === 204 || response.status === 202) {
+      try {
+        return response.status === 204 ? null : await response.json();
+      } catch {
+        return null;
+      }
+    }
     try { return await response.json(); } catch { throw new ContentApiError(422); }
   } catch (error) {
     if (options.signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
@@ -72,6 +99,16 @@ export async function contentJson(origin: string, path: string, options: {
 }
 export function contentMessage(error: unknown) {
   if (!(error instanceof ContentApiError)) return "요청을 처리하지 못했습니다. 다시 확인해 주세요.";
+  if (error.code === "RATE_LIMITED" || error.status === 429) {
+    return error.retryAfterSeconds
+      ? `요청이 너무 많습니다. 약 ${error.retryAfterSeconds}초 후 다시 시도해 주세요.`
+      : "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+  }
+  if (error.code === "REPORT_ALREADY_RESOLVED") {
+    return "이미 처리 완료된 신고입니다. 같은 대상은 다시 신고할 수 없습니다.";
+  }
+  if (error.code === "INQUIRY_ALREADY_CLOSED") return "이미 종료된 문의입니다.";
+  if (error.code === "INQUIRY_EDIT_NOT_ALLOWED") return "답변 완료 또는 종료된 문의는 수정·삭제할 수 없습니다.";
   if (error.code === "POLICY_VERSION_CHANGED") return "정책 버전이 변경되었습니다. 최신 원문을 다시 확인하고 직접 동의해 주세요.";
   if (error.code === "POLICY_VERSION_REQUIRED") return "동의할 정책 버전을 확인하지 못했습니다. 최신 원문을 다시 조회해 주세요.";
   if (error.code === "REQUIRED_CONSENT_MISSING") return "필수 정책 동의가 누락되었습니다. 원문과 동의 항목을 확인해 주세요.";
@@ -83,7 +120,7 @@ export function contentMessage(error: unknown) {
   if (error.code === "PROFILE_MESSAGE_UPDATE_REQUIRED") return "기존 소개가 현재 입력 한도를 초과합니다. 소개를 255자 이내로 수정해 주세요.";
   if (error.code === "MEMBER_ALREADY_EXISTS") return "이미 가입된 소셜 계정입니다. 현재 로그인 상태를 확인해 주세요.";
   if (error.code === "RESOURCE_ALREADY_EXISTS") return "이미 처리된 정보와 요청이 충돌했습니다. 현재 상태를 먼저 확인해 주세요.";
-  if (error.code === "MEMBER_SUSPENDED") return "계정이 일시 정지되었습니다. 고객센터(/support)에서 1:1 이의제기를 접수하실 수 있습니다.";
+  if (error.code === "MEMBER_SUSPENDED") return "계정이 일시 정지되었습니다. 1:1 고객센터(/support)에서 이의제기를 접수하거나 계정 설정에서 탈퇴할 수 있습니다.";
   if (error.code === "MEMBER_BANNED") return "운영 정책 위반으로 계정이 영구 정지되었습니다. 고객센터 또는 운영팀에 문의해 주세요.";
   if (error.code === "MEMBER_NOT_FOUND") return "탈퇴했거나 존재하지 않는 회원입니다.";
   if (error.code === "INQUIRY_NOT_FOUND") return "요청한 고객 문의를 찾을 수 없습니다.";
@@ -96,6 +133,7 @@ export function contentMessage(error: unknown) {
   if (error.code === "FILE_COUNT_EXCEEDED") return "첨부 가능한 최대 이미지 장수를 초과했습니다.";
   if (error.code === "POLICY_VERSION_OR_CONSENT_INVALID") return "정책 버전이 변경되었거나 필수 동의가 누락되었습니다. 최신 원문을 확인하고 다시 동의해 주세요.";
   if (error.code === "WITHDRAWAL_CONFIRMATION_REQUIRED") return "안내 확인과 ‘탈퇴합니다’ 문구를 정확하게 입력해 주세요.";
+  if (error.status === 413) return "첨부 파일 용량이 허용 한도를 초과했습니다. 일반 이미지는 최대 5MB, GIF는 최대 3MB 이하로 첨부해 주세요.";
   if (error.status === 401) return "로그인 상태가 만료되었습니다. 다시 로그인해 주세요.";
   if (error.status === 403) return "요청 권한 또는 로그인 설정을 확인해 주세요.";
   if (error.status === 404) return "요청한 항목 또는 회원을 찾을 수 없습니다.";

@@ -75,6 +75,8 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
   let memberRoundId: number | undefined;
   let restartIntent: { key: string; memberId: number; credential: GuestCredential; roundId: number } | null = null;
   let memberRestartFlight: Promise<ReturnType<typeof parseRestart>> | null = null;
+  let cancelAllIntent: { accountId: number; generation: number; key: string } | null = null;
+  let closeAllIntent: { accountId: number; generation: number; key: string } | null = null;
   let memberAuthRejected = false, memberLookupRecoveryAttempted = false;
   let memberRefresh: (() => void) | undefined;
   const eventReconnects = new Set<() => void>();
@@ -521,12 +523,22 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       const current = credential, sentToken = current?.accessToken;
       if (current && !usable(current)) invalidate(current, sentToken);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      const retained =
+        cancelAllIntent &&
+        cancelAllIntent.accountId === current.accountId &&
+        cancelAllIntent.generation === expected.generation
+          ? cancelAllIntent.key
+          : null;
       const idempotencyKey =
         key && /^[A-Za-z0-9_-]{8,100}$/.test(key)
           ? key
-          : typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-            ? crypto.randomUUID()
-            : `cancel-all-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          : retained ?? (
+              typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                ? crypto.randomUUID()
+                : `cancel-all-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+            );
+      const wasUnconfirmed = retained !== null;
+      cancelAllIntent = { accountId: current.accountId, generation: expected.generation, key: idempotencyKey };
       writes++;
       try {
         const value = await tradingJson(origin, resolvePath("account/orders/cancel-all"), {
@@ -535,8 +547,10 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           idempotencyKey,
         }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+        cancelAllIntent = null;
         return parseCancelAllOrdersResponse(value);
       } catch (error) {
+        if (!mutationStillUnconfirmed(error, wasUnconfirmed)) cancelAllIntent = null;
         if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       } finally { writes--; }
@@ -546,12 +560,22 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
       const current = credential, sentToken = current?.accessToken;
       if (current && !usable(current)) invalidate(current, sentToken);
       if (!current || snapshot.phase !== "ready" || expected.accountId !== current.accountId || expected.generation !== snapshot.generation) throw new TradingApiError(401);
+      const retained =
+        closeAllIntent &&
+        closeAllIntent.accountId === current.accountId &&
+        closeAllIntent.generation === expected.generation
+          ? closeAllIntent.key
+          : null;
       const idempotencyKey =
         key && /^[A-Za-z0-9_-]{8,100}$/.test(key)
           ? key
-          : typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-            ? crypto.randomUUID()
-            : `close-all-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          : retained ?? (
+              typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                ? crypto.randomUUID()
+                : `close-all-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+            );
+      const wasUnconfirmed = retained !== null;
+      closeAllIntent = { accountId: current.accountId, generation: expected.generation, key: idempotencyKey };
       writes++;
       try {
         const value = await tradingJson(origin, resolvePath("account/positions/close-all"), {
@@ -560,8 +584,10 @@ export function createGuestSession(origin: string, storage: StorageAccess, trans
           idempotencyKey,
         }, transport);
         if (current !== credential || expected.generation !== snapshot.generation) throw new DOMException("Session changed", "AbortError");
+        closeAllIntent = null;
         return parseCloseAllPositionsResponse(value);
       } catch (error) {
+        if (!mutationStillUnconfirmed(error, wasUnconfirmed)) closeAllIntent = null;
         if (error instanceof TradingApiError && error.status === 401) invalidate(current, sentToken);
         throw error;
       } finally { writes--; }

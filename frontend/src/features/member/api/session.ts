@@ -1,6 +1,6 @@
 import { ContentApiError, contentJson } from "./client";
 import { TradingApiError } from "../../trading/api/client";
-import { parseAccess, parseCsrf, parseWithdrawal, type MemberAccess, type MemberRole } from "./contracts";
+import { parseAccess, parseCsrf, parseSessionProbe, parseWithdrawal, type MemberAccess, type MemberRole } from "./contracts";
 import { memberTabVisible } from "./activity";
 
 export const REFRESH_PENDING_TTL_MS = 60_000;
@@ -31,7 +31,7 @@ function hasActiveRefreshPending(
 }
 
 export type MemberSnapshot = { phase: "loading" | "anonymous" | "authenticating" | "ready" | "ending" | "withdrawing" | "recovering" | "error";
-  memberId: number | null; nickname: string; expiresAt: string | null; generation: number; role?: MemberRole; recovery?: { retryable: boolean; retryAt: number; uncertain: boolean }; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
+  memberId: number | null; nickname: string; expiresAt: string | null; generation: number; role?: MemberRole; accountStatus?: string; suspensionReason?: string | null; recovery?: { retryable: boolean; retryAt: number; uncertain: boolean }; consentStatus?: "checking" | "required" | "accepted" | "unavailable" };
 export type MemberSessionSnapshot = MemberSnapshot;
 export const initialMember: MemberSnapshot = { phase: "loading", memberId: null, nickname: "", expiresAt: null, generation: 0 };
 export const HEADER_AUTH_HINT_KEY = "yogimangchi:header-auth-hint:v1";
@@ -86,7 +86,12 @@ export function clearRefreshPending(error: unknown) {
   return error instanceof ContentApiError && (
     (error.status === 503 && error.code === "SERVICE_TEMPORARILY_UNAVAILABLE")
     || (error.status === 409 && error.code === "MEMBER_BUSY")
-    || (error.status === 403 && (error.code === "CSRF_INVALID" || error.code === "CSRF_REQUIRED"))
+    || (error.status === 403 && (
+      error.code === "CSRF_INVALID"
+      || error.code === "CSRF_REQUIRED"
+      || error.code === "MEMBER_SUSPENDED"
+      || error.code === "MEMBER_BANNED"
+    ))
   );
 }
 export function browserCookieLock(origin: string): CookieLock {
@@ -117,8 +122,24 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
     if (Date.parse(parsed.expiresAt) <= now()) throw new ContentApiError(401);
     const changed = snapshot.memberId !== parsed.memberId;
     access = Object.freeze(parsed); refreshFailures = 0; accessRejected = false;
-    snapshot = { phase: "ready", memberId: parsed.memberId, nickname: parsed.nickname, expiresAt: parsed.expiresAt, role: parsed.role,
-      generation: snapshot.generation + (changed ? 1 : 0), consentStatus: changed ? "checking" : snapshot.consentStatus ?? "checking" };
+    const nextAccountStatus = parsed.accountStatus ?? (changed ? "ACTIVE" : snapshot.accountStatus ?? "ACTIVE");
+    const nextSuspensionReason =
+      parsed.suspensionReason !== undefined
+        ? parsed.suspensionReason
+        : changed
+          ? null
+          : (snapshot.suspensionReason ?? null);
+    snapshot = {
+      phase: "ready",
+      memberId: parsed.memberId,
+      nickname: parsed.nickname,
+      expiresAt: parsed.expiresAt,
+      role: parsed.role,
+      accountStatus: nextAccountStatus,
+      suspensionReason: nextSuspensionReason,
+      generation: snapshot.generation + (changed ? 1 : 0),
+      consentStatus: changed ? "checking" : snapshot.consentStatus ?? "checking",
+    };
     writeHeaderAuthHint({ loggedIn: true, role: parsed.role });
     emit();
   }
@@ -169,9 +190,19 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
           && error instanceof ContentApiError
           && error.status === 403
           && (error.code === "CSRF_INVALID" || error.code === "CSRF_REQUIRED");
-        if ((error instanceof ContentApiError && error.status === 401) || isInitialAnonymousCsrfFailure) {
-          if (ownsMarker) marker?.removeItem(pendingKey);
-          clear("anonymous");
+        const isSuspendedOrBanned403 =
+          error instanceof ContentApiError
+          && error.status === 403
+          && (error.code === "MEMBER_SUSPENDED" || error.code === "MEMBER_BANNED");
+        if ((error instanceof ContentApiError && error.status === 401) || isInitialAnonymousCsrfFailure || isSuspendedOrBanned403) {
+          if (ownsMarker) { marker?.removeItem(pendingKey); ownsMarker = false; }
+          if (isSuspendedOrBanned403 && error.code === "MEMBER_SUSPENDED" && access && !accessRejected && Date.parse(access.expiresAt) > now()) {
+            snapshot = { ...snapshot, phase: "ready", accountStatus: "SUSPENDED", recovery: undefined };
+            refreshRequired = false;
+            emit();
+          } else {
+            clear("anonymous");
+          }
         } else {
           // Only a pre-rotation failure or the documented no-consumption 503 is safe to retry.
           const safe = !blockedByPending && (!rotationStarted || clearRefreshPending(error));
@@ -252,7 +283,43 @@ export function createMemberSession(origin: string, transport: typeof fetch = fe
       if (access) access = Object.freeze({ ...access, nickname: trimmed });
       snapshot = { ...snapshot, nickname: trimmed }; emit();
     },
-    async restore() { if (access && !refreshRequired && Date.parse(access.expiresAt) - now() >= 30_000) return; await refresh(); },
+    setAccountStatus(accountStatus: string, suspensionReason: string | null, memberId: number, generation: number) {
+      const normalized = accountStatus.trim().toUpperCase();
+      if (!normalized || snapshot.phase !== "ready" || snapshot.memberId !== memberId || snapshot.generation !== generation) return;
+      if (snapshot.accountStatus === normalized && (snapshot.suspensionReason ?? null) === suspensionReason) return;
+      snapshot = { ...snapshot, accountStatus: normalized, suspensionReason }; emit();
+    },
+    async probe() {
+      try {
+        const raw = await contentJson(origin, "/auth/session-probe", {}, transport);
+        return parseSessionProbe(raw);
+      } catch {
+        return null;
+      }
+    },
+    async restore(options?: { probeFirst?: boolean }) {
+      if (access && !refreshRequired && Date.parse(access.expiresAt) - now() >= 30_000) return;
+      if (options?.probeFirst && !access && snapshot.phase === "loading" && snapshot.memberId === null) {
+        if (!visible()) {
+          refreshRequired = true;
+          throw new DOMException("Refresh deferred until visible", "AbortError");
+        }
+        const generation = snapshot.generation;
+        const probed = await (async () => {
+          try {
+            return parseSessionProbe(await contentJson(origin, "/auth/session-probe", {}, transport));
+          } catch {
+            return null;
+          }
+        })();
+        if (snapshot.generation !== generation) return;
+        if (probed && !probed.hasRefreshCookie && !probed.authenticated) {
+          clear("anonymous");
+          return;
+        }
+      }
+      await refresh();
+    },
     refresh, checkExpiry,
     complete: () => authenticate("/auth/login/complete"),
     signup: (body: { nickname: string; profileMessage: string; termAgree: boolean; privateAgree: boolean; termsVersion: string; privacyVersion: string }) => authenticate("/auth/signup", body),

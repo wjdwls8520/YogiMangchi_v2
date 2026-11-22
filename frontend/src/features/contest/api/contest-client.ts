@@ -314,6 +314,8 @@ async function contestApiJson<T>(
         CONTEST_NOT_RUNNING: "대회 진행 시간에만 주문·수정이 가능합니다.",
         CONTEST_PARTICIPATION_REQUIRED: "승인된 대회 참가자만 거래할 수 있습니다.",
         CONTEST_SEASON_NOT_FOUND: "대회 시즌 정보를 찾을 수 없습니다.",
+        MEMBER_SUSPENDED: "활동이 정지된 계정입니다. 1:1 고객지원에서 정지 사유를 확인해 주세요.",
+        RATE_LIMITED: "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
       };
       throw new ContestApiError(
         response.status,
@@ -718,6 +720,32 @@ export async function cleanupRemainingAdminContestSeason(
       method: "POST",
     },
   );
+}
+
+export async function disqualifyAdminContestParticipant(
+  seasonId: number,
+  memberId: number,
+  reason?: string,
+  options: ContestRequestOptions = {},
+): Promise<unknown> {
+  return contestApiJson<unknown>(
+    `admin/contest/seasons/${seasonId}/participants/${memberId}/disqualify`,
+    {
+      ...options,
+      method: "POST",
+      body: reason && reason.trim().length > 0 ? { reason: reason.trim() } : {},
+    },
+  );
+}
+
+export async function deleteAdminContestSeason(
+  seasonId: number,
+  options: ContestRequestOptions = {},
+): Promise<void> {
+  await contestApiJson<void>(`admin/contest/seasons/${seasonId}`, {
+    ...options,
+    method: "DELETE",
+  });
 }
 
 // ============================================================================
