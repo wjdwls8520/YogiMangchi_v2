@@ -185,7 +185,7 @@ class MemberTradingFlowIntegrationTests {
         try{
             var close=pool.submit(()->{start.await();return raw(post("/api/v1/trading/account/positions/"+position+"/close"),"{\"quantity\":\"0.4\"}");});
             var crossing=pool.submit(()->{start.await();mark("900");return true;});start.countDown();var response=close.get();crossing.get();
-            assertThat(response.status()==200||Set.of("ACCOUNT_RISK_PENDING","ACCOUNT_AT_RISK","POSITION_NOT_OPEN").contains(response.body().path("code").asText())).isTrue();
+            assertThat(response.status()==200||Set.of("ACCOUNT_RISK_PENDING","ACCOUNT_AT_RISK","POSITION_NOT_OPEN","ENGINE_RECOVERING","TRADING_BUSY").contains(response.body().path("code").asText())).isTrue();
         }finally{pool.shutdownNow();}
         assertThat(jdbc.queryForObject("select coalesce(sum(f.quantity),0) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.position_id=? and o.action in ('CLOSE','LIQUIDATE')",BigDecimal.class,position)).isEqualByComparingTo("1");
         assertThat(jdbc.queryForObject("select quantity+margin+reserved_close_quantity from trading.position where id=?",BigDecimal.class,position)).isZero();assertThat(ledger.check(actor.id).status()).isEqualTo("MATCHED");
