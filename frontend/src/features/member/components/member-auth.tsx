@@ -286,11 +286,19 @@ export function MemberSignupPage() {
       <MemberShell
         title="회원가입"
         subtitle="이미 로그인되어 있어 메인 페이지로 이동합니다."
-        variant="signup"
+        variant="default"
+        hideCardHeading
       >
-        <p role="status" className="member-message">
-          이미 로그인되어 있습니다. 메인 페이지로 자동 이동합니다.
-        </p>
+        <div className="mx-auto max-w-2xl space-y-6">
+          <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+              회원가입
+            </h2>
+          </div>
+          <p role="status" className="member-message">
+            이미 로그인되어 있습니다. 메인 페이지로 자동 이동합니다.
+          </p>
+        </div>
       </MemberShell>
     );
   }
@@ -299,51 +307,64 @@ export function MemberSignupPage() {
     <MemberShell
       title="회원가입"
       subtitle="소셜 본인확인 후 닉네임과 프로필, 필수 약관 동의를 설정하세요."
-      variant="signup"
+      variant="default"
+      hideCardHeading
     >
-      <div className="mb-4 flex items-center justify-center gap-2 text-xs font-bold" aria-label="회원가입 단계 안내">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#0058FF] px-3 py-1 text-white">
-          <span>1단계</span>
-          <span>소셜 본인인증</span>
-        </span>
-        <span className="text-gray-400">→</span>
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-gray-500">
-          <span>2단계</span>
-          <span>프로필·약관 동의 완료</span>
-        </span>
-      </div>
-
-      <div className="identity_verification_wrap" aria-label="소셜 계정 본인인증">
-        <div className="ym-verify-icon" aria-hidden="true">
-          <V1IconCheck className="h-4 w-4" />
+      <div className="mx-auto max-w-2xl space-y-6">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+              회원가입
+            </h2>
+            <p className="mt-1.5 break-keep text-sm font-medium text-gray-500">
+              소셜 본인확인 후 닉네임과 프로필, 필수 약관 동의를 설정하세요.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-bold" aria-label="회원가입 단계 안내">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[#0058FF] px-3 py-1 text-white">
+              <span>1단계</span>
+              <span>소셜 본인인증</span>
+            </span>
+            <span className="text-gray-400">→</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-gray-500">
+              <span>2단계</span>
+              <span>프로필·약관 동의</span>
+            </span>
+          </div>
         </div>
-        <h2 className="ym-verify-title">1단계 · 소셜 계정 본인인증</h2>
-        <p className="ym-verify-desc">
-          요기망치는 별도 비밀번호 없이 Google 또는 Kakao 계정 본인확인으로 안전하게 가입을 진행합니다.
-        </p>
-        <div className="ym-verify-btn-group">
-          <a href={google} className="ym-dark-verify-btn" onClick={captureFormDraft}>
-            Google 본인확인 시작
-          </a>
-          <a href={kakao} className="ym-dark-verify-btn is-kakao-border" onClick={captureFormDraft}>
-            Kakao 본인확인 시작
-          </a>
+
+        <section className="identity_verification_wrap rounded-2xl border border-gray-200 bg-white p-6 sm:p-8" aria-label="소셜 계정 본인인증">
+          <div className="ym-verify-icon" aria-hidden="true">
+            <V1IconCheck className="h-4 w-4" />
+          </div>
+          <h3 className="ym-verify-title">1단계 · 소셜 계정 본인인증</h3>
+          <p className="ym-verify-desc">
+            요기망치는 별도 비밀번호 없이 Google 또는 Kakao 계정 본인확인으로 안전하게 가입을 진행합니다.
+          </p>
+          <div className="ym-verify-btn-group">
+            <a href={google} className="ym-dark-verify-btn" onClick={captureFormDraft}>
+              Google 본인확인 시작
+            </a>
+            <a href={kakao} className="ym-dark-verify-btn is-kakao-border" onClick={captureFormDraft}>
+              Kakao 본인확인 시작
+            </a>
+          </div>
+        </section>
+
+        {notice && (
+          <p role="status" className="member-message">
+            {notice}
+          </p>
+        )}
+
+        <div ref={formWrapRef}>
+          <SignupForm
+            onSubmit={handlePreviewSubmit}
+            pending={false}
+            showAvatarUpload={false}
+            previewOnly
+          />
         </div>
-      </div>
-
-      {notice && (
-        <p role="status" className="member-message">
-          {notice}
-        </p>
-      )}
-
-      <div ref={formWrapRef}>
-        <SignupForm
-          onSubmit={handlePreviewSubmit}
-          pending={false}
-          showAvatarUpload={false}
-          previewOnly
-        />
       </div>
     </MemberShell>
   );
@@ -481,37 +502,64 @@ export function MemberCallback() {
     } catch (error) { setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null); if (contentRecovery(error) === "login") setFlow(null); }
     finally { setChecking(false); }
   }
-  return <MemberShell title={flow?.status === "SIGNUP_REQUIRED" ? "회원가입" : "로그인 확인"} variant="signup">
-    {error && (
-      <div role="alert" className="member-message space-y-2">
-        <p>{error}</p>
-        {getErrorRequestId(requestError) && (
-          <div>
-            <RequestIdChip requestId={getErrorRequestId(requestError)} />
+  return <MemberShell title={flow?.status === "SIGNUP_REQUIRED" ? "회원가입" : "로그인 확인"} variant="default" hideCardHeading>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">
+            {flow?.status === "SIGNUP_REQUIRED" ? "회원가입" : "로그인 확인"}
+          </h2>
+          {flow?.status === "SIGNUP_REQUIRED" && (
+            <p className="mt-1.5 break-keep text-sm font-medium text-gray-500">
+              프로필 이미지, 닉네임, 필수 약관 동의를 완료하면 바로 요기망치를 이용할 수 있습니다.
+            </p>
+          )}
+        </div>
+        {flow?.status === "SIGNUP_REQUIRED" && (
+          <div className="flex items-center gap-2 text-xs font-bold" aria-label="회원가입 단계 안내">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[#0058FF]">
+              <span>1단계 완료</span>
+            </span>
+            <span className="text-gray-400">→</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[#0058FF] px-3 py-1 text-white">
+              <span>2단계</span>
+              <span>프로필·약관 동의</span>
+            </span>
           </div>
         )}
       </div>
-    )}
-    {error && <MemberErrorActions error={requestError} onCheck={() => void checkState()} checking={checking || pending} onLogin={clearWithdrawalIntent} />}
-    {!flow && !error && <p role="status" className="member-message">로그인을 확인하는 중입니다. 계속 진행되지 않으면 <Link href="/login">다시 로그인</Link>해 주세요.</p>}
-    {completionReady ? <RecoveredLoginAction pending={pending || checking} onComplete={() => void completeRecoveredLogin()} /> : flow?.status === "LOGIN_READY" && !error && <p role="status" className="member-message">로그인을 완료하는 중입니다.</p>}
-    {flow?.status === "WITHDRAWAL_PENDING" && <p role="status" className="member-message">이 계정의 탈퇴 정리를 진행 중입니다. 완료 전에는 신규 가입이나 기존 계정 사용을 할 수 없습니다. 완료 후 같은 소셜 계정으로 새로 가입할 수 있으며 과거 자산·회차는 이전되지 않습니다.</p>}
-    {flow?.status === "SIGNUP_REQUIRED" && !withdrawalIntent && snapshot.phase !== "ready" && <>
-      <div className="identity_verification_wrap is-verified">
-        <div className="ym-verify-icon" aria-hidden="true"><V1IconCheck className="h-4 w-4" /></div>
-        <h2 className="ym-verify-title">소셜 계정 본인인증 완료</h2>
-        <p className="member-message">{flow.provider} · {flow.accountHint} 계정을 확인했습니다. 닉네임과 가입 동의를 입력해 주세요. 탈퇴 후 재가입인 경우 새로운 회원으로 시작하며 기존 자산·이력은 이전되지 않습니다.</p>
-      </div>
-      <SignupForm
-        key={signupDraft ? `draft:${signupDraft.nickname}:${signupDraft.profileMessage}` : "fresh"}
-        onSubmit={event => void signup(event)}
-        pending={pending}
-        defaultNickname={signupDraft?.nickname ?? ""}
-        defaultProfileMessage={signupDraft?.profileMessage ?? ""}
-        selectedProfileImage={selectedProfileImage}
-        onSelectProfileImage={setSelectedProfileImage}
-      />
-    </>}
-    {error && <Link href="/login" onClick={clearWithdrawalIntent}>로그인으로 돌아가기</Link>}
+
+      {error && (
+        <div role="alert" className="member-message space-y-2">
+          <p>{error}</p>
+          {getErrorRequestId(requestError) && (
+            <div>
+              <RequestIdChip requestId={getErrorRequestId(requestError)} />
+            </div>
+          )}
+        </div>
+      )}
+      {error && <MemberErrorActions error={requestError} onCheck={() => void checkState()} checking={checking || pending} onLogin={clearWithdrawalIntent} />}
+      {!flow && !error && <p role="status" className="member-message">로그인을 확인하는 중입니다. 계속 진행되지 않으면 <Link href="/login">다시 로그인</Link>해 주세요.</p>}
+      {completionReady ? <RecoveredLoginAction pending={pending || checking} onComplete={() => void completeRecoveredLogin()} /> : flow?.status === "LOGIN_READY" && !error && <p role="status" className="member-message">로그인을 완료하는 중입니다.</p>}
+      {flow?.status === "WITHDRAWAL_PENDING" && <p role="status" className="member-message">이 계정의 탈퇴 정리를 진행 중입니다. 완료 전에는 신규 가입이나 기존 계정 사용을 할 수 없습니다. 완료 후 같은 소셜 계정으로 새로 가입할 수 있으며 과거 자산·회차는 이전되지 않습니다.</p>}
+      {flow?.status === "SIGNUP_REQUIRED" && !withdrawalIntent && snapshot.phase !== "ready" && <>
+        <section className="identity_verification_wrap is-verified rounded-2xl border border-blue-200 bg-blue-50/40 p-5 sm:p-6">
+          <div className="ym-verify-icon" aria-hidden="true"><V1IconCheck className="h-4 w-4" /></div>
+          <h3 className="ym-verify-title">소셜 계정 본인인증 완료</h3>
+          <p className="member-message">{flow.provider} · {flow.accountHint} 계정을 확인했습니다. 닉네임과 가입 동의를 입력해 주세요. 탈퇴 후 재가입인 경우 새로운 회원으로 시작하며 기존 자산·이력은 이전되지 않습니다.</p>
+        </section>
+        <SignupForm
+          key={signupDraft ? `draft:${signupDraft.nickname}:${signupDraft.profileMessage}` : "fresh"}
+          onSubmit={event => void signup(event)}
+          pending={pending}
+          defaultNickname={signupDraft?.nickname ?? ""}
+          defaultProfileMessage={signupDraft?.profileMessage ?? ""}
+          selectedProfileImage={selectedProfileImage}
+          onSelectProfileImage={setSelectedProfileImage}
+        />
+      </>}
+      {error && <Link href="/login" className="inline-block text-sm font-bold text-[#0058FF] hover:underline" onClick={clearWithdrawalIntent}>로그인으로 돌아가기</Link>}
+    </div>
   </MemberShell>;
 }
