@@ -141,7 +141,7 @@ public class ContentNotificationService {
         this.requiresNewTx.setTimeout(5);
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public NotificationPageResponse listNotifications(
             Long memberId,
             Long cursorId,
@@ -187,18 +187,18 @@ public class ContentNotificationService {
         return new NotificationPageResponse(page, nextCursorId, hasNext);
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public NotificationStatusResponse getStatus(Long memberId) {
         requireActiveMember(memberId);
         return queryStatusInternal(memberId);
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public SseEmitter subscribe(Long memberId, String lastEventIdHeader) {
         return subscribe(memberId, lastEventIdHeader, null);
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public SseEmitter subscribe(Long memberId, String lastEventIdHeader, Runnable onRelease) {
         requireActiveMember(memberId);
         NotificationStatusResponse status = queryStatusInternal(memberId);
@@ -218,7 +218,7 @@ public class ContentNotificationService {
         return sse.subscribe(memberId, status, missed, onRelease);
     }
 
-    @Transactional(timeout = 3)
+    @Transactional(timeout = 10)
     public void checkNotifications(Long memberId) {
         requireActiveMember(memberId);
         Long latestId = jdbc.queryForObject(
@@ -239,7 +239,7 @@ public class ContentNotificationService {
         afterCommit(() -> sse.sendStatus(memberId, updatedStatus));
     }
 
-    @Transactional(timeout = 3)
+    @Transactional(timeout = 10)
     public void markAsRead(Long memberId, Long notificationId) {
         requireActiveMember(memberId);
         if (notificationId == null || notificationId <= 0) {
@@ -260,7 +260,7 @@ public class ContentNotificationService {
         afterCommit(() -> sse.sendStatus(memberId, updatedStatus));
     }
 
-    @Transactional(timeout = 3)
+    @Transactional(timeout = 10)
     public void markSelectedAsRead(Long memberId, NotificationIdsRequest body) {
         requireActiveMember(memberId);
         List<Long> ids = sanitizeIds(body);
@@ -279,7 +279,7 @@ public class ContentNotificationService {
         afterCommit(() -> sse.sendStatus(memberId, updatedStatus));
     }
 
-    @Transactional(timeout = 3)
+    @Transactional(timeout = 10)
     public void markAllAsRead(Long memberId) {
         requireActiveMember(memberId);
         jdbc.update(
@@ -290,7 +290,7 @@ public class ContentNotificationService {
         afterCommit(() -> sse.sendStatus(memberId, updatedStatus));
     }
 
-    @Transactional(timeout = 3)
+    @Transactional(timeout = 10)
     public int deleteReadNotifications(Long memberId) {
         requireActiveMember(memberId);
         // Delete ALL read notifications for the member regardless of lastCheckedId
@@ -307,7 +307,7 @@ public class ContentNotificationService {
         return deleted;
     }
 
-    @Transactional(timeout = 3)
+    @Transactional(timeout = 10)
     public void deleteNotification(Long memberId, Long notificationId) {
         requireActiveMember(memberId);
         if (notificationId == null || notificationId <= 0) {
@@ -326,7 +326,7 @@ public class ContentNotificationService {
         afterCommit(() -> sse.sendStatus(memberId, updatedStatus));
     }
 
-    @Transactional(timeout = 3)
+    @Transactional(timeout = 10)
     public void deleteNotifications(Long memberId, NotificationIdsRequest body) {
         requireActiveMember(memberId);
         List<Long> ids = sanitizeIds(body);

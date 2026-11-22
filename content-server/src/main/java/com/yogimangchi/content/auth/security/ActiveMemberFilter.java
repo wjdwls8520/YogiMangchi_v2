@@ -23,7 +23,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
-import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionException;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 public class ActiveMemberFilter extends OncePerRequestFilter {
@@ -68,7 +68,7 @@ public class ActiveMemberFilter extends OncePerRequestFilter {
                         "select status, role from content.member where id = ?",
                         (rs, n) -> new MemberState(rs.getString("status"), rs.getString("role")),
                         memberId);
-            } catch (DataAccessException | CannotCreateTransactionException failure) {
+            } catch (DataAccessException | TransactionException failure) {
                 if (isDbOutageTolerantAdminReadPath(request.getMethod(), path) && isValidDegradedAdminJwt(jwt)) {
                     log.warn("[Auth] DB outage degraded read-only ADMIN auth granted path={} memberId={}", path, memberId);
                     request.setAttribute(DEGRADED_DB_OUTAGE_ADMIN_ATTR, Boolean.TRUE);
