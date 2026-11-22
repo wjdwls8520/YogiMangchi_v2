@@ -9,7 +9,7 @@ import { PolicyMarkdownBody } from "./policy-content";
 import { acceptance, parsePolicyState, type ConsentSelection } from "../api/policies";
 import { ContentApiError, contentMessage, contentRecovery } from "../api/client";
 import { MemberErrorActions } from "./member-error-actions";
-import { V1IconCheck } from "./v1-ui";
+import { V1IconCheck, V1IconClose } from "./v1-ui";
 
 function formatAgreedAtKst(agreedAt: string | null | undefined): string {
   if (!agreedAt) return "기록 없음";
@@ -42,6 +42,7 @@ function useOwnConsents(options?: { backgroundPoll?: boolean }) {
 export function MemberConsentGate({ children, headless = false }: { children: ReactNode; headless?: boolean }) {
   const { session, snapshot } = useMember();
   const query = useOwnConsents({ backgroundPoll: true });
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (snapshot.phase !== "ready" || !snapshot.memberId) return;
@@ -58,24 +59,46 @@ export function MemberConsentGate({ children, headless = false }: { children: Re
     );
   }, [session, snapshot.phase, snapshot.memberId, snapshot.generation, query.data, query.isError]);
 
+  const bannerState = query.isError ? "unavailable" : query.data?.reconsentRequired ? "required" : null;
+  const bannerKey = bannerState ? `gate:${snapshot.memberId ?? "0"}:${snapshot.generation}:${bannerState}` : null;
+
   return (
     <>
-      {!headless && snapshot.phase === "ready" && snapshot.accountStatus !== "SUSPENDED" && (query.isError || query.data?.reconsentRequired) && (
+      {!headless && snapshot.phase === "ready" && snapshot.accountStatus !== "SUSPENDED" && bannerState && dismissedKey !== bannerKey && (
         <aside
           className="member-consent-banner flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 bg-blue-50/90 px-6 py-2.5 text-xs font-medium text-gray-800"
           aria-label="필수 정책 동의 상태"
         >
-          <span>
+          <span className="min-w-0 flex-1">
             {query.isError
               ? "정책 동의 상태를 확인하지 못했습니다. 회원 모의투자를 사용하기 전에 다시 확인해 주세요."
               : "약관이 개정되었습니다. 최신 약관을 확인하고 동의해 주세요."}
           </span>
-          <Link
-            href="/account#policy-consents"
-            className="inline-flex h-7 items-center justify-center rounded-full bg-[#0058FF] px-3 text-xs font-bold text-white transition-colors hover:bg-blue-700"
-          >
-            정책 확인
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            {query.isError && (
+              <button
+                type="button"
+                onClick={() => void query.refetch()}
+                className="inline-flex h-7 items-center justify-center rounded-full border border-blue-200 bg-white px-3 text-xs font-bold text-[#0058FF] transition-colors hover:bg-blue-50"
+              >
+                다시 확인
+              </button>
+            )}
+            <Link
+              href="/account#policy-consents"
+              className="inline-flex h-7 items-center justify-center rounded-full bg-[#0058FF] px-3 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+            >
+              정책 확인
+            </Link>
+            <button
+              type="button"
+              onClick={() => setDismissedKey(bannerKey)}
+              aria-label="필수 정책 동의 안내 닫기"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-blue-100 hover:text-gray-800"
+            >
+              <V1IconClose className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </aside>
       )}
       {children}
