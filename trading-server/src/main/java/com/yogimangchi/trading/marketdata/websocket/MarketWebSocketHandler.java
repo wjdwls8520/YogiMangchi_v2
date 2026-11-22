@@ -201,6 +201,7 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
                 }
                 snapshots.add(snapshot(id, previous));
             }
+            client.subscribedSymbols.addAll(requested);
             send(client, "SUBSCRIBED", Map.of("tradingSymbolIds", sortedIds(client)));
             send(client, "SNAPSHOT", Map.of("prices", snapshots));
             if (store != null) {
@@ -223,6 +224,7 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
         synchronized (client) {
             requested.forEach(client.symbols::remove);
             requested.forEach(client.books::remove);
+            client.subscribedSymbols.removeAll(requested);
             send(client, "UNSUBSCRIBED", Map.of("tradingSymbolIds", sortedIds(client)));
         }
         log.info("[Market WS] unsubscribe sessionId={} tradingSymbolIds={}", client.session.getId(), requested);
@@ -402,6 +404,19 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
         return clients.size();
     }
 
+    /** Lock-free check used to skip orderbook JSON/BigDecimal parsing for symbols with zero viewers. */
+    public boolean hasSubscribers(long tradingSymbolId) {
+        if (clients.isEmpty()) {
+            return false;
+        }
+        for (Client client : clients.values()) {
+            if (client.subscribedSymbols.contains(tradingSymbolId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @PreDestroy
     public void stop() {
         watchdog.shutdownNow();
@@ -441,6 +456,7 @@ public class MarketWebSocketHandler extends TextWebSocketHandler {
         private final WebSocketSession session;
         private final BoundedWebSocketSender sender;
         private final Map<Long, SymbolState> symbols = new HashMap<>();
+        private final Set<Long> subscribedSymbols = ConcurrentHashMap.newKeySet();
         private final Map<Long, BookState> books = new HashMap<>();
         private volatile long lastInbound = System.nanoTime();
         private long commandWindow = lastInbound;

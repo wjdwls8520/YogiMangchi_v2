@@ -199,7 +199,8 @@ public class MarketOverviewCollector {
 
     public OverviewHealth health() {
         Instant collected = lastCollectedAt;
-        boolean fresh = collected != null && Duration.between(collected, clock.instant()).compareTo(Duration.ofSeconds(60)) <= 0;
+        Duration freshWindow = Duration.ofMillis(Math.max(60_000L, fastIntervalMs * 3L));
+        boolean fresh = collected != null && Duration.between(collected, clock.instant()).compareTo(freshWindow) <= 0;
         boolean healthy = lastSnapshot != null && fresh && consecutiveUpstreamFailures.get() < 3 && lastError == null;
         return new OverviewHealth(healthy, lastStaleGroupCount, lastError);
     }
