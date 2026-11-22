@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import { DEFAULT_TRADING_API_BASE_URL } from "../../contest/api/contest-client";
 import { resolveContentOrigin } from "../../../lib/api-origins";
+import { useFocusTrap } from "../../../lib/use-focus-trap";
 import { registerOverlayEscape, useDimScrollLock } from "../components/dim-modal";
 import { useOptionalMember } from "../components/member-provider";
 import {
@@ -98,6 +99,7 @@ export function NotificationCenterProvider({
   const isDarkDrawer = isTradingTerminalPath(pathname);
   const memberCtx = useOptionalMember();
   const phase = memberCtx?.snapshot.phase;
+  const isSuspended = memberCtx?.snapshot.accountStatus === "SUSPENDED";
   const memberId = memberCtx?.snapshot.memberId ?? null;
   const generation = memberCtx?.snapshot.generation ?? 0;
   const session = memberCtx?.session ?? null;
@@ -141,6 +143,7 @@ export function NotificationCenterProvider({
   );
 
   const isDrawerOpenRef = useRef(isDrawerOpen);
+  const drawerPanelRef = useRef<HTMLDivElement>(null);
   const seenEventKeysRef = useRef<Set<string>>(new Set());
   const toastTimersRef = useRef<Map<string, number>>(new Map());
 
@@ -236,12 +239,14 @@ export function NotificationCenterProvider({
         const [statusResult, pageResult] = await Promise.all([
           fetchUnifiedNotificationStatus(session, {
             tradingBaseUrl,
+            skipTrading: isSuspended,
             signal: abortController.signal,
           }),
           fetchUnifiedNotifications(session, {
             tab: "ALL",
             size: DRAWER_PAGE_SIZE,
             tradingBaseUrl,
+            skipTrading: isSuspended,
             signal: abortController.signal,
           }),
         ]);
@@ -290,15 +295,17 @@ export function NotificationCenterProvider({
         onStatus: handleSseStatus,
       },
     );
-    const stopTradingSse = startNotificationSseSubscription(
-      "TRADING",
-      session,
-      tradingBaseUrl,
-      {
-        onNotification: handleSseNotification,
-        onStatus: handleSseStatus,
-      },
-    );
+    const stopTradingSse = isSuspended
+      ? () => {}
+      : startNotificationSseSubscription(
+          "TRADING",
+          session,
+          tradingBaseUrl,
+          {
+            onNotification: handleSseNotification,
+            onStatus: handleSseStatus,
+          },
+        );
 
     return () => {
       abortController.abort();
@@ -312,6 +319,7 @@ export function NotificationCenterProvider({
     };
   }, [
     phase,
+    isSuspended,
     session,
     memberId,
     generation,
@@ -322,6 +330,7 @@ export function NotificationCenterProvider({
 
   const drawerEscapeId = useId();
   const effectiveDrawerOpen = isSessionActive && isDrawerOpen;
+  useFocusTrap(effectiveDrawerOpen, drawerPanelRef);
 
   // Escape key closes ONLY the topmost active overlay (shared stack with DimModal & Mobile Drawer)
   useEffect(() => {
@@ -352,19 +361,24 @@ export function NotificationCenterProvider({
       TRADING: { ...prev.TRADING, newCount: 0, hasNew: false },
     }));
     if (!session) return;
-    await checkUnifiedNotifications(session, { tradingBaseUrl });
-  }, [session, tradingBaseUrl]);
+    try {
+      await checkUnifiedNotifications(session, { tradingBaseUrl, skipTrading: isSuspended });
+    } catch {
+      // Non-blocking badge acknowledgement
+    }
+  }, [session, tradingBaseUrl, isSuspended]);
 
   const refreshLatest = useCallback(async () => {
     if (!session || phase !== "ready") return;
     setIsLoading(true);
     try {
       const [statusResult, pageResult] = await Promise.all([
-        fetchUnifiedNotificationStatus(session, { tradingBaseUrl }),
+        fetchUnifiedNotificationStatus(session, { tradingBaseUrl, skipTrading: isSuspended }),
         fetchUnifiedNotifications(session, {
           tab: "ALL",
           size: DRAWER_PAGE_SIZE,
           tradingBaseUrl,
+          skipTrading: isSuspended,
         }),
       ]);
       setSourceStatus({
@@ -376,7 +390,7 @@ export function NotificationCenterProvider({
     } finally {
       setIsLoading(false);
     }
-  }, [session, phase, tradingBaseUrl]);
+  }, [session, phase, tradingBaseUrl, isSuspended]);
 
   const loadMoreDrawer = useCallback(async () => {
     if (!session || !hasNext || isLoadingMore) return;
@@ -387,17 +401,20 @@ export function NotificationCenterProvider({
         size: DRAWER_PAGE_SIZE,
         cursors,
         tradingBaseUrl,
+        skipTrading: isSuspended,
       });
       setItems(prev => mergeNotificationsByUid(prev, pageResult.items));
       setCursors(pageResult.cursors);
     } finally {
       setIsLoadingMore(false);
     }
-  }, [session, hasNext, isLoadingMore, cursors, tradingBaseUrl]);
+  }, [session, hasNext, isLoadingMore, cursors, tradingBaseUrl, isSuspended]);
 
   const markOneAsRead = useCallback(
     async (item: NotificationItem) => {
       if (item.isRead) return;
+      const prevItems = items;
+      const prevStatus = sourceStatus;
       setItems(prev =>
         prev.map(existing =>
           existing.uid === item.uid ? { ...existing, isRead: true } : existing,
@@ -414,17 +431,21 @@ export function NotificationCenterProvider({
       if (!session) return;
       try {
         await markUnifiedNotificationRead(session, item, { tradingBaseUrl });
-      } catch {
-        // Keep optimistic UI state; SSE status event will reconcile if needed
+      } catch (err) {
+        setItems(prevItems);
+        setSourceStatus(prevStatus);
+        throw err;
       }
     },
-    [session, tradingBaseUrl],
+    [items, sourceStatus, session, tradingBaseUrl],
   );
 
   const markManyAsRead = useCallback(
     async (targets: NotificationItem[]) => {
       const unreadTargets = targets.filter(t => !t.isRead);
       if (unreadTargets.length === 0) return;
+      const prevItems = items;
+      const prevStatus = sourceStatus;
       const uidSet = new Set(unreadTargets.map(t => t.uid));
       const contentDelta = unreadTargets.filter(t => t.source === "CONTENT").length;
       const tradingDelta = unreadTargets.filter(t => t.source === "TRADING").length;
@@ -447,14 +468,22 @@ export function NotificationCenterProvider({
         },
       }));
       if (!session) return;
-      await markSelectedUnifiedNotificationsRead(session, unreadTargets, {
-        tradingBaseUrl,
-      });
+      try {
+        await markSelectedUnifiedNotificationsRead(session, unreadTargets, {
+          tradingBaseUrl,
+        });
+      } catch (err) {
+        setItems(prevItems);
+        setSourceStatus(prevStatus);
+        throw err;
+      }
     },
-    [session, tradingBaseUrl],
+    [items, sourceStatus, session, tradingBaseUrl],
   );
 
   const markAllAsRead = useCallback(async () => {
+    const prevItems = items;
+    const prevStatus = sourceStatus;
     setIsReadingAll(true);
     setItems(prev => prev.map(existing => ({ ...existing, isRead: true })));
     setSourceStatus({
@@ -464,25 +493,37 @@ export function NotificationCenterProvider({
     try {
       if (session) {
         await Promise.all([
-          checkUnifiedNotifications(session, { tradingBaseUrl }),
-          markAllUnifiedNotificationsRead(session, { tradingBaseUrl }),
+          checkUnifiedNotifications(session, { tradingBaseUrl, skipTrading: isSuspended }),
+          markAllUnifiedNotificationsRead(session, { tradingBaseUrl, skipTrading: isSuspended }),
         ]);
       }
+    } catch (err) {
+      setItems(prevItems);
+      setSourceStatus(prevStatus);
+      throw err;
     } finally {
       setIsReadingAll(false);
     }
-  }, [session, tradingBaseUrl]);
+  }, [items, sourceStatus, session, tradingBaseUrl, isSuspended]);
 
   const deleteRead = useCallback(async () => {
+    const prevItems = items;
     setItems(prev => prev.filter(existing => !existing.isRead));
     if (!session) return;
-    await checkUnifiedNotifications(session, { tradingBaseUrl });
-    await deleteReadUnifiedNotifications(session, { tradingBaseUrl });
-  }, [session, tradingBaseUrl]);
+    try {
+      await checkUnifiedNotifications(session, { tradingBaseUrl, skipTrading: isSuspended });
+      await deleteReadUnifiedNotifications(session, { tradingBaseUrl, skipTrading: isSuspended });
+    } catch (err) {
+      setItems(prevItems);
+      throw err;
+    }
+  }, [items, session, tradingBaseUrl, isSuspended]);
 
   const deleteMany = useCallback(
     async (targets: NotificationItem[]) => {
       if (targets.length === 0) return;
+      const prevItems = items;
+      const prevStatus = sourceStatus;
       const uidSet = new Set(targets.map(t => t.uid));
       const unreadContentDelta = targets.filter(
         t => !t.isRead && t.source === "CONTENT",
@@ -505,11 +546,17 @@ export function NotificationCenterProvider({
         },
       }));
       if (!session) return;
-      await deleteSelectedUnifiedNotifications(session, targets, {
-        tradingBaseUrl,
-      });
+      try {
+        await deleteSelectedUnifiedNotifications(session, targets, {
+          tradingBaseUrl,
+        });
+      } catch (err) {
+        setItems(prevItems);
+        setSourceStatus(prevStatus);
+        throw err;
+      }
     },
-    [session, tradingBaseUrl],
+    [items, sourceStatus, session, tradingBaseUrl],
   );
 
   const openDrawer = useCallback(() => {
@@ -532,7 +579,7 @@ export function NotificationCenterProvider({
 
   const handleSelectDrawerNotification = useCallback(
     (notification: NotificationItem) => {
-      void markOneAsRead(notification);
+      void markOneAsRead(notification).catch(() => {});
       setIsDrawerOpen(false);
     },
     [markOneAsRead],
@@ -542,13 +589,13 @@ export function NotificationCenterProvider({
     (toast: NotificationToastItem) => {
       const matched = items.find(i => i.uid === toast.uid);
       if (matched) {
-        void markOneAsRead(matched);
+        void markOneAsRead(matched).catch(() => {});
       } else if (session) {
         void markUnifiedNotificationRead(
           session,
           { source: toast.source, notificationId: toast.notificationId },
           { tradingBaseUrl },
-        );
+        ).catch(() => {});
       }
     },
     [items, markOneAsRead, session, tradingBaseUrl],
@@ -622,6 +669,10 @@ export function NotificationCenterProvider({
                   onClick={closeDrawer}
                 />
                 <div
+                  ref={drawerPanelRef}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="실시간 알림 패널"
                   className={
                     isDarkDrawer
                       ? "fixed bottom-0 right-0 top-0 z-[81] h-dvh w-full max-w-sm border-l border-[#2B3139] bg-[#161A1E]"
@@ -638,8 +689,8 @@ export function NotificationCenterProvider({
                     onClose={closeDrawer}
                     onSelectNotification={handleSelectDrawerNotification}
                     onAcknowledgeNewNotifications={() => void acknowledgeNew()}
-                    onReadAll={() => void markAllAsRead()}
-                    onLoadMore={() => void loadMoreDrawer()}
+                    onReadAll={() => void markAllAsRead().catch(() => {})}
+                    onLoadMore={() => void loadMoreDrawer().catch(() => {})}
                   />
                 </div>
               </div>

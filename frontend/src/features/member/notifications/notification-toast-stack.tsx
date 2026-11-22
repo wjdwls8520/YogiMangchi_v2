@@ -39,11 +39,11 @@ export function NotificationToastStack({
   return (
     <div
       data-notification-toast-stack="true"
-      data-toast-position={isTradingRoute ? "bottom-right" : "top-center"}
+      data-toast-position={isTradingRoute ? "bottom-left" : "top-center"}
       className={cn(
         "pointer-events-none fixed z-[65] flex w-[calc(100vw-2rem)] max-w-[384px] flex-col gap-2.5",
         isTradingRoute
-          ? "bottom-5 right-4 sm:right-6"
+          ? "bottom-5 left-4 sm:left-6"
           : "left-1/2 top-[72px] -translate-x-1/2",
       )}
     >

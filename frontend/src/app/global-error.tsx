@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
+import { sendClientErrorBeacon } from "@/lib/client-error-beacon";
+
 export default function GlobalError({
   error,
   reset,
@@ -7,6 +10,9 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    sendClientErrorBeacon(error);
+  }, [error]);
   return (
     <html lang="ko">
       <body className="min-h-screen bg-[#F9FAFB] font-sans text-gray-900 antialiased">

@@ -14,6 +14,8 @@ import { V1IconCheck } from "./v1-ui";
 import { validPolicyVersion } from "../api/policies";
 import { clearWithdrawalIntent, readWithdrawalIntent, saveWithdrawalIntent } from "../api/withdrawal-intent";
 import type { SelectedS3File } from "./s3-upload-slot";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId } from "../../../lib/request-id";
 
 export const LOGIN_RETURN_PATH_KEY = "yogimangchi:login-return-to:v1";
 export const SIGNUP_DRAFT_KEY = "yogimangchi:signup-draft:v1";
@@ -299,11 +301,23 @@ export function MemberSignupPage() {
       subtitle="소셜 본인확인 후 닉네임과 프로필, 필수 약관 동의를 설정하세요."
       variant="signup"
     >
+      <div className="mb-4 flex items-center justify-center gap-2 text-xs font-bold" aria-label="회원가입 단계 안내">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#0058FF] px-3 py-1 text-white">
+          <span>1단계</span>
+          <span>소셜 본인인증</span>
+        </span>
+        <span className="text-gray-400">→</span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-gray-500">
+          <span>2단계</span>
+          <span>프로필·약관 동의 완료</span>
+        </span>
+      </div>
+
       <div className="identity_verification_wrap" aria-label="소셜 계정 본인인증">
         <div className="ym-verify-icon" aria-hidden="true">
           <V1IconCheck className="h-4 w-4" />
         </div>
-        <h2 className="ym-verify-title">소셜 계정 본인인증</h2>
+        <h2 className="ym-verify-title">1단계 · 소셜 계정 본인인증</h2>
         <p className="ym-verify-desc">
           요기망치는 별도 비밀번호 없이 Google 또는 Kakao 계정 본인확인으로 안전하게 가입을 진행합니다.
         </p>
@@ -324,7 +338,12 @@ export function MemberSignupPage() {
       )}
 
       <div ref={formWrapRef}>
-        <SignupForm onSubmit={handlePreviewSubmit} pending={false} />
+        <SignupForm
+          onSubmit={handlePreviewSubmit}
+          pending={false}
+          showAvatarUpload={false}
+          previewOnly
+        />
       </div>
     </MemberShell>
   );
@@ -463,7 +482,16 @@ export function MemberCallback() {
     finally { setChecking(false); }
   }
   return <MemberShell title={flow?.status === "SIGNUP_REQUIRED" ? "회원가입" : "로그인 확인"} variant="signup">
-    {error && <p role="alert" className="member-message">{error}</p>}
+    {error && (
+      <div role="alert" className="member-message space-y-2">
+        <p>{error}</p>
+        {getErrorRequestId(requestError) && (
+          <div>
+            <RequestIdChip requestId={getErrorRequestId(requestError)} />
+          </div>
+        )}
+      </div>
+    )}
     {error && <MemberErrorActions error={requestError} onCheck={() => void checkState()} checking={checking || pending} onLogin={clearWithdrawalIntent} />}
     {!flow && !error && <p role="status" className="member-message">로그인을 확인하는 중입니다. 계속 진행되지 않으면 <Link href="/login">다시 로그인</Link>해 주세요.</p>}
     {completionReady ? <RecoveredLoginAction pending={pending || checking} onComplete={() => void completeRecoveredLogin()} /> : flow?.status === "LOGIN_READY" && !error && <p role="status" className="member-message">로그인을 완료하는 중입니다.</p>}

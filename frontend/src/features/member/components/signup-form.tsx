@@ -14,6 +14,8 @@ export function SignupForm({
   defaultProfileMessage = "",
   selectedProfileImage,
   onSelectProfileImage,
+  showAvatarUpload = true,
+  previewOnly = false,
 }: {
   onSubmit: FormEventHandler<HTMLFormElement>;
   pending: boolean;
@@ -21,6 +23,8 @@ export function SignupForm({
   defaultProfileMessage?: string;
   selectedProfileImage?: SelectedS3File | null;
   onSelectProfileImage?: (file: SelectedS3File | null) => void;
+  showAvatarUpload?: boolean;
+  previewOnly?: boolean;
 }) {
   const policies = usePolicies(), [selection, setSelection] = useState<ConsentSelection>({});
   const [bioLength, setBioLength] = useState(() => Array.from(defaultProfileMessage).length);
@@ -40,15 +44,21 @@ export function SignupForm({
           <small className="ym-helper-primary">최대 8자 · 공백·특수문자 제외</small>
         </div>
 
-        <div className="ym-field-group">
-          <span className="ym-field-title">프로필 이미지 등록</span>
-          <ProfileImageUploadSlot
-            slotName="signup-profile-image"
-            compact
-            selectedFile={selectedProfileImage}
-            onSelectFile={onSelectProfileImage}
-          />
-        </div>
+        {showAvatarUpload ? (
+          <div className="ym-field-group">
+            <span className="ym-field-title">프로필 이미지 등록</span>
+            <ProfileImageUploadSlot
+              slotName="signup-profile-image"
+              compact
+              selectedFile={selectedProfileImage}
+              onSelectFile={onSelectProfileImage}
+            />
+          </div>
+        ) : (
+          <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs font-medium text-gray-700">
+            프로필 이미지 등록과 최종 약관 동의는 1단계 소셜 본인인증 완료 직후(2단계)에서 안전하게 저장됩니다.
+          </div>
+        )}
 
         <div className="ym-field-group">
           <label className="ym-label-block">
@@ -69,33 +79,35 @@ export function SignupForm({
           </label>
         </div>
 
-        <div className="ym-policy-box">
-          <span className="ym-field-title">필수 약관 및 개인정보 동의</span>
-          {policies.isPending && <p role="status" className="member-message">필수 동의 문서를 확인하는 중입니다.</p>}
-          {policies.isError && (
-            <p role="alert" className="member-message">
-              동의 원문과 버전을 확인하지 못해 가입할 수 없습니다.{" "}
-              <button type="button" className="account-refresh" onClick={() => void policies.refetch()}>
-                다시 조회
-              </button>
-            </p>
-          )}
-          {!policies.isError && policies.data && (
-            <PolicyConsentControl
-              bundle={policies.data}
-              selection={selection}
-              onChange={setSelection}
-              pending={pending || policies.isFetching}
-            />
-          )}
-        </div>
+        {!previewOnly && (
+          <div className="ym-policy-box">
+            <span className="ym-field-title">필수 약관 및 개인정보 동의</span>
+            {policies.isPending && <p role="status" className="member-message">필수 동의 문서를 확인하는 중입니다.</p>}
+            {policies.isError && (
+              <p role="alert" className="member-message">
+                동의 원문과 버전을 확인하지 못해 가입할 수 없습니다.{" "}
+                <button type="button" className="account-refresh" onClick={() => void policies.refetch()}>
+                  다시 조회
+                </button>
+              </p>
+            )}
+            {!policies.isError && policies.data && (
+              <PolicyConsentControl
+                bundle={policies.data}
+                selection={selection}
+                onChange={setSelection}
+                pending={pending || policies.isFetching}
+              />
+            )}
+          </div>
+        )}
 
         <button
           type="submit"
           className="member-primary login-button"
-          disabled={pending || policies.isFetching || !policies.data || policies.isError}
+          disabled={previewOnly ? pending : (pending || policies.isFetching || !policies.data || policies.isError)}
         >
-          {pending ? "가입 처리 중…" : "동의하고 가입하기"}
+          {previewOnly ? "입력값 임시 저장 후 상단 소셜 인증 안내" : pending ? "가입 처리 중…" : "동의하고 가입하기"}
         </button>
       </fieldset>
     </form>

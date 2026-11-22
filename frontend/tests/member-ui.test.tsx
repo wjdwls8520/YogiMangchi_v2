@@ -311,8 +311,10 @@ test("MemberConsents displays clean KST consent summaries, reconsent prompts, an
     assert.match(html, /현재 필요한 정책 동의가 완료되었습니다\./);
     assert.match(html, /<strong>이용약관<\/strong> · 동의 완료 · 2026-10-25 21:00 KST/);
     assert.match(html, /<strong>개인정보처리방침<\/strong> · 동의 완료 · 2026-10-25 21:00 KST/);
-    assert.match(html, /<details><summary>이용약관 전문 보기<\/summary><pre class="policy-original"># 요기망치 이용약관\n시행일: 2026-11-22\n\n제1조 이용약관 등록 원문<\/pre><\/details>/);
-    assert.match(html, /<details><summary>개인정보처리방침 전문 보기<\/summary><pre class="policy-original"># 요기망치 개인정보 처리방침\n시행일: 2026-11-22\n\n제1조 개인정보처리방침 등록 원문<\/pre><\/details>/);
+    assert.match(html, /<details><summary>이용약관 전문 보기<\/summary><div class="policy-original"><h3 class="policy-doc-title">요기망치 이용약관<\/h3><p><span>시행일: 2026-11-22<\/span><\/p><p><span>제1조 이용약관 등록 원문<\/span><\/p><\/div><\/details>/);
+    assert.match(html, /<details><summary>개인정보처리방침 전문 보기<\/summary><div class="policy-original"><h3 class="policy-doc-title">요기망치 개인정보 처리방침<\/h3><p><span>시행일: 2026-11-22<\/span><\/p><p><span>제1조 개인정보처리방침 등록 원문<\/span><\/p><\/div><\/details>/);
+    assert.equal(html.includes("<pre"), false);
+    assert.equal(html.includes("# 요기망치"), false);
     assert.equal(html.includes("ym-terms-"), false);
     assert.equal(html.includes("ym-privacy-"), false);
     assert.equal(html.includes("(PUBLISHED)"), false);
@@ -1226,7 +1228,9 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     );
     assert.match(signupAnonHtml, /identity_verification_wrap/);
     assert.match(signupAnonHtml, /소셜 계정 본인인증/);
-    assert.match(signupAnonHtml, /data-s3-slot="signup-profile-image"/);
+    assert.doesNotMatch(signupAnonHtml, /data-s3-slot="signup-profile-image"/);
+    assert.match(signupAnonHtml, /1단계 · 소셜 계정 본인인증/);
+    assert.match(signupAnonHtml, /프로필 이미지 등록과 최종 약관 동의는 1단계 소셜 본인인증 완료 직후\(2단계\)에서 안전하게 저장됩니다\./);
 
     const signupLoggedInHtml = renderToStaticMarkup(
       <MemberProvider session={loggedInSession} client={client}>
@@ -1239,7 +1243,7 @@ test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1He
     assert.equal(signupLoggedInHtml.includes('href="/signup"'), false);
 
     const accountHtml = renderToStaticMarkup(
-      <MemberProvider client={client}>
+      <MemberProvider session={loggedInSession} client={client}>
         <MemberAccount />
       </MemberProvider>,
     );
@@ -3653,7 +3657,7 @@ test("checkbox line-height alignment and modal idle anti-flicker / scrollbar-gap
     "background 5s refetch must not toggle canRestart / blocked banner while popup is idle",
   );
   assert.match(memberSimSrc, /useCurrentRound\(dialogOpen\)/);
-  assert.match(memberSimSrc, /useDialogScrollLock\(dialog\)/);
+  assert.match(memberSimSrc, /useDialogScrollLock\(dialog(?:,|\))/);
 
   resetScrollLockForTest();
   const mockWin = {

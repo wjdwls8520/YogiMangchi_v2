@@ -26,6 +26,7 @@ export function TradingCommandRecovery() {
   const [view,setView]=useState<{identity:string;entries:JournalEntry[];error:string|null}>({identity:"",entries:[],error:null});
   const [messages,setMessages]=useState<Record<string,string>>({}),[canResend,setCanResend]=useState<Record<string,boolean>>({}),[busy,setBusy]=useState<Record<string,boolean>>({});
   const [receipt,setReceipt]=useState<{identity:string;text:string}|null>(null);
+  const [dismissedErrorIdentity, setDismissedErrorIdentity] = useState<string | null>(null);
   const active=useRef(new Set<string>());
   const reload=useRef<()=>void>(()=>{});
   const current=()=>ownerId(session.getCommandOwner())===identity;
@@ -68,9 +69,38 @@ export function TradingCommandRecovery() {
     finally {active.current.delete(key);if(current()){setBusy(values=>({...values,[key]:false}));reload.current();}}
   }
   const visible=view.identity===identity?view:null;
-  if(!identity||!visible||!visible.entries.length&&!visible.error&&receipt?.identity!==identity)return null;
-  return <aside className="trading-section p-4" aria-label="미확정 거래 복구"><h2 className="section-title">미확정 거래 복구</h2>
-    {visible.error&&<p role="alert" className="order-warning">{visible.error}</p>}
+  const visibleError = visible?.error && dismissedErrorIdentity !== identity ? visible.error : null;
+  if(!identity||!visible||!visible.entries.length&&!visibleError&&receipt?.identity!==identity)return null;
+  return <aside className="trading-section p-4" aria-label="미확정 거래 복구">
+    <div className="flex items-center justify-between gap-2">
+      <h2 className="section-title">미확정 거래 복구</h2>
+      {!visible.entries.length && (
+        <button
+          type="button"
+          className="account-refresh"
+          aria-label="복구 안내 닫기"
+          onClick={() => {
+            setReceipt(null);
+            if (visibleError) setDismissedErrorIdentity(identity);
+          }}
+        >
+          닫기 ×
+        </button>
+      )}
+    </div>
+    {visibleError && (
+      <div className="mt-2 flex items-start justify-between gap-2">
+        <p role="alert" className="order-warning">{visibleError}</p>
+        <button
+          type="button"
+          className="account-refresh shrink-0"
+          aria-label="복구 오류 닫기"
+          onClick={() => setDismissedErrorIdentity(identity)}
+        >
+          ×
+        </button>
+      </div>
+    )}
     {receipt?.identity===identity&&<p role="status">{receipt.text}</p>}
     {visible.entries.map(entry=>{const key=`${identity}:${entry.key}`;return <div key={key} className="mt-3"><p>{describe(entry)}</p><p className="order-input-hint">{new Date(entry.createdAt).toLocaleString("ko-KR")} 저장 · 같은 계정·원래 키·내용만 사용합니다.</p>
       <p role="status">{messages[key]??"먼저 서버에서 기존 결과를 조회합니다. 조회는 주문·청산·재시작을 실행하지 않습니다."}</p>

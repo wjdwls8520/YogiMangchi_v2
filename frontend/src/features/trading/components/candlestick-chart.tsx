@@ -15,6 +15,32 @@ import { ChartState } from "./chart-state";
 const plot = (candle: Candle) => ({ time: candle.openTime / 1000 as UTCTimestamp,
   open: Number(candle.open), high: Number(candle.high), low: Number(candle.low), close: Number(candle.close) });
 
+const plotVolume = (candle: Candle) => {
+  const open = Number(candle.open);
+  const close = Number(candle.close);
+  const high = Number(candle.high);
+  const low = Number(candle.low);
+  const rawVol = candle.volume !== undefined ? Number(candle.volume) : Math.max(high - low, Math.abs(close - open));
+  return {
+    time: candle.openTime / 1000 as UTCTimestamp,
+    value: Number.isFinite(rawVol) ? rawVol : 0,
+    color: close >= open ? "rgba(14, 203, 129, 0.28)" : "rgba(246, 70, 93, 0.28)",
+  };
+};
+
+function computeMovingAverage(data: readonly Candle[], period: number) {
+  const out: { time: UTCTimestamp; value: number }[] = [];
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    sum += Number(data[i].close);
+    if (i >= period) sum -= Number(data[i - period].close);
+    if (i >= period - 1) {
+      out.push({ time: data[i].openTime / 1000 as UTCTimestamp, value: sum / period });
+    }
+  }
+  return out;
+}
+
 export function CandlestickChart({ symbol, market, interval }: { symbol: TradingSymbol; market: SelectedMarket; interval: CandleInterval }) {
   const query = useCandleHistory(symbol.id, interval);
   const { refetch } = query;
@@ -26,6 +52,9 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
   const mount = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeries = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const ma7Series = useRef<ISeriesApi<"Line"> | null>(null);
+  const ma25Series = useRef<ISeriesApi<"Line"> | null>(null);
   const rendered = useRef<readonly Candle[]>([]);
   const historyVersion = useRef(-1);
   const drawing = useRef(false);
@@ -34,6 +63,8 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
   const recovery = useRef(0);
   const [rendererFailed, setRendererFailed] = useState(false);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [showMa, setShowMa] = useState(true);
+  const [showVolume, setShowVolume] = useState(true);
   const reference = candles.at(-1)?.close ?? freshMarkPrice(market)?.decimal;
   const initialFormat = useRef(marketChartPriceFormat(reference, symbol.priceTickSize));
   const previousTickSize = useRef(symbol.priceTickSize);
@@ -73,15 +104,32 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
         const scale = chart.current?.timeScale();
         const range = preserveCandleRange(rendered.current, data, scale?.getVisibleLogicalRange() ?? null);
         current.setData(data.map(plot));
+        volumeSeries.current?.setData(data.map(plotVolume));
+        ma7Series.current?.setData(computeMovingAverage(data, 7));
+        ma25Series.current?.setData(computeMovingAverage(data, 25));
         if (range) scale?.setVisibleLogicalRange(range as LogicalRange);
         else if (!rendered.current.length && data.length) scale?.fitContent();
-      } else if (data.length) current.update(plot(data[data.length - 1]));
+      } else if (data.length) {
+        current.update(plot(data[data.length - 1]));
+        volumeSeries.current?.update(plotVolume(data[data.length - 1]));
+        const ma7 = computeMovingAverage(data.slice(-7), 7);
+        if (ma7.length) ma7Series.current?.update(ma7[ma7.length - 1]);
+        const ma25 = computeMovingAverage(data.slice(-25), 25);
+        if (ma25.length) ma25Series.current?.update(ma25[ma25.length - 1]);
+      }
       rendered.current = data;
       historyVersion.current = book.historyVersion;
     } catch { queueMicrotask(() => { if (series.current === current) setRendererFailed(true); }); }
     finally { pager.resetRange(chart.current?.timeScale().getVisibleLogicalRange()?.from ?? null); drawing.current = false; }
   }, [book, pager]);
   useEffect(() => { renderData(); }, [candles, renderData]);
+  useEffect(() => {
+    ma7Series.current?.applyOptions({ visible: showMa });
+    ma25Series.current?.applyOptions({ visible: showMa });
+  }, [showMa]);
+  useEffect(() => {
+    volumeSeries.current?.applyOptions({ visible: showVolume });
+  }, [showVolume]);
   useEffect(() => {
     const format = marketChartPriceFormat(reference, symbol.priceTickSize);
     if (previousTickSize.current === symbol.priceTickSize && initialFormat.current.minMove === format.minMove) return;
@@ -96,14 +144,20 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
     let instance: IChartApi | undefined;
     async function start() {
       try {
-        const { createChart, CandlestickSeries, ColorType, TickMarkType } = await import("lightweight-charts");
+        const { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, TickMarkType } = await import("lightweight-charts");
         if (disposed || !mount.current) return;
         instance = createChart(mount.current, {
           autoSize: true,
-          layout: { background: { type: ColorType.Solid, color: "#101014" }, textColor: "#898e98", fontFamily: "Arial, sans-serif", fontSize: 11, attributionLogo: true },
+          layout: {
+            background: { type: ColorType.Solid, color: "#101014" },
+            textColor: "#898e98",
+            fontFamily: "Pretendard, var(--font-noto-sans-kr), -apple-system, BlinkMacSystemFont, sans-serif",
+            fontSize: 11,
+            attributionLogo: true,
+          },
           grid: { vertLines: { color: "#222329" }, horzLines: { color: "#222329" } },
           crosshair: { vertLine: { color: "#666b75", labelBackgroundColor: "#34363d" }, horzLine: { color: "#666b75", labelBackgroundColor: "#34363d" } },
-          rightPriceScale: { borderColor: "#27282e" },
+          rightPriceScale: { borderColor: "#27282e", scaleMargins: { top: 0.08, bottom: 0.22 } },
           timeScale: { borderColor: "#27282e", timeVisible: true, secondsVisible: false, rightOffset: 3,
             tickMarkFormatter: (time: Time, kind: import("lightweight-charts").TickMarkType) => typeof time !== "number" ? null : new Date(time * 1000).toLocaleString("ko-KR", {
               timeZone: "Asia/Seoul", hour12: false, ...(kind === TickMarkType.Time || kind === TickMarkType.TimeWithSeconds
@@ -114,8 +168,32 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
             ? new Date(time * 1000).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false }) : String(time) },
         });
         chart.current = instance;
-        series.current = instance.addSeries(CandlestickSeries, { upColor: "#00c785", downColor: "#f6465d", wickUpColor: "#00c785",
-          wickDownColor: "#f6465d", borderVisible: false, priceFormat: initialFormat.current });
+        series.current = instance.addSeries(CandlestickSeries, { upColor: "#0ECB81", downColor: "#F6465D", wickUpColor: "#0ECB81",
+          wickDownColor: "#F6465D", borderVisible: false, priceFormat: initialFormat.current });
+        volumeSeries.current = instance.addSeries(HistogramSeries, {
+          priceFormat: { type: "volume" },
+          priceScaleId: "volume",
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        instance.priceScale("volume").applyOptions({
+          scaleMargins: { top: 0.82, bottom: 0 },
+          visible: false,
+        });
+        ma7Series.current = instance.addSeries(LineSeries, {
+          color: "#F0B90B",
+          lineWidth: 1,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        ma25Series.current = instance.addSeries(LineSeries, {
+          color: "#3B82F6",
+          lineWidth: 1,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+        });
         instance.subscribeCrosshairMove((event) => setHoverTime(typeof event.time === "number" ? event.time * 1000 : null));
         instance.timeScale().subscribeVisibleLogicalRangeChange((range) => {
           if (!drawing.current) pager.rangeChanged(range?.from ?? null, performance.now() - lastNavigation.current < 1000);
@@ -124,7 +202,17 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
       } catch { if (!disposed) setRendererFailed(true); }
     }
     void start();
-    return () => { disposed = true; series.current = null; chart.current = null; rendered.current = []; historyVersion.current = -1; instance?.remove(); };
+    return () => {
+      disposed = true;
+      series.current = null;
+      volumeSeries.current = null;
+      ma7Series.current = null;
+      ma25Series.current = null;
+      chart.current = null;
+      rendered.current = [];
+      historyVersion.current = -1;
+      instance?.remove();
+    };
   }, [renderData, pager]);
 
   const selected = candles.find((candle) => candle.openTime === hoverTime) ?? candles.at(-1);
@@ -141,6 +229,32 @@ export function CandlestickChart({ symbol, market, interval }: { symbol: Trading
       <dl className="candle-ohlc" aria-label="선택 봉 OHLC" data-open-time={selected?.openTime}>
         {(["open", "high", "low", "close"] as const).map((field) => <div key={field}><dt>{field.charAt(0).toUpperCase()}</dt><dd>{formatMarketPrice(selected?.[field], symbol.priceTickSize)}</dd></div>)}
       </dl>
+      <div className="inline-flex items-center gap-1.5" role="group" aria-label="차트 보조지표">
+        <button
+          type="button"
+          aria-pressed={showMa}
+          onClick={() => setShowMa((v) => !v)}
+          className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold cursor-pointer ${
+            showMa
+              ? "border-[#F0B90B]/50 bg-[#F0B90B]/15 text-[#F0B90B]"
+              : "border-terminal-line bg-terminal-header text-terminal-muted"
+          }`}
+        >
+          MA(7/25)
+        </button>
+        <button
+          type="button"
+          aria-pressed={showVolume}
+          onClick={() => setShowVolume((v) => !v)}
+          className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold cursor-pointer ${
+            showVolume
+              ? "border-[#0ECB81]/50 bg-[#0ECB81]/15 text-[#0ECB81]"
+              : "border-terminal-line bg-terminal-header text-terminal-muted"
+          }`}
+        >
+          변동량
+        </button>
+      </div>
       {selected && <time className="preview-label" dateTime={new Date(selected.openTime).toISOString()}>{new Date(selected.openTime).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false })} KST</time>}
     </div>
     <figure aria-labelledby="chart-caption" className="market-chart-figure">

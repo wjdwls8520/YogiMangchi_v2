@@ -6,7 +6,7 @@ export type NewsSection = "BREAKING" | "NEWSROOM";
 export type NewsSubCategory = "COIN_FLASH" | "ECONOMY_FLASH" | "CRYPTO" | "STOCKS" | "FX_RATES";
 export type NewsSentiment = "BULLISH" | "BEARISH" | "NEUTRAL";
 export type CommunityCategory = "MARKET" | "ANALYSIS" | "POSITION" | "FREE";
-export type CommunitySort = "LATEST" | "POPULAR";
+export type CommunitySort = "LATEST" | "POPULAR" | "WEEKLY_POPULAR";
 
 export const NEWS_CATEGORIES: readonly { key: "" | NewsCategory; label: string }[] = [
   { key: "", label: "전체" },

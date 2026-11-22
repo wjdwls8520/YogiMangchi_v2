@@ -1,8 +1,8 @@
 "use client";
 
-import { useId, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import { DimModal } from "./dim-modal";
-import { V1Button } from "./v1-ui";
+import { V1Button, V1IconClose } from "./v1-ui";
 
 export interface SelectedS3File {
   id: string;
@@ -18,60 +18,17 @@ const MAX_GIF_BYTES = 3 * 1024 * 1024;
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const COMMUNITY_ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
+function createSafeFileId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `file-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function UploadLimitAlertModal({
-  error,
-  maxFiles,
-  onClose,
-}: {
-  error: string | null;
-  maxFiles?: number;
-  onClose: () => void;
-}) {
-  return (
-    <DimModal
-      open={Boolean(error)}
-      onClose={onClose}
-      title="첨부파일 업로드 제한 안내"
-      subtitle="업로드할 수 없는 파일이 포함되어 제외되었습니다."
-      maxWidth="448px"
-    >
-      <div className="space-y-4">
-        <div
-          role="alert"
-          className="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs font-bold leading-relaxed text-red-600"
-        >
-          <span className="mb-1 inline-block rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
-            업로드 거절 사유
-          </span>
-          <p className="mt-1">{error}</p>
-        </div>
-
-        <div className="rounded-xl border border-gray-200 bg-[#F9FAFB] p-3.5 text-xs text-gray-700">
-          <p className="mb-2 font-black text-gray-900">첨부파일 허용 기준</p>
-          <ul className="space-y-1 font-medium text-gray-600">
-            <li>• 일반 이미지(JPG, PNG, WEBP): 장당 최대 5MB</li>
-            <li>• 움짤(GIF): 장당 최대 3MB</li>
-            <li>• 동영상(MP4, MOV 등): 업로드 불가</li>
-            {typeof maxFiles === "number" && (
-              <li>• 최대 첨부 장수: 현재 최대 {maxFiles}장</li>
-            )}
-          </ul>
-        </div>
-
-        <div className="flex justify-end pt-1">
-          <V1Button type="button" variant="blue" size="sm" onClick={onClose}>
-            확인
-          </V1Button>
-        </div>
-      </div>
-    </DimModal>
-  );
 }
 
 export function ProfileImageUploadSlot({
@@ -99,44 +56,53 @@ export function ProfileImageUploadSlot({
 }) {
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const ownedUrlsRef = useRef<Set<string>>(new Set());
   const [selected, setSelected] = useState<SelectedS3File | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [modalError, setModalError] = useState<string | null>(null);
   const activeSelected = selectedFile !== undefined ? selectedFile : selected;
   void memberId;
 
-  function reportError(message: string) {
-    setError(message);
-    setModalError(message);
-  }
+  useEffect(() => {
+    const urls = ownedUrlsRef.current;
+    return () => {
+      urls.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Ignore revoke errors
+        }
+      });
+      urls.clear();
+    };
+  }, []);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     setError(null);
     if (!file) return;
     if (file.type.startsWith("video/")) {
-      reportError(
+      setError(
         `[${file.name}] 동영상 파일은 업로드할 수 없습니다. (일반 이미지 최대 5MB · GIF 움짤 최대 3MB만 가능)`,
       );
       event.target.value = "";
       return;
     }
     if (!ALLOWED_MIME.includes(file.type)) {
-      reportError(
+      setError(
         `[${file.name}] 지원하지 않는 파일 형식입니다. JPG, PNG, WEBP, GIF 형식의 이미지만 등록할 수 있습니다.`,
       );
       event.target.value = "";
       return;
     }
     if (file.type === "image/gif" && file.size > MAX_GIF_BYTES) {
-      reportError(
+      setError(
         `[${file.name} (${formatBytes(file.size)})] GIF 움짤은 최대 3MB 이하만 첨부할 수 있습니다.`,
       );
       event.target.value = "";
       return;
     }
     if (file.size > MAX_FILE_BYTES) {
-      reportError(
+      setError(
         `[${file.name} (${formatBytes(file.size)})] 일반 이미지는 장당 최대 5MB 이하만 첨부할 수 있습니다.`,
       );
       event.target.value = "";
@@ -144,13 +110,17 @@ export function ProfileImageUploadSlot({
     }
     if (activeSelected?.previewUrl.startsWith("blob:")) {
       URL.revokeObjectURL(activeSelected.previewUrl);
+      ownedUrlsRef.current.delete(activeSelected.previewUrl);
     }
     const previewUrl =
       typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
         ? URL.createObjectURL(file)
         : "";
+    if (previewUrl.startsWith("blob:")) {
+      ownedUrlsRef.current.add(previewUrl);
+    }
     const nextSelected: SelectedS3File = {
-      id: `${file.name}-${file.size}`,
+      id: createSafeFileId(),
       name: file.name,
       sizeBytes: file.size,
       mimeType: file.type,
@@ -165,6 +135,7 @@ export function ProfileImageUploadSlot({
   function handleReset() {
     if (activeSelected?.previewUrl.startsWith("blob:")) {
       URL.revokeObjectURL(activeSelected.previewUrl);
+      ownedUrlsRef.current.delete(activeSelected.previewUrl);
     }
     setSelected(null);
     onSelectFile?.(null);
@@ -172,7 +143,6 @@ export function ProfileImageUploadSlot({
       onRequestReset?.(true);
     }
     setError(null);
-    setModalError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -238,12 +208,19 @@ export function ProfileImageUploadSlot({
       {error && (
         <div
           role="alert"
-          className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-600"
+          className="mt-2 flex items-start justify-between gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-600"
         >
-          {error}
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            aria-label="업로드 오류 안내 닫기"
+            className="shrink-0 rounded p-0.5 text-red-500 hover:bg-red-100"
+          >
+            <V1IconClose className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
-      <UploadLimitAlertModal error={modalError} onClose={() => setModalError(null)} />
     </div>
   );
 }
@@ -252,7 +229,7 @@ export function CommunityImageUploadSlot({
   files,
   onChange,
   onInspectImage,
-  maxFiles = 4,
+  maxFiles = 10,
 }: {
   files: SelectedS3File[];
   onChange: (next: SelectedS3File[]) => void;
@@ -261,15 +238,24 @@ export function CommunityImageUploadSlot({
 }) {
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const ownedUrlsRef = useRef<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [modalError, setModalError] = useState<string | null>(null);
   const [inspectedFile, setInspectedFile] = useState<SelectedS3File | null>(null);
   const allowedMax = Math.max(0, Math.min(10, maxFiles));
 
-  function reportError(message: string) {
-    setError(message);
-    setModalError(message);
-  }
+  useEffect(() => {
+    const urls = ownedUrlsRef.current;
+    return () => {
+      urls.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Ignore revoke errors
+        }
+      });
+      urls.clear();
+    };
+  }, []);
 
   function handleSelect(event: ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(event.target.files ?? []);
@@ -279,31 +265,29 @@ export function CommunityImageUploadSlot({
     const next: SelectedS3File[] = [...files];
     for (const file of picked) {
       if (next.length >= allowedMax) {
-        reportError(
-          `이미지는 현재 최대 ${allowedMax}장까지 첨부할 수 있습니다.`,
-        );
+        setError(`이미지는 현재 최대 ${allowedMax}장까지 첨부할 수 있습니다.`);
         break;
       }
       if (file.type.startsWith("video/")) {
-        reportError(
+        setError(
           `[${file.name}] 동영상 파일은 업로드할 수 없습니다. (일반 이미지 최대 5MB · GIF 움짤 최대 3MB만 가능)`,
         );
         continue;
       }
       if (!COMMUNITY_ALLOWED_MIME.includes(file.type)) {
-        reportError(
+        setError(
           `[${file.name}] 지원하지 않는 파일 형식입니다. JPG, PNG, WEBP 또는 GIF(움짤)만 첨부할 수 있습니다.`,
         );
         continue;
       }
       if (file.type === "image/gif" && file.size > MAX_GIF_BYTES) {
-        reportError(
-          `[${file.name} (${formatBytes(file.size)})] GIF 움짤은 쾌적한 환경을 위해 최대 3MB 이하만 첨부할 수 있습니다.`,
+        setError(
+          `[${file.name} (${formatBytes(file.size)})] GIF 움짤은 최대 3MB 이하만 첨부할 수 있습니다.`,
         );
         continue;
       }
       if (file.size > MAX_FILE_BYTES) {
-        reportError(
+        setError(
           `[${file.name} (${formatBytes(file.size)})] 일반 이미지는 장당 최대 5MB 이하만 첨부할 수 있습니다.`,
         );
         continue;
@@ -312,8 +296,11 @@ export function CommunityImageUploadSlot({
         typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
           ? URL.createObjectURL(file)
           : "";
+      if (previewUrl.startsWith("blob:")) {
+        ownedUrlsRef.current.add(previewUrl);
+      }
       next.push({
-        id: `${file.name}-${file.size}-${next.length}`,
+        id: createSafeFileId(),
         name: file.name,
         sizeBytes: file.size,
         mimeType: file.type,
@@ -329,6 +316,7 @@ export function CommunityImageUploadSlot({
     const target = files.find(item => item.id === id);
     if (target?.previewUrl.startsWith("blob:")) {
       URL.revokeObjectURL(target.previewUrl);
+      ownedUrlsRef.current.delete(target.previewUrl);
     }
     if (inspectedFile?.id === id) setInspectedFile(null);
     onChange(files.filter(item => item.id !== id));
@@ -365,20 +353,26 @@ export function CommunityImageUploadSlot({
           onChange={handleSelect}
         />
         <span className="ym-s3-caption">
-          JPG, PNG, WEBP(최대 5MB) · GIF 움짤(최대 3MB) · 동영상 업로드 불가
+          JPG, PNG, WEBP(최대 5MB) · GIF 움짤(최대 3MB) · 최대 {allowedMax}장 · 동영상 불가
         </span>
       </div>
 
       {error && (
         <div
           role="alert"
-          className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-600"
+          className="mt-2 flex items-start justify-between gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-600"
         >
-          {error}
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            aria-label="업로드 오류 안내 닫기"
+            className="shrink-0 rounded p-0.5 text-red-500 hover:bg-red-100"
+          >
+            <V1IconClose className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
-
-      <UploadLimitAlertModal error={modalError} maxFiles={allowedMax} onClose={() => setModalError(null)} />
 
       <DimModal
         open={inspectedFile !== null}

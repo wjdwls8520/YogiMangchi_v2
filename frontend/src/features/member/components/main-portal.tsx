@@ -8,10 +8,15 @@ import {
   communityPostsPath,
   newsPath,
   parseCommunityPostPage,
+  parseNewsItem,
   parseNewsPage,
+  parseNewsReaction,
   readCommunityOrPublic,
   type NewsItem,
 } from "../api/community-news";
+import { contentJson, contentMessage } from "../api/client";
+import { getOrCreateAnonNewsViewerId } from "./news-feed";
+import { formatNewsCategoryKr } from "../../../lib/labels";
 import {
   buildExchangeRateChartGeometry,
   fetchRedisMarketOverview,
@@ -161,6 +166,10 @@ export function MainPortal({
   const { origin, session, snapshot } = useMember();
   const tradingBase = resolveTradingMarketBaseUrl();
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
+  const [modalReactionError, setModalReactionError] = useState<string | null>(null);
+  const [modalUserReactions, setModalUserReactions] = useState<Record<number, "BULL" | "BEAR" | null>>({});
+  const [modalLiveCounts, setModalLiveCounts] = useState<Record<number, { bullCount: number; bearCount: number }>>({});
+  const [calcSwapped, setCalcSwapped] = useState(false);
 
   const [ydInput, setYdInput] = useState("100");
   const [krwInput, setKrwInput] = useState("");
@@ -315,8 +324,76 @@ export function MainPortal({
 
   function handleResetCalculator() {
     setCalcAnchor("YD");
+    setCalcSwapped(false);
     setYdInput("1");
     setKrwInput(exchangeRate !== null ? Math.round(exchangeRate).toLocaleString("ko-KR") : "");
+  }
+
+  function handleSwapCalculator() {
+    setCalcSwapped(prev => !prev);
+    if (calcAnchor === "YD") {
+      setKrwInput(displayedKrwInput);
+      setCalcAnchor("KRW");
+    } else {
+      setYdInput(displayedYdInput);
+      setCalcAnchor("YD");
+    }
+  }
+
+  async function openPortalNewsModal(article: NewsItem) {
+    setModalReactionError(null);
+    setSelectedNews(article);
+    try {
+      const anonViewerId = snapshot.phase === "ready" ? undefined : getOrCreateAnonNewsViewerId();
+      const raw =
+        snapshot.phase === "ready"
+          ? await session.request(`/news/${article.id}`)
+          : await contentJson(origin, `/news/${article.id}`, { anonViewerId });
+      const fresh = parseNewsItem(raw);
+      setSelectedNews(fresh);
+      setModalLiveCounts(prev => ({
+        ...prev,
+        [fresh.id]: { bullCount: fresh.bullCount ?? 0, bearCount: fresh.bearCount ?? 0 },
+      }));
+      if (fresh.userReaction === "BULL" || fresh.userReaction === "BEAR") {
+        setModalUserReactions(prev => ({ ...prev, [fresh.id]: fresh.userReaction ?? null }));
+      }
+    } catch {
+      // Keep already-opened summary modal usable on transient fetch error
+    }
+  }
+
+  async function togglePortalNewsReaction(article: NewsItem, reaction: "BULL" | "BEAR") {
+    const prevUser =
+      article.id in modalUserReactions
+        ? modalUserReactions[article.id]
+        : (article.userReaction ?? null);
+    const nextUser = prevUser === reaction ? null : reaction;
+    setModalReactionError(null);
+    setModalUserReactions(prev => ({ ...prev, [article.id]: nextUser }));
+    try {
+      const body = { reaction };
+      const raw =
+        snapshot.phase === "ready"
+          ? await session.request(`/news/${article.id}/reactions`, { method: "POST", body })
+          : await contentJson(origin, `/news/${article.id}/reactions`, {
+              method: "POST",
+              body,
+              anonViewerId: getOrCreateAnonNewsViewerId(),
+            });
+      const parsed = parseNewsReaction(raw);
+      setModalLiveCounts(prev => ({
+        ...prev,
+        [article.id]: { bullCount: parsed.bullCount, bearCount: parsed.bearCount },
+      }));
+      setModalUserReactions(prev => ({
+        ...prev,
+        [article.id]: parsed.userReaction === "BULL" || parsed.userReaction === "BEAR" ? parsed.userReaction : null,
+      }));
+    } catch (err) {
+      setModalUserReactions(prev => ({ ...prev, [article.id]: prevUser }));
+      setModalReactionError(contentMessage(err));
+    }
   }
 
   return (
@@ -591,54 +668,63 @@ export function MainPortal({
                 </div>
 
                 <div className="space-y-3">
-                  {/* YD 입력창 */}
-                  <div className="relative flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all focus-within:border-[#0058FF] focus-within:bg-white">
-                    <div className="flex shrink-0 items-center gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0058FF] text-xs font-black text-white">
-                        YD
+                  {/* 상단/하단 스왑 가능한 양방향 환율 입력 */}
+                  <div className={calcSwapped ? "flex flex-col-reverse gap-3" : "flex flex-col gap-3"}>
+                    {/* YD 입력창 */}
+                    <div className="relative flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all focus-within:border-[#0058FF] focus-within:bg-white">
+                      <div className="flex shrink-0 items-center gap-2.5">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0058FF] text-xs font-black text-white">
+                          YD
+                        </div>
+                        <span className="shrink-0 whitespace-nowrap text-sm font-bold text-gray-700">요기 달러</span>
                       </div>
-                      <span className="shrink-0 whitespace-nowrap text-sm font-bold text-gray-700">요기 달러</span>
-                    </div>
-                    <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 pl-4">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        aria-label="요기 달러 입력"
-                        value={displayedYdInput}
-                        onChange={e => handleYdChange(e.target.value)}
-                        placeholder="0"
-                        className="w-full bg-transparent text-right text-lg font-extrabold text-gray-900 focus:outline-none"
-                      />
-                      <span className="shrink-0 text-sm font-bold text-gray-400">YD</span>
-                    </div>
-                  </div>
-
-                  {/* 스왑 아이콘 */}
-                  <div className="flex justify-center">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 text-xs font-bold text-gray-400">
-                      <V1IconSwap className="h-4 w-4" />
-                    </div>
-                  </div>
-
-                  {/* KRW 입력창 */}
-                  <div className="relative flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all focus-within:border-[#0058FF] focus-within:bg-white">
-                    <div className="flex shrink-0 items-center gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-700">
-                        ₩
+                      <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 pl-4">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          aria-label="요기 달러 입력"
+                          value={displayedYdInput}
+                          onChange={e => handleYdChange(e.target.value)}
+                          placeholder="0"
+                          className="w-full bg-transparent text-right text-lg font-extrabold text-gray-900"
+                        />
+                        <span className="shrink-0 text-sm font-bold text-gray-400">YD</span>
                       </div>
-                      <span className="shrink-0 whitespace-nowrap text-sm font-bold text-gray-700">대한민국 원</span>
                     </div>
-                    <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 pl-4">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        aria-label="대한민국 원 입력"
-                        value={displayedKrwInput}
-                        onChange={e => handleKrwChange(e.target.value)}
-                        placeholder="0"
-                        className="w-full bg-transparent text-right text-lg font-extrabold text-[#0058FF] focus:outline-none"
-                      />
-                      <span className="shrink-0 text-sm font-bold text-gray-400">원</span>
+
+                    {/* 스왑 버튼 */}
+                    <div className="flex justify-center">
+                      <button
+                        type="button"
+                        onClick={handleSwapCalculator}
+                        aria-label="요기 달러와 원화 입력 순서 전환"
+                        aria-pressed={calcSwapped}
+                        className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-xs font-bold text-gray-600 transition-colors hover:border-[#0058FF] hover:bg-blue-50 hover:text-[#0058FF] cursor-pointer"
+                      >
+                        <V1IconSwap className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {/* KRW 입력창 */}
+                    <div className="relative flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all focus-within:border-[#0058FF] focus-within:bg-white">
+                      <div className="flex shrink-0 items-center gap-2.5">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-700">
+                          ₩
+                        </div>
+                        <span className="shrink-0 whitespace-nowrap text-sm font-bold text-gray-700">대한민국 원</span>
+                      </div>
+                      <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 pl-4">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          aria-label="대한민국 원 입력"
+                          value={displayedKrwInput}
+                          onChange={e => handleKrwChange(e.target.value)}
+                          placeholder="0"
+                          className="w-full bg-transparent text-right text-lg font-extrabold text-[#0058FF]"
+                        />
+                        <span className="shrink-0 text-sm font-bold text-gray-400">원</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1025,12 +1111,15 @@ export function MainPortal({
                   >
                     <div className="flex items-center justify-between text-xs text-gray-400">
                       <span className="font-bold text-[#0058FF]">
-                        {formatPortalKstTime(article.publishedAt)} · {article.category}
+                        {formatPortalKstTime(article.publishedAt)} · {formatNewsCategoryKr(article.category)}
                       </span>
                       {article.symbolTag ? (
-                        <span className="rounded bg-blue-50 px-2 py-0.5 font-bold text-[#0058FF]">
+                        <Link
+                          href={`/trading?symbol=${article.symbolTag}`}
+                          className="rounded bg-blue-50 px-2 py-0.5 font-bold text-[#0058FF] hover:bg-blue-100"
+                        >
                           #{article.symbolTag}
-                        </span>
+                        </Link>
                       ) : null}
                     </div>
                     <h3 className="text-sm font-black text-gray-900">{article.title}</h3>
@@ -1038,8 +1127,8 @@ export function MainPortal({
                     <div className="mt-1 flex items-center justify-between">
                       <button
                         type="button"
-                        onClick={() => setSelectedNews(article)}
-                        className="text-xs font-bold text-gray-700 hover:text-[#0058FF]"
+                        onClick={() => void openPortalNewsModal(article)}
+                        className="min-h-9 text-xs font-bold text-gray-700 hover:text-[#0058FF]"
                       >
                         전문 팝업 보기
                       </button>
@@ -1190,21 +1279,34 @@ export function MainPortal({
         </section>
       </div>
 
-      {/* 속보 상세 모달 */}
+      {/* 속보 상세 모달 (강세/약세 반응 + 조회수 + 모의투자 CTA 통일) */}
       <DimModal
         open={selectedNews !== null}
-        onClose={() => setSelectedNews(null)}
+        onClose={() => {
+          setSelectedNews(null);
+          setModalReactionError(null);
+        }}
         title={selectedNews?.title ?? "속보 상세"}
         subtitle={
           selectedNews
-            ? `${selectedNews.sourceName} · ${formatPortalKstDateTime(selectedNews.publishedAt)}`
+            ? `[${formatNewsCategoryKr(selectedNews.category)}] · ${selectedNews.sourceName} · ${formatPortalKstDateTime(selectedNews.publishedAt)} · 조회 ${(selectedNews.viewCount ?? 0).toLocaleString("ko-KR")}`
             : undefined
         }
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {selectedNews?.sourceUrl && (
+              <a
+                href={selectedNews.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-10 items-center justify-center rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50"
+              >
+                원문 기사 보기
+              </a>
+            )}
             <Link
               href={`/trading?symbol=${selectedNews?.symbolTag ?? "BTC"}`}
-              className="rounded-xl bg-[#0058FF] px-4 py-2.5 text-xs font-bold text-white"
+              className="inline-flex h-10 items-center justify-center rounded-xl bg-[#0058FF] px-4 text-xs font-bold text-white hover:bg-blue-700"
               onClick={() => setSelectedNews(null)}
             >
               {selectedNews?.symbolTag ?? "BTC"} 모의투자 하러가기
@@ -1215,12 +1317,58 @@ export function MainPortal({
           </div>
         }
       >
-        {selectedNews && (
-          <div className="space-y-3 text-sm leading-relaxed text-gray-700">
-            <p className="font-bold text-gray-900">{selectedNews.summary}</p>
-            <p>{selectedNews.content}</p>
-          </div>
-        )}
+        {selectedNews && (() => {
+          const live = modalLiveCounts[selectedNews.id];
+          const activeReaction =
+            selectedNews.id in modalUserReactions
+              ? modalUserReactions[selectedNews.id]
+              : (selectedNews.userReaction ?? null);
+          const bullCount = live?.bullCount ?? selectedNews.bullCount ?? 0;
+          const bearCount = live?.bearCount ?? selectedNews.bearCount ?? 0;
+          return (
+            <div className="space-y-4 text-sm leading-relaxed text-gray-700">
+              {selectedNews.aiSummary && (
+                <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-3.5 py-2.5 text-xs font-bold text-[#0058FF]">
+                  AI 분석: {selectedNews.aiSummary}
+                </div>
+              )}
+              <p className="font-bold text-gray-900">{selectedNews.summary}</p>
+              <p>{selectedNews.content}</p>
+              <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+                <button
+                  type="button"
+                  aria-pressed={activeReaction === "BULL"}
+                  onClick={() => void togglePortalNewsReaction(selectedNews, "BULL")}
+                  className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-bold transition-colors ${
+                    activeReaction === "BULL"
+                      ? "border-[#0ECB81] bg-emerald-50 text-[#0ECB81]"
+                      : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  <V1IconTrendUp className="h-4 w-4" />
+                  <span>강세 {bullCount}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={activeReaction === "BEAR"}
+                  onClick={() => void togglePortalNewsReaction(selectedNews, "BEAR")}
+                  className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-bold transition-colors ${
+                    activeReaction === "BEAR"
+                      ? "border-[#F6465D] bg-rose-50 text-[#F6465D]"
+                      : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  <span>약세 {bearCount}</span>
+                </button>
+              </div>
+              {modalReactionError && (
+                <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
+                  {modalReactionError}
+                </p>
+              )}
+            </div>
+          );
+        })()}
       </DimModal>
     </div>
   );

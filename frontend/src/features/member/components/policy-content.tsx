@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import type { PolicyType, PolicyDocument } from "../api/policies";
 export type { PolicyType, PolicyDocument } from "../api/policies";
 
@@ -7,26 +8,169 @@ export const policyTitle = (type: PolicyType) =>
 
 export function sanitizePolicyDisplayText(text: string): string {
   return text
+    .replace(/\r\n?/g, "\n")
     .replace(/[ \t]*\(ym-[a-z0-9-]+\)/gi, "")
     .replace(/[ \t]*·[ \t]*문서[ \t]*상태:[ \t]*[^\r\n]+/g, "");
 }
 
-function OriginalText({ text }: { text: string }) {
+export type PolicyMarkdownBlock =
+  | { type: "heading"; level: 1 | 2 | 3; text: string }
+  | { type: "ul"; items: string[] }
+  | { type: "ol"; items: string[] }
+  | { type: "paragraph"; lines: string[] };
+
+export function parsePolicyMarkdownBlocks(rawText: string): PolicyMarkdownBlock[] {
+  const sanitized = sanitizePolicyDisplayText(rawText);
+  const rawLines = sanitized.split("\n");
+  const blocks: PolicyMarkdownBlock[] = [];
+  let paragraphLines: string[] = [];
+  let ulItems: string[] = [];
+  let olItems: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraphLines.length > 0) {
+      blocks.push({ type: "paragraph", lines: paragraphLines });
+      paragraphLines = [];
+    }
+  };
+  const flushUl = () => {
+    if (ulItems.length > 0) {
+      blocks.push({ type: "ul", items: ulItems });
+      ulItems = [];
+    }
+  };
+  const flushOl = () => {
+    if (olItems.length > 0) {
+      blocks.push({ type: "ol", items: olItems });
+      olItems = [];
+    }
+  };
+  const flushAll = () => {
+    flushParagraph();
+    flushUl();
+    flushOl();
+  };
+
+  for (const rawLine of rawLines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      flushAll();
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      flushAll();
+      const level = Math.min(3, headingMatch[1].length) as 1 | 2 | 3;
+      const headingText = headingMatch[2].replace(/^\*\*(.+)\*\*$/, "$1").trim();
+      blocks.push({ type: "heading", level, text: headingText });
+      continue;
+    }
+
+    const boldOnlyHeading = trimmed.match(/^\*\*([^*]+)\*\*$/);
+    if (boldOnlyHeading) {
+      flushAll();
+      blocks.push({ type: "heading", level: 3, text: boldOnlyHeading[1].trim() });
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.+)$/);
+    if (bulletMatch) {
+      flushParagraph();
+      flushOl();
+      ulItems.push(bulletMatch[1].trim());
+      continue;
+    }
+
+    const articleHeadingMatch = trimmed.match(/^제\d+조(?:\s*\([^)]+\))?$/);
+    if (articleHeadingMatch) {
+      flushAll();
+      blocks.push({ type: "heading", level: 3, text: trimmed });
+      continue;
+    }
+
+    const numberedSectionHeading = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (numberedSectionHeading) {
+      // Distinguish a short section heading (e.g. "2. 수집하는 개인정보 항목") from consecutive numbered list items
+      const isShortSectionTitle =
+        paragraphLines.length === 0 &&
+        olItems.length === 0 &&
+        numberedSectionHeading[1].length <= 45 &&
+        !/[.!?]$/.test(numberedSectionHeading[1]);
+      if (isShortSectionTitle) {
+        flushAll();
+        blocks.push({ type: "heading", level: 3, text: trimmed });
+      } else {
+        flushParagraph();
+        flushUl();
+        olItems.push(numberedSectionHeading[1].trim());
+      }
+      continue;
+    }
+
+    flushUl();
+    flushOl();
+    paragraphLines.push(trimmed);
+  }
+
+  flushAll();
+  return blocks;
+}
+
+function renderInlineBold(text: string): ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  if (parts.length === 1) return text;
+  return parts.map((part, idx) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+    }
+    return <span key={idx}>{part}</span>;
+  });
+}
+
+export function PolicyMarkdownBody({ text }: { text: string }) {
+  const blocks = parsePolicyMarkdownBlocks(text);
   return (
     <div className="policy-original">
-      {sanitizePolicyDisplayText(text).split(/\n\s*\n/).map((block, index) => {
-        const heading = block.trim().match(/^(?:#{1,4}\s+|\*\*)([^\n]+?)(?:\*\*)?$/);
-        if (heading) return <h3 key={index}>{heading[1]}</h3>;
-        if (block.split("\n").every(line => line.startsWith("- "))) {
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          if (block.level === 1) {
+            return (
+              <h3 key={index} className="policy-doc-title">
+                {renderInlineBold(block.text)}
+              </h3>
+            );
+          }
+          return <h3 key={index}>{renderInlineBold(block.text)}</h3>;
+        }
+        if (block.type === "ul") {
           return (
             <ul key={index}>
-              {block.split("\n").map((line, i) => (
-                <li key={i}>{line.slice(2)}</li>
+              {block.items.map((item, i) => (
+                <li key={i}>{renderInlineBold(item)}</li>
               ))}
             </ul>
           );
         }
-        return <p key={index}>{block}</p>;
+        if (block.type === "ol") {
+          return (
+            <ol key={index} className="mb-4 list-decimal space-y-2 pl-5">
+              {block.items.map((item, i) => (
+                <li key={i}>{renderInlineBold(item)}</li>
+              ))}
+            </ol>
+          );
+        }
+        return (
+          <p key={index}>
+            {block.lines.map((line, i) => (
+              <span key={i}>
+                {i > 0 && <br />}
+                {renderInlineBold(line)}
+              </span>
+            ))}
+          </p>
+        );
       })}
     </div>
   );
@@ -59,12 +203,8 @@ export function PolicyContent({ type, document }: { type: PolicyType; document?:
               ? "현재 서비스에 적용 중인 공식 약관입니다."
               : "현재 동의 대상 약관입니다."}
           </p>
-          <OriginalText text={document.text} />
+          <PolicyMarkdownBody text={document.text} />
         </section>
-        <p className="member-note">
-          정책 페이지와 가입·재동의 팝업은 같은 원문을 표시합니다.{" "}
-          <Link href={type === "TERMS" ? "/terms" : "/privacy"}>정책 페이지 열기</Link>
-        </p>
       </article>
     );
   }

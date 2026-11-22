@@ -58,10 +58,28 @@ export function parseAccess(value: unknown, _nowMs?: number) {
   const data = row(value), accessToken = text(data.accessToken, 8192);
   if (data.tokenType !== "Bearer" || data.expiresIn !== 900 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(accessToken)) return invalid();
   const role = parseJwtRole(accessToken, data.role);
-  return { memberId: id(data.memberId), nickname: text(data.nickname, 16), accessToken, expiresAt: instant(data.expiresAt), role };
+  const rawStatus = typeof data.accountStatus === "string" ? data.accountStatus : typeof data.status === "string" ? data.status : undefined;
+  const accountStatus = rawStatus && rawStatus.trim().length > 0 && rawStatus.length <= 32 ? rawStatus.trim().toUpperCase() : undefined;
+  const rawReason = typeof data.suspensionReason === "string" ? data.suspensionReason : typeof data.suspendedReason === "string" ? data.suspendedReason : undefined;
+  const suspensionReason = rawReason && rawReason.trim().length > 0 ? rawReason.trim().slice(0, 500) : null;
+  return {
+    memberId: id(data.memberId),
+    nickname: text(data.nickname, 16),
+    accessToken,
+    expiresAt: instant(data.expiresAt),
+    role,
+    ...(accountStatus ? { accountStatus } : {}),
+    ...(rawReason !== undefined ? { suspensionReason } : {}),
+  };
 }
 export type MemberAccess = ReturnType<typeof parseAccess>;
 export type AccessSession = MemberAccess;
+export function parseSessionProbe(value: unknown): { authenticated: boolean; hasRefreshCookie: boolean } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  if (typeof data.authenticated !== "boolean" || typeof data.hasRefreshCookie !== "boolean") return null;
+  return { authenticated: data.authenticated, hasRefreshCookie: data.hasRefreshCookie };
+}
 export function parseCsrf(value: unknown) {
   const data = row(value);
   if (data.headerName !== "X-CSRF-TOKEN") return invalid();
@@ -71,8 +89,21 @@ export function parseFlow(value: unknown) {
   const data = row(value);
   if (!["SIGNUP_REQUIRED", "LOGIN_READY", "WITHDRAWAL_PENDING"].includes(String(data.status)) || !["GOOGLE", "KAKAO"].includes(String(data.provider))) return invalid();
   const email = text(data.email, 320), separator = email.lastIndexOf("@");
-  return { status: data.status as "SIGNUP_REQUIRED" | "LOGIN_READY" | "WITHDRAWAL_PENDING", provider: data.provider as "GOOGLE" | "KAKAO",
-    accountHint: separator > 0 ? `${email[0]}***${email.slice(separator)}` : "확인된 소셜 계정" };
+  const accountStatus =
+    typeof data.accountStatus === "string" && data.accountStatus.trim().length > 0 && data.accountStatus.length <= 32
+      ? data.accountStatus.trim().toUpperCase()
+      : undefined;
+  const suspensionReason =
+    typeof data.suspensionReason === "string" && data.suspensionReason.trim().length > 0
+      ? data.suspensionReason.trim().slice(0, 500)
+      : null;
+  return {
+    status: data.status as "SIGNUP_REQUIRED" | "LOGIN_READY" | "WITHDRAWAL_PENDING",
+    provider: data.provider as "GOOGLE" | "KAKAO",
+    accountHint: separator > 0 ? `${email[0]}***${email.slice(separator)}` : "확인된 소셜 계정",
+    ...(accountStatus ? { accountStatus } : {}),
+    ...(data.suspensionReason !== undefined ? { suspensionReason } : {}),
+  };
 }
 export function parseProfile(value: unknown): {
   memberId: number;
@@ -98,24 +129,32 @@ export type MemberProfile = ReturnType<typeof parseProfile>;
 export function parseOwnProfile(value: unknown, memberId: number) {
   const data = row(value), profile = parseProfile(value);
   if (profile.memberId !== memberId || !["MEMBER", "ADMIN"].includes(String(data.role))) return invalid();
-  const status =
-    typeof data.status === "string" && data.status.trim().length > 0 && data.status.length <= 32
-      ? data.status.trim().toUpperCase()
-      : undefined;
+  const rawStatus =
+    typeof data.accountStatus === "string" && data.accountStatus.trim().length > 0
+      ? data.accountStatus
+      : typeof data.status === "string" && data.status.trim().length > 0
+        ? data.status
+        : undefined;
+  const status = rawStatus && rawStatus.length <= 32 ? rawStatus.trim().toUpperCase() : undefined;
   const suspendedAt =
     typeof data.suspendedAt === "string" && Number.isFinite(Date.parse(data.suspendedAt))
       ? data.suspendedAt
       : null;
-  const suspendedReason =
-    typeof data.suspendedReason === "string" && data.suspendedReason.trim().length > 0
-      ? data.suspendedReason.trim().slice(0, 500)
-      : null;
+  const rawReason =
+    typeof data.suspensionReason === "string" && data.suspensionReason.trim().length > 0
+      ? data.suspensionReason
+      : typeof data.suspendedReason === "string" && data.suspendedReason.trim().length > 0
+        ? data.suspendedReason
+        : null;
+  const suspendedReason = rawReason ? rawReason.trim().slice(0, 500) : null;
   return {
     ...profile,
     role: data.role as "MEMBER" | "ADMIN",
-    ...(status !== undefined ? { status } : {}),
+    ...(status !== undefined ? { status, accountStatus: status } : {}),
     ...(data.suspendedAt !== undefined ? { suspendedAt } : {}),
-    ...(data.suspendedReason !== undefined ? { suspendedReason } : {}),
+    ...(data.suspendedReason !== undefined || data.suspensionReason !== undefined
+      ? { suspendedReason, suspensionReason: suspendedReason }
+      : {}),
   };
 }
 function count(value: unknown) { return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : invalid(); }

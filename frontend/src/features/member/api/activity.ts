@@ -5,14 +5,25 @@ export function memberTabVisible() {
 }
 
 // No expiry timer: restore only on initial visible use, a return event, or an explicit cross-tab change.
-export function bindMemberActivity(session: MemberSession, page: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">,
-  browser: Pick<Window, "addEventListener" | "removeEventListener">, callback: boolean) {
+export function bindMemberActivity(
+  session: MemberSession,
+  page: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">,
+  browser: Pick<Window, "addEventListener" | "removeEventListener">,
+  callback: boolean,
+  probeFirst = false,
+) {
   let requested = !callback, stopped = false;
+  let initialProbePending = probeFirst;
   const resume = () => {
     if (stopped || callback || page.visibilityState === "hidden" || !requested && !["ready", "recovering"].includes(session.getSnapshot().phase)) return;
     requested = false;
-    void session.restore().catch(error => {
-      if (!stopped && error instanceof DOMException && error.name === "AbortError") requested = true;
+    const useProbe = initialProbePending && session.getSnapshot().phase === "loading";
+    initialProbePending = false;
+    void session.restore(useProbe ? { probeFirst: true } : undefined).catch(error => {
+      if (!stopped && error instanceof DOMException && error.name === "AbortError") {
+        requested = true;
+        if (useProbe) initialProbePending = true;
+      }
     });
   };
   page.addEventListener("visibilitychange", resume);

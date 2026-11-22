@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { V1Header, V1IconAlert, V1IconRefresh } from "@/features/member/components/v1-ui";
 import { RequestIdChip } from "@/components/request-id-copy";
 import { getErrorRequestId } from "@/lib/request-id";
+import { sendClientErrorBeacon } from "@/lib/client-error-beacon";
 
 export default function AppError({
   error,
@@ -20,7 +21,8 @@ export default function AppError({
     if (error.digest || requestId) {
       console.error("[YogiMangchi] Route error:", { digest: error.digest, requestId });
     }
-  }, [error.digest, requestId]);
+    sendClientErrorBeacon(error);
+  }, [error, error.digest, requestId]);
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-gray-900">

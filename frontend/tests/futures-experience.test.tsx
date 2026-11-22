@@ -135,7 +135,7 @@ test("row partial close stays in a closed modal while the Close tab keeps its in
 });
 test("pending and order history distinguish CLOSE, requested/fill prices, realized PnL and liquidation",()=>{
   const pending=renderTrading(<PendingOrderTable orders={[order(1,"CLOSE","PENDING")]} symbols={symbols}/>);
-  assert.match(pending,/>CLOSE</);assert.match(pending,/Created · KST/);
+  assert.match(pending,/지정가<small>청산<\/small>/);assert.doesNotMatch(pending,/>CLOSE</);assert.match(pending,/Created · KST/);
   assert.match(pending,/접수 · 체결 대기/);
   const history=renderToStaticMarkup(<OrderHistoryTable orders={[order(2,"LIQUIDATE")]} symbols={symbols}/>);
   for(const value of ["Fill / Order Price","Gross PnL / Fee","Filled / Created · KST","강제청산","4.2"])assert.ok(history.includes(value));

@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { contentJson, ContentApiError } from "../../member/api/client";
 import { parseProfile } from "../../member/api/contracts";
 import { DimModal } from "../../member/components/dim-modal";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
 import { useOptionalMember } from "../../member/components/member-provider";
 import { MemberShell } from "../../member/components/member-views";
 import {
@@ -78,7 +80,7 @@ export interface OngoingMyContestItem {
   currentEquity: string;
   myRoi: string;
   myPnl: string;
-  myRank: number;
+  myRank: number | null;
   participantCount: number;
   isLive: boolean;
   statusLabel: string;
@@ -122,11 +124,19 @@ export function ContestListCard({
   contest,
   onApply,
   onCancel,
+  onViewLeaderboard,
+  canEnterTrading = false,
+  isLoggedIn = true,
+  busy = false,
   defaultExpanded = false,
 }: {
   contest: ContestSeasonItem;
   onApply?: (contest: ContestSeasonItem) => void;
   onCancel?: (contest: ContestSeasonItem) => void;
+  onViewLeaderboard?: (seasonId: number) => void;
+  canEnterTrading?: boolean;
+  isLoggedIn?: boolean;
+  busy?: boolean;
   defaultExpanded?: boolean;
 }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
@@ -151,19 +161,7 @@ export function ContestListCard({
         isExpanded ? "border-gray-300" : "border-gray-200 hover:border-gray-300",
       )}
     >
-      <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={isExpanded}
-        onClick={() => setIsExpanded(prev => !prev)}
-        onKeyDown={event => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            setIsExpanded(prev => !prev);
-          }
-        }}
-        className="flex flex-col gap-3 p-5 cursor-pointer select-none"
-      >
+      <div className="flex flex-col gap-3 p-5">
         <div className="flex items-center justify-between gap-2">
           <span
             className={cn(
@@ -174,68 +172,97 @@ export function ContestListCard({
             {contest.accentLabel}
           </span>
           <div className="flex items-center gap-2 shrink-0">
-          {contest.cardType === "apply" && onApply ? (
-            <button
-              type="button"
-              data-contest-action="apply"
-              onClick={event => {
-                event.stopPropagation();
-                onApply(contest);
-              }}
-              className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 cursor-pointer"
-            >
-              <span>{contest.actionLabel || "신청"}</span>
-              <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
-            </button>
-          ) : contest.cardType === "live" ? (
-            <Link
-              href={`/contest/${contest.id}/trading`}
-              onClick={event => event.stopPropagation()}
-              className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
-            >
-              <span>대회 참여하기</span>
-              <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
-            </Link>
-          ) : contest.cardType === "wait" ? (
-            <div className="inline-flex items-center gap-1.5">
-              <span className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-amber-200 bg-amber-50 px-3 text-xs font-bold text-amber-700">
-                {contest.actionLabel}
-              </span>
-              {onCancel ? (
+            {contest.cardType === "apply" && onApply ? (
+              <button
+                type="button"
+                data-contest-action="apply"
+                disabled={busy}
+                onClick={() => onApply(contest)}
+                className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 cursor-pointer disabled:opacity-50"
+              >
+                <span>{busy ? "신청 중…" : contest.actionLabel || "신청"}</span>
+                <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
+              </button>
+            ) : contest.cardType === "live" ? (
+              canEnterTrading ? (
+                <Link
+                  href={`/contest/${contest.id}/trading`}
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+                >
+                  <span>대회 참여하기</span>
+                  <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
+                </Link>
+              ) : !isLoggedIn ? (
+                <Link
+                  href="/login"
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-[#0058FF] transition-colors hover:bg-blue-100"
+                >
+                  <span>로그인 후 확인</span>
+                </Link>
+              ) : onViewLeaderboard ? (
                 <button
                   type="button"
-                  data-contest-action="cancel-application"
-                  onClick={event => {
-                    event.stopPropagation();
-                    onCancel(contest);
-                  }}
-                  className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-300 bg-white px-2.5 text-xs font-bold text-gray-600 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 cursor-pointer"
+                  onClick={() => onViewLeaderboard(contest.id)}
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-[#0058FF] transition-colors hover:bg-blue-100 cursor-pointer"
                 >
-                  신청 취소
+                  <span>실시간 랭킹 보기</span>
                 </button>
-              ) : null}
-            </div>
-          ) : (
-            <span
-              className={cn(
-                "inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl px-3 text-xs font-bold",
-                contest.cardType === "reject"
-                  ? "border border-rose-200 bg-rose-50 text-rose-700"
-                  : "border border-gray-200 bg-gray-50 text-gray-600",
-              )}
-            >
-              {contest.actionLabel}
-            </span>
-          )}
-          <V1IconChevronDown
-            className={cn(
-              "h-4 w-4 shrink-0 text-gray-400 transition-transform",
-              isExpanded && "rotate-180",
+              ) : (
+                <span className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-[#0058FF]">
+                  진행중 · 참가 마감
+                </span>
+              )
+            ) : contest.cardType === "wait" ? (
+              <div className="inline-flex items-center gap-1.5">
+                <span className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-amber-200 bg-amber-50 px-3 text-xs font-bold text-amber-700">
+                  {contest.actionLabel}
+                </span>
+                {onCancel ? (
+                  <button
+                    type="button"
+                    data-contest-action="cancel-application"
+                    disabled={busy}
+                    onClick={() => onCancel(contest)}
+                    className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-gray-300 bg-white px-2.5 text-xs font-bold text-gray-600 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 cursor-pointer disabled:opacity-50"
+                  >
+                    {busy ? "취소 중…" : "신청 취소"}
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <span
+                className={cn(
+                  "inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-xl px-3 text-xs font-bold",
+                  contest.cardType === "reject"
+                    ? "border border-rose-200 bg-rose-50 text-rose-700"
+                    : "border border-gray-200 bg-gray-50 text-gray-600",
+                )}
+              >
+                {contest.actionLabel}
+              </span>
             )}
-          />
+            <button
+              type="button"
+              aria-expanded={isExpanded}
+              aria-label={`${contest.title} 상세 ${isExpanded ? "접기" : "펼치기"}`}
+              onClick={() => setIsExpanded(prev => !prev)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 cursor-pointer"
+            >
+              <V1IconChevronDown
+                className={cn(
+                  "h-4 w-4 shrink-0 transition-transform",
+                  isExpanded && "rotate-180",
+                )}
+              />
+            </button>
           </div>
         </div>
-        <div className="min-w-0 space-y-1">
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={() => setIsExpanded(prev => !prev)}
+          className="min-w-0 space-y-1 text-left cursor-pointer"
+        >
           <h3
             className={cn(
               "text-sm font-black tracking-tight text-gray-900 leading-snug break-keep",
@@ -247,7 +274,7 @@ export function ContestListCard({
           <p className="whitespace-nowrap text-[11px] font-bold text-gray-400 tabular-nums">
             {contest.contestStartAt} ~ {contest.contestEndAt}
           </p>
-        </div>
+        </button>
       </div>
 
       {isExpanded ? (
@@ -435,7 +462,9 @@ export function ContestOngoingSection({
                     <dt className="text-[11px] font-bold text-gray-400">현재 순위</dt>
                     <dd className="mt-0.5 text-xs font-black text-gray-900 tabular-nums">
                       {contest.isLive
-                        ? `${contest.myRank}위 / ${contest.participantCount}명`
+                        ? contest.myRank !== null
+                          ? `${contest.myRank}위 / ${contest.participantCount}명`
+                          : "집계 중"
                         : "집계 전"}
                     </dd>
                   </div>
@@ -573,12 +602,16 @@ export function ContestHub() {
   const [historyContests, setHistoryContests] = useState<ContestSeasonItem[]>([]);
   const [leaderboardSeasons, setLeaderboardSeasons] = useState<ContestLeaderboardSeason[]>([]);
   const [isLoadingOverview, setIsLoadingOverview] = useState(true);
-  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const [overviewError, setOverviewError] = useState<{ text: string; requestId?: string } | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [feedbackNotice, setFeedbackNotice] = useState<{
     kind: "success" | "error";
     text: string;
+    requestId?: string;
   } | null>(null);
+  const [busySeasonId, setBusySeasonId] = useState<number | null>(null);
+  const [pendingCancelContest, setPendingCancelContest] = useState<ContestSeasonItem | null>(null);
+  const leaderboardSectionRef = useRef<HTMLElement>(null);
 
   const [selectedLeaderboardSeasonId, setSelectedLeaderboardSeasonId] = useState<number>(0);
   const [visibleRankCount, setVisibleRankCount] = useState<number>(5);
@@ -644,7 +677,7 @@ export function ContestHub() {
           currentEquity: formatContestUsdt(p.totalEquity),
           myRoi: formatContestSignedRoi(p.roiPct),
           myPnl: formatContestSignedUsdt(p.totalPnl),
-          myRank: p.rank ?? 1,
+          myRank: p.rank ?? null,
           participantCount: p.totalParticipants,
           isLive,
           statusLabel: isLive ? "라이브 진행중" : "시작 대기중",
@@ -782,10 +815,13 @@ export function ContestHub() {
             setSelectedLeaderboardSeasonId(0);
           }
         })
-        .catch(() => {
+        .catch(err => {
           if (controller.signal.aborted) return;
           setIsLoadingOverview(false);
-          setOverviewError("대회 시즌 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+          setOverviewError({
+            text: "대회 시즌 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            requestId: isUnexpectedApiError(err) ? getErrorRequestId(err) : undefined,
+          });
           setPublicRunningContests([]);
           setLeaderboardSeasons([]);
           if (!isLoggedIn) {
@@ -807,10 +843,13 @@ export function ContestHub() {
             if (!overview || !Array.isArray(overview.participatingSeasons)) return;
             applyMyOverviewResponse(overview);
           })
-          .catch(() => {
+          .catch(err => {
             if (controller.signal.aborted) return;
             setIsLoadingOverview(false);
-            setOverviewError("내 대회 참가 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            setOverviewError({
+              text: "내 대회 참가 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+              requestId: isUnexpectedApiError(err) ? getErrorRequestId(err) : undefined,
+            });
             setMyOngoingContests([]);
             setAvailableContests([]);
             setPendingContests([]);
@@ -845,13 +884,12 @@ export function ContestHub() {
           const mapped = mapLeaderboardPageToSeason(page, profileCacheRef.current);
           setLeaderboardSeasons(prev => {
             const existing = prev.find(item => item.seasonId === mapped.seasonId);
-            const mergedEntries =
-              existing && existing.entries.length > mapped.entries.length
-                ? [
-                    ...mapped.entries,
-                    ...existing.entries.slice(mapped.entries.length),
-                  ]
-                : mapped.entries;
+            let mergedEntries = mapped.entries;
+            if (existing && existing.entries.length > mapped.entries.length) {
+              const seen = new Set(mapped.entries.map(e => e.memberId));
+              const tail = existing.entries.filter(e => !seen.has(e.memberId));
+              mergedEntries = [...mapped.entries, ...tail];
+            }
             const updatedSeason: ContestLeaderboardSeason = {
               ...mapped,
               entries: mergedEntries,
@@ -877,14 +915,7 @@ export function ContestHub() {
           );
         })
         .catch(() => {
-          if (controller.signal.aborted) return;
-          setLeaderboardSeasons(prev =>
-            prev.map(item =>
-              item.seasonId === selectedLeaderboardSeasonId
-                ? { ...item, entries: [], hasNext: false, nextCursorId: null }
-                : item,
-            ),
-          );
+          // Preserve existing leaderboard rows on transient polling errors.
         });
     };
 
@@ -957,7 +988,14 @@ export function ContestHub() {
     }
   }
 
+  function handleFocusLeaderboard(seasonId: number) {
+    setSelectedLeaderboardSeasonId(seasonId);
+    setVisibleRankCount(5);
+    leaderboardSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   async function handleApplySeason(contest: ContestSeasonItem) {
+    if (busySeasonId !== null) return;
     if (!isLoggedIn) {
       setFeedbackNotice({
         kind: "error",
@@ -974,6 +1012,7 @@ export function ContestHub() {
       return;
     }
 
+    setBusySeasonId(contest.id);
     try {
       const applicantNickname = memberCtx.snapshot.nickname ?? "";
       await memberCtx.session.authorized(cred =>
@@ -994,8 +1033,9 @@ export function ContestHub() {
         kind: "success",
         text: `"${contest.title}" 참가 신청이 접수되었습니다. 관리자 승인 즉시 시즌 전용 ${contest.seedMoney} 대회 지갑이 자동 발급됩니다.`,
       });
-      const overview = await memberCtx.session.authorized(cred =>
-        fetchMyContestOverview(cred.accessToken),
+      const overview = await memberCtx.session.authorized(
+        cred => fetchMyContestOverview(cred.accessToken),
+        true,
       );
       if (overview) applyMyOverviewResponse(overview);
     } catch (error) {
@@ -1003,11 +1043,18 @@ export function ContestHub() {
         error instanceof Error && error.message
           ? error.message
           : "참가 신청 처리에 실패했습니다. 모집 기간 및 계정 상태를 확인해 주세요.";
-      setFeedbackNotice({ kind: "error", text: message });
+      setFeedbackNotice({
+        kind: "error",
+        text: message,
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
+    } finally {
+      setBusySeasonId(null);
     }
   }
 
-  async function handleCancelApplication(contest: ContestSeasonItem) {
+  async function confirmCancelApplication(contest: ContestSeasonItem) {
+    if (busySeasonId !== null) return;
     if (!isLoggedIn || !memberCtx?.session) {
       setFeedbackNotice({
         kind: "error",
@@ -1016,25 +1063,35 @@ export function ContestHub() {
       return;
     }
 
+    setBusySeasonId(contest.id);
     try {
       await memberCtx.session.authorized(cred =>
         cancelContestSeasonApplication(contest.id, cred.accessToken),
       );
+      setPendingCancelContest(null);
       setPendingContests(prev => prev.filter(item => item.id !== contest.id));
       setFeedbackNotice({
         kind: "success",
         text: `"${contest.title}" 참가 신청이 취소되었습니다. 모집 마감 전까지 언제든 다시 신청할 수 있습니다.`,
       });
-      const overview = await memberCtx.session.authorized(cred =>
-        fetchMyContestOverview(cred.accessToken),
+      const overview = await memberCtx.session.authorized(
+        cred => fetchMyContestOverview(cred.accessToken),
+        true,
       );
       if (overview) applyMyOverviewResponse(overview);
     } catch (error) {
+      setPendingCancelContest(null);
       const message =
         error instanceof Error && error.message
           ? error.message
           : "참가 신청 취소에 실패했습니다. 이미 심사 완료되었는지 확인해 주세요.";
-      setFeedbackNotice({ kind: "error", text: message });
+      setFeedbackNotice({
+        kind: "error",
+        text: message,
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
+    } finally {
+      setBusySeasonId(null);
     }
   }
 
@@ -1081,9 +1138,10 @@ export function ContestHub() {
             role="alert"
             className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-xs sm:text-sm font-bold text-[#F6465D]"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <V1IconAlert className="h-4 w-4 shrink-0" />
-              <span>{overviewError}</span>
+              <span>{overviewError.text}</span>
+              {overviewError.requestId && <RequestIdChip requestId={overviewError.requestId} />}
             </div>
             <button
               type="button"
@@ -1110,19 +1168,20 @@ export function ContestHub() {
                 : "border-blue-200 bg-blue-50 text-[#0058FF]",
             )}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {feedbackNotice.kind === "error" ? (
                 <V1IconAlert className="h-4 w-4 shrink-0" />
               ) : (
                 <V1IconCheck className="h-4 w-4 shrink-0" />
               )}
               <span>{feedbackNotice.text}</span>
+              {feedbackNotice.requestId && <RequestIdChip requestId={feedbackNotice.requestId} />}
             </div>
             <button
               type="button"
               onClick={() => setFeedbackNotice(null)}
               className={cn(
-                "shrink-0 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-bold",
+                "shrink-0 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-bold cursor-pointer",
                 feedbackNotice.kind === "error"
                   ? "text-rose-600 hover:bg-rose-100"
                   : "text-gray-500 hover:bg-blue-100",
@@ -1180,6 +1239,9 @@ export function ContestHub() {
                     <ContestListCard
                       key={contest.id}
                       contest={contest}
+                      isLoggedIn={false}
+                      canEnterTrading={false}
+                      onViewLeaderboard={handleFocusLeaderboard}
                       defaultExpanded={idx === 0}
                     />
                   ))}
@@ -1251,6 +1313,9 @@ export function ContestHub() {
                     <ContestListCard
                       key={contest.id}
                       contest={contest}
+                      isLoggedIn={true}
+                      canEnterTrading={false}
+                      onViewLeaderboard={handleFocusLeaderboard}
                       defaultExpanded={idx === 0}
                     />
                   ))}
@@ -1294,6 +1359,7 @@ export function ContestHub() {
                         key={contest.id}
                         contest={contest}
                         onApply={handleApplySeason}
+                        busy={busySeasonId === contest.id}
                         defaultExpanded={idx === 0}
                       />
                     ))
@@ -1310,7 +1376,8 @@ export function ContestHub() {
                       <ContestListCard
                         key={contest.id}
                         contest={contest}
-                        onCancel={handleCancelApplication}
+                        onCancel={item => setPendingCancelContest(item)}
+                        busy={busySeasonId === contest.id}
                         defaultExpanded={idx === 0}
                       />
                     ))
@@ -1339,8 +1406,9 @@ export function ContestHub() {
 
         {/* 3. 하단 시즌별 대회 리더보드 & 정산 순위 섹션 */}
         <section
+          ref={leaderboardSectionRef}
           data-contest-section="leaderboard"
-          className="space-y-6 rounded-2xl border border-gray-200 bg-white p-6 sm:p-8"
+          className="space-y-6 rounded-2xl border border-gray-200 bg-white p-6 sm:p-8 scroll-mt-24"
         >
           <div className="flex flex-col gap-4 border-b border-gray-100 pb-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
@@ -1363,7 +1431,7 @@ export function ContestHub() {
                 ) : null}
               </div>
               <p className="text-xs font-medium text-gray-500">
-                시즌 진행 기간에는 실시간 평가 수익률을 집계하며, 대회 종료 후에는 마크가격 스냅샷 정산을 거친 최종 올림픽 순위가 영구 박제됩니다.
+                시즌 진행 기간에는 실시간 평가 수익률을 집계하며, 대회 종료 후에는 마크가격 스냅샷 정산을 거친 대회 기록이 명예의 전당에 영구 보존됩니다.
               </p>
             </div>
 
@@ -1648,10 +1716,49 @@ export function ContestHub() {
               <span>3. 시즌 종료 시 일괄 정산 및 올림픽 순위 확정</span>
             </h3>
             <p>
-              대회 종료 시각이 도래하면 시즌 지갑이 즉시 비활성화되며, 남아 있는 모든 미체결 지정가 주문은 자동 취소 처리되고 오픈 포지션은 종료 시점 마크가격 스냅샷을 기준으로 일괄 정산되어 최종 올림픽 순위(동점자 동일 순위 부여)가 영구 박제됩니다.
+              대회 종료 시각이 도래하면 시즌 지갑이 즉시 비활성화되며, 남아 있는 모든 미체결 지정가 주문은 자동 취소 처리되고 오픈 포지션은 종료 시점 마크가격 스냅샷을 기준으로 일괄 정산되어 대회 기록이 명예의 전당에 영구 보존됩니다.
             </p>
           </div>
         </div>
+      </DimModal>
+
+      {/* 참가 신청 취소 확인 모달 */}
+      <DimModal
+        open={pendingCancelContest !== null}
+        onClose={() => {
+          if (busySeasonId === null) setPendingCancelContest(null);
+        }}
+        title="대회 참가 신청을 취소할까요?"
+        subtitle="모집 마감 전까지 언제든 다시 신청할 수 있습니다."
+        maxWidth="420px"
+        footer={
+          <div className="flex justify-end gap-2">
+            <V1Button
+              variant="gray"
+              size="sm"
+              disabled={busySeasonId !== null}
+              onClick={() => setPendingCancelContest(null)}
+            >
+              취소
+            </V1Button>
+            <V1Button
+              variant="red"
+              size="sm"
+              disabled={busySeasonId !== null}
+              onClick={() => {
+                if (pendingCancelContest) void confirmCancelApplication(pendingCancelContest);
+              }}
+            >
+              {busySeasonId !== null ? "취소 중…" : "신청 취소 확인"}
+            </V1Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-gray-600">
+          {pendingCancelContest
+            ? `“${pendingCancelContest.title}” 시즌 참가 신청을 취소하시겠습니까?`
+            : ""}
+        </p>
       </DimModal>
     </MemberShell>
   );

@@ -1,3 +1,4 @@
+import { formatInquiryCategoryKr } from "../../../lib/labels";
 import type {
   NotificationCategory,
   NotificationDetailField,
@@ -16,7 +17,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   COMMUNITY: "커뮤니티",
   FOLLOW: "팔로우",
   REPORT: "신고·제재",
-  SUPPORT: "고객센터",
+  SUPPORT: "고객지원",
+  ACCOUNT: "계정",
 };
 
 const SIDE_LABELS: Record<string, string> = {
@@ -808,7 +810,7 @@ export function getNotificationDetailFields(
       const inquiryCategory = getPayloadString(notification.payload, "inquiryCategory");
       const replyPreview = getPayloadString(notification.payload, "replyPreview");
       return [
-        createDetailField("문의 유형", inquiryCategory),
+        createDetailField("문의 유형", inquiryCategory ? formatInquiryCategoryKr(inquiryCategory) : null),
         createDetailField("문의 제목", title),
         createDetailField("답변 요약", replyPreview),
       ].filter((f): f is NotificationDetailField => f !== null);
@@ -850,6 +852,7 @@ export function getNotificationListTabValue(
 ): NotificationListTabValue {
   if (category === "MOCK") return "MOCK";
   if (category === "CONTEST") return "CONTEST";
+  if (category === "SUPPORT" || category === "ACCOUNT") return "SUPPORT";
   return "COMMUNITY";
 }
 
@@ -880,6 +883,19 @@ export function getNotificationNavigationTarget(
   const type = notification.type;
   const seasonIdRaw = getPayloadNumericValue(notification.payload, "seasonId");
   const seasonId = seasonIdRaw !== null && seasonIdRaw > 0 ? Math.trunc(seasonIdRaw) : null;
+
+  if (type.includes("ORDER_CANCELED")) {
+    if (notification.category === "CONTEST") {
+      return {
+        href: seasonId ? `/contest/${seasonId}/trading` : "/contest",
+        label: seasonId ? "대회 거래소로 이동" : "대회 페이지로 이동",
+      };
+    }
+    return {
+      href: "/trading?tab=orders",
+      label: "모의투자 주문내역으로 이동",
+    };
+  }
 
   if (type.includes("ORDER_COMPLETED") || type.includes("LIQUIDATION_COMPLETED")) {
     if (notification.category === "CONTEST") {
@@ -919,7 +935,15 @@ export function getNotificationNavigationTarget(
   if (
     type === "CONTEST_APPLICATION_REJECTED" ||
     type === "CONTEST_REJECTED" ||
-    type === "NOTIFICATION_CONTEST_APPLICATION_REJECTED" ||
+    type === "NOTIFICATION_CONTEST_APPLICATION_REJECTED"
+  ) {
+    return {
+      href: "/contest",
+      label: "대회 안내 확인",
+    };
+  }
+
+  if (
     type === "CONTEST_SEASON_CANCELED" ||
     type === "NOTIFICATION_CONTEST_SEASON_CANCELED"
   ) {
@@ -929,21 +953,28 @@ export function getNotificationNavigationTarget(
     };
   }
 
-  if (
-    type === "REPORT_RESOLVED" ||
-    type === "REPORT_DISMISSED" ||
-    type === "CONTENT_MODERATED"
-  ) {
+  if (type === "CONTENT_MODERATED") {
+    return {
+      href: "/me?tab=community&communityTab=reports",
+      label: "제재·신고 내역 확인",
+    };
+  }
+
+  if (type === "REPORT_RESOLVED" || type === "REPORT_DISMISSED") {
     const postId = getPayloadNumericValue(notification.payload, "postId", "targetPostId");
     return {
-      href: postId !== null && postId > 0 ? `/community/all/${Math.trunc(postId)}` : "/community",
-      label: postId !== null && postId > 0 ? "해당 게시글 확인" : "커뮤니티로 이동",
+      href: postId !== null && postId > 0 ? `/community/all/${Math.trunc(postId)}` : "/me?tab=community&communityTab=reports",
+      label: postId !== null && postId > 0 ? "해당 게시글 확인" : "신고 내역 확인",
     };
   }
 
   if (type === "SUPPORT_INQUIRY_ANSWERED") {
+    const inquiryId = getPayloadNumericValue(notification.payload, "inquiryId");
     return {
-      href: "/support",
+      href:
+        inquiryId !== null && inquiryId > 0
+          ? `/support?inquiryId=${Math.trunc(inquiryId)}`
+          : "/support",
       label: "1:1 문의 답변 확인",
     };
   }

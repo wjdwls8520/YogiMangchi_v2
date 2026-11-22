@@ -9,7 +9,7 @@ export type SupportInquiryCategory =
   | "GENERAL"
   | "ETC";
 
-export type SupportInquiryStatus = "OPEN" | "ANSWERED";
+export type SupportInquiryStatus = "OPEN" | "ANSWERED" | "CLOSED";
 export type SupportInquiryFilterStatus = "ALL" | SupportInquiryStatus;
 
 export const SUPPORT_INQUIRY_CATEGORIES: readonly {
@@ -42,6 +42,8 @@ export interface SupportInquiry {
   repliedByMemberId: number | null;
   repliedAt: string | null;
   createdAt: string;
+  updatedAt?: string | null;
+  closedAt?: string | null;
 }
 
 export interface SupportInquiryPage {
@@ -53,6 +55,7 @@ export interface SupportInquiryPage {
 export interface AdminSupportInquiryPage extends SupportInquiryPage {
   openCount: number;
   answeredCount: number;
+  closedCount: number;
 }
 
 const fail = (): never => {
@@ -85,7 +88,14 @@ const isoStr = (value: unknown): string =>
 
 export function parseSupportInquiry(value: unknown): SupportInquiry {
   const row = asObj(value);
-  const status = row.status === "ANSWERED" ? "ANSWERED" : row.status === "OPEN" ? "OPEN" : fail();
+  const status: SupportInquiryStatus =
+    row.status === "ANSWERED"
+      ? "ANSWERED"
+      : row.status === "CLOSED"
+        ? "CLOSED"
+        : row.status === "OPEN"
+          ? "OPEN"
+          : fail();
   return {
     id: posInt(row.id),
     memberId: posInt(row.memberId),
@@ -105,6 +115,12 @@ export function parseSupportInquiry(value: unknown): SupportInquiry {
     repliedAt:
       row.repliedAt === null || row.repliedAt === undefined ? null : isoStr(row.repliedAt),
     createdAt: isoStr(row.createdAt),
+    ...(row.updatedAt !== undefined
+      ? { updatedAt: row.updatedAt === null ? null : isoStr(row.updatedAt) }
+      : {}),
+    ...(row.closedAt !== undefined
+      ? { closedAt: row.closedAt === null ? null : isoStr(row.closedAt) }
+      : {}),
   };
 }
 
@@ -128,6 +144,7 @@ export function parseAdminSupportInquiryPage(value: unknown): AdminSupportInquir
     ...base,
     openCount: nonNegInt(row.openCount),
     answeredCount: nonNegInt(row.answeredCount),
+    closedCount: typeof row.closedCount === "number" && Number.isSafeInteger(row.closedCount) && row.closedCount >= 0 ? row.closedCount : 0,
   };
 }
 

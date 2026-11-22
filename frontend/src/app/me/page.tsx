@@ -1,5 +1,6 @@
 import {
   MemberMyProfilePage,
+  type MyPageCommunityTab,
   type MyPageMainTab,
 } from "../../features/member/components/member-profile-portfolio";
 
@@ -16,6 +17,13 @@ const VALID_DETAIL_TABS = new Set([
   "trades",
   "open",
 ] as const);
+const VALID_COMMUNITY_TABS = new Set<MyPageCommunityTab>([
+  "posts",
+  "replies",
+  "likedPosts",
+  "likedReplies",
+  "reports",
+]);
 
 export default async function MePage({
   searchParams,
@@ -24,6 +32,8 @@ export default async function MePage({
     tab?: string;
     detailTab?: string;
     contestSubTab?: string;
+    seasonId?: string;
+    communityTab?: string;
   }>;
 }) {
   const resolved = searchParams ? await searchParams : undefined;
@@ -44,12 +54,23 @@ export default async function MePage({
       : resolved?.contestSubTab === "live"
         ? "live"
         : undefined;
+  const parsedSeasonId = resolved?.seasonId ? Number(resolved.seasonId) : NaN;
+  const seasonId =
+    Number.isSafeInteger(parsedSeasonId) && parsedSeasonId > 0
+      ? parsedSeasonId
+      : undefined;
+  const communityTab =
+    resolved?.communityTab && VALID_COMMUNITY_TABS.has(resolved.communityTab as MyPageCommunityTab)
+      ? (resolved.communityTab as MyPageCommunityTab)
+      : undefined;
 
   return (
     <MemberMyProfilePage
       initialMainTab={mainTab}
       initialDetailTab={detailTab}
       initialContestSubTab={contestSubTab}
+      initialSeasonId={seasonId}
+      initialCommunityTab={communityTab}
     />
   );
 }

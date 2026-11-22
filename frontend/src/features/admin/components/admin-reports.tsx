@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { DimModal } from "../../member/components/dim-modal";
 import { useOptionalMember } from "../../member/components/member-provider";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
 import { cn, V1IconAlert, V1IconCheck, V1IconRefresh } from "../../member/components/v1-ui";
 import {
   type AdminReportDto,
@@ -74,11 +77,21 @@ export function AdminReportsView() {
   const [reloadTick, setReloadTick] = useState(0);
 
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ text: string; requestId?: string } | null>(null);
   const [bannerMessage, setBannerMessage] = useState<{
     kind: "success" | "error";
     text: string;
+    requestId?: string;
   } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    item: AdminReportDto;
+    kind: "DELETE_TARGET" | "CLEAR_REPORTS" | "DISMISS";
+  } | null>(null);
+  const [modalError, setModalError] = useState<{ text: string; requestId?: string } | null>(null);
+
+  const [settledQueryKey, setSettledQueryKey] = useState<string | null>(null);
+  const queryKey = `${generation ?? 0}:${targetTypeFilter}:${targetStatusFilter}:${reasonFilter}:${reportStatusFilter}:${appliedKeyword}:${page}:${reloadTick}`;
+  const loadingReports = phase === "ready" && role === "ADMIN" && settledQueryKey !== queryKey;
 
   useEffect(() => {
     if (phase !== "ready" || role !== "ADMIN" || !session) {
@@ -86,23 +99,26 @@ export function AdminReportsView() {
     }
     const controller = new AbortController();
     void session
-      .authorized(cred =>
-        fetchAdminReports(
-          cred.accessToken,
-          {
-            targetType: targetTypeFilter,
-            targetStatus: targetStatusFilter,
-            reasonType: reasonFilter,
-            reportStatus: reportStatusFilter,
-            keyword: appliedKeyword || undefined,
-            page,
-            size: 20,
-          },
-          { signal: controller.signal },
-        ),
+      .authorized(
+        cred =>
+          fetchAdminReports(
+            cred.accessToken,
+            {
+              targetType: targetTypeFilter,
+              targetStatus: targetStatusFilter,
+              reasonType: reasonFilter,
+              reportStatus: reportStatusFilter,
+              keyword: appliedKeyword || undefined,
+              page,
+              size: 20,
+            },
+            { signal: controller.signal },
+          ),
+        true,
       )
       .then(res => {
         setLoadError(null);
+        setSettledQueryKey(queryKey);
         if (res.totalPages > 0 && page >= res.totalPages) {
           setPage(res.totalPages - 1);
           return;
@@ -117,9 +133,13 @@ export function AdminReportsView() {
         setActiveTargetReportCount(res.activeTargetReportCount);
         setPendingReportCount(res.pendingReportCount);
       })
-      .catch(() => {
+      .catch(error => {
         if (controller.signal.aborted) return;
-        setLoadError("신고 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        setSettledQueryKey(queryKey);
+        setLoadError({
+          text: "신고 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+          requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+        });
       });
     return () => controller.abort();
   }, [
@@ -134,57 +154,52 @@ export function AdminReportsView() {
     appliedKeyword,
     page,
     reloadTick,
+    queryKey,
   ]);
 
-  async function handleDismissSingle(item: AdminReportDto) {
-    if (!session) return;
-    setBusyKey(`dismiss:${item.reportKey}`);
+  async function executeConfirmedAction() {
+    if (!confirmAction || !session || busyKey !== null) return;
+    const { item, kind } = confirmAction;
+    setModalError(null);
+    setBusyKey(`${kind}:${item.reportKey}`);
     try {
-      await session.authorized(cred =>
-        dismissAdminReport(
-          cred.accessToken,
-          item.targetType,
-          item.targetId,
-          item.reporterId,
-        ),
-      );
-      setBannerMessage({
-        kind: "success",
-        text: `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}에 대한 신고자(#${item.reporterId})의 신고를 반려 처리했습니다.`,
-      });
+      if (kind === "DISMISS") {
+        await session.authorized(cred =>
+          dismissAdminReport(
+            cred.accessToken,
+            item.targetType,
+            item.targetId,
+            item.reporterId,
+          ),
+        );
+        setBannerMessage({
+          kind: "success",
+          text: `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}에 대한 신고자(#${item.reporterId})의 신고를 반려 처리했습니다.`,
+        });
+      } else {
+        await session.authorized(cred =>
+          moderateAdminReportTarget(
+            cred.accessToken,
+            item.targetType,
+            item.targetId,
+            kind,
+          ),
+        );
+        setBannerMessage({
+          kind: "success",
+          text:
+            kind === "DELETE_TARGET"
+              ? `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}을(를) 소프트 삭제하고 누적 신고를 일괄 정리했습니다.`
+              : `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}의 허위·중복 신고를 일괄 해제했습니다.`,
+        });
+      }
+      setConfirmAction(null);
       setReloadTick(t => t + 1);
-    } catch {
-      setBannerMessage({ kind: "error", text: "신고 반려 처리에 실패했습니다." });
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
-  async function handleModerateTarget(
-    item: AdminReportDto,
-    action: "DELETE_TARGET" | "CLEAR_REPORTS",
-  ) {
-    if (!session) return;
-    setBusyKey(`${action}:${item.reportKey}`);
-    try {
-      await session.authorized(cred =>
-        moderateAdminReportTarget(
-          cred.accessToken,
-          item.targetType,
-          item.targetId,
-          action,
-        ),
-      );
-      setBannerMessage({
-        kind: "success",
-        text:
-          action === "DELETE_TARGET"
-            ? `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}을(를) 소프트 삭제하고 누적 신고를 일괄 정리했습니다.`
-            : `${item.targetType === "POST" ? "게시글" : "댓글"} #${item.targetId}의 허위·중복 신고를 일괄 해제했습니다.`,
+    } catch (error) {
+      setModalError({
+        text: kind === "DISMISS" ? "신고 반려 처리에 실패했습니다." : "대상 제재 처리에 실패했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
-      setReloadTick(t => t + 1);
-    } catch {
-      setBannerMessage({ kind: "error", text: "대상 제재 처리에 실패했습니다." });
     } finally {
       setBusyKey(null);
     }
@@ -261,9 +276,10 @@ export function AdminReportsView() {
             role="alert"
             className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3.5 text-xs font-bold text-[#F6465D]"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <V1IconAlert className="h-4 w-4 shrink-0" />
-              <span>{loadError}</span>
+              <span>{loadError.text}</span>
+              {loadError.requestId && <RequestIdChip requestId={loadError.requestId} />}
             </div>
             <button
               type="button"
@@ -288,13 +304,14 @@ export function AdminReportsView() {
                 : "border-blue-200 bg-blue-50/80 text-[#0058FF]",
             )}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {bannerMessage.kind === "error" ? (
                 <V1IconAlert className="h-4 w-4 shrink-0" />
               ) : (
                 <V1IconCheck className="h-4 w-4 shrink-0" />
               )}
               <span>{bannerMessage.text}</span>
+              {bannerMessage.requestId && <RequestIdChip requestId={bannerMessage.requestId} />}
             </div>
             <button
               type="button"
@@ -431,7 +448,15 @@ export function AdminReportsView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {items.length === 0 ? (
+                {loadingReports && items.length === 0 ? (
+                  [1, 2, 3, 4].map(idx => (
+                    <tr key={`rep-sk-${idx}`}>
+                      <td colSpan={11} className="px-4 py-3.5">
+                        <div className="h-5 w-full animate-pulse rounded bg-gray-100" />
+                      </td>
+                    </tr>
+                  ))
+                ) : items.length === 0 ? (
                   <tr>
                     <td
                       colSpan={11}
@@ -528,32 +553,35 @@ export function AdminReportsView() {
                                 <button
                                   type="button"
                                   disabled={busyKey !== null || isDeleted}
-                                  onClick={() => void handleModerateTarget(r, "DELETE_TARGET")}
-                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-40"
+                                  onClick={() => {
+                                    setModalError(null);
+                                    setConfirmAction({ item: r, kind: "DELETE_TARGET" });
+                                  }}
+                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-40 cursor-pointer"
                                 >
-                                  {busyKey === `DELETE_TARGET:${r.reportKey}`
-                                    ? "처리중..."
-                                    : "대상 삭제 조치"}
+                                  대상 삭제 조치
                                 </button>
                                 <button
                                   type="button"
                                   disabled={busyKey !== null}
-                                  onClick={() => void handleModerateTarget(r, "CLEAR_REPORTS")}
-                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                                  onClick={() => {
+                                    setModalError(null);
+                                    setConfirmAction({ item: r, kind: "CLEAR_REPORTS" });
+                                  }}
+                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40 cursor-pointer"
                                 >
-                                  {busyKey === `CLEAR_REPORTS:${r.reportKey}`
-                                    ? "처리중..."
-                                    : "신고 일괄해제"}
+                                  신고 일괄해제
                                 </button>
                                 <button
                                   type="button"
                                   disabled={busyKey !== null}
-                                  onClick={() => void handleDismissSingle(r)}
-                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 text-xs font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+                                  onClick={() => {
+                                    setModalError(null);
+                                    setConfirmAction({ item: r, kind: "DISMISS" });
+                                  }}
+                                  className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-gray-200 bg-gray-50 px-2.5 text-xs font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-40 cursor-pointer"
                                 >
-                                  {busyKey === `dismiss:${r.reportKey}`
-                                    ? "반려중..."
-                                    : "단건 반려"}
+                                  단건 반려
                                 </button>
                               </>
                             ) : (
@@ -562,12 +590,13 @@ export function AdminReportsView() {
                                   <button
                                     type="button"
                                     disabled={busyKey !== null}
-                                    onClick={() => void handleModerateTarget(r, "DELETE_TARGET")}
-                                    className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-40"
+                                    onClick={() => {
+                                      setModalError(null);
+                                      setConfirmAction({ item: r, kind: "DELETE_TARGET" });
+                                    }}
+                                    className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-40 cursor-pointer"
                                   >
-                                    {busyKey === `DELETE_TARGET:${r.reportKey}`
-                                      ? "처리중..."
-                                      : "대상 삭제 조치"}
+                                    대상 삭제 조치
                                   </button>
                                 ) : null}
                                 <span
@@ -620,6 +649,80 @@ export function AdminReportsView() {
             </div>
           )}
         </div>
+
+        {/* 신고 제재 확인 모달 */}
+        <DimModal
+          open={confirmAction !== null}
+          onClose={() => {
+            if (busyKey === null) {
+              setModalError(null);
+              setConfirmAction(null);
+            }
+          }}
+          title={
+            confirmAction?.kind === "DELETE_TARGET"
+              ? "신고 대상 삭제 조치 확인"
+              : confirmAction?.kind === "CLEAR_REPORTS"
+                ? "신고 일괄 해제 확인"
+                : "단건 신고 반려 확인"
+          }
+          maxWidth="440px"
+        >
+          {confirmAction ? (
+            <div className="space-y-4">
+              {modalError ? (
+                <div
+                  role="alert"
+                  className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>{modalError.text}</span>
+                    {modalError.requestId && <RequestIdChip requestId={modalError.requestId} />}
+                  </div>
+                </div>
+              ) : null}
+              <p className="text-xs leading-relaxed text-gray-700">
+                {confirmAction.kind === "DELETE_TARGET"
+                  ? `${confirmAction.item.targetType === "POST" ? "게시글" : "댓글"} #${confirmAction.item.targetId}을(를) 소프트 삭제하고 누적 신고를 일괄 처리 완료하시겠습니까?`
+                  : confirmAction.kind === "CLEAR_REPORTS"
+                    ? `${confirmAction.item.targetType === "POST" ? "게시글" : "댓글"} #${confirmAction.item.targetId}의 대기 중 신고를 모두 반려·해제하시겠습니까?`
+                    : `신고자 #${confirmAction.item.reporterId}의 단건 신고를 반려 처리하시겠습니까?`}
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={busyKey !== null}
+                  onClick={() => {
+                    setModalError(null);
+                    setConfirmAction(null);
+                  }}
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl border border-gray-200 bg-white px-4 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  disabled={busyKey !== null}
+                  onClick={() => void executeConfirmedAction()}
+                  className={cn(
+                    "inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-xl px-4 text-xs font-black text-white disabled:opacity-50 cursor-pointer",
+                    confirmAction.kind === "DELETE_TARGET"
+                      ? "bg-[#F6465D] hover:bg-rose-700"
+                      : "bg-[#0058FF] hover:bg-blue-700",
+                  )}
+                >
+                  {busyKey !== null
+                    ? "처리 중…"
+                    : confirmAction.kind === "DELETE_TARGET"
+                      ? "삭제 조치 실행"
+                      : confirmAction.kind === "CLEAR_REPORTS"
+                        ? "일괄 해제 실행"
+                        : "반려 실행"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </DimModal>
       </div>
     </AdminShell>
   );

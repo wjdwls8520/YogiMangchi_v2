@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode } from "react";
 import { useOptionalMember } from "../../member/components/member-provider";
+import { MemberGlobalBanners } from "../../member/components/member-recovery-status";
 import {
   cn,
   V1IconArrowRight,
@@ -102,19 +103,19 @@ export function AdminHeader({
           })}
         </nav>
 
-        {/* 우측: 관리자 계정 배지 + 서비스 홈으로 이동 버튼 (고정 크기 유지) */}
-        <div className="flex min-h-[38px] shrink-0 items-center justify-end gap-2.5 md:justify-self-end lg:w-[268px] lg:min-w-[268px]">
-          <div className="hidden lg:inline-flex h-9 w-[148px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full border border-gray-200 bg-[#F9FAFB] px-3 text-xs font-bold text-gray-800">
+        {/* 우측: 관리자 계정 배지 + 서비스 홈으로 이동 버튼 */}
+        <div className="flex min-h-[38px] shrink-0 items-center justify-end gap-2 md:justify-self-end lg:w-[268px] lg:min-w-[268px]">
+          <div className="hidden lg:inline-flex h-9 w-[136px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-200 bg-[#F9FAFB] px-2.5 text-xs font-bold text-gray-800">
             <V1IconShield className="h-3.5 w-3.5 shrink-0 text-[#0058FF]" />
             <span className="truncate">{adminNickname}</span>
-            <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-[#0058FF]">
+            <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-black text-[#0058FF]">
               관리자
             </span>
           </div>
 
           <Link
             href="/"
-            className="inline-flex h-9 w-[108px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3.5 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-50"
+            className="inline-flex h-9 w-auto shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-50"
           >
             <span>서비스 홈으로</span>
             <V1IconExternal className="h-3.5 w-3.5 shrink-0 text-gray-500" />
@@ -224,6 +225,7 @@ export function AdminShell({
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-gray-900">
       <AdminHeader activeSection={activeSection} />
+      <MemberGlobalBanners />
       <AdminGuard>
         <main className="mx-auto w-full max-w-[1280px] px-4 py-8 sm:px-6 md:py-10">
           {children}

@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useGuestSession } from "./trading-data-provider";
+import { useTradingNotices } from "./trading-notices";
 import { formatDecimal, pnlTrend, type Position } from "../api/account";
 import { parseStopLoss, latestStopLoss, type StopLoss, type StopLossCommand } from "../api/stop-loss-contract";
 import { tradingKeys } from "../api/query-keys";
@@ -14,6 +15,7 @@ import { formatMarketPrice } from "../market/price-format";
 import { useJournalResolution } from "../api/journal-resolution";
 import { usePositionMarkets } from "./selected-market-provider";
 import { positionValuation, stopLossEstimate, stopLossRoePreset } from "../api/position-display";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
 
 function errorMessage(error: unknown) {
   const messages: Record<string, string> = {
@@ -37,6 +39,7 @@ export function PositionStopLoss({
   initialPrice?: string;
 }) {
   const { session, snapshot } = useGuestSession();
+  const notices = useTradingNotices();
   const client = useQueryClient();
   const admission = useTradingAdmission();
   const positionPrices = usePositionMarkets();
@@ -50,6 +53,7 @@ export function PositionStopLoss({
   const [pending, setPending] = useState(false);
   const [unknown, setUnknown] = useState(false);
   const [message, setMessage] = useState("");
+  useDialogScrollLock(dialog, false, { canClose: () => !pending });
 
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
   const query = useQuery({
@@ -134,6 +138,13 @@ export function PositionStopLoss({
       setUnknown(false);
       setPrice("");
       client.setQueryData([...tradingKeys.account(snapshot), "stop-loss", position.id], (old: StopLoss | undefined) => latestStopLoss(old, position.stopLoss, result));
+      notices.push({
+        kind: "success",
+        title: remove ? "손절 설정이 해제되었습니다" : "손절(SL)이 설정되었습니다",
+        message: remove
+          ? `${baseSymbol}USDT ${position.side === "LONG" ? "Long" : "Short"} 손절 해제 완료`
+          : `${baseSymbol}USDT ${position.side === "LONG" ? "Long" : "Short"} · Mark ${formatMarketPrice(result.stopPrice, priceTickSize)}`,
+      });
       dialog.current?.close();
     } catch (error) {
       if (!same()) return;
@@ -157,6 +168,7 @@ export function PositionStopLoss({
         ref={trigger}
         type="button"
         className="whitespace-nowrap shrink-0"
+        data-active-sl={current?.status === "ACTIVE" ? "true" : undefined}
         aria-haspopup="dialog"
         aria-label={`${symbol} ${position.side} 손절 설정`}
         disabled={snapshot.phase !== "ready"}
@@ -330,6 +342,9 @@ export function PositionStopLoss({
             ) : null}
 
             <div className="ym-modal-footer">
+              <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={closeModal}>
+                취소
+              </button>
               {unknown ? (
                 <button
                   type="button"
@@ -348,9 +363,6 @@ export function PositionStopLoss({
                   {pending ? "처리 중…" : "확인"}
                 </button>
               )}
-              <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={closeModal}>
-                취소
-              </button>
             </div>
           </form>
         )}

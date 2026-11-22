@@ -17,6 +17,8 @@ import { syncContestAccountNickname } from "../../contest/api/contest-client";
 import { resolveTradingMarketBaseUrl } from "../api/market-overview";
 import { tradingJson } from "../../trading/api/client";
 import { parsePortfolioVisibility } from "../../trading/api/take-profit-contract";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId } from "../../../lib/request-id";
 
 export function MemberAccount() {
   const { session, snapshot, announce } = useMember();
@@ -42,9 +44,11 @@ export function MemberAccount() {
       parseOwnProfile(await session.request("/members/me", { signal }), snapshot.memberId!),
   });
 
+  const isSuspended = snapshot.phase === "ready" && snapshot.accountStatus === "SUSPENDED";
+
   const portfolioVisibilityQuery = useQuery({
     queryKey: ["member", "portfolio-visibility", snapshot.memberId, snapshot.generation],
-    enabled: snapshot.phase === "ready",
+    enabled: snapshot.phase === "ready" && !isSuspended,
     queryFn: async ({ signal }) =>
       parsePortfolioVisibility(
         await session.authorized(cred =>
@@ -97,9 +101,8 @@ export function MemberAccount() {
     setLogoutAllBusy(true);
     setLogoutAllError(null);
     try {
-      const request = session.logoutAll();
+      await session.logoutAll();
       announce("ended");
-      await request;
       setLogoutAllOpen(false);
     } catch (err) {
       setLogoutAllError(contentMessage(err));
@@ -214,28 +217,6 @@ export function MemberAccount() {
             </h3>
           </div>
 
-          <div className="flex flex-col items-center justify-center">
-            <ProfileImageUploadSlot
-              slotName="account-profile-image"
-              currentImageUrl={profile.data?.profileImgUrl ?? null}
-              memberId={profile.data?.memberId ?? snapshot.memberId}
-              nickname={profile.data?.nickname}
-              selectedFile={selectedProfileImage}
-              resetRequested={resetProfileImage}
-              onSelectFile={file => {
-                setSelectedProfileImage(file);
-                if (file) setResetProfileImage(false);
-              }}
-              onRequestReset={reset => {
-                setResetProfileImage(reset);
-                if (reset) setSelectedProfileImage(null);
-              }}
-            />
-            <p className="mt-2 text-xs font-bold text-gray-400">
-              앨범에서 사진 선택 또는 기본 이미지로 변경
-            </p>
-          </div>
-
           {snapshot.phase !== "ready" ? (
             <div className="rounded-xl border border-gray-100 bg-[#F9FAFB] p-5 space-y-4">
               <p role="status" className="member-message text-sm font-bold text-gray-700">
@@ -273,6 +254,41 @@ export function MemberAccount() {
             </div>
           ) : (
             <>
+              {isSuspended ? (
+                <div
+                  role="status"
+                  className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 text-xs font-medium leading-relaxed text-rose-800"
+                >
+                  일시 정지된 계정은 프로필 수정이 제한됩니다. 하단의{" "}
+                  <strong>회원 탈퇴</strong> 또는{" "}
+                  <Link href="/support" className="font-bold underline">
+                    1:1 고객센터 이의제기
+                  </Link>
+                  를 이용해 주세요.
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center">
+                  <ProfileImageUploadSlot
+                    slotName="account-profile-image"
+                    currentImageUrl={profile.data?.profileImgUrl ?? null}
+                    memberId={profile.data?.memberId ?? snapshot.memberId}
+                    nickname={profile.data?.nickname}
+                    selectedFile={selectedProfileImage}
+                    resetRequested={resetProfileImage}
+                    onSelectFile={file => {
+                      setSelectedProfileImage(file);
+                      if (file) setResetProfileImage(false);
+                    }}
+                    onRequestReset={reset => {
+                      setResetProfileImage(reset);
+                      if (reset) setSelectedProfileImage(null);
+                    }}
+                  />
+                  <p className="mt-2 text-xs font-bold text-gray-400">
+                    앨범에서 사진 선택 또는 기본 이미지로 변경
+                  </p>
+                </div>
+              )}
               {profile.isPending && (
                 <p role="status" className="member-message text-xs text-gray-500">
                   프로필을 불러오는 중입니다.
@@ -286,7 +302,7 @@ export function MemberAccount() {
                   </button>
                 </p>
               )}
-              {profile.data && (
+              {profile.data && !isSuspended && (
                 <div className="space-y-6">
                   <ProfileEditForm
                     key={`${profile.data.nickname}:${profile.data.profileMessage}`}
@@ -304,9 +320,12 @@ export function MemberAccount() {
               )}
               {error && (
                 <>
-                  <p role="alert" className="member-message rounded-xl bg-red-50 p-3 text-xs font-bold text-red-600">
-                    {error}
-                  </p>
+                  <div role="alert" className="member-message space-y-2 rounded-xl bg-red-50 p-3 text-xs font-bold text-red-600">
+                    <p>{error}</p>
+                    {getErrorRequestId(requestError) && (
+                      <RequestIdChip requestId={getErrorRequestId(requestError)} />
+                    )}
+                  </div>
                   <MemberErrorActions
                     error={requestError}
                     checking={pending || profile.isFetching}
@@ -327,14 +346,17 @@ export function MemberAccount() {
             <div>
               <h3 className="flex items-center gap-2 text-lg font-black text-gray-900">
                 <span className="inline-block h-4 w-1.5 rounded-full bg-[#0058FF]" />
-                공개 포트폴리오 &amp; 보안 설정
+                {isSuspended ? "세션 보안 설정" : "공개 포트폴리오 & 보안 설정"}
               </h3>
               <p className="mt-1 text-xs text-gray-500">
-                다른 회원에게 보여지는 포트폴리오 공개 여부와 활성 로그인 기기 세션을 관리합니다.
+                {isSuspended
+                  ? "활성 로그인 기기 세션을 안전하게 관리합니다."
+                  : "다른 회원에게 보여지는 포트폴리오 공개 여부와 활성 로그인 기기 세션을 관리합니다."}
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-gray-200 bg-[#F9FAFB] p-4">
+            {!isSuspended && (
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-gray-200 bg-[#F9FAFB] p-4">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-bold text-gray-900">
                   공개 프로필 모의투자 포트폴리오 공개
@@ -378,8 +400,9 @@ export function MemberAccount() {
                 )}
               </div>
             </div>
+            )}
 
-            {visibilityFeedback && (
+            {!isSuspended && visibilityFeedback && (
               <p
                 role={visibilityFeedback.kind === "error" ? "alert" : "status"}
                 className={`rounded-xl px-3.5 py-2.5 text-xs font-bold ${
@@ -460,13 +483,15 @@ export function MemberAccount() {
           </section>
         )}
 
-        {/* 회원 탈퇴 섹션 */}
-        <section
-          id="withdrawal"
-          className="card rounded-2xl border border-gray-200 bg-white p-6 sm:p-8"
-        >
-          <MemberWithdrawal />
-        </section>
+        {/* 회원 탈퇴 섹션 (로그인 또는 탈퇴 진행 중에만 표시) */}
+        {(snapshot.phase === "ready" || snapshot.phase === "withdrawing") && (
+          <section
+            id="withdrawal"
+            className="card rounded-2xl border border-gray-200 bg-white p-6 sm:p-8"
+          >
+            <MemberWithdrawal />
+          </section>
+        )}
       </div>
     </MemberShell>
   );

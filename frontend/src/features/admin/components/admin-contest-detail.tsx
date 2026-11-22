@@ -6,6 +6,7 @@ import {
   approveAdminContestApplicant,
   bulkApproveAdminContestApplicants,
   cleanupRemainingAdminContestSeason,
+  disqualifyAdminContestParticipant,
   fetchAdminContestSeasonDetail,
   formatContestDateTime,
   formatContestSignedRoi,
@@ -19,6 +20,8 @@ import {
   updateAdminContestSeason,
   type AdminSeasonDetailResponse,
 } from "../../contest/api/contest-client";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
 import { DimModal } from "../../member/components/dim-modal";
 import { useOptionalMember } from "../../member/components/member-provider";
 import {
@@ -133,7 +136,7 @@ export function AdminContestDetail({
     buildLoadingSeason(seasonId),
   );
   const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ text: string; requestId?: string } | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [applicants, setApplicants] = useState<AdminContestApplicantItem[]>([]);
   const [participants, setParticipants] = useState<AdminContestParticipantWalletItem[]>([]);
@@ -144,18 +147,43 @@ export function AdminContestDetail({
     "applicants" | "participants" | "rejected"
   >("applicants");
 
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
-  const [earlySettleModalOpen, setEarlySettleModalOpen] = useState(false);
-  const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
-  const [cancelSeasonModalOpen, setCancelSeasonModalOpen] = useState(false);
-  const [cancelingSeason, setCancelingSeason] = useState(false);
-  const [rejectTarget, setRejectTarget] = useState<AdminContestApplicantItem | null>(
+  const [editModalError, setEditModalError] = useState<{ text: string; requestId?: string } | null>(
     null,
   );
+  const [earlySettleModalOpen, setEarlySettleModalOpen] = useState(false);
+  const [earlySettleModalError, setEarlySettleModalError] = useState<{
+    text: string;
+    requestId?: string;
+  } | null>(null);
+  const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
+  const [cleanupModalError, setCleanupModalError] = useState<{
+    text: string;
+    requestId?: string;
+  } | null>(null);
+  const [cancelSeasonModalOpen, setCancelSeasonModalOpen] = useState(false);
+  const [cancelModalError, setCancelModalError] = useState<{
+    text: string;
+    requestId?: string;
+  } | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<AdminContestApplicantItem | null>(null);
   const [rejectReasonInput, setRejectReasonInput] = useState("");
+  const [rejectModalError, setRejectModalError] = useState<{
+    text: string;
+    requestId?: string;
+  } | null>(null);
+  const [disqualifyTarget, setDisqualifyTarget] =
+    useState<AdminContestParticipantWalletItem | null>(null);
+  const [disqualifyReasonInput, setDisqualifyReasonInput] = useState("");
+  const [disqualifyModalError, setDisqualifyModalError] = useState<{
+    text: string;
+    requestId?: string;
+  } | null>(null);
   const [operationBanner, setOperationBanner] = useState<{
     kind: "success" | "error";
     text: string;
+    requestId?: string;
   } | null>(null);
 
   const [settlementRuns, setSettlementRuns] = useState<ContestSettlementRunLog[]>([]);
@@ -178,7 +206,7 @@ export function AdminContestDetail({
         memberId: app.memberId,
         nickname: app.nickname,
         appliedAt: formatContestDateTime(app.appliedAt),
-        profileMsg: "시즌 대회 참가 신청",
+        profileMsg: `회원 #${app.memberId} · 신청 #${app.applicationId}`,
       })),
     );
 
@@ -239,12 +267,13 @@ export function AdminContestDetail({
   }
 
   function reloadDetailFromServer(targetId: number) {
-    if (phase !== "ready" || role !== "ADMIN" || !session) {
+    if (phase !== "ready" || role !== "ADMIN" || !session || targetId <= 0) {
       return;
     }
     void session
-      .authorized(cred =>
-        fetchAdminContestSeasonDetail(targetId, { token: cred.accessToken }),
+      .authorized(
+        cred => fetchAdminContestSeasonDetail(targetId, { token: cred.accessToken }),
+        true,
       )
       .then(detail => {
         setLoadError(null);
@@ -252,28 +281,32 @@ export function AdminContestDetail({
           applyDetailResponse(detail);
         }
       })
-      .catch(() => {
-        setLoadError("최신 대회 상세 데이터를 새로고침하지 못했습니다.");
+      .catch(error => {
+        setLoadError({
+          text: "최신 대회 상세 데이터를 새로고침하지 못했습니다.",
+          requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+        });
       });
   }
 
+  const parsedSeasonId = Number(seasonId);
+  const validSeasonId =
+    Number.isFinite(parsedSeasonId) && parsedSeasonId > 0 ? parsedSeasonId : 0;
+
   useEffect(() => {
-    if (phase !== "ready" || role !== "ADMIN" || !session) {
+    if (phase !== "ready" || role !== "ADMIN" || !session || validSeasonId <= 0) {
       return;
     }
     const controller = new AbortController();
-    const numericId = Number(seasonId);
-    const targetId = Number.isFinite(numericId) && numericId > 0 ? numericId : 0;
-    if (targetId <= 0) {
-      return;
-    }
 
     void session
-      .authorized(cred =>
-        fetchAdminContestSeasonDetail(targetId, {
-          token: cred.accessToken,
-          signal: controller.signal,
-        }),
+      .authorized(
+        cred =>
+          fetchAdminContestSeasonDetail(validSeasonId, {
+            token: cred.accessToken,
+            signal: controller.signal,
+          }),
+        true,
       )
       .then(detail => {
         setLoadError(null);
@@ -282,32 +315,43 @@ export function AdminContestDetail({
           applyDetailResponse(detail);
         }
       })
-      .catch(() => {
+      .catch(error => {
         if (controller.signal.aborted) return;
         setIsLoading(false);
         setApplicants([]);
         setParticipants([]);
         setRejectedList([]);
         setSettlementRuns([]);
-        setLoadError("대회 시즌 상세 정보를 불러오지 못했습니다. 시즌 ID 및 서버 상태를 확인해 주세요.");
+        setLoadError({
+          text: "대회 시즌 상세 정보를 불러오지 못했습니다. 시즌 ID 및 서버 상태를 확인해 주세요.",
+          requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+        });
       });
 
     return () => controller.abort();
-  }, [seasonId, session, phase, role, generation, reloadTick]);
+  }, [validSeasonId, session, phase, role, generation, reloadTick]);
+
+  const effectiveIsLoading = validSeasonId > 0 && isLoading;
+  const effectiveLoadError =
+    validSeasonId <= 0 ? { text: "유효하지 않은 대회 시즌 ID입니다." } : loadError;
 
   const displayStatus = resolveDisplayStatus(season);
+  const isLockedSeason = season.isCancel || Boolean(season.settledAt);
   const isAllApplicantsSelected =
     applicants.length > 0 && selectedApplicantIds.length === applicants.length;
 
   async function handleToggleStatus(field: "isPublic" | "isCancel") {
-    if (!session) return;
+    if (!session || busyAction !== null) return;
     if (field === "isCancel") {
-      if (season.isCancel || Boolean(season.settledAt)) return;
+      if (isLockedSeason) return;
+      setCancelModalError(null);
       setCancelSeasonModalOpen(true);
       return;
     }
+    if (season.isCancel) return;
     const nextValue = !season[field];
     const patchBody = { isPublic: nextValue };
+    setBusyAction("toggle-public");
 
     try {
       const updatedView = await session.authorized(cred =>
@@ -329,13 +373,17 @@ export function AdminContestDetail({
           error instanceof Error && error.message
             ? error.message
             : "시즌 상태 변경에 실패했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function handleConfirmCancelSeason() {
-    if (!session || cancelingSeason || season.isCancel || Boolean(season.settledAt)) return;
-    setCancelingSeason(true);
+    if (!session || busyAction !== null || isLockedSeason) return;
+    setBusyAction("cancel-season");
+    setCancelModalError(null);
     try {
       const updatedView = await session.authorized(cred =>
         patchAdminContestSeasonStatus(
@@ -355,20 +403,22 @@ export function AdminContestDetail({
       setCancelSeasonModalOpen(false);
       reloadDetailFromServer(season.id);
     } catch (error) {
-      setOperationBanner({
-        kind: "error",
+      setCancelModalError({
         text:
           error instanceof Error && error.message
             ? error.message
             : "시즌 취소 처리에 실패했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
     } finally {
-      setCancelingSeason(false);
+      setBusyAction(null);
     }
   }
 
   async function handleSaveSeasonEdit(draft: ContestFormDraft) {
-    if (!session) return;
+    if (!session || busyAction !== null || isLockedSeason) return;
+    setBusyAction("edit-season");
+    setEditModalError(null);
     const payload = {
       title: draft.title,
       description: draft.description,
@@ -394,24 +444,28 @@ export function AdminContestDetail({
         });
       }
     } catch (error) {
-      setOperationBanner({
-        kind: "error",
+      setEditModalError({
         text:
           error instanceof Error && error.message
             ? error.message
             : "시즌 정보 저장에 실패했습니다. 일정 및 입력값을 확인해 주세요.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function handleConfirmEarlyFinishSettle() {
-    if (!session) return;
-    setEarlySettleModalOpen(false);
+    if (!session || busyAction !== null || isLockedSeason) return;
+    setBusyAction("early-settle");
+    setEarlySettleModalError(null);
     try {
       const res = await session.authorized(cred =>
         settleAdminContestSeason(season.id, { token: cred.accessToken }),
       );
       if (res) {
+        setEarlySettleModalOpen(false);
         setOperationBanner({
           kind: "success",
           text: `정산 완료: 비활성화 지갑 ${res.deactivatedWalletCount}건 · 미체결 주문 소프트 취소 ${res.canceledOrderCount}건 · 포지션 강제청산 ${res.liquidatedPositionCount}건 · 최종 순위 확정 ${res.finalizedParticipantCount}명`,
@@ -419,25 +473,29 @@ export function AdminContestDetail({
         reloadDetailFromServer(season.id);
       }
     } catch (error) {
-      setOperationBanner({
-        kind: "error",
+      setEarlySettleModalError({
         text:
           error instanceof Error && error.message
             ? error.message
             : "대회 조기 종료 및 강제 정산 실행에 실패했습니다. 최신 시세 스냅샷 상태를 확인해 주세요.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
       reloadDetailFromServer(season.id);
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function handleConfirmCleanupRemaining() {
-    if (!session) return;
-    setCleanupModalOpen(false);
+    if (!session || busyAction !== null) return;
+    setBusyAction("cleanup-remaining");
+    setCleanupModalError(null);
     try {
       const res = await session.authorized(cred =>
         cleanupRemainingAdminContestSeason(season.id, { token: cred.accessToken }),
       );
       if (res) {
+        setCleanupModalOpen(false);
         setOperationBanner({
           kind: "success",
           text: `잔여 재정리 완료: 미체결 주문 500청크 소프트 취소 ${res.canceledOrderCount}건 · 오픈 포지션 500청크 강제청산 ${res.liquidatedPositionCount}건 · 최종 순위 재집계 ${res.finalizedParticipantCount}명`,
@@ -445,19 +503,22 @@ export function AdminContestDetail({
         reloadDetailFromServer(season.id);
       }
     } catch (error) {
-      setOperationBanner({
-        kind: "error",
+      setCleanupModalError({
         text:
           error instanceof Error && error.message
             ? error.message
             : "남은 포지션·미체결 주문 재정리 실행에 실패했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
       reloadDetailFromServer(season.id);
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function approveApplicantsByIds(targetIds: number[]) {
-    if (targetIds.length === 0 || !session) return;
+    if (targetIds.length === 0 || !session || busyAction !== null) return;
+    setBusyAction("approve");
     try {
       if (targetIds.length === 1) {
         await session.authorized(cred =>
@@ -476,7 +537,7 @@ export function AdminContestDetail({
       setActiveMemberTab("participants");
       setOperationBanner({
         kind: "success",
-        text: `${targetIds.length}명의 참가 신청을 승인하고 시즌 전용 ${season.seedMoney} USDT 대회 지갑(ACTIVE)을 발급했습니다.`,
+        text: `${targetIds.length}명의 참가 신청을 승인하고 시즌 전용 ${season.seedMoney} USDT 대회 지갑(활성)을 발급했습니다.`,
       });
       reloadDetailFromServer(season.id);
     } catch (error) {
@@ -486,18 +547,23 @@ export function AdminContestDetail({
           error instanceof Error && error.message
             ? error.message
             : "참가 신청 승인 처리에 실패했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
       reloadDetailFromServer(season.id);
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function handleConfirmReject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!rejectTarget || !session) return;
+    if (!rejectTarget || !session || busyAction !== null) return;
     const targetAppId = rejectTarget.applicantId;
     const targetNickname = rejectTarget.nickname;
     const reason =
       rejectReasonInput.trim() || "시즌 참가 기준 미충족으로 반려되었습니다.";
+    setBusyAction("reject");
+    setRejectModalError(null);
 
     try {
       await session.authorized(cred =>
@@ -515,13 +581,51 @@ export function AdminContestDetail({
       });
       reloadDetailFromServer(season.id);
     } catch (error) {
-      setOperationBanner({
-        kind: "error",
+      setRejectModalError({
         text:
           error instanceof Error && error.message
             ? error.message
             : "참가 신청 반려 처리에 실패했습니다.",
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
       });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleConfirmDisqualify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!disqualifyTarget || !session || busyAction !== null) return;
+    const target = disqualifyTarget;
+    const reason = disqualifyReasonInput.trim();
+    setBusyAction("disqualify");
+    setDisqualifyModalError(null);
+    try {
+      await session.authorized(cred =>
+        disqualifyAdminContestParticipant(
+          season.id,
+          target.memberId,
+          reason || undefined,
+          { token: cred.accessToken },
+        ),
+      );
+      setDisqualifyTarget(null);
+      setDisqualifyReasonInput("");
+      setOperationBanner({
+        kind: "success",
+        text: `"${target.nickname}"(#${target.memberId}) 참가자를 실격 처리하고 시즌 지갑·포지션을 정리했습니다.`,
+      });
+      reloadDetailFromServer(season.id);
+    } catch (error) {
+      setDisqualifyModalError({
+        text:
+          error instanceof Error && error.message
+            ? error.message
+            : `"${target.nickname}" 참가자 실격 처리에 실패했습니다.`,
+        requestId: isUnexpectedApiError(error) ? getErrorRequestId(error) : undefined,
+      });
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -581,8 +685,12 @@ export function AdminContestDetail({
             <button
               type="button"
               data-admin-action="early-finish-settle"
-              onClick={() => setEarlySettleModalOpen(true)}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-rose-200 bg-rose-50 px-4 text-xs font-black text-rose-700 transition-colors hover:bg-rose-100 cursor-pointer"
+              disabled={isLockedSeason || busyAction !== null}
+              onClick={() => {
+                setEarlySettleModalError(null);
+                setEarlySettleModalOpen(true);
+              }}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-rose-200 bg-rose-50 px-4 text-xs font-black text-rose-700 transition-colors hover:bg-rose-100 disabled:opacity-40 cursor-pointer"
             >
               <V1IconAlert className="h-4 w-4 shrink-0 text-rose-600" />
               <span>대회 조기 종료 및 강제 정산</span>
@@ -591,8 +699,12 @@ export function AdminContestDetail({
             <button
               type="button"
               data-admin-action="cleanup-remaining"
-              onClick={() => setCleanupModalOpen(true)}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-amber-200 bg-amber-50 px-4 text-xs font-black text-amber-800 transition-colors hover:bg-amber-100 cursor-pointer"
+              disabled={busyAction !== null}
+              onClick={() => {
+                setCleanupModalError(null);
+                setCleanupModalOpen(true);
+              }}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-amber-200 bg-amber-50 px-4 text-xs font-black text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-40 cursor-pointer"
             >
               <V1IconRefresh className="h-4 w-4 shrink-0 text-amber-700" />
               <span>남은 포지션·미체결 주문 재정리</span>
@@ -601,7 +713,11 @@ export function AdminContestDetail({
             <V1Button
               variant="white"
               size="sm"
-              onClick={() => setEditModalOpen(true)}
+              disabled={isLockedSeason || busyAction !== null}
+              onClick={() => {
+                setEditModalError(null);
+                setEditModalOpen(true);
+              }}
             >
               대회 정보 수정
             </V1Button>
@@ -609,26 +725,31 @@ export function AdminContestDetail({
         </header>
 
         {/* 상세 조회 오류 배너 */}
-        {loadError ? (
+        {effectiveLoadError ? (
           <div
             role="alert"
             className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-xs sm:text-sm font-bold text-[#F6465D]"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <V1IconAlert className="h-4 w-4 shrink-0" />
-              <span>{loadError}</span>
+              <span>{effectiveLoadError.text}</span>
+              {effectiveLoadError.requestId ? (
+                <RequestIdChip requestId={effectiveLoadError.requestId} />
+              ) : null}
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setLoadError(null);
-                setIsLoading(true);
-                setReloadTick(t => t + 1);
-              }}
-              className="shrink-0 whitespace-nowrap rounded-lg border border-rose-200 bg-white px-3 py-1 text-xs font-bold text-[#F6465D] hover:bg-rose-100"
-            >
-              다시 시도
-            </button>
+            {validSeasonId > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadError(null);
+                  setIsLoading(true);
+                  setReloadTick(t => t + 1);
+                }}
+                className="shrink-0 whitespace-nowrap rounded-lg border border-rose-200 bg-white px-3 py-1 text-xs font-bold text-[#F6465D] hover:bg-rose-100"
+              >
+                다시 시도
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -644,13 +765,16 @@ export function AdminContestDetail({
                 : "border-emerald-200 bg-emerald-50 text-emerald-800",
             )}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {operationBanner.kind === "error" ? (
                 <V1IconAlert className="h-4 w-4 shrink-0 text-[#F6465D]" />
               ) : (
                 <V1IconCheck className="h-4 w-4 shrink-0 text-emerald-600" />
               )}
               <span>{operationBanner.text}</span>
+              {operationBanner.requestId ? (
+                <RequestIdChip requestId={operationBanner.requestId} />
+              ) : null}
             </div>
             <button
               type="button"
@@ -667,9 +791,13 @@ export function AdminContestDetail({
           </div>
         ) : null}
 
-        {isLoading ? (
-          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-center text-xs font-bold text-gray-400">
-            대회 시즌 상세 정보를 불러오는 중입니다…
+        {effectiveIsLoading ? (
+          <div
+            aria-label="대회 시즌 상세 정보 불러오는 중"
+            className="animate-pulse rounded-2xl border border-gray-200 bg-white p-5 space-y-2.5"
+          >
+            <div className="h-4 w-48 rounded bg-gray-100" />
+            <div className="h-3 w-full max-w-md rounded bg-gray-100" />
           </div>
         ) : null}
 
@@ -701,7 +829,8 @@ export function AdminContestDetail({
                 </div>
                 <AdminToggleSwitch
                   checked={season.isPublic}
-                  onChange={() => handleToggleStatus("isPublic")}
+                  disabled={season.isCancel || busyAction !== null}
+                  onChange={() => void handleToggleStatus("isPublic")}
                   label="시즌 공개 여부"
                 />
               </div>
@@ -716,7 +845,7 @@ export function AdminContestDetail({
                 <AdminToggleSwitch
                   checked={season.isCancel}
                   tone="rose"
-                  disabled={season.isCancel || Boolean(season.settledAt)}
+                  disabled={isLockedSeason || busyAction !== null}
                   onChange={() => void handleToggleStatus("isCancel")}
                   label="시즌 취소 여부"
                 />
@@ -866,10 +995,12 @@ export function AdminContestDetail({
                 variant="blue"
                 size="sm"
                 data-admin-action="approve-selected"
-                disabled={selectedApplicantIds.length === 0}
-                onClick={() => approveApplicantsByIds(selectedApplicantIds)}
+                disabled={selectedApplicantIds.length === 0 || busyAction !== null || isLockedSeason}
+                onClick={() => void approveApplicantsByIds(selectedApplicantIds)}
               >
-                선택 일괄 승인 ({selectedApplicantIds.length})
+                {busyAction === "approve"
+                  ? "승인 처리 중…"
+                  : `선택 일괄 승인 (${selectedApplicantIds.length})`}
               </V1Button>
             ) : null}
           </div>
@@ -985,21 +1116,24 @@ export function AdminContestDetail({
                             <button
                               type="button"
                               data-admin-approve-applicant={applicant.applicantId}
+                              disabled={busyAction !== null || isLockedSeason}
                               onClick={() =>
-                                approveApplicantsByIds([applicant.applicantId])
+                                void approveApplicantsByIds([applicant.applicantId])
                               }
-                              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700 cursor-pointer"
+                              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-40 cursor-pointer"
                             >
                               승인
                             </button>
                             <button
                               type="button"
                               data-admin-reject-applicant={applicant.applicantId}
+                              disabled={busyAction !== null || isLockedSeason}
                               onClick={() => {
+                                setRejectModalError(null);
                                 setRejectTarget(applicant);
                                 setRejectReasonInput("");
                               }}
-                              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-bold text-rose-700 hover:bg-rose-100 cursor-pointer"
+                              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-40 cursor-pointer"
                             >
                               반려
                             </button>
@@ -1016,7 +1150,7 @@ export function AdminContestDetail({
           {/* 탭 2: 참가자 및 시즌 지갑 목록 */}
           {activeMemberTab === "participants" ? (
             <div className="overflow-x-auto rounded-xl border border-gray-200">
-              <table className="w-full min-w-[920px] text-left text-xs">
+              <table className="w-full min-w-[980px] text-left text-xs">
                 <thead className="border-b border-gray-200 bg-[#F9FAFB] text-gray-500">
                   <tr>
                     <th className="px-4 py-3 font-bold whitespace-nowrap">참가자 ID</th>
@@ -1028,12 +1162,13 @@ export function AdminContestDetail({
                     <th className="px-4 py-3 font-bold text-center whitespace-nowrap">미체결 주문</th>
                     <th className="px-4 py-3 font-bold text-center whitespace-nowrap">오픈 포지션</th>
                     <th className="px-4 py-3 font-bold text-center whitespace-nowrap">현재/최종 순위</th>
+                    <th className="px-4 py-3 font-bold text-center whitespace-nowrap">운영 조치</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {participants.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-10 text-center font-bold text-gray-400">
+                      <td colSpan={10} className="px-4 py-10 text-center font-bold text-gray-400">
                         현재 승인된 시즌 참가자가 없습니다.
                       </td>
                     </tr>
@@ -1069,7 +1204,7 @@ export function AdminContestDetail({
                                 : "bg-gray-100 text-gray-600 border border-gray-200",
                             )}
                           >
-                            {participant.walletStatus}
+                            {participant.walletStatus === "ACTIVE" ? "활성" : "비활성"}
                           </span>
                         </div>
                       </td>
@@ -1099,6 +1234,25 @@ export function AdminContestDetail({
                       </td>
                       <td className="px-4 py-3.5 text-center font-black text-gray-900 tabular-nums whitespace-nowrap">
                         {participant.rank}위
+                      </td>
+                      <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                        {participant.walletStatus === "ACTIVE" && !isLockedSeason ? (
+                          <button
+                            type="button"
+                            data-admin-disqualify-participant={participant.memberId}
+                            disabled={busyAction !== null}
+                            onClick={() => {
+                              setDisqualifyModalError(null);
+                              setDisqualifyReasonInput("");
+                              setDisqualifyTarget(participant);
+                            }}
+                            className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-rose-200 bg-rose-50 px-3 text-xs font-bold text-[#F6465D] hover:bg-rose-100 disabled:opacity-40 cursor-pointer"
+                          >
+                            실격 처리
+                          </button>
+                        ) : (
+                          <span className="text-[11px] font-medium text-gray-400">-</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1172,7 +1326,12 @@ export function AdminContestDetail({
       {/* 1. 대회 조기 종료 및 강제 정산 확인 모달 */}
       <DimModal
         open={earlySettleModalOpen}
-        onClose={() => setEarlySettleModalOpen(false)}
+        onClose={() => {
+          if (busyAction !== "early-settle") {
+            setEarlySettleModalError(null);
+            setEarlySettleModalOpen(false);
+          }
+        }}
         title="대회 조기 종료 및 강제 정산 확인"
         subtitle={`시즌 #${season.id} · ${season.title}`}
         footer={
@@ -1180,7 +1339,11 @@ export function AdminContestDetail({
             <V1Button
               variant="white"
               size="sm"
-              onClick={() => setEarlySettleModalOpen(false)}
+              disabled={busyAction === "early-settle"}
+              onClick={() => {
+                setEarlySettleModalError(null);
+                setEarlySettleModalOpen(false);
+              }}
             >
               취소
             </V1Button>
@@ -1188,9 +1351,12 @@ export function AdminContestDetail({
               variant="red"
               size="sm"
               data-admin-confirm="early-finish-settle"
-              onClick={handleConfirmEarlyFinishSettle}
+              disabled={busyAction === "early-settle"}
+              onClick={() => void handleConfirmEarlyFinishSettle()}
             >
-              조기 종료 및 강제 정산 실행
+              {busyAction === "early-settle"
+                ? "강제 정산 실행 중…"
+                : "조기 종료 및 강제 정산 실행"}
             </V1Button>
           </div>
         }
@@ -1204,13 +1370,30 @@ export function AdminContestDetail({
             <li>현재 취소 대상 미체결 주문: {season.pendingOrderCount}건 (Keyset 500개 청크 단위 소프트 취소)</li>
             <li>현재 강제청산 대상 오픈 포지션: {season.openPositionCount}건 (Keyset 500개 청크 단위 마크가격 정산)</li>
           </ul>
+          {earlySettleModalError ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
+            >
+              <V1IconAlert className="h-4 w-4 shrink-0" />
+              <span>{earlySettleModalError.text}</span>
+              {earlySettleModalError.requestId ? (
+                <RequestIdChip requestId={earlySettleModalError.requestId} />
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </DimModal>
 
       {/* 2. 남은 포지션·미체결 주문 재정리 확인 모달 */}
       <DimModal
         open={cleanupModalOpen}
-        onClose={() => setCleanupModalOpen(false)}
+        onClose={() => {
+          if (busyAction !== "cleanup-remaining") {
+            setCleanupModalError(null);
+            setCleanupModalOpen(false);
+          }
+        }}
         title="남은 포지션·미체결 주문 500청크 재정리"
         subtitle={`시즌 #${season.id} · ${season.title}`}
         footer={
@@ -1218,7 +1401,11 @@ export function AdminContestDetail({
             <V1Button
               variant="white"
               size="sm"
-              onClick={() => setCleanupModalOpen(false)}
+              disabled={busyAction === "cleanup-remaining"}
+              onClick={() => {
+                setCleanupModalError(null);
+                setCleanupModalOpen(false);
+              }}
             >
               취소
             </V1Button>
@@ -1226,9 +1413,12 @@ export function AdminContestDetail({
               variant="blue"
               size="sm"
               data-admin-confirm="cleanup-remaining"
-              onClick={handleConfirmCleanupRemaining}
+              disabled={busyAction === "cleanup-remaining"}
+              onClick={() => void handleConfirmCleanupRemaining()}
             >
-              잔여 주문 취소·포지션 강제청산 재실행
+              {busyAction === "cleanup-remaining"
+                ? "재정리 실행 중…"
+                : "잔여 주문 취소·포지션 강제청산 재실행"}
             </V1Button>
           </div>
         }
@@ -1240,13 +1430,30 @@ export function AdminContestDetail({
           <p className="text-xs font-medium text-gray-600">
             이미 정산 완료된 포지션과 취소된 주문은 멱등 가드에 의해 안전하게 건너뛰며, 미처리 잔여 건만 선택적으로 정리한 뒤 올림픽 순위를 다시 산출합니다.
           </p>
+          {cleanupModalError ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
+            >
+              <V1IconAlert className="h-4 w-4 shrink-0" />
+              <span>{cleanupModalError.text}</span>
+              {cleanupModalError.requestId ? (
+                <RequestIdChip requestId={cleanupModalError.requestId} />
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </DimModal>
 
       {/* 3. 신청자 반려 사유 입력 모달 */}
       <DimModal
         open={Boolean(rejectTarget)}
-        onClose={() => setRejectTarget(null)}
+        onClose={() => {
+          if (busyAction !== "reject") {
+            setRejectModalError(null);
+            setRejectTarget(null);
+          }
+        }}
         title="대회 참가 신청 반려"
         subtitle={
           rejectTarget
@@ -1271,16 +1478,37 @@ export function AdminContestDetail({
               className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
             />
           </div>
+          {rejectModalError ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
+            >
+              <V1IconAlert className="h-4 w-4 shrink-0" />
+              <span>{rejectModalError.text}</span>
+              {rejectModalError.requestId ? (
+                <RequestIdChip requestId={rejectModalError.requestId} />
+              ) : null}
+            </div>
+          ) : null}
           <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
             <V1Button
               variant="white"
               size="sm"
-              onClick={() => setRejectTarget(null)}
+              disabled={busyAction === "reject"}
+              onClick={() => {
+                setRejectModalError(null);
+                setRejectTarget(null);
+              }}
             >
               취소
             </V1Button>
-            <V1Button type="submit" variant="red" size="sm">
-              반려 처리 확정
+            <V1Button
+              type="submit"
+              variant="red"
+              size="sm"
+              disabled={busyAction === "reject"}
+            >
+              {busyAction === "reject" ? "반려 처리 중…" : "반려 처리 확정"}
             </V1Button>
           </div>
         </form>
@@ -1292,7 +1520,14 @@ export function AdminContestDetail({
           open={editModalOpen}
           mode="edit"
           initialSeason={season}
-          onClose={() => setEditModalOpen(false)}
+          saving={busyAction === "edit-season"}
+          externalError={editModalError}
+          onClose={() => {
+            if (busyAction !== "edit-season") {
+              setEditModalError(null);
+              setEditModalOpen(false);
+            }
+          }}
           onSave={handleSaveSeasonEdit}
         />
       ) : null}
@@ -1301,7 +1536,10 @@ export function AdminContestDetail({
       <DimModal
         open={cancelSeasonModalOpen}
         onClose={() => {
-          if (!cancelingSeason) setCancelSeasonModalOpen(false);
+          if (busyAction !== "cancel-season") {
+            setCancelModalError(null);
+            setCancelSeasonModalOpen(false);
+          }
         }}
         title="대회 시즌 영구 취소 확인"
         subtitle={`시즌 #${season.id} · ${season.title}`}
@@ -1310,8 +1548,11 @@ export function AdminContestDetail({
             <V1Button
               variant="white"
               size="sm"
-              disabled={cancelingSeason}
-              onClick={() => setCancelSeasonModalOpen(false)}
+              disabled={busyAction === "cancel-season"}
+              onClick={() => {
+                setCancelModalError(null);
+                setCancelSeasonModalOpen(false);
+              }}
             >
               돌아가기
             </V1Button>
@@ -1319,10 +1560,10 @@ export function AdminContestDetail({
               variant="red"
               size="sm"
               data-admin-confirm="cancel-season"
-              disabled={cancelingSeason}
+              disabled={busyAction === "cancel-season"}
               onClick={() => void handleConfirmCancelSeason()}
             >
-              {cancelingSeason ? "취소 처리 중…" : "시즌 영구 취소 실행"}
+              {busyAction === "cancel-season" ? "취소 처리 중…" : "시즌 영구 취소 실행"}
             </V1Button>
           </div>
         }
@@ -1334,7 +1575,96 @@ export function AdminContestDetail({
           <p className="text-xs font-medium text-gray-600">
             취소가 완료된 시즌은 다시 정상 운영 상태로 되돌릴 수 없습니다.
           </p>
+          {cancelModalError ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
+            >
+              <V1IconAlert className="h-4 w-4 shrink-0" />
+              <span>{cancelModalError.text}</span>
+              {cancelModalError.requestId ? (
+                <RequestIdChip requestId={cancelModalError.requestId} />
+              ) : null}
+            </div>
+          ) : null}
         </div>
+      </DimModal>
+
+      {/* 6. 참가자 실격 처리 확인 모달 */}
+      <DimModal
+        open={disqualifyTarget !== null}
+        onClose={() => {
+          if (busyAction !== "disqualify") {
+            setDisqualifyModalError(null);
+            setDisqualifyTarget(null);
+          }
+        }}
+        title="대회 참가자 실격 처리"
+        subtitle={
+          disqualifyTarget
+            ? `${disqualifyTarget.nickname} (회원 #${disqualifyTarget.memberId} · 지갑 W-${disqualifyTarget.walletId})`
+            : undefined
+        }
+      >
+        {disqualifyTarget ? (
+          <form onSubmit={handleConfirmDisqualify} className="space-y-4 text-xs sm:text-sm">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 font-bold text-rose-900">
+              &quot;{disqualifyTarget.nickname}&quot; 참가자를 본 시즌에서 실격 처리하시겠습니까?
+              실격 즉시 시즌 전용 지갑이 비활성화되며 미체결 주문({disqualifyTarget.pendingOrderCount}건) 취소 및 오픈 포지션({disqualifyTarget.openPositionCount}건)이 청산 처리됩니다.
+            </div>
+            <div className="space-y-1.5">
+              <label
+                htmlFor="disqualify-reason-textarea"
+                className="block text-xs font-black text-gray-800"
+              >
+                실격 사유 (선택)
+              </label>
+              <textarea
+                id="disqualify-reason-textarea"
+                rows={3}
+                maxLength={500}
+                value={disqualifyReasonInput}
+                onChange={event => setDisqualifyReasonInput(event.currentTarget.value)}
+                placeholder="예: 비정상 반복 거래 또는 운영 정책 위반"
+                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0058FF] focus:outline-none"
+              />
+            </div>
+            {disqualifyModalError ? (
+              <div
+                role="alert"
+                className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#F6465D]"
+              >
+                <V1IconAlert className="h-4 w-4 shrink-0" />
+                <span>{disqualifyModalError.text}</span>
+                {disqualifyModalError.requestId ? (
+                  <RequestIdChip requestId={disqualifyModalError.requestId} />
+                ) : null}
+              </div>
+            ) : null}
+            <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
+              <V1Button
+                variant="white"
+                size="sm"
+                disabled={busyAction === "disqualify"}
+                onClick={() => {
+                  setDisqualifyModalError(null);
+                  setDisqualifyTarget(null);
+                }}
+              >
+                취소
+              </V1Button>
+              <V1Button
+                type="submit"
+                variant="red"
+                size="sm"
+                data-admin-confirm="disqualify-participant"
+                disabled={busyAction === "disqualify"}
+              >
+                {busyAction === "disqualify" ? "실격 처리 중…" : "참가자 실격 확정"}
+              </V1Button>
+            </div>
+          </form>
+        ) : null}
       </DimModal>
     </AdminShell>
   );

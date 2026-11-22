@@ -5,7 +5,17 @@ import type { TradingOrder } from "./orders";
 import { SERVER_MAX_LEVERAGE, validLimitPrice, validQuantity } from "./order-input";
 
 export type TradingCommand =
-  | { kind: "open"; tradingSymbolId: number; type: "MARKET" | "LIMIT"; side: "LONG" | "SHORT"; quantity: string; leverage: number; limitPrice?: string }
+  | {
+      kind: "open";
+      tradingSymbolId: number;
+      type: "MARKET" | "LIMIT";
+      side: "LONG" | "SHORT";
+      quantity: string;
+      leverage: number;
+      limitPrice?: string;
+      stopLossPrice?: string;
+      takeProfitPrice?: string;
+    }
   | { kind: "close"; positionId: number; quantity?: string }
   | { kind: "limitClose"; positionId: number; quantity?: string; limitPrice: string }
   | { kind: "amend"; orderId: number; quantity: string; limitPrice: string }
@@ -33,8 +43,14 @@ export function mutationRequest(command: TradingCommand) {
     if (!validQuantity(command.quantity) || !Number.isInteger(command.leverage) || command.leverage < 1 || command.leverage > SERVER_MAX_LEVERAGE
       || !["MARKET", "LIMIT"].includes(command.type) || !["LONG", "SHORT"].includes(command.side)) throw new TradingApiError(400, "주문 수량·유형·방향·레버리지를 확인해 주세요.");
     if (command.type === "LIMIT" && !validLimitPrice(command.limitPrice ?? "")) throw new TradingApiError(400, "양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.");
+    if (command.stopLossPrice !== undefined && !validLimitPrice(command.stopLossPrice)) throw new TradingApiError(400, "양수 손절 가격을 입력해 주세요.");
+    if (command.takeProfitPrice !== undefined && !validLimitPrice(command.takeProfitPrice)) throw new TradingApiError(400, "양수 익절 가격을 입력해 주세요.");
     return { path: "account/orders", body: { type: command.type, tradingSymbolId: command.tradingSymbolId, side: command.side,
-      quantity: command.quantity, leverage: command.leverage, ...(command.type === "LIMIT" ? { limitPrice: command.limitPrice } : {}) }, keyed: true };
+      quantity: command.quantity, leverage: command.leverage,
+      ...(command.type === "LIMIT" ? { limitPrice: command.limitPrice } : {}),
+      ...(command.type === "MARKET" && command.stopLossPrice ? { stopLossPrice: command.stopLossPrice } : {}),
+      ...(command.type === "MARKET" && command.takeProfitPrice ? { takeProfitPrice: command.takeProfitPrice } : {}),
+    }, keyed: true };
   }
   if (command.kind === "limitClose" && !validLimitPrice(command.limitPrice)) throw new TradingApiError(400, "양수 지정가를 입력해 주세요.");
   return { path: `account/positions/${command.positionId}/${command.kind === "close" ? "close" : "close-orders"}`,
@@ -90,6 +106,7 @@ export function createTradingIntent(send: (request: TradingIntent) => Promise<Tr
 const businessMessages: Record<string, string> = {
   LOCAL_COMMAND_JOURNAL_BLOCKED:"미확정 거래 기록을 먼저 확인해 주세요. 충돌하는 새 요청은 전송하지 않았습니다. 거래 복구 안내에서 기록과 브라우저 저장·동시 처리 지원을 확인해 주세요.",
   MEMBER_CREDENTIAL_REQUIRED: "회원 로그인이 필요합니다. 로그인 상태를 다시 확인해 주세요.",
+  MEMBER_SUSPENDED: "활동이 정지된 계정입니다. 1:1 고객지원에서 정지 사유 확인 또는 이의신청을 진행해 주세요.",
   MARGIN_MIGRATION_REQUIRED:"담보 전환이 완료되지 않아 거래가 제한됩니다. Guest 재도전 또는 계정 상태 확인이 필요합니다.",
   GUEST_ACCOUNT_REQUIRED:"Guest 계정에서만 재도전할 수 있습니다.",
   GUEST_CREDENTIAL_EXPIRED:"Guest 인증이 만료되었습니다. 새 모의투자는 직접 시작해 주세요.",
@@ -110,6 +127,11 @@ const businessMessages: Record<string, string> = {
 };
 export function mutationMessage(error: unknown) {
   if (!(error instanceof TradingApiError)) return unconfirmedMutationMessage;
+  if (error.status === 429 || error.code === "RATE_LIMITED") {
+    return error.retryAfterSeconds
+      ? `요청이 너무 많습니다. 약 ${error.retryAfterSeconds}초 후 다시 시도해 주세요.`
+      : "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+  }
   if (error.code && ["ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ORDER_SIZE_LIMIT_EXCEEDED", "POSITION_LIMIT_REACHED", "PENDING_LIMIT_REACHED", "POSITION_LIQUIDATION"].includes(error.code)) return orderReason(error.code);
   if (error.code && businessMessages[error.code]) return businessMessages[error.code];
   if (error.status === 401 || error.status === 403) return "계정 인증을 확인할 수 없습니다. 계정 상태를 다시 확인해 주세요. 주문은 새 계정으로 재전송하지 않습니다.";

@@ -20,6 +20,7 @@ import { useJournalResolution } from "../api/journal-resolution";
 import { formatMarketPrice } from "../market/price-format";
 import { usePositionMarkets } from "./selected-market-provider";
 import { positionValuation, takeProfitEstimate, takeProfitRoePreset } from "../api/position-display";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
 
 function errorMessage(error: unknown) {
   const messages: Record<string, string> = {
@@ -65,6 +66,7 @@ export function PositionTakeProfit({
   const [pending, setPending] = useState(false);
   const [unknown, setUnknown] = useState(false);
   const [message, setMessage] = useState("");
+  useDialogScrollLock(dialog, false, { canClose: () => !pending });
 
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
   const query = useQuery({
@@ -257,6 +259,12 @@ export function PositionTakeProfit({
             <dt>Mark Price</dt>
             <dd>{formatMarketPrice(liveMark, priceTickSize)}</dd>
           </div>
+          <div>
+            <dt>Liq. Price</dt>
+            <dd className="ym-modal-liq">
+              {position.liquidationPrice ? formatMarketPrice(position.liquidationPrice, priceTickSize) : "—"}
+            </dd>
+          </div>
           {current?.status === "ACTIVE" && current.takeProfitPrice && (
             <div>
               <dt>Active TP</dt>
@@ -379,6 +387,9 @@ export function PositionTakeProfit({
             ) : null}
 
             <div className="ym-modal-footer">
+              <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={closeModal}>
+                취소
+              </button>
               {unknown ? (
                 <button
                   type="button"
@@ -397,9 +408,6 @@ export function PositionTakeProfit({
                   {pending ? "처리 중…" : "확인"}
                 </button>
               )}
-              <button type="button" className="ym-modal-btn-cancel" disabled={pending} onClick={closeModal}>
-                취소
-              </button>
             </div>
           </form>
         )}

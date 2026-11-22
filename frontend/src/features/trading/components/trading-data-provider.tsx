@@ -38,7 +38,19 @@ export function bindGuestCache(client: QueryClient, session: GuestSession) {
   });
 }
 
-export function TradingDataProvider({ children, session: providedSession, client: providedClient, contestSeasonId }: { children: ReactNode; session?: GuestSession; client?: QueryClient; contestSeasonId?: number }) {
+export function TradingDataProvider({
+  children,
+  session: providedSession,
+  client: providedClient,
+  contestSeasonId,
+  suppressNotices = false,
+}: {
+  children: ReactNode;
+  session?: GuestSession;
+  client?: QueryClient;
+  contestSeasonId?: number;
+  suppressNotices?: boolean;
+}) {
   const { session: memberSession } = useMember();
   const [client] = useState(() => providedClient ?? new QueryClient({ defaultOptions: { queries: {
     staleTime: 15_000, gcTime: 60_000, retry: retryTradingQuery, refetchIntervalInBackground: false,
@@ -75,7 +87,7 @@ export function TradingDataProvider({ children, session: providedSession, client
     };
   }, [client, session, memberSession]);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, () => session.getSnapshot());
-  return <QueryClientProvider client={client}><SessionContext.Provider value={session}><MemberRoundMonitor /><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`}><GuestAccessProvider session={session}><TradingCommandRecovery />{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
+  return <QueryClientProvider client={client}><SessionContext.Provider value={session}><MemberRoundMonitor /><TradingNoticeProvider identity={`${snapshot.accountId}:${snapshot.generation}`} suppressRender={suppressNotices}><GuestAccessProvider session={session}><TradingCommandRecovery />{children}</GuestAccessProvider></TradingNoticeProvider></SessionContext.Provider></QueryClientProvider>;
 }
 
 export function useGuestSession() {

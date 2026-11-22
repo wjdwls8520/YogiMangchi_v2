@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   useEffect,
   useId,
+  useRef,
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -14,6 +15,7 @@ import {
 import { createPortal } from "react-dom";
 import { registerOverlayEscape, useDimScrollLock } from "./dim-modal";
 import { useOptionalMember } from "./member-provider";
+import { MemberGlobalBanners } from "./member-recovery-status";
 import { useOptionalNotificationCenter } from "../notifications/notification-context";
 import { formatNotificationCount } from "../notifications/notification-utils";
 import type { MemberRole } from "../api/contracts";
@@ -21,6 +23,7 @@ import {
   writeHeaderAuthHint,
   type HeaderAuthHint,
 } from "../api/session";
+import { useFocusTrap } from "../../../lib/use-focus-trap";
 
 export interface V1FlatIconProps extends SVGProps<SVGSVGElement> {
   className?: string;
@@ -548,7 +551,7 @@ export function V1Button({
       type={type}
       disabled={isLoading || disabled}
       className={cn(
-        "inline-flex shrink-0 whitespace-nowrap items-center justify-center rounded-xl font-bold transition-colors cursor-pointer focus:outline-none disabled:cursor-default disabled:opacity-50",
+        "inline-flex shrink-0 whitespace-nowrap items-center justify-center rounded-xl font-bold transition-colors cursor-pointer disabled:cursor-default disabled:opacity-50",
         variantClass,
         sizeClass,
         fullWidth && "w-full",
@@ -632,7 +635,7 @@ export function V1Tabs({
               aria-selected={isActive}
               onClick={() => onChange(tab.value)}
               className={cn(
-                "relative inline-flex h-10 shrink-0 items-center justify-center rounded-t-xl border border-b-0 px-3 sm:px-5 text-xs sm:text-sm whitespace-nowrap select-none cursor-pointer focus:outline-none",
+                "relative inline-flex h-10 shrink-0 items-center justify-center rounded-t-xl border border-b-0 px-3 sm:px-5 text-xs sm:text-sm whitespace-nowrap select-none cursor-pointer",
                 fullWidth && "flex-1",
                 isActive
                   ? "border-[#0058FF] bg-[#0058FF] font-black text-white"
@@ -650,6 +653,7 @@ export function V1Tabs({
 
   return (
     <div
+      role="tablist"
       className={cn(
         "flex overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]",
         variant === "underline" && cn("border-b", isDark ? "border-white/10" : "border-gray-200"),
@@ -664,6 +668,8 @@ export function V1Tabs({
           <button
             key={tab.value}
             type="button"
+            role="tab"
+            aria-selected={isActive}
             onClick={() => onChange(tab.value)}
             className={cn(
               "relative transition-colors shrink-0 whitespace-nowrap",
@@ -729,13 +735,15 @@ export function V1FolderTabs({
 
   return (
     <div className="w-full">
-      <div className="flex items-end gap-0.5 min-h-[48px] rounded-t-md bg-gray-900 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+      <div role="tablist" className="flex items-end gap-0.5 min-h-[48px] rounded-t-md bg-gray-900 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {tabs.map(tab => {
           const isActive = currentActiveId === tab.id;
           return (
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={isActive}
               onClick={() => handleChange(tab.id)}
               className={cn(
                 "relative flex items-center justify-center px-3 sm:px-6 transition-colors rounded-t-lg text-xs sm:text-sm whitespace-nowrap shrink-0",
@@ -799,13 +807,15 @@ export function V1SegmentTabs({
             : "rounded";
 
   return (
-    <div className={cn("flex max-w-full gap-1 overflow-x-auto", className)}>
+    <div role="tablist" className={cn("flex max-w-full gap-1 overflow-x-auto", className)}>
       {tabs.map(tab => {
         const isActive = activeTab === tab.value;
         return (
           <button
             key={tab.value}
             type="button"
+            role="tab"
+            aria-selected={isActive}
             onClick={() => onChange(tab.value)}
             className={cn(
               "border font-black transition-colors whitespace-nowrap shrink-0",
@@ -939,7 +949,12 @@ export function V1ProfileSidebar({
   onClickFollowers?: () => void;
   onClickFollowings?: () => void;
 }) {
-  const roleLabel = profile.role === "ADMIN" ? "관리자" : "일반회원";
+  const roleLabel =
+    profile.role === "ADMIN"
+      ? "관리자"
+      : profile.role === "USER"
+        ? "일반회원"
+        : "트레이더";
   const roleBadgeClass =
     profile.role === "ADMIN" ? "bg-orange-50 text-orange-600" : "bg-gray-100 text-gray-600";
 
@@ -977,8 +992,8 @@ export function V1ProfileSidebar({
               onClick={onClickFollowers}
               className="text-center rounded-2xl px-2 py-1 transition-colors hover:bg-gray-50"
             >
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-                Followers
+              <p className="text-[11px] text-gray-500 font-bold">
+                팔로워
               </p>
               <p className="text-lg font-black text-gray-900 transition-colors hover:text-[#0058FF]">
                 {profile.followerCount}
@@ -986,8 +1001,8 @@ export function V1ProfileSidebar({
             </button>
           ) : (
             <div className="text-center px-2 py-1">
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-                Followers
+              <p className="text-[11px] text-gray-500 font-bold">
+                팔로워
               </p>
               <p className="text-lg font-black text-gray-900">{profile.followerCount}</p>
             </div>
@@ -999,8 +1014,8 @@ export function V1ProfileSidebar({
               onClick={onClickFollowings}
               className="border-l border-gray-100 text-center rounded-2xl px-2 py-1 transition-colors hover:bg-gray-50"
             >
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-                Following
+              <p className="text-[11px] text-gray-500 font-bold">
+                팔로잉
               </p>
               <p className="text-lg font-black text-gray-900 transition-colors hover:text-[#0058FF]">
                 {profile.followingCount}
@@ -1008,8 +1023,8 @@ export function V1ProfileSidebar({
             </button>
           ) : (
             <div className="border-l border-gray-100 text-center px-2 py-1">
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-                Following
+              <p className="text-[11px] text-gray-500 font-bold">
+                팔로잉
               </p>
               <p className="text-lg font-black text-gray-900">{profile.followingCount}</p>
             </div>
@@ -1061,13 +1076,19 @@ export function V1Header({
       .request("/members/me", { signal: controller.signal })
       .then(data => {
         if (data && typeof data === "object") {
-          const rawRole = (data as { role?: unknown }).role;
+          const record = data as { role?: unknown; accountStatus?: unknown; status?: unknown; suspensionReason?: unknown; suspendedReason?: unknown };
+          const rawRole = record.role;
           const resolved: MemberRole =
             rawRole === "ADMIN" || rawRole === "ROLE_ADMIN" ? "ADMIN" : "MEMBER";
           setVerifiedRole({ key: sessionKey, role: resolved });
           const nextHint: HeaderAuthHint = { loggedIn: true, role: resolved };
           writeHeaderAuthHint(nextHint);
           memberCtx.session.setRole(resolved, memberId, generation);
+          const rawAccountStatus = typeof record.accountStatus === "string" ? record.accountStatus : typeof record.status === "string" ? record.status : undefined;
+          if (rawAccountStatus) {
+            const rawReason = typeof record.suspensionReason === "string" ? record.suspensionReason : typeof record.suspendedReason === "string" ? record.suspendedReason : null;
+            memberCtx.session.setAccountStatus(rawAccountStatus, rawReason, memberId, generation);
+          }
         }
       })
       .catch(() => {
@@ -1089,7 +1110,9 @@ export function V1Header({
         : false;
 
   const mobileDrawerId = useId();
+  const mobileDrawerRef = useRef<HTMLElement>(null);
   useDimScrollLock(isMenuOpen);
+  useFocusTrap(isMenuOpen, mobileDrawerRef);
 
   useEffect(() => {
     if (!isMenuOpen || typeof window === "undefined") return;
@@ -1230,7 +1253,7 @@ export function V1Header({
                     aria-label="알림 열기"
                     onClick={() => notifCenter?.toggleDrawer()}
                     className={cn(
-                      "relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors cursor-pointer focus:outline-none",
+                      "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors cursor-pointer",
                       isDark
                         ? "text-gray-200 hover:bg-white/10 hover:text-white"
                         : "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
@@ -1240,7 +1263,7 @@ export function V1Header({
                     {newNotificationCount > 0 ? (
                       <span
                         data-notification-badge="true"
-                        className="absolute right-0 top-0 flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-red-500 px-1 text-center text-[9px] font-extrabold leading-none text-white"
+                        className="absolute right-1 top-1 flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-red-500 px-1 text-center text-[9px] font-extrabold leading-none text-white"
                       >
                         {formatNotificationCount(newNotificationCount)}
                       </span>
@@ -1285,7 +1308,7 @@ export function V1Header({
               type="button"
               onClick={() => setIsMenuOpen(true)}
               className={cn(
-                "inline-flex h-9 w-9 items-center justify-center rounded-lg md:hidden focus:outline-none",
+                "inline-flex h-11 w-11 items-center justify-center rounded-lg md:hidden",
                 isDark ? "text-gray-200 hover:bg-white/10" : "text-gray-700 hover:bg-gray-100",
               )}
               aria-label="메뉴 열기"
@@ -1298,6 +1321,7 @@ export function V1Header({
           </div>
         </div>
       </header>
+      <MemberGlobalBanners />
 
       {/* V1 모바일 사이드 드로어 (MenuLayer + Dim, body 포털 마운트) */}
       {isMenuOpen
@@ -1309,6 +1333,10 @@ export function V1Header({
                   onClick={() => setIsMenuOpen(false)}
                 />
                 <aside
+                  ref={mobileDrawerRef}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="모바일 전체 메뉴"
                   className={cn(
                     "fixed right-0 top-0 z-[76] h-dvh w-[min(18rem,85vw)] overflow-y-auto p-6 border-l",
                     isDark
@@ -1332,7 +1360,7 @@ export function V1Header({
                       type="button"
                       onClick={() => setIsMenuOpen(false)}
                       className={cn(
-                        "rounded-lg p-1 cursor-pointer",
+                        "inline-flex h-11 w-11 items-center justify-center rounded-lg cursor-pointer",
                         isDark
                           ? "text-gray-400 hover:bg-white/10 hover:text-white"
                           : "text-gray-500 hover:bg-gray-100",
@@ -1357,7 +1385,7 @@ export function V1Header({
                           href={item.href}
                           aria-current={active ? "page" : undefined}
                           className={cn(
-                            "rounded-xl px-3 py-2.5 transition-colors",
+                            "flex min-h-11 items-center rounded-xl px-3 py-2.5 transition-colors",
                             active
                               ? isDark
                                 ? "bg-[#F0B90B]/15 text-[#F0B90B]"
@@ -1373,68 +1401,70 @@ export function V1Header({
                       );
                     })}
                     {isLoggedIn ? (
-                      <Link
-                        href="/notifications"
-                        aria-current={isNavRouteActive("/notifications") ? "page" : undefined}
-                        className={cn(
-                          "flex items-center justify-between rounded-xl px-3 py-2.5 transition-colors",
-                          isNavRouteActive("/notifications")
-                            ? isDark
-                              ? "bg-[#F0B90B]/15 text-[#F0B90B]"
-                              : "bg-blue-50 text-[#0058FF]"
-                            : isDark
-                              ? "text-gray-200 hover:bg-white/10 hover:text-white"
-                              : "hover:bg-gray-50",
-                        )}
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        <span>알림 내역</span>
-                        {newNotificationCount > 0 ? (
-                          <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-extrabold text-white">
-                            {formatNotificationCount(newNotificationCount)}
-                          </span>
-                        ) : null}
-                      </Link>
+                      <>
+                        <Link
+                          href="/notifications"
+                          aria-current={isNavRouteActive("/notifications") ? "page" : undefined}
+                          className={cn(
+                            "flex min-h-11 items-center justify-between rounded-xl px-3 py-2.5 transition-colors",
+                            isNavRouteActive("/notifications")
+                              ? isDark
+                                ? "bg-[#F0B90B]/15 text-[#F0B90B]"
+                                : "bg-blue-50 text-[#0058FF]"
+                              : isDark
+                                ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                                : "hover:bg-gray-50",
+                          )}
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          <span>알림 내역</span>
+                          {newNotificationCount > 0 ? (
+                            <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-extrabold text-white">
+                              {formatNotificationCount(newNotificationCount)}
+                            </span>
+                          ) : null}
+                        </Link>
+                        <Link
+                          href="/me"
+                          aria-current={isNavRouteActive("/me") ? "page" : undefined}
+                          className={cn(
+                            "flex min-h-11 items-center rounded-xl px-3 py-2.5 transition-colors",
+                            isNavRouteActive("/me")
+                              ? isDark
+                                ? "bg-[#F0B90B]/15 text-[#F0B90B]"
+                                : "bg-blue-50 text-[#0058FF]"
+                              : isDark
+                                ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                                : "hover:bg-gray-50",
+                          )}
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          마이페이지 · 자산/포트폴리오
+                        </Link>
+                        <Link
+                          href="/me/settings"
+                          aria-current={isNavRouteActive("/me/settings") ? "page" : undefined}
+                          className={cn(
+                            "flex min-h-11 items-center rounded-xl px-3 py-2.5 transition-colors",
+                            isNavRouteActive("/me/settings")
+                              ? isDark
+                                ? "bg-[#F0B90B]/15 text-[#F0B90B]"
+                                : "bg-blue-50 text-[#0058FF]"
+                              : isDark
+                                ? "text-gray-200 hover:bg-white/10 hover:text-white"
+                                : "hover:bg-gray-50",
+                          )}
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          회원정보 수정
+                        </Link>
+                      </>
                     ) : null}
-                    <Link
-                      href="/me"
-                      aria-current={isNavRouteActive("/me") ? "page" : undefined}
-                      className={cn(
-                        "rounded-xl px-3 py-2.5 transition-colors",
-                        isNavRouteActive("/me")
-                          ? isDark
-                            ? "bg-[#F0B90B]/15 text-[#F0B90B]"
-                            : "bg-blue-50 text-[#0058FF]"
-                          : isDark
-                            ? "text-gray-200 hover:bg-white/10 hover:text-white"
-                            : "hover:bg-gray-50",
-                      )}
-                      onClick={() => setIsMenuOpen(false)}
-                    >
-                      마이페이지 · 자산/포트폴리오
-                    </Link>
-                    <Link
-                      href="/me/settings"
-                      aria-current={isNavRouteActive("/me/settings") ? "page" : undefined}
-                      className={cn(
-                        "rounded-xl px-3 py-2.5 transition-colors",
-                        isNavRouteActive("/me/settings")
-                          ? isDark
-                            ? "bg-[#F0B90B]/15 text-[#F0B90B]"
-                            : "bg-blue-50 text-[#0058FF]"
-                          : isDark
-                            ? "text-gray-200 hover:bg-white/10 hover:text-white"
-                            : "hover:bg-gray-50",
-                      )}
-                      onClick={() => setIsMenuOpen(false)}
-                    >
-                      회원정보 수정
-                    </Link>
                     <Link
                       href="/support"
                       aria-current={isNavRouteActive("/support") ? "page" : undefined}
                       className={cn(
-                        "rounded-xl px-3 py-2.5 transition-colors",
+                        "flex min-h-11 items-center rounded-xl px-3 py-2.5 transition-colors",
                         isNavRouteActive("/support")
                           ? isDark
                             ? "bg-[#F0B90B]/15 text-[#F0B90B]"
@@ -1452,7 +1482,7 @@ export function V1Header({
                         href="/admin/contest"
                         aria-current={isNavRouteActive("/admin/contest") ? "page" : undefined}
                         className={cn(
-                          "rounded-xl px-3 py-2.5 transition-colors",
+                          "flex min-h-11 items-center rounded-xl px-3 py-2.5 transition-colors",
                           isNavRouteActive("/admin/contest")
                             ? isDark
                               ? "bg-[#F0B90B]/20 text-[#F0B90B]"
@@ -1467,30 +1497,17 @@ export function V1Header({
                       </Link>
                     ) : null}
                   </nav>
-                  <div
-                    className={cn(
-                      "mt-6 flex flex-col gap-2 border-t pt-4",
-                      isDark ? "border-white/10" : "border-gray-100",
-                    )}
-                  >
-                    {isLoggedIn ? (
-                      <Link
-                        href="/me"
-                        className={cn(
-                          "inline-flex h-9 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
-                          isDark
-                            ? "bg-white text-gray-900 hover:bg-gray-200"
-                            : "bg-gray-900 text-white hover:bg-gray-800",
-                        )}
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        마이페이지
-                      </Link>
-                    ) : (
+                  {!isLoggedIn && (
+                    <div
+                      className={cn(
+                        "mt-6 flex flex-col gap-2 border-t pt-4",
+                        isDark ? "border-white/10" : "border-gray-100",
+                      )}
+                    >
                       <Link
                         href="/login"
                         className={cn(
-                          "inline-flex h-9 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
+                          "inline-flex h-11 w-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors",
                           isDark
                             ? "bg-white text-gray-900 hover:bg-gray-200"
                             : "bg-gray-900 text-white hover:bg-gray-800",
@@ -1502,8 +1519,8 @@ export function V1Header({
                       >
                         로그인
                       </Link>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </aside>
               </div>
             );

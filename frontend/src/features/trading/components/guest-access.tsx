@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useMember } from "../../member/components/member-provider";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
 import { MemberTradingPrompt } from "./member-trading-prompt";
 import { initialSession, type GuestSession, type SessionSnapshot } from "../api/guest-session";
 
@@ -99,6 +100,7 @@ export function GuestStartDialog({ dialogRef, creating, failed, onStart, onCance
   dialogRef: RefObject<HTMLDialogElement | null>; creating: boolean; failed: boolean;
   onStart: () => void; onCancel: () => void; onClose: () => void; member?: boolean;
 }) {
+  useDialogScrollLock(dialogRef, false, { canClose: () => !creating });
   return <dialog ref={dialogRef} className="guest-start-dialog ym-exchange-modal" aria-modal="true" aria-labelledby="guest-start-heading" aria-describedby="guest-start-description"
     onClick={event => { if (event.target === event.currentTarget && event.detail < 2 && !creating) onCancel(); }}
     onCancel={(event) => { if (creating) event.preventDefault(); }} onClose={onClose}>
