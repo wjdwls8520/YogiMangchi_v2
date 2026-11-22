@@ -427,7 +427,15 @@ class DurableRiskIntegrationTests {
     private OrderResponse market(long account){
         LegacyLeverageFixtures.tenTimes(jdbc,account,btc,Position.Side.LONG);
         return orders.create(account,key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n("1"),10,null));}
-    private LatestMarkPrice tick(String amount){Instant now=Instant.now();var tick=new LatestMarkPrice(btc,n(amount),now,now);assertThat(prices.update(tick)).isTrue();return tick;}
+    private LatestMarkPrice tick(String amount){
+        Instant receivedAt=Instant.now();
+        Instant eventTime=receivedAt.truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        Instant previous=prices.find(btc).latestPrice().map(LatestMarkPrice::eventTime).orElse(Instant.MIN);
+        if(!eventTime.isAfter(previous))eventTime=previous.truncatedTo(java.time.temporal.ChronoUnit.MICROS).plus(1,java.time.temporal.ChronoUnit.MICROS);
+        var tick=new LatestMarkPrice(btc,n(amount),eventTime,receivedAt);
+        assertThat(prices.update(tick)).isTrue();
+        return tick;
+    }
     private String orderStatus(long order){return jdbc.queryForObject("select status from trading.trading_order where id=?",String.class,order);}
     private long fillCount(long account){return jdbc.queryForObject("select count(*) from trading.fill f join trading.trading_order o on o.id=f.order_id where o.account_id=?",Long.class,account);}
     private static void rejects(Runnable action,ErrorCode code){assertThatThrownBy(action::run).isInstanceOfSatisfying(BusinessException.class,e->assertThat(e.getCode()).isEqualTo(code));}

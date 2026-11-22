@@ -129,9 +129,6 @@ public class RiskJournalRetentionService {
             long dispatchCursorEventId = Objects.requireNonNullElse(
                     jdbc.queryForObject("SELECT COALESCE((SELECT event_id FROM trading.risk_dispatch_cursor WHERE id = 1), 0)", Long.class),
                     0L);
-            long minHeadEventId = Objects.requireNonNullElse(
-                    jdbc.queryForObject("SELECT COALESCE(MIN(event_id), 0) FROM trading.risk_price_head", Long.class),
-                    0L);
             long minUnresolvedWorkEventId = Objects.requireNonNullElse(
                     jdbc.queryForObject(
                             "SELECT COALESCE(MIN(event_id), ?) FROM trading.risk_account_work WHERE status IN ('PENDING', 'HELD')",
@@ -139,7 +136,9 @@ public class RiskJournalRetentionService {
                             Long.MAX_VALUE),
                     Long.MAX_VALUE);
 
-            long safeMaxEventId = Math.min(dispatchCursorEventId, Math.min(minHeadEventId, minUnresolvedWorkEventId));
+            // Do not pin safeMaxEventId to MIN(risk_price_head.event_id): idle symbols legitimately stop advancing
+            // their head while active symbols continue journaling. Head rows are protected individually below.
+            long safeMaxEventId = Math.min(dispatchCursorEventId, minUnresolvedWorkEventId);
             if (safeMaxEventId <= 0) {
                 return new RetentionPurgeResult(0, 0, 0);
             }
@@ -151,6 +150,10 @@ public class RiskJournalRetentionService {
                       AND w.completed_at IS NOT NULL
                       AND w.completed_at < ?
                       AND w.event_id < ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM trading.risk_price_head h
+                          WHERE h.event_id = w.event_id
+                      )
                       AND NOT EXISTS (
                           SELECT 1 FROM trading.risk_hold h
                           WHERE h.account_id = w.account_id AND h.event_id = w.event_id
