@@ -14,6 +14,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,6 +38,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -53,6 +55,7 @@ public class CommunityS3Service {
     public static final long MAX_TOTAL_FILE_SIZE = 20L * 1024 * 1024;
     public static final String POST_PREFIX = "community/post";
     public static final String PROFILE_PREFIX = "member/profile";
+    private static final String DEFAULT_LOCAL_MEDIA_DIR = ".gradle/local-runtime/uploads";
 
     private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
             "image/jpeg",
@@ -68,6 +71,9 @@ public class CommunityS3Service {
             "webp",
             "gif"
     );
+    private static final Set<String> VIDEO_EXTENSIONS = Set.of(
+            "mp4", "mov", "webm", "avi", "mkv", "m4v"
+    );
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final byte[] PLACEHOLDER_SVG_BYTES = (
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"640\" height=\"360\" viewBox=\"0 0 640 360\">"
@@ -79,6 +85,29 @@ public class CommunityS3Service {
                     + "<text x=\"320\" y=\"238\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"12\" fill=\"#64748B\">이미지 저장소 준비 중</text>"
                     + "</svg>"
     ).getBytes(StandardCharsets.UTF_8);
+
+    public enum DetectedImageType {
+        JPEG("image/jpeg", "jpg"),
+        PNG("image/png", "png"),
+        GIF("image/gif", "gif"),
+        WEBP("image/webp", "webp");
+
+        private final String mimeType;
+        private final String extension;
+
+        DetectedImageType(String mimeType, String extension) {
+            this.mimeType = mimeType;
+            this.extension = extension;
+        }
+
+        public String mimeType() {
+            return mimeType;
+        }
+
+        public String extension() {
+            return extension;
+        }
+    }
 
     public record UploadResult(
             String key,
@@ -100,6 +129,8 @@ public class CommunityS3Service {
             int maxAttempts
     ) { }
 
+    private record DeleteAttemptResult(boolean deleted, String errorDetail) { }
+
     private final String bucket;
     private final String region;
     private final String normalizedPublicBaseUrl;
@@ -108,14 +139,12 @@ public class CommunityS3Service {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate requiresNewTx;
     private final OpsAlertService opsAlert;
-    private final Set<String> simulatedStore = ConcurrentHashMap.newKeySet();
-    private final Map<String, LocalMediaPayload> localMemoryStore = new ConcurrentHashMap<>();
     private final Set<String> simulatedDeleteFailureKeys = ConcurrentHashMap.newKeySet();
     private final AtomicInteger realS3PutCounter = new AtomicInteger();
     private final AtomicInteger realS3DeleteCounter = new AtomicInteger();
 
     public CommunityS3Service(String bucket, String accessKey, String secretKey, String region) {
-        this(true, null, bucket, accessKey, secretKey, region, null, null, null);
+        this(true, null, DEFAULT_LOCAL_MEDIA_DIR, bucket, accessKey, secretKey, region, null, null, null);
     }
 
     public CommunityS3Service(
@@ -125,7 +154,7 @@ public class CommunityS3Service {
             String region,
             JdbcTemplate jdbc,
             PlatformTransactionManager txManager) {
-        this(true, null, bucket, accessKey, secretKey, region, jdbc, txManager, null);
+        this(true, null, DEFAULT_LOCAL_MEDIA_DIR, bucket, accessKey, secretKey, region, jdbc, txManager, null);
     }
 
     public CommunityS3Service(
@@ -137,13 +166,14 @@ public class CommunityS3Service {
             String region,
             JdbcTemplate jdbc,
             PlatformTransactionManager txManager) {
-        this(s3Enabled, publicBaseUrl, bucket, accessKey, secretKey, region, jdbc, txManager, null);
+        this(s3Enabled, publicBaseUrl, DEFAULT_LOCAL_MEDIA_DIR, bucket, accessKey, secretKey, region, jdbc, txManager, null);
     }
 
     @Autowired
     public CommunityS3Service(
             @Value("${content.s3.enabled:false}") boolean s3Enabled,
-            @Value("${content.s3.public-base-url:http://localhost:8080}") String publicBaseUrl,
+            @Value("${content.s3.public-base-url:${CONTENT_PUBLIC_BASE_URL:http://localhost:8080}}") String publicBaseUrl,
+            @Value("${content.s3.local-media-dir:${CONTENT_LOCAL_MEDIA_DIR:.gradle/local-runtime/uploads}}") String localMediaDir,
             @Value("${content.s3.bucket:}") String bucket,
             @Value("${content.s3.access-key:}") String accessKey,
             @Value("${content.s3.secret-key:}") String secretKey,
@@ -156,9 +186,10 @@ public class CommunityS3Service {
         this.region = (region == null || region.isBlank()) ? "ap-northeast-2" : region.strip();
         String trimmedBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.strip().replaceAll("/+$", "");
         this.normalizedPublicBaseUrl = trimmedBaseUrl.isEmpty() ? null : trimmedBaseUrl;
-        this.localStorageRoot = this.normalizedPublicBaseUrl != null
-                ? Path.of(".gradle", "local-runtime", "uploads").toAbsolutePath().normalize()
-                : null;
+        String effectiveDir = (localMediaDir == null || localMediaDir.isBlank())
+                ? DEFAULT_LOCAL_MEDIA_DIR
+                : localMediaDir.strip();
+        this.localStorageRoot = Path.of(effectiveDir).toAbsolutePath().normalize();
         this.jdbc = jdbc;
         if (txManager != null) {
             TransactionTemplate tpl = new TransactionTemplate(txManager);
@@ -194,6 +225,14 @@ public class CommunityS3Service {
 
     public int realS3DeleteCount() {
         return realS3DeleteCounter.get();
+    }
+
+    public String storageMode() {
+        return s3Client != null ? "S3" : "LOCAL_DISK";
+    }
+
+    public Path localStorageRoot() {
+        return localStorageRoot;
     }
 
     public void failSimulatedDeleteForKey(String key) {
@@ -243,30 +282,39 @@ public class CommunityS3Service {
         if ("placeholder.svg".equals(key)) {
             return new LocalMediaPayload(PLACEHOLDER_SVG_BYTES, "image/svg+xml");
         }
+        Path target = resolveSafeLocalPath(key);
+        if (target == null || !Files.isRegularFile(target)) {
+            return null;
+        }
+        try {
+            byte[] bytes = Files.readAllBytes(target);
+            DetectedImageType detected = detectMagicBytes(bytes, bytes.length);
+            String canonicalMime = detected != null ? detected.mimeType() : contentTypeFromKey(key);
+            return new LocalMediaPayload(bytes, canonicalMime);
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private Path resolveSafeLocalPath(String rawKey) {
+        if (localStorageRoot == null || rawKey == null || rawKey.isBlank()) {
+            return null;
+        }
+        String key = rawKey.strip();
+        while (key.startsWith("/")) {
+            key = key.substring(1);
+        }
         if (key.contains("..") || key.indexOf('\\') >= 0 || key.indexOf('\0') >= 0) {
             return null;
         }
         if (!key.startsWith(PROFILE_PREFIX + "/") && !key.startsWith(POST_PREFIX + "/")) {
             return null;
         }
-        LocalMediaPayload cached = localMemoryStore.get(key);
-        if (cached != null) {
-            return cached;
+        Path target = localStorageRoot.resolve(key).normalize();
+        if (!target.startsWith(localStorageRoot)) {
+            return null;
         }
-        if (localStorageRoot != null) {
-            Path target = localStorageRoot.resolve(key).normalize();
-            if (target.startsWith(localStorageRoot) && Files.isRegularFile(target)) {
-                try {
-                    byte[] bytes = Files.readAllBytes(target);
-                    LocalMediaPayload loaded = new LocalMediaPayload(bytes, contentTypeFromKey(key));
-                    localMemoryStore.put(key, loaded);
-                    return loaded;
-                } catch (IOException ignored) {
-                    return null;
-                }
-            }
-        }
-        return null;
+        return target;
     }
 
     private static String contentTypeFromKey(String key) {
@@ -281,8 +329,8 @@ public class CommunityS3Service {
         if (file == null || file.isEmpty()) {
             throw invalidRequest();
         }
-        validateImageFile(file);
-        UploadResult uploaded = uploadSingleImage(file, PROFILE_PREFIX);
+        DetectedImageType detected = validateAndDetectImage(file);
+        UploadResult uploaded = uploadSingleImage(file, detected, PROFILE_PREFIX);
         registerRollbackCleanup(List.of(uploaded.key()));
         return uploaded;
     }
@@ -298,23 +346,24 @@ public class CommunityS3Service {
             return List.of();
         }
         if (existingRemainingCount + nonEmpty.size() > MAX_POST_IMAGE_COUNT) {
-            throw badRequest("FILE_COUNT_EXCEEDED");
+            throw badRequest("FILE_COUNT_EXCEEDED", "게시글당 첨부 이미지는 최대 10개까지 업로드할 수 있습니다.");
         }
 
+        List<DetectedImageType> detectedTypes = new ArrayList<>(nonEmpty.size());
         long totalSize = 0L;
         for (MultipartFile file : nonEmpty) {
-            validateImageFile(file);
+            detectedTypes.add(validateAndDetectImage(file));
             totalSize += file.getSize();
             if (totalSize > MAX_TOTAL_FILE_SIZE) {
-                throw badRequest("FILE_TOTAL_SIZE_EXCEEDED");
+                throw badRequest("FILE_TOTAL_SIZE_EXCEEDED", "첨부 이미지 총 용량은 최대 20MB까지 업로드할 수 있습니다.");
             }
         }
 
         List<UploadResult> uploaded = new ArrayList<>(nonEmpty.size());
         List<String> uploadedKeys = new ArrayList<>(nonEmpty.size());
         try {
-            for (MultipartFile file : nonEmpty) {
-                UploadResult result = uploadSingleImage(file, POST_PREFIX);
+            for (int i = 0; i < nonEmpty.size(); i++) {
+                UploadResult result = uploadSingleImage(nonEmpty.get(i), detectedTypes.get(i), POST_PREFIX);
                 uploaded.add(result);
                 uploadedKeys.add(result.key());
             }
@@ -329,6 +378,10 @@ public class CommunityS3Service {
     }
 
     public void validateImageFile(MultipartFile file) {
+        validateAndDetectImage(file);
+    }
+
+    public DetectedImageType validateAndDetectImage(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw invalidRequest();
         }
@@ -337,37 +390,116 @@ public class CommunityS3Service {
             throw invalidRequest();
         }
         String contentType = file.getContentType();
-        if (contentType == null) {
-            throw badRequest("FILE_TYPE_NOT_ALLOWED");
+        if (contentType != null && !contentType.isBlank()) {
+            String normalizedType = normalizeMimeType(contentType);
+            if (normalizedType.startsWith("video/")) {
+                throw badRequest("FILE_VIDEO_NOT_ALLOWED", "동영상 파일은 업로드할 수 없습니다.");
+            }
+            if (!ALLOWED_IMAGE_TYPES.contains(normalizedType)) {
+                throw badRequest("FILE_TYPE_NOT_ALLOWED", "지원하지 않는 파일 형식입니다. JPG, PNG, GIF, WEBP 이미지만 업로드할 수 있습니다.");
+            }
+        } else {
+            throw badRequest("FILE_TYPE_NOT_ALLOWED", "파일 형식을 확인할 수 없습니다. JPG, PNG, GIF, WEBP 이미지만 업로드할 수 있습니다.");
         }
-        String normalizedType = normalizeMimeType(contentType);
-        if (normalizedType.startsWith("video/")) {
-            throw badRequest("FILE_VIDEO_NOT_ALLOWED");
-        }
-        if (!ALLOWED_IMAGE_TYPES.contains(normalizedType)) {
-            throw badRequest("FILE_TYPE_NOT_ALLOWED");
-        }
+
         String originalFilename = file.getOriginalFilename();
         if (originalFilename != null && !originalFilename.isBlank()) {
             String sanitized = sanitizeOriginalName(originalFilename);
             int dot = sanitized.lastIndexOf('.');
             if (dot >= 0 && dot < sanitized.length() - 1) {
                 String ext = sanitized.substring(dot + 1).toLowerCase(Locale.ROOT);
-                if (Set.of("mp4", "mov", "webm", "avi", "mkv", "m4v").contains(ext)) {
-                    throw badRequest("FILE_VIDEO_NOT_ALLOWED");
+                if (VIDEO_EXTENSIONS.contains(ext)) {
+                    throw badRequest("FILE_VIDEO_NOT_ALLOWED", "동영상 파일은 업로드할 수 없습니다.");
                 }
                 if (!ALLOWED_EXTENSIONS.contains(ext)) {
-                    throw badRequest("FILE_TYPE_NOT_ALLOWED");
+                    throw badRequest("FILE_TYPE_NOT_ALLOWED", "지원하지 않는 확장자입니다. JPG, PNG, GIF, WEBP 이미지만 업로드할 수 있습니다.");
                 }
             }
         }
-        if ("image/gif".equals(normalizedType)) {
+
+        // Inspect actual file header magic bytes (never trust client Content-Type or filename extension).
+        byte[] header = new byte[16];
+        int bytesRead;
+        try (InputStream is = file.getInputStream()) {
+            bytesRead = readHeader(is, header);
+        } catch (IOException e) {
+            throw invalidRequest();
+        }
+
+        DetectedImageType detected = detectMagicBytes(header, bytesRead);
+        if (detected == null) {
+            throw badRequest("FILE_TYPE_NOT_ALLOWED", "유효한 이미지 파일(JPG, PNG, GIF, WEBP)이 아닙니다. 파일 형식을 확인해 주세요.");
+        }
+
+        // Enforce 3MB GIF limit strictly by detected magic bytes (catches .gif renamed to .jpg).
+        if (detected == DetectedImageType.GIF) {
             if (size > MAX_GIF_FILE_SIZE) {
-                throw badRequest("GIF_FILE_TOO_LARGE");
+                throw badRequest("GIF_FILE_TOO_LARGE", "GIF 이미지는 최대 3MB까지 업로드할 수 있습니다.");
             }
         } else if (size > MAX_SINGLE_FILE_SIZE) {
-            throw badRequest("IMAGE_FILE_TOO_LARGE");
+            throw badRequest("IMAGE_FILE_TOO_LARGE", "이미지는 최대 5MB까지 업로드할 수 있습니다.");
         }
+
+        return detected;
+    }
+
+    public static DetectedImageType detectMagicBytes(byte[] bytes, int length) {
+        if (bytes == null || length < 3) {
+            return null;
+        }
+        // JPEG: FF D8 FF
+        if ((bytes[0] & 0xFF) == 0xFF
+                && (bytes[1] & 0xFF) == 0xD8
+                && (bytes[2] & 0xFF) == 0xFF) {
+            return DetectedImageType.JPEG;
+        }
+        // PNG: 89 50 4E 47 0D 0A 1A 0A
+        if (length >= 8
+                && (bytes[0] & 0xFF) == 0x89
+                && bytes[1] == 0x50
+                && bytes[2] == 0x4E
+                && bytes[3] == 0x47
+                && bytes[4] == 0x0D
+                && bytes[5] == 0x0A
+                && bytes[6] == 0x1A
+                && bytes[7] == 0x0A) {
+            return DetectedImageType.PNG;
+        }
+        // GIF: GIF87a or GIF89a
+        if (length >= 6
+                && bytes[0] == 'G'
+                && bytes[1] == 'I'
+                && bytes[2] == 'F'
+                && bytes[3] == '8'
+                && (bytes[4] == '7' || bytes[4] == '9')
+                && bytes[5] == 'a') {
+            return DetectedImageType.GIF;
+        }
+        // WEBP: RIFF....WEBP
+        if (length >= 12
+                && bytes[0] == 'R'
+                && bytes[1] == 'I'
+                && bytes[2] == 'F'
+                && bytes[3] == 'F'
+                && bytes[8] == 'W'
+                && bytes[9] == 'E'
+                && bytes[10] == 'B'
+                && bytes[11] == 'P') {
+            return DetectedImageType.WEBP;
+        }
+        return null;
+    }
+
+    private static int readHeader(InputStream is, byte[] buffer) throws IOException {
+        int total = 0;
+        while (total < buffer.length) {
+            int n = is.read(buffer, total, buffer.length - total);
+            if (n < 0) {
+                break;
+            }
+            total += n;
+        }
+        return total;
     }
 
     private static String normalizeMimeType(String contentType) {
@@ -376,12 +508,13 @@ public class CommunityS3Service {
         return semicolon >= 0 ? lowered.substring(0, semicolon).strip() : lowered;
     }
 
-    private UploadResult uploadSingleImage(MultipartFile file, String dirPrefix) {
+    private UploadResult uploadSingleImage(MultipartFile file, DetectedImageType detected, String dirPrefix) {
         String originalName = sanitizeOriginalName(file.getOriginalFilename());
-        String ext = extractExtension(originalName, file.getContentType());
+        // Derive canonical extension & MIME type strictly from detected magic bytes.
+        String ext = detected.extension();
+        String contentType = detected.mimeType();
         String dateSegment = LocalDate.now(ZoneOffset.UTC).format(DATE_FMT);
         String key = dirPrefix + "/" + dateSegment + "/" + UUID.randomUUID() + "." + ext;
-        String contentType = normalizeMimeType(file.getContentType());
         long size = file.getSize();
 
         if (s3Client != null) {
@@ -404,25 +537,17 @@ public class CommunityS3Service {
             return new UploadResult(key, url, originalName, size, contentType);
         }
 
-        // Local/Test zero-billing storage when S3 is disabled or unconfigured
-        byte[] bytes;
-        try {
-            bytes = file.getBytes();
-        } catch (IOException e) {
+        // Local/Test zero-billing disk storage (zero in-heap memory cache -> prevents OOM)
+        Path target = resolveSafeLocalPath(key);
+        if (target == null) {
             throw invalidRequest();
         }
-        simulatedStore.add(key);
-        localMemoryStore.put(key, new LocalMediaPayload(bytes, contentType));
-        if (localStorageRoot != null) {
-            Path target = localStorageRoot.resolve(key).normalize();
-            if (target.startsWith(localStorageRoot)) {
-                try {
-                    Files.createDirectories(target.getParent());
-                    Files.write(target, bytes);
-                } catch (IOException e) {
-                    log.warn("Failed to persist local media file for key={}", key);
-                }
-            }
+        try (InputStream is = file.getInputStream()) {
+            Files.createDirectories(target.getParent());
+            Files.copy(is, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            log.warn("Failed to persist local media file for key={} cause={}", key, e.getClass().getSimpleName());
+            throw new AuthFailure("MEDIA_STORAGE_ERROR", HttpStatus.INTERNAL_SERVER_ERROR);
         }
         String url = normalizedPublicBaseUrl != null
                 ? normalizedPublicBaseUrl + "/api/v1/community/local-media/" + key
@@ -431,42 +556,70 @@ public class CommunityS3Service {
     }
 
     public boolean deleteByKeyQuietly(String key) {
+        return deleteByKeyWithDetail(key).deleted();
+    }
+
+    private DeleteAttemptResult deleteByKeyWithDetail(String key) {
         if (key == null || key.isBlank()) {
-            return false;
+            return new DeleteAttemptResult(false, "Blank S3 key");
         }
         if (simulatedDeleteFailureKeys.contains(key)) {
             log.warn("Simulated S3 delete failure triggered for key={}", key);
-            return false;
+            return new DeleteAttemptResult(false, "SimulatedDeleteFailure: simulated outage for key");
         }
         if (s3Client != null) {
             try {
                 realS3DeleteCounter.incrementAndGet();
                 s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
-                return true;
+                return new DeleteAttemptResult(true, null);
             } catch (Exception e) {
-                log.warn("S3 deleteObject deferred for key={}", key);
-                return false;
+                String detail = formatStorageException(e);
+                log.warn("S3 deleteObject deferred for key={} error={}", key, detail);
+                return new DeleteAttemptResult(false, detail);
             }
         }
-        localMemoryStore.remove(key);
-        boolean removedDisk = deleteLocalFileQuietly(key);
-        boolean removedMem = simulatedStore.remove(key);
-        return removedMem || removedDisk;
-    }
-
-    private boolean deleteLocalFileQuietly(String key) {
-        if (localStorageRoot == null || key.contains("..") || key.indexOf('\\') >= 0) {
-            return false;
-        }
-        Path target = localStorageRoot.resolve(key).normalize();
-        if (!target.startsWith(localStorageRoot)) {
-            return false;
+        Path target = resolveSafeLocalPath(key);
+        if (target == null) {
+            return new DeleteAttemptResult(false, "Invalid local media path");
         }
         try {
-            return Files.deleteIfExists(target);
-        } catch (IOException ignored) {
-            return false;
+            boolean deleted = Files.deleteIfExists(target);
+            return deleted
+                    ? new DeleteAttemptResult(true, null)
+                    : new DeleteAttemptResult(false, "LocalMediaNotFound: file not present on disk");
+        } catch (IOException e) {
+            String detail = formatStorageException(e);
+            log.warn("Local media delete failed for key={} error={}", key, detail);
+            return new DeleteAttemptResult(false, detail);
         }
+    }
+
+    static String formatStorageException(Throwable e) {
+        if (e == null) {
+            return "UnknownStorageError";
+        }
+        StringBuilder sb = new StringBuilder(128);
+        sb.append(e.getClass().getSimpleName());
+        if (e instanceof AwsServiceException aws) {
+            if (aws.awsErrorDetails() != null && aws.awsErrorDetails().errorCode() != null) {
+                sb.append(" [").append(aws.awsErrorDetails().errorCode());
+                if (aws.statusCode() > 0) {
+                    sb.append(" HTTP ").append(aws.statusCode());
+                }
+                sb.append(']');
+            } else if (aws.statusCode() > 0) {
+                sb.append(" [HTTP ").append(aws.statusCode()).append(']');
+            }
+        }
+        String msg = e.getMessage();
+        if (msg != null && !msg.isBlank()) {
+            String cleaned = msg.replaceAll("[\\p{Cntrl}]", " ").strip();
+            if (!cleaned.isEmpty()) {
+                sb.append(": ").append(cleaned);
+            }
+        }
+        String result = sb.toString();
+        return result.length() > 450 ? result.substring(0, 450) : result;
     }
 
     public void deleteOrEnqueueRetry(String key, String reason) {
@@ -474,8 +627,8 @@ public class CommunityS3Service {
             return;
         }
         String effectiveReason = (reason == null || reason.isBlank()) ? "CLEANUP" : reason;
-        boolean deleted = deleteByKeyQuietly(key);
-        if (deleted) {
+        DeleteAttemptResult outcome = deleteByKeyWithDetail(key);
+        if (outcome.deleted()) {
             if (jdbc != null) {
                 runInIndependentTx(() -> jdbc.update(
                         "update content.s3_cleanup_task set status = 'COMPLETED', completed_at = now(), last_error = null "
@@ -484,17 +637,18 @@ public class CommunityS3Service {
             }
             return;
         }
+        String lastError = truncateError(outcome.errorDetail(), "Initial S3 delete failed");
         if (jdbc != null) {
             runInIndependentTx(() -> jdbc.update(
                     "insert into content.s3_cleanup_task(s3_key, reason, status, attempt_count, max_attempts, next_attempt_at, last_error, created_at) "
-                            + "values (?, ?, 'PENDING', 1, 5, now(), 'Initial S3 delete failed', now()) "
+                            + "values (?, ?, 'PENDING', 1, 5, now(), ?, now()) "
                             + "on conflict(s3_key) do update "
                             + "set status = 'PENDING', "
                             + "    reason = excluded.reason, "
                             + "    attempt_count = least(content.s3_cleanup_task.attempt_count + 1, content.s3_cleanup_task.max_attempts), "
                             + "    next_attempt_at = now(), "
                             + "    last_error = excluded.last_error",
-                    key, effectiveReason));
+                    key, effectiveReason, lastError));
         }
     }
 
@@ -506,7 +660,7 @@ public class CommunityS3Service {
                 action.run();
             }
         } catch (Exception e) {
-            log.warn("Failed to record S3 cleanup task in DB: {}", e.getMessage());
+            log.warn("Failed to record S3 cleanup task in DB: {}", e.getClass().getSimpleName());
         }
     }
 
@@ -536,32 +690,36 @@ public class CommunityS3Service {
 
         int resolvedCount = 0;
         for (PendingCleanupRow row : rows) {
-            if (deleteByKeyQuietly(row.s3Key())) {
+            DeleteAttemptResult outcome = deleteByKeyWithDetail(row.s3Key());
+            if (outcome.deleted()) {
                 jdbc.update(
                         "update content.s3_cleanup_task set status = 'COMPLETED', completed_at = now(), last_error = null where id = ?",
                         row.id());
                 resolvedCount++;
             } else {
                 int newAttempt = row.attemptCount() + 1;
+                String errorDetail = truncateError(outcome.errorDetail(), "Retry S3 delete failed");
                 if (newAttempt >= row.maxAttempts()) {
+                    String terminalError = truncateError("Max retry attempts reached: " + errorDetail, "Max retry attempts reached");
                     jdbc.update(
-                            "update content.s3_cleanup_task set status = 'FAILED', attempt_count = ?, last_error = 'Max retry attempts reached' where id = ?",
-                            newAttempt, row.id());
-                    log.error("S3 cleanup task entered FAILED state taskId={} s3Key={} attempts={} maxAttempts={}",
-                            row.id(), row.s3Key(), newAttempt, row.maxAttempts());
+                            "update content.s3_cleanup_task set status = 'FAILED', attempt_count = ?, last_error = ? where id = ?",
+                            newAttempt, terminalError, row.id());
+                    log.error("S3 cleanup task entered FAILED state taskId={} s3Key={} attempts={} maxAttempts={} error={}",
+                            row.id(), row.s3Key(), newAttempt, row.maxAttempts(), terminalError);
                     if (opsAlert != null) {
-                        opsAlert.alert(
-                                "s3-cleanup-failed",
-                                "ERROR",
-                                "S3 cleanup task entered FAILED state",
-                                Map.of("taskId", row.id(), "attempts", newAttempt, "maxAttempts", row.maxAttempts()));
+                        Map<String, Object> details = new LinkedHashMap<>();
+                        details.put("taskId", row.id());
+                        details.put("attempts", newAttempt);
+                        details.put("maxAttempts", row.maxAttempts());
+                        details.put("lastError", terminalError);
+                        opsAlert.alert("s3-cleanup-failed", "ERROR", "S3 cleanup task entered FAILED state", details);
                     }
                 } else {
                     jdbc.update(
                             "update content.s3_cleanup_task set status = 'PENDING', attempt_count = ?, "
                                     + "next_attempt_at = now() + make_interval(secs => least(3600, 10 * power(2, least(? + 1, 6)))::int), "
-                                    + "last_error = 'Retry S3 delete failed' where id = ?",
-                            newAttempt, row.attemptCount(), row.id());
+                                    + "last_error = ? where id = ?",
+                            newAttempt, row.attemptCount(), errorDetail, row.id());
                 }
             }
         }
@@ -624,7 +782,19 @@ public class CommunityS3Service {
     }
 
     public boolean isSimulatedKeyPresent(String key) {
-        return key != null && simulatedStore.contains(key);
+        Path target = resolveSafeLocalPath(key);
+        return target != null && Files.isRegularFile(target);
+    }
+
+    private static String truncateError(String raw, String fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        String cleaned = raw.replaceAll("[\\p{Cntrl}]", " ").strip();
+        if (cleaned.isEmpty()) {
+            return fallback;
+        }
+        return cleaned.length() > 500 ? cleaned.substring(0, 500) : cleaned;
     }
 
     private static String sanitizeOriginalName(String originalFilename) {
@@ -641,35 +811,11 @@ public class CommunityS3Service {
         return base.length() > 200 ? base.substring(base.length() - 200) : base;
     }
 
-    private static String extractExtension(String filename, String contentType) {
-        if (contentType != null) {
-            String lower = normalizeMimeType(contentType);
-            if ("image/gif".equals(lower)) {
-                return "gif";
-            }
-        }
-        int dot = filename.lastIndexOf('.');
-        if (dot >= 0 && dot < filename.length() - 1) {
-            String candidate = filename.substring(dot + 1).toLowerCase(Locale.ROOT);
-            if (ALLOWED_EXTENSIONS.contains(candidate)) {
-                return candidate;
-            }
-        }
-        if (contentType != null) {
-            String lower = normalizeMimeType(contentType);
-            if (lower.contains("gif")) return "gif";
-            if (lower.contains("jpeg") || lower.contains("jpg")) return "jpg";
-            if (lower.contains("webp")) return "webp";
-            if (lower.contains("png")) return "png";
-        }
-        return "png";
-    }
-
     private static AuthFailure invalidRequest() {
-        return badRequest("INVALID_REQUEST");
+        return badRequest("INVALID_REQUEST", null);
     }
 
-    private static AuthFailure badRequest(String code) {
-        return new AuthFailure(code, HttpStatus.BAD_REQUEST);
+    private static AuthFailure badRequest(String code, String detail) {
+        return new AuthFailure(code, HttpStatus.BAD_REQUEST, detail);
     }
 }

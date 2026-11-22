@@ -45,7 +45,11 @@ public class AuthService {
     /** Internal handoff only; never serialize this wrapper (it contains the raw refresh token). */
     public record Issued(AccessResponse access, String refresh, Instant refreshExpiresAt) { }
 
-    public record Flow(String status, String provider, String email) { }
+    public record Flow(String status, String provider, String email, String accountStatus, String suspensionReason) {
+        public Flow(String status, String provider, String email) {
+            this(status, provider, email, null, null);
+        }
+    }
 
     @Transactional(readOnly = true, timeout = 3)
     public Flow flow(VerifiedIdentity identity) {
@@ -55,19 +59,21 @@ public class AuthService {
         if (existing.isPresent()) {
             var member = members.findById(existing.get().getMemberId()).orElseThrow(AuthFailure::unauthorized);
             if (member.getStatus() == Member.Status.WITHDRAWING) {
-                return new Flow("WITHDRAWAL_PENDING", identity.provider().name(), identity.email());
-            }
-            if (member.getStatus() == Member.Status.SUSPENDED) {
-                throw new AuthFailure("MEMBER_SUSPENDED", HttpStatus.FORBIDDEN);
+                return new Flow("WITHDRAWAL_PENDING", identity.provider().name(), identity.email(), "WITHDRAWING", null);
             }
             if (member.getStatus() == Member.Status.BANNED) {
                 throw new AuthFailure("MEMBER_BANNED", HttpStatus.FORBIDDEN);
             }
+            if (member.getStatus() == Member.Status.SUSPENDED) {
+                // Suspended members may authenticate into a restricted appeal/withdrawal-only session.
+                return new Flow("LOGIN_READY", identity.provider().name(), identity.email(), "SUSPENDED", member.getSuspendedReason());
+            }
             if (member.getStatus() != Member.Status.ACTIVE) {
                 throw AuthFailure.unauthorized();
             }
+            return new Flow("LOGIN_READY", identity.provider().name(), identity.email(), "ACTIVE", null);
         }
-        return new Flow(existing.isPresent() ? "LOGIN_READY" : "SIGNUP_REQUIRED", identity.provider().name(), identity.email());
+        return new Flow("SIGNUP_REQUIRED", identity.provider().name(), identity.email(), null, null);
     }
 
     @Transactional(timeout = 5)
@@ -105,7 +111,7 @@ public class AuthService {
                 .orElseThrow(AuthFailure::unauthorized);
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
         Instant now = now();
-        return issue(activeForLogin(link.getMemberId()), UUID.randomUUID(), now, now.plus(Duration.ofDays(7)));
+        return issue(allowedForLogin(link.getMemberId()), UUID.randomUUID(), now, now.plus(Duration.ofDays(7)));
     }
 
     @Transactional(timeout = 5, noRollbackFor = AuthFailure.class)
@@ -117,13 +123,10 @@ public class AuthService {
         // Member -> refresh lock order matches withdrawal, preventing post-revocation token issuance.
         Long owner = sessions.memberByHash(RefreshTokens.hash(token)).orElseThrow(AuthFailure::unauthorized);
         var lockedMember = members.lockById(owner).orElseThrow(AuthFailure::unauthorized);
-        if (lockedMember.getStatus() == Member.Status.SUSPENDED) {
-            throw new AuthFailure("MEMBER_SUSPENDED", HttpStatus.FORBIDDEN);
-        }
         if (lockedMember.getStatus() == Member.Status.BANNED) {
             throw new AuthFailure("MEMBER_BANNED", HttpStatus.FORBIDDEN);
         }
-        if (lockedMember.getStatus() != Member.Status.ACTIVE) {
+        if (lockedMember.getStatus() != Member.Status.ACTIVE && lockedMember.getStatus() != Member.Status.SUSPENDED) {
             throw AuthFailure.unauthorized();
         }
         var old = sessions.lockByHash(RefreshTokens.hash(token)).orElseThrow(AuthFailure::unauthorized);
@@ -134,13 +137,45 @@ public class AuthService {
         }
         Member member;
         try {
-            member = active(old.getMemberId());
+            member = activeOrSuspended(old.getMemberId());
         } catch (AuthFailure failure) {
             sessions.revokeFamily(old.getFamilyId(), now);
             throw failure;
         }
         old.rotate(now);
         return issue(member, old.getFamilyId(), now, old.getExpiresAt()); // Fixed 7-day lifetime, no unlimited sliding session.
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public boolean hasActiveRefreshSession(String token) {
+        if (!RefreshTokens.valid(token)) {
+            return false;
+        }
+        String hash = RefreshTokens.hash(token);
+        Boolean active = jdbc.queryForObject("""
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM content.refresh_session rs
+                    JOIN content.member m ON m.id = rs.member_id
+                    WHERE rs.token_hash = ?
+                      AND rs.status = 'ACTIVE'
+                      AND rs.expires_at > NOW()
+                      AND m.status IN ('ACTIVE', 'SUSPENDED')
+                )
+                """, Boolean.class, hash);
+        return Boolean.TRUE.equals(active);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public boolean isMemberSessionEligible(Long memberId) {
+        if (memberId == null || memberId <= 0) {
+            return false;
+        }
+        Boolean eligible = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM content.member WHERE id = ? AND status IN ('ACTIVE', 'SUSPENDED'))",
+                Boolean.class,
+                memberId);
+        return Boolean.TRUE.equals(eligible);
     }
 
     @Transactional(timeout = 5)
@@ -188,22 +223,21 @@ public class AuthService {
         return new Issued(access.issue(member, now), refresh, expiry);
     }
 
-    private Member activeForLogin(Long id) {
+    private Member allowedForLogin(Long id) {
         Member member = members.lockById(id).orElseThrow(AuthFailure::unauthorized);
-        if (member.getStatus() == Member.Status.SUSPENDED) {
-            throw new AuthFailure("MEMBER_SUSPENDED", HttpStatus.FORBIDDEN);
-        }
         if (member.getStatus() == Member.Status.BANNED) {
             throw new AuthFailure("MEMBER_BANNED", HttpStatus.FORBIDDEN);
         }
-        if (member.getStatus() != Member.Status.ACTIVE) {
+        if (member.getStatus() != Member.Status.ACTIVE && member.getStatus() != Member.Status.SUSPENDED) {
             throw AuthFailure.unauthorized();
         }
         return member;
     }
 
-    private Member active(Long id) {
-        return members.lockById(id).filter(m -> m.getStatus() == Member.Status.ACTIVE).orElseThrow(AuthFailure::unauthorized);
+    private Member activeOrSuspended(Long id) {
+        return members.lockById(id)
+                .filter(m -> m.getStatus() == Member.Status.ACTIVE || m.getStatus() == Member.Status.SUSPENDED)
+                .orElseThrow(AuthFailure::unauthorized);
     }
 
     private static Instant now() {

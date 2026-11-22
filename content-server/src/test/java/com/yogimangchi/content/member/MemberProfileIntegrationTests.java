@@ -125,7 +125,8 @@ class MemberProfileIntegrationTests extends TestEnvironment {
         Long memberId = own.access().memberId();
 
         // 1. Upload initial profile image via multipart PATCH
-        var avatar1 = new MockMultipartFile("profileImage", "avatar-1.png", "image/png", new byte[]{1, 2, 3, 4, 5});
+        var avatar1 = new MockMultipartFile("profileImage", "avatar-1.png", "image/png",
+                new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2});
         var uploadedBody1 = mvc.perform(multipart(HttpMethod.PATCH, "/api/v1/members/me/profile")
                         .file(avatar1)
                         .param("profileMessage", "첫 프로필 이미지")
@@ -171,7 +172,8 @@ class MemberProfileIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.authorProfileImgUrl").value(url1));
 
         // 2. Replace profile image -> old S3 key is deleted after commit
-        var avatar2 = new MockMultipartFile("file", "avatar-2.webp", "image/webp", new byte[]{9, 8, 7, 6});
+        var avatar2 = new MockMultipartFile("file", "avatar-2.webp", "image/webp",
+                new byte[]{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 9, 8});
         var uploadedBody2 = mvc.perform(multipart(HttpMethod.POST, "/api/v1/members/me/profile")
                         .file(avatar2)
                         .param("type", "upload")
@@ -207,7 +209,8 @@ class MemberProfileIntegrationTests extends TestEnvironment {
         // Case 1: Transaction rolls back and S3 delete succeeds immediately
         AtomicReference<String> rolledBackKeyRef = new AtomicReference<>();
         assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
-            var file = new MockMultipartFile("profileImage", "rollback-1.png", "image/png", new byte[]{1, 2, 3});
+            var file = new MockMultipartFile("profileImage", "rollback-1.png", "image/png",
+                    new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1});
             var uploaded = s3.validateAndUploadProfileImage(file);
             rolledBackKeyRef.set(uploaded.key());
             assertThat(s3.isSimulatedKeyPresent(uploaded.key())).isTrue();
@@ -221,7 +224,8 @@ class MemberProfileIntegrationTests extends TestEnvironment {
         // Case 2: Transaction rolls back AND S3 delete fails -> recorded as PENDING in s3_cleanup_task, then resolved by retry worker
         AtomicReference<String> retryKeyRef = new AtomicReference<>();
         assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
-            var file = new MockMultipartFile("profileImage", "rollback-retry.png", "image/png", new byte[]{4, 5, 6});
+            var file = new MockMultipartFile("profileImage", "rollback-retry.png", "image/png",
+                    new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 2});
             var uploaded = s3.validateAndUploadProfileImage(file);
             retryKeyRef.set(uploaded.key());
             s3.failSimulatedDeleteForKey(uploaded.key());

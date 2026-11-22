@@ -424,7 +424,7 @@ class Pass2ClosureIntegrationTests extends TestEnvironment {
         mvc.perform(post("/api/v1/auth/logout-all").header("Authorization", targetBearer))
                 .andExpect(status().isNoContent());
 
-        // 4. Suspended member STILL receives 403 MEMBER_SUSPENDED on posting, commenting, profile edit, notifications
+        // 4. Suspended member CAN read notifications (for appeal replies), while STILL blocked with 403 MEMBER_SUSPENDED on posting, commenting, profile edit
         mvc.perform(post("/api/v1/community/posts")
                         .header("Authorization", targetBearer)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -447,8 +447,7 @@ class Pass2ClosureIntegrationTests extends TestEnvironment {
                 .andExpect(jsonPath("$.code").value("MEMBER_SUSPENDED"));
 
         mvc.perform(get("/api/v1/notifications").header("Authorization", targetBearer))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("MEMBER_SUSPENDED"));
+                .andExpect(status().isOk());
 
         // 5. BANNED member is blocked EVERYWHERE (even /members/me and /support/inquiries)
         jdbc.update("update content.member set status = 'BANNED' where id = ?", targetId);

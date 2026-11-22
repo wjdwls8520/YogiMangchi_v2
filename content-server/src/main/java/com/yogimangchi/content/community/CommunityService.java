@@ -470,10 +470,14 @@ public class CommunityService {
             params.add(viewerId);
         }
 
+        if ("WEEKLY_POPULAR".equals(normalizedSort)) {
+            sql.append(" and p.created_at >= now() - interval '7 days'");
+        }
+
         if ("LATEST".equals(normalizedSort) && cursorId != null) {
             sql.append(" and p.id < ?");
             params.add(cursorId);
-        } else if ("POPULAR".equals(normalizedSort) && cursorId != null) {
+        } else if (("POPULAR".equals(normalizedSort) || "WEEKLY_POPULAR".equals(normalizedSort)) && cursorId != null) {
             sql.append(" and (p.like_count < coalesce((select c.like_count from content.community_post c where c.id = ?), 2147483647) "
                     + "or (p.like_count = coalesce((select c.like_count from content.community_post c where c.id = ?), 2147483647) and p.id < ?))");
             params.add(cursorId);
@@ -495,7 +499,7 @@ public class CommunityService {
             params.add(search);
         }
 
-        if ("POPULAR".equals(normalizedSort)) {
+        if ("POPULAR".equals(normalizedSort) || "WEEKLY_POPULAR".equals(normalizedSort)) {
             sql.append(" order by p.like_count desc, p.id desc limit ?");
         } else {
             sql.append(" order by p.id desc limit ?");
@@ -552,16 +556,58 @@ public class CommunityService {
 
     @Transactional(timeout = 3)
     public CommunityPostResponse getPost(Long postId, Long viewerId) {
+        return getPost(postId, viewerId, null);
+    }
+
+    @Transactional(timeout = 3)
+    public CommunityPostResponse getPost(Long postId, Long viewerId, String anonViewerKey) {
         if (postId == null || postId <= 0) {
             throw notFound();
         }
-        int updated = jdbc.update(
-                "update content.community_post set view_count = view_count + 1 where id = ? and status = 'ACTIVE'",
+        Boolean active = jdbc.queryForObject(
+                "select exists(select 1 from content.community_post where id = ? and status = 'ACTIVE')",
+                Boolean.class,
                 postId);
-        if (updated == 0) {
+        if (!Boolean.TRUE.equals(active)) {
             throw notFound();
         }
+        java.time.LocalDate kstToday = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
+        String viewerKey;
+        if (viewerId != null && viewerId > 0) {
+            viewerKey = "m:" + viewerId;
+        } else {
+            String effectiveAnon = (anonViewerKey == null || anonViewerKey.isBlank())
+                    ? "anonymous-default"
+                    : anonViewerKey.strip();
+            viewerKey = "a:" + sha256Hex(effectiveAnon);
+        }
+        int inserted = jdbc.update(
+                "insert into content.community_post_viewer_daily(post_id, viewed_date, viewer_key, viewed_at) "
+                        + "select id, ?, ?, now() from content.community_post where id = ? and status = 'ACTIVE' "
+                        + "on conflict (post_id, viewed_date, viewer_key) do nothing",
+                java.sql.Date.valueOf(kstToday),
+                viewerKey,
+                postId);
+        if (inserted > 0) {
+            jdbc.update(
+                    "update content.community_post set view_count = view_count + 1 where id = ? and status = 'ACTIVE'",
+                    postId);
+        }
         return queryActivePost(postId, viewerId);
+    }
+
+    static String sha256Hex(String input) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     @Transactional(timeout = 5)
@@ -764,11 +810,8 @@ public class CommunityService {
             throw forbidden();
         }
         if ("ACTIVE".equals(existing.status())) {
-            List<String> keys = jdbc.queryForList(
-                    "delete from content.community_post_file where post_id = ? returning s3_key",
-                    String.class,
-                    postId);
-            s3.registerAfterCommitDelete(keys);
+            // Preserve community_post_file rows & media on soft-delete so admin restorePost() restores attachments intact.
+            // Permanent attachment purge runs in ContentRetentionCleanupService 30 days after soft-delete.
             jdbc.update(
                     "update content.community_post set status = 'DELETED', deleted_at = now(), updated_at = now() where id = ?",
                     postId);
@@ -833,12 +876,27 @@ public class CommunityService {
         }
 
         if (report) {
-            jdbc.update(
-                    "insert into content.community_post_report(post_id, member_id, reason_type, status, resolved_at, resolved_by_member_id, resolution_note, created_at) "
-                            + "values (?, ?, ?, 'PENDING', null, null, null, now()) "
-                            + "on conflict(post_id, member_id) do update set reason_type = excluded.reason_type, "
-                            + "status = 'PENDING', resolved_at = null, resolved_by_member_id = null, resolution_note = null",
-                    postId, memberId, normalizedReason);
+            List<String> existingStatuses = jdbc.queryForList(
+                    "select status from content.community_post_report where post_id = ? and member_id = ?",
+                    String.class,
+                    postId, memberId);
+            if (!existingStatuses.isEmpty()) {
+                String existingStatus = existingStatuses.get(0);
+                if ("DISMISSED".equals(existingStatus) || "RESOLVED".equals(existingStatus)) {
+                    throw new AuthFailure(
+                            "REPORT_ALREADY_RESOLVED",
+                            HttpStatus.CONFLICT,
+                            "이미 관리자가 처리 완료한 신고는 다시 접수할 수 없습니다.");
+                }
+                jdbc.update(
+                        "update content.community_post_report set reason_type = ? where post_id = ? and member_id = ? and status = 'PENDING'",
+                        normalizedReason, postId, memberId);
+            } else {
+                jdbc.update(
+                        "insert into content.community_post_report(post_id, member_id, reason_type, status, resolved_at, resolved_by_member_id, resolution_note, created_at) "
+                                + "values (?, ?, ?, 'PENDING', null, null, null, now())",
+                        postId, memberId, normalizedReason);
+            }
         } else {
             jdbc.update(
                     "delete from content.community_post_report where post_id = ? and member_id = ? and status = 'PENDING'",
@@ -1198,12 +1256,27 @@ public class CommunityService {
         }
 
         if (report) {
-            jdbc.update(
-                    "insert into content.community_comment_report(comment_id, member_id, reason_type, status, resolved_at, resolved_by_member_id, resolution_note, created_at) "
-                            + "values (?, ?, ?, 'PENDING', null, null, null, now()) "
-                            + "on conflict(comment_id, member_id) do update set reason_type = excluded.reason_type, "
-                            + "status = 'PENDING', resolved_at = null, resolved_by_member_id = null, resolution_note = null",
-                    commentId, memberId, normalizedReason);
+            List<String> existingStatuses = jdbc.queryForList(
+                    "select status from content.community_comment_report where comment_id = ? and member_id = ?",
+                    String.class,
+                    commentId, memberId);
+            if (!existingStatuses.isEmpty()) {
+                String existingStatus = existingStatuses.get(0);
+                if ("DISMISSED".equals(existingStatus) || "RESOLVED".equals(existingStatus)) {
+                    throw new AuthFailure(
+                            "REPORT_ALREADY_RESOLVED",
+                            HttpStatus.CONFLICT,
+                            "이미 관리자가 처리 완료한 신고는 다시 접수할 수 없습니다.");
+                }
+                jdbc.update(
+                        "update content.community_comment_report set reason_type = ? where comment_id = ? and member_id = ? and status = 'PENDING'",
+                        normalizedReason, commentId, memberId);
+            } else {
+                jdbc.update(
+                        "insert into content.community_comment_report(comment_id, member_id, reason_type, status, resolved_at, resolved_by_member_id, resolution_note, created_at) "
+                                + "values (?, ?, ?, 'PENDING', null, null, null, now())",
+                        commentId, memberId, normalizedReason);
+            }
         } else {
             jdbc.update(
                     "delete from content.community_comment_report where comment_id = ? and member_id = ? and status = 'PENDING'",
@@ -1583,6 +1656,7 @@ public class CommunityService {
         return switch (upper) {
             case "LATEST", "ALL" -> "LATEST";
             case "POPULAR", "BEST" -> "POPULAR";
+            case "WEEKLY_POPULAR", "WEEKLY", "WEEKLY_BEST" -> "WEEKLY_POPULAR";
             default -> throw invalidRequest();
         };
     }

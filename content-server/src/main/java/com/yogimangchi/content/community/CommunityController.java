@@ -1,8 +1,12 @@
 package com.yogimangchi.content.community;
 
+import com.yogimangchi.content.auth.security.ContentEndpointRateLimiter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import java.util.Objects;
+import java.util.regex.Pattern;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -16,6 +20,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,13 +29,16 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 public class CommunityController {
+    private static final Pattern SAFE_ANON_VIEWER_ID = Pattern.compile("^[A-Za-z0-9_-]{8,64}$");
+
     private final CommunityService community;
     private final CommunityUxSseService uxSse;
     private final CommunityS3Service s3;
     private final TradingPositionVerifier positionVerifier;
+    private final ContentEndpointRateLimiter rateLimiter;
 
     public CommunityController(CommunityService community, CommunityUxSseService uxSse, CommunityS3Service s3) {
-        this(community, uxSse, s3, null);
+        this(community, uxSse, s3, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -38,11 +46,13 @@ public class CommunityController {
             CommunityService community,
             CommunityUxSseService uxSse,
             CommunityS3Service s3,
-            @org.springframework.beans.factory.annotation.Autowired(required = false) TradingPositionVerifier positionVerifier) {
+            @org.springframework.beans.factory.annotation.Autowired(required = false) TradingPositionVerifier positionVerifier,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) ContentEndpointRateLimiter rateLimiter) {
         this.community = community;
         this.uxSse = uxSse;
         this.s3 = s3;
         this.positionVerifier = positionVerifier;
+        this.rateLimiter = rateLimiter;
     }
 
     @GetMapping("/api/v1/community/local-media/{*mediaKey}")
@@ -61,7 +71,7 @@ public class CommunityController {
     @GetMapping(value = "/api/v1/community/posts", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(
             summary = "List active community posts",
-            description = "Public. Supports sort=LATEST|POPULAR|ALL|BEST. Optional member Bearer sets likedByMe, reportedByMe and mine flags."
+            description = "Public. Supports sort=LATEST|POPULAR|WEEKLY_POPULAR|ALL|BEST. Optional member Bearer sets likedByMe, reportedByMe and mine flags."
     )
     public ResponseEntity<CommunityService.CommunityPostPageResponse> listPosts(
             @RequestParam(required = false) String category,
@@ -94,20 +104,36 @@ public class CommunityController {
     @GetMapping(value = "/api/v1/community/ux/subscribe/feed", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(
             summary = "Subscribe to real-time community new post UX SSE stream",
-            description = "Public SSE stream emitting CONNECTED and UX_COMMUNITY_POST_CREATED events after post creation commit."
+            description = "Public SSE stream emitting CONNECTED and UX_COMMUNITY_POST_CREATED events after post creation commit. Max 5 concurrent SSE connections per IP."
     )
-    public SseEmitter subscribeFeed() {
-        return uxSse.subscribeFeed();
+    public SseEmitter subscribeFeed(HttpServletRequest request) {
+        Runnable release = rateLimiter != null ? rateLimiter.acquireSseSlot(remoteAddr(request)) : null;
+        try {
+            SseEmitter emitter = uxSse.subscribeFeed();
+            if (rateLimiter != null && release != null) {
+                rateLimiter.bindSseRelease(emitter, release);
+            }
+            return emitter;
+        } catch (RuntimeException ex) {
+            if (release != null) {
+                release.run();
+            }
+            throw ex;
+        }
     }
 
     @GetMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", produces = MediaType.APPLICATION_JSON_VALUE)
-    @Operation(summary = "Read a single active community post", description = "Public. Optional member Bearer sets likedByMe, reportedByMe and mine flags.")
+    @Operation(summary = "Read a single active community post", description = "Public. Deduplicates viewCount per member or daily anonymous viewer. Optional member Bearer sets likedByMe, reportedByMe and mine flags.")
     public ResponseEntity<CommunityService.CommunityPostResponse> getPost(
             @PathVariable Long postId,
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = "X-Anon-Viewer-Id", required = false) String anonViewerHeader,
+            HttpServletRequest request) {
+        Long memberId = viewerId(jwt);
+        String anonViewerKey = resolveAnonViewerKey(anonViewerHeader, request);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(community.getPost(postId, viewerId(jwt)));
+                .body(community.getPost(postId, memberId, anonViewerKey));
     }
 
     @PostMapping(value = "/api/v1/community/posts", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -115,8 +141,10 @@ public class CommunityController {
     @Operation(summary = "Create a community post (JSON)", description = "Active member Bearer required.")
     public ResponseEntity<CommunityService.CommunityPostResponse> createPostJson(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestBody(required = false) CommunityService.CreatePostRequest body) {
+            @RequestBody(required = false) CommunityService.CreatePostRequest body,
+            HttpServletRequest request) {
         Long memberId = Long.valueOf(jwt.getSubject());
+        checkCommunityWrite(memberId, request);
         TradingPositionVerifier.VerificationResult verifiedPosition = verifySharedPosition(
                 memberId, jwt, body == null ? null : body.sharedPosition());
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -135,8 +163,10 @@ public class CommunityController {
             @RequestParam(required = false) String content,
             @RequestParam(required = false) String sharedPosition,
             @RequestPart(name = "request", required = false) CommunityService.CreatePostRequest requestPart,
-            @RequestPart(name = "files", required = false) List<MultipartFile> files) {
+            @RequestPart(name = "files", required = false) List<MultipartFile> files,
+            HttpServletRequest request) {
         Long memberId = Long.valueOf(jwt.getSubject());
+        checkCommunityWrite(memberId, request);
         CommunityService.CreatePostRequest effective = requestPart != null
                 ? requestPart
                 : new CommunityService.CreatePostRequest(
@@ -155,7 +185,7 @@ public class CommunityController {
     @PatchMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @PutMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Update own community post (JSON)", description = "Post owner Bearer required.")
+    @Operation(summary = "Update own community post (JSON)", description = "Post owner Bearer required. Preserves existing sharedPosition (including verified=true) unless clearSharedPosition=true or a new sharedPosition is supplied.")
     public ResponseEntity<CommunityService.CommunityPostResponse> updatePostJson(
             @PathVariable Long postId,
             @AuthenticationPrincipal Jwt jwt,
@@ -173,7 +203,7 @@ public class CommunityController {
     @PatchMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @PutMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Update own community post with image attachments (Multipart)", description = "Post owner Bearer required. Supports deleteFileIds, clearSharedPosition, and new image files.")
+    @Operation(summary = "Update own community post with image attachments (Multipart)", description = "Post owner Bearer required. Supports deleteFileIds, clearSharedPosition, and new image files. Preserves existing sharedPosition unless clearSharedPosition=true.")
     public ResponseEntity<CommunityService.CommunityPostResponse> updatePostMultipart(
             @PathVariable Long postId,
             @AuthenticationPrincipal Jwt jwt,
@@ -187,8 +217,11 @@ public class CommunityController {
             @RequestPart(name = "request", required = false) CommunityService.UpdatePostRequest requestPart,
             @RequestPart(name = "files", required = false) List<MultipartFile> files) {
         Long memberId = Long.valueOf(jwt.getSubject());
-        boolean explicitClear = Boolean.TRUE.equals(clearSharedPosition)
-                || (sharedPosition != null && (sharedPosition.isBlank() || "null".equalsIgnoreCase(sharedPosition.strip())));
+        boolean explicitClear = Boolean.TRUE.equals(clearSharedPosition);
+        CommunityService.SharedPositionSnapshot parsedSharedPosition =
+                explicitClear || sharedPosition == null || sharedPosition.isBlank() || "null".equalsIgnoreCase(sharedPosition.strip())
+                        ? null
+                        : community.parseSharedPositionJson(sharedPosition);
         CommunityService.UpdatePostRequest effective = requestPart != null
                 ? requestPart
                 : new CommunityService.UpdatePostRequest(
@@ -196,7 +229,7 @@ public class CommunityController {
                         symbolTag,
                         title,
                         content,
-                        explicitClear ? null : community.parseSharedPositionJson(sharedPosition),
+                        parsedSharedPosition,
                         deleteFileIds,
                         explicitClear ? Boolean.TRUE : null);
         TradingPositionVerifier.VerificationResult verifiedPosition =
@@ -250,16 +283,19 @@ public class CommunityController {
 
     @PutMapping(value = "/api/v1/community/posts/{postId:[0-9]+}/reports", produces = MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Report an active community post", description = "Active member Bearer required. Cannot report own post. Idempotent.")
+    @Operation(summary = "Report an active community post", description = "Active member Bearer required. Cannot report own post. Returns 409 REPORT_ALREADY_RESOLVED if previously resolved/dismissed.")
     public ResponseEntity<CommunityService.ReportResponse> reportPost(
             @PathVariable Long postId,
             @RequestParam(required = false) String reasonType,
             @RequestBody(required = false) CommunityService.ReportRequest body,
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
+        Long memberId = Long.valueOf(jwt.getSubject());
+        checkCommunityWrite(memberId, request);
         String effectiveReason = resolveReasonType(reasonType, body);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(community.changePostReport(Long.valueOf(jwt.getSubject()), postId, effectiveReason, true));
+                .body(community.changePostReport(memberId, postId, effectiveReason, true));
     }
 
     @DeleteMapping(value = "/api/v1/community/posts/{postId:[0-9]+}/reports", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -406,10 +442,13 @@ public class CommunityController {
     public ResponseEntity<CommunityService.CommunityCommentResponse> createComment(
             @PathVariable Long postId,
             @AuthenticationPrincipal Jwt jwt,
-            @RequestBody(required = false) CommunityService.CreateCommentRequest body) {
+            @RequestBody(required = false) CommunityService.CreateCommentRequest body,
+            HttpServletRequest request) {
+        Long memberId = Long.valueOf(jwt.getSubject());
+        checkCommunityWrite(memberId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .cacheControl(CacheControl.noStore())
-                .body(community.createComment(Long.valueOf(jwt.getSubject()), postId, body));
+                .body(community.createComment(memberId, postId, body));
     }
 
     @PatchMapping(
@@ -473,16 +512,19 @@ public class CommunityController {
             produces = MediaType.APPLICATION_JSON_VALUE
     )
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Report an active comment", description = "Active member Bearer required. Cannot report own comment. Idempotent.")
+    @Operation(summary = "Report an active comment", description = "Active member Bearer required. Cannot report own comment. Returns 409 REPORT_ALREADY_RESOLVED if previously resolved/dismissed.")
     public ResponseEntity<CommunityService.ReportResponse> reportComment(
             @PathVariable Long commentId,
             @RequestParam(required = false) String reasonType,
             @RequestBody(required = false) CommunityService.ReportRequest body,
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
+        Long memberId = Long.valueOf(jwt.getSubject());
+        checkCommunityWrite(memberId, request);
         String effectiveReason = resolveReasonType(reasonType, body);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
-                .body(community.changeCommentReport(Long.valueOf(jwt.getSubject()), commentId, effectiveReason, true));
+                .body(community.changeCommentReport(memberId, commentId, effectiveReason, true));
     }
 
     @DeleteMapping(
@@ -497,6 +539,32 @@ public class CommunityController {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(community.changeCommentReport(Long.valueOf(jwt.getSubject()), commentId, null, false));
+    }
+
+    private void checkCommunityWrite(Long memberId, HttpServletRequest request) {
+        if (rateLimiter != null) {
+            rateLimiter.checkCommunityWrite(memberId, remoteAddr(request));
+        }
+    }
+
+    private static String remoteAddr(HttpServletRequest request) {
+        if (request == null) {
+            return "0.0.0.0";
+        }
+        String addr = request.getRemoteAddr();
+        return (addr == null || addr.isBlank()) ? "0.0.0.0" : addr.strip();
+    }
+
+    private static String resolveAnonViewerKey(String anonViewerHeader, HttpServletRequest request) {
+        if (anonViewerHeader != null) {
+            String trimmed = anonViewerHeader.strip();
+            if (SAFE_ANON_VIEWER_ID.matcher(trimmed).matches()) {
+                return "hdr:" + trimmed;
+            }
+        }
+        String ip = remoteAddr(request);
+        String ua = request == null ? "unknown" : Objects.toString(request.getHeader("User-Agent"), "unknown");
+        return ip + "|" + ua;
     }
 
     private static String resolveReasonType(String reasonTypeParam, CommunityService.ReportRequest body) {

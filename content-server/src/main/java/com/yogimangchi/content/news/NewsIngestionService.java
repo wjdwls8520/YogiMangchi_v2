@@ -11,8 +11,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +32,17 @@ public class NewsIngestionService {
             String subCategory,
             String defaultSourceName,
             String url
+    ) { }
+
+    public record RssSourceStatus(
+            String subCategory,
+            String section,
+            String sourceName,
+            Instant lastFetchAt,
+            Instant lastSuccessAt,
+            int consecutiveFailures,
+            String lastError,
+            int lastItemCount
     ) { }
 
     public static final List<FeedSource> DEFAULT_FEEDS = List.of(
@@ -73,6 +86,7 @@ public class NewsIngestionService {
     private final int breakingRetentionHours;
     private final HttpClient httpClient;
     private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
+    private final Map<String, RssSourceStatus> sourceStatuses = new ConcurrentHashMap<>();
 
     public NewsIngestionService(
             JdbcTemplate jdbc,
@@ -101,6 +115,11 @@ public class NewsIngestionService {
                 .connectTimeout(Duration.ofSeconds(4))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
+        for (FeedSource feed : DEFAULT_FEEDS) {
+            sourceStatuses.put(feed.subCategory(), new RssSourceStatus(
+                    feed.subCategory(), feed.section(), feed.defaultSourceName(),
+                    null, null, 0, null, 0));
+        }
     }
 
     public int getConsecutiveFailures() {
@@ -115,10 +134,27 @@ public class NewsIngestionService {
         return sse.currentLiveStatus();
     }
 
+    public List<RssSourceStatus> rssSourceStatuses() {
+        List<RssSourceStatus> ordered = new ArrayList<>(DEFAULT_FEEDS.size());
+        for (FeedSource feed : DEFAULT_FEEDS) {
+            RssSourceStatus st = sourceStatuses.get(feed.subCategory());
+            if (st != null) {
+                ordered.add(st);
+            }
+        }
+        return List.copyOf(ordered);
+    }
+
     public int collectAllDefaultFeeds() {
+        return collectFeeds(DEFAULT_FEEDS);
+    }
+
+    int collectFeeds(List<FeedSource> feeds) {
         int totalInserted = 0;
         int succeededFeeds = 0;
-        for (FeedSource feed : DEFAULT_FEEDS) {
+        String lastBatchError = null;
+        for (FeedSource feed : feeds) {
+            Instant fetchedAt = Instant.now();
             try {
                 HttpRequest req = HttpRequest.newBuilder(URI.create(feed.url()))
                         .timeout(Duration.ofSeconds(5))
@@ -135,14 +171,23 @@ public class NewsIngestionService {
                             feed.subCategory(),
                             maxItemsPerFeed);
                     totalInserted += inserted.size();
+                    recordFeedSuccess(feed, fetchedAt, inserted.size());
                 } else {
-                    log.debug("RSS feed returned non-200 status={} for subCategory={}", res.statusCode(), feed.subCategory());
+                    String err = "HTTP_" + res.statusCode();
+                    lastBatchError = err;
+                    recordFeedFailure(feed, fetchedAt, err);
+                    log.warn("[NewsRSS] feed returned non-200 status={} subCategory={} source={}",
+                            res.statusCode(), feed.subCategory(), feed.defaultSourceName());
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return totalInserted;
             } catch (Exception e) {
-                log.debug("RSS feed fetch deferred for subCategory={}: {}", feed.subCategory(), e.getClass().getSimpleName());
+                String err = e.getClass().getSimpleName();
+                lastBatchError = err;
+                recordFeedFailure(feed, fetchedAt, err);
+                log.warn("[NewsRSS] feed fetch failed subCategory={} source={} cause={}",
+                        feed.subCategory(), feed.defaultSourceName(), err);
             }
         }
 
@@ -166,18 +211,21 @@ public class NewsIngestionService {
         } else {
             int failures = consecutiveFailures.incrementAndGet();
             boolean stillLive = collectorEnabled && failures < 3;
-            if (failures >= 3) {
-                log.warn("News RSS ingestion failed across all feeds consecutiveFailures={} collectorEnabled={}",
-                        failures, collectorEnabled);
-                if (opsAlert != null) {
-                    opsAlert.alert(
-                            "news-rss-ingestion-failing",
-                            "WARN",
-                            "News RSS ingestion failed across all feeds",
-                            Map.of("consecutiveFailures", failures, "collectorEnabled", collectorEnabled));
+            log.warn("[NewsRSS] full-batch ingestion failed across all {} feeds consecutiveFailures={} lastError={}",
+                    feeds.size(), failures, lastBatchError);
+            if (opsAlert != null) {
+                Map<String, Object> details = new LinkedHashMap<>();
+                details.put("feedCount", feeds.size());
+                details.put("consecutiveFailures", failures);
+                details.put("collectorEnabled", collectorEnabled);
+                if (lastBatchError != null) {
+                    details.put("lastError", lastBatchError);
                 }
-            } else {
-                log.debug("News RSS ingestion had zero successful feeds consecutiveFailures={}", failures);
+                opsAlert.alert(
+                        "news-rss-ingestion-failing",
+                        failures >= 3 ? "ERROR" : "WARN",
+                        "News RSS full-batch ingestion failed across all feeds",
+                        details);
             }
             sse.updateLiveStatus(new NewsService.NewsLiveStatus(
                     stillLive,
@@ -191,6 +239,34 @@ public class NewsIngestionService {
             log.info("Ingested {} new real-time RSS news articles across feeds", totalInserted);
         }
         return totalInserted;
+    }
+
+    private void recordFeedSuccess(FeedSource feed, Instant fetchedAt, int itemCount) {
+        sourceStatuses.put(feed.subCategory(), new RssSourceStatus(
+                feed.subCategory(),
+                feed.section(),
+                feed.defaultSourceName(),
+                fetchedAt,
+                fetchedAt,
+                0,
+                null,
+                itemCount));
+    }
+
+    private void recordFeedFailure(FeedSource feed, Instant fetchedAt, String error) {
+        sourceStatuses.compute(feed.subCategory(), (k, prev) -> {
+            Instant prevSuccess = prev == null ? null : prev.lastSuccessAt();
+            int prevFailures = prev == null ? 0 : prev.consecutiveFailures();
+            return new RssSourceStatus(
+                    feed.subCategory(),
+                    feed.section(),
+                    feed.defaultSourceName(),
+                    fetchedAt,
+                    prevSuccess,
+                    prevFailures + 1,
+                    error,
+                    0);
+        });
     }
 
     public int purgeExpiredBreakingAndOverflowArticles(Instant now) {
@@ -215,12 +291,8 @@ public class NewsIngestionService {
                             + "where id > 20 and external_hash is not null and external_hash not like 'seed-%' "
                             + "order by id desc offset 1000 limit 200"
                             + ")");
-            java.time.LocalDate anonViewCutoff = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).minusDays(2);
-            jdbc.update(
-                    "delete from content.news_article_anon_daily_view where viewed_date < ?",
-                    java.sql.Date.valueOf(anonViewCutoff));
         } catch (Exception e) {
-            log.debug("News retention cleanup deferred: {}", e.getClass().getSimpleName());
+            log.warn("News retention cleanup deferred: {}", e.getClass().getSimpleName());
         }
         return purged;
     }

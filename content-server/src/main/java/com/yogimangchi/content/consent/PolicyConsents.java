@@ -47,7 +47,7 @@ public class PolicyConsents {
     @Transactional(timeout=5)
     public State accept(Long memberId,Acceptance body) {
         var status=jdbc.queryForList("select status from content.member where id=? for update",String.class,memberId);
-        if(status.isEmpty() || !status.get(0).equals("ACTIVE")) throw AuthFailure.unauthorized();
+        if(status.isEmpty() || !("ACTIVE".equals(status.get(0)) || "SUSPENDED".equals(status.get(0)))) throw AuthFailure.unauthorized();
         record(memberId,body,Instant.now());return current(memberId);
     }
 }

@@ -1,7 +1,10 @@
 package com.yogimangchi.content.auth.security;
 
 import com.yogimangchi.content.error.ApiErrors;
+import com.yogimangchi.content.ops.OpsAlertService;
+import com.yogimangchi.content.ops.OpsErrorBuffer;
 import java.util.*;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.*;
 import org.springframework.core.annotation.Order;
@@ -16,13 +19,19 @@ import org.springframework.web.cors.*;
 @Configuration(proxyBeanMethods=false)
 public class SecurityConfig {
     @Bean @Order(2)
-    SecurityFilterChain apiChain(HttpSecurity http,CorsConfigurationSource cors,@Value("${springdoc.api-docs.enabled}") boolean docs,org.springframework.jdbc.core.JdbcTemplate jdbc,
+    SecurityFilterChain apiChain(
+            HttpSecurity http,
+            CorsConfigurationSource cors,
+            @Value("${springdoc.api-docs.enabled}") boolean docs,
+            org.springframework.jdbc.core.JdbcTemplate jdbc,
+            ObjectProvider<OpsErrorBuffer> errorBufferProvider,
+            ObjectProvider<OpsAlertService> alertServiceProvider,
             @Value("${content.auth.nickname-lookups-per-minute:300}") int nicknameLookups) throws Exception {
         http.authorizeHttpRequests(a -> {
             a.requestMatchers(HttpMethod.GET,"/actuator/health","/actuator/health/liveness","/actuator/health/readiness").permitAll();
             a.requestMatchers(HttpMethod.GET,"/actuator/info","/actuator/metrics","/actuator/metrics/**").hasRole("ADMIN");
-            a.requestMatchers(HttpMethod.GET,"/.well-known/jwks.json","/api/v1/auth/csrf","/api/v1/auth/flow","/api/v1/policies/current","/api/v1/policies/{type:TERMS|PRIVACY}/{version}").permitAll();
-            a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout","/api/v1/news/{newsId:[0-9]+}/reactions","/api/v1/news/{newsId:[0-9]+}/views").permitAll();
+            a.requestMatchers(HttpMethod.GET,"/.well-known/jwks.json","/api/v1/auth/csrf","/api/v1/auth/flow","/api/v1/auth/session-probe","/api/v1/policies/current","/api/v1/policies/{type:TERMS|PRIVACY}/{version}").permitAll();
+            a.requestMatchers(HttpMethod.POST,"/api/v1/auth/signup","/api/v1/auth/login/complete","/api/v1/auth/refresh","/api/v1/auth/logout","/api/v1/news/{newsId:[0-9]+}/reactions","/api/v1/news/{newsId:[0-9]+}/views","/api/v1/ops/client-errors").permitAll();
             a.requestMatchers(HttpMethod.POST,"/api/v1/auth/logout-all").authenticated();
             a.requestMatchers(HttpMethod.GET,"/api/v1/members/me","/api/v1/members/me/consents","/api/v1/members/me/withdrawal","/api/v1/members/me/community/posts","/api/v1/members/me/community/comments","/api/v1/members/me/community/liked-posts","/api/v1/members/me/community/liked-comments","/api/v1/members/me/community/reports").authenticated();
             a.requestMatchers(HttpMethod.POST,"/api/v1/members/me/consents","/api/v1/members/me/profile").authenticated();
@@ -37,10 +46,12 @@ public class SecurityConfig {
             a.requestMatchers(HttpMethod.PATCH,"/api/v1/community/posts/{postId:[0-9]+}","/api/v1/community/comments/{commentId:[0-9]+}","/api/v1/community/posts/{postId:[0-9]+}/comments/{commentId:[0-9]+}").authenticated();
             a.requestMatchers(HttpMethod.PUT,"/api/v1/community/posts/{postId:[0-9]+}","/api/v1/community/posts/{postId:[0-9]+}/likes","/api/v1/community/posts/{postId:[0-9]+}/reports","/api/v1/community/comments/{commentId:[0-9]+}/likes","/api/v1/community/posts/{postId:[0-9]+}/comments/{commentId:[0-9]+}/likes","/api/v1/community/comments/{commentId:[0-9]+}/reports","/api/v1/community/posts/{postId:[0-9]+}/comments/{commentId:[0-9]+}/reports").authenticated();
             a.requestMatchers(HttpMethod.DELETE,"/api/v1/community/posts/{postId:[0-9]+}","/api/v1/community/posts/{postId:[0-9]+}/likes","/api/v1/community/posts/{postId:[0-9]+}/reports","/api/v1/community/comments/{commentId:[0-9]+}","/api/v1/community/posts/{postId:[0-9]+}/comments/{commentId:[0-9]+}","/api/v1/community/comments/{commentId:[0-9]+}/likes","/api/v1/community/posts/{postId:[0-9]+}/comments/{commentId:[0-9]+}/likes","/api/v1/community/comments/{commentId:[0-9]+}/reports","/api/v1/community/posts/{postId:[0-9]+}/comments/{commentId:[0-9]+}/reports").authenticated();
-            a.requestMatchers(HttpMethod.POST,"/api/v1/support/inquiries").hasRole("MEMBER");
+            a.requestMatchers(HttpMethod.POST,"/api/v1/support/inquiries","/api/v1/support/inquiries/{id:[0-9]+}/close").hasRole("MEMBER");
             a.requestMatchers(HttpMethod.GET,"/api/v1/support/inquiries/me").hasRole("MEMBER");
-            a.requestMatchers(HttpMethod.GET,"/api/v1/admin/members","/api/v1/admin/community/posts","/api/v1/admin/community/posts/active-author","/api/v1/admin/community/posts/withdrawn-author","/api/v1/admin/community/replies","/api/v1/admin/community/replies/active-author","/api/v1/admin/community/replies/withdrawn-author","/api/v1/admin/community/reports").hasRole("ADMIN");
-            a.requestMatchers(HttpMethod.DELETE,"/api/v1/admin/members/{memberId:[0-9]+}","/api/v1/admin/community/posts/{postId:[0-9]+}","/api/v1/admin/community/replies/{replyId:[0-9]+}","/api/v1/admin/community/reports/{targetType}/{targetId:[0-9]+}/reporters/{reporterId:[0-9]+}").hasRole("ADMIN");
+            a.requestMatchers(HttpMethod.PATCH,"/api/v1/support/inquiries/{id:[0-9]+}").hasRole("MEMBER");
+            a.requestMatchers(HttpMethod.DELETE,"/api/v1/support/inquiries/{id:[0-9]+}").hasRole("MEMBER");
+            a.requestMatchers(HttpMethod.GET,"/api/v1/admin/members","/api/v1/admin/banned-oauth-identities","/api/v1/admin/audit-logs","/api/v1/admin/community/posts","/api/v1/admin/community/posts/active-author","/api/v1/admin/community/posts/withdrawn-author","/api/v1/admin/community/replies","/api/v1/admin/community/replies/active-author","/api/v1/admin/community/replies/withdrawn-author","/api/v1/admin/community/reports").hasRole("ADMIN");
+            a.requestMatchers(HttpMethod.DELETE,"/api/v1/admin/members/{memberId:[0-9]+}","/api/v1/admin/banned-oauth-identities/{id:[0-9]+}","/api/v1/admin/community/posts/{postId:[0-9]+}","/api/v1/admin/community/replies/{replyId:[0-9]+}","/api/v1/admin/community/reports/{targetType}/{targetId:[0-9]+}/reporters/{reporterId:[0-9]+}").hasRole("ADMIN");
             a.requestMatchers(HttpMethod.POST,"/api/v1/admin/members/{memberId:[0-9]+}/suspend","/api/v1/admin/members/{memberId:[0-9]+}/unsuspend","/api/v1/admin/community/posts/{postId:[0-9]+}/restore","/api/v1/admin/community/replies/{replyId:[0-9]+}/restore","/api/v1/admin/community/reports/{targetType}/{targetId:[0-9]+}/moderate").hasRole("ADMIN");
             a.requestMatchers(HttpMethod.GET,"/api/v1/admin/support/**","/api/v1/admin/ops/**").hasRole("ADMIN");
             a.requestMatchers(HttpMethod.POST,"/api/v1/admin/support/**","/api/v1/admin/ops/**").hasRole("ADMIN");
@@ -60,9 +71,11 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .securityContext(c -> c.securityContextRepository(new NullSecurityContextRepository()))
                 .oauth2ResourceServer(o -> o.bearerTokenResolver(request -> {
-                    // Cookie-authenticated auth endpoints never use Bearer auth; logout-all requires Bearer auth.
+                    // Cookie-authenticated auth endpoints and zero-401 public probe/client-error endpoints
+                    // skip BearerTokenAuthenticationFilter so stale/expired tokens never trigger 401 noise.
                     String path=request.getRequestURI().substring(request.getContextPath().length());
-                    return (path.startsWith("/api/v1/auth/") && !path.equals("/api/v1/auth/logout-all"))
+                    return ((path.startsWith("/api/v1/auth/") && !path.equals("/api/v1/auth/logout-all"))
+                            || path.equals("/api/v1/ops/client-errors"))
                             ? null
                             : new org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver().resolve(request);
                 }).jwt(j -> { })
@@ -74,7 +87,8 @@ public class SecurityConfig {
         // Keep the existing auth CSRF protection. Add protection for the OAuth-cookie/Bearer
         // withdrawal flow, because Resource Server's default Bearer exemption would skip it.
         http.addFilterBefore(new WithdrawalCsrfFilter(),org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
-        http.addFilterAfter(new ActiveMemberFilter(jdbc),org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
+        http.addFilterAfter(new ActiveMemberFilter(jdbc, errorBufferProvider.getIfAvailable(), alertServiceProvider.getIfAvailable()),
+                org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
         http.addFilterAfter(new NicknameLookupLimit(nicknameLookups),org.springframework.security.web.authentication.logout.LogoutFilter.class);
         return http.build();
     }

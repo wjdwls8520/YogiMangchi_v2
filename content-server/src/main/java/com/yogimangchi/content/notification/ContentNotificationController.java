@@ -1,7 +1,10 @@
 package com.yogimangchi.content.notification;
 
+import com.yogimangchi.content.auth.security.ContentEndpointRateLimiter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -23,13 +26,22 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @SecurityRequirement(name = "memberBearer")
 public class ContentNotificationController {
     private final ContentNotificationService notifications;
+    private final ContentEndpointRateLimiter rateLimiter;
 
     public ContentNotificationController(ContentNotificationService notifications) {
+        this(notifications, null);
+    }
+
+    @Autowired
+    public ContentNotificationController(
+            ContentNotificationService notifications,
+            @Autowired(required = false) ContentEndpointRateLimiter rateLimiter) {
         this.notifications = notifications;
+        this.rateLimiter = rateLimiter;
     }
 
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-    @Operation(summary = "List member community & follow notifications", description = "Cursor-paginated member notifications owned by Content Server.")
+    @Operation(summary = "List member community, follow, moderation, and support notifications", description = "Cursor-paginated member notifications owned by Content Server. Allowed for ACTIVE and SUSPENDED members.")
     public ResponseEntity<ContentNotificationService.NotificationPageResponse> listNotifications(
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) Long cursorId,
@@ -51,11 +63,26 @@ public class ContentNotificationController {
     }
 
     @GetMapping(value = "/subscribe", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "Subscribe to real-time Content notification SSE stream", description = "Emits CONNECTED, STATUS, and real-time community/follow notifications. Supports Last-Event-ID replay.")
+    @Operation(summary = "Subscribe to real-time Content notification SSE stream", description = "Emits CONNECTED, STATUS, and real-time notifications. Supports Last-Event-ID replay. Max 5 concurrent SSE connections per IP.")
     public SseEmitter subscribe(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
-        return notifications.subscribe(Long.valueOf(jwt.getSubject()), lastEventId);
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
+            HttpServletRequest request) {
+        Runnable release = rateLimiter != null
+                ? rateLimiter.acquireSseSlot(request != null ? request.getRemoteAddr() : "unknown")
+                : null;
+        try {
+            SseEmitter emitter = notifications.subscribe(Long.valueOf(jwt.getSubject()), lastEventId);
+            if (rateLimiter != null && release != null) {
+                rateLimiter.bindSseRelease(emitter, release);
+            }
+            return emitter;
+        } catch (RuntimeException ex) {
+            if (release != null) {
+                release.run();
+            }
+            throw ex;
+        }
     }
 
     @PutMapping("/check")
@@ -91,7 +118,7 @@ public class ContentNotificationController {
     }
 
     @DeleteMapping("/read")
-    @Operation(summary = "Delete read notifications (all read if never checked, or read up to last checked ID)")
+    @Operation(summary = "Delete ALL read notifications for the authenticated member regardless of lastCheckedId")
     public ResponseEntity<Void> deleteReadNotifications(@AuthenticationPrincipal Jwt jwt) {
         notifications.deleteReadNotifications(Long.valueOf(jwt.getSubject()));
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
