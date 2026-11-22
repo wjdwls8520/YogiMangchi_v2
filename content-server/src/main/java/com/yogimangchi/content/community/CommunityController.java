@@ -109,11 +109,7 @@ public class CommunityController {
     public SseEmitter subscribeFeed(HttpServletRequest request) {
         Runnable release = rateLimiter != null ? rateLimiter.acquireSseSlot(remoteAddr(request)) : null;
         try {
-            SseEmitter emitter = uxSse.subscribeFeed();
-            if (rateLimiter != null && release != null) {
-                rateLimiter.bindSseRelease(emitter, release);
-            }
-            return emitter;
+            return uxSse.subscribeFeed(release);
         } catch (RuntimeException ex) {
             if (release != null) {
                 release.run();

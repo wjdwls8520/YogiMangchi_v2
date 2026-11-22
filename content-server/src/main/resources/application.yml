@@ -97,7 +97,7 @@ content:
     support-write-per-minute: ${CONTENT_RATE_LIMIT_SUPPORT_WRITE_PER_MINUTE:30}
     profile-write-per-minute: ${CONTENT_RATE_LIMIT_PROFILE_WRITE_PER_MINUTE:30}
     client-errors-per-minute: ${CONTENT_RATE_LIMIT_CLIENT_ERRORS_PER_MINUTE:20}
-    max-sse-per-ip: ${CONTENT_RATE_LIMIT_MAX_SSE_PER_IP:5}
+    max-sse-per-ip: ${CONTENT_RATE_LIMIT_MAX_SSE_PER_IP:12}
 management:
   endpoint:
     health:

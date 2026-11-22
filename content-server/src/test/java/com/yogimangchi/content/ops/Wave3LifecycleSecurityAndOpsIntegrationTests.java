@@ -799,9 +799,9 @@ class Wave3LifecycleSecurityAndOpsIntegrationTests extends TestEnvironment {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(greaterThanOrEqualTo(1)));
 
-        // 4. SSE max 5 concurrent connections per IP over HTTP
+        // 4. SSE max 12 concurrent connections per IP over HTTP
         String sseIp = "198.51.100.200";
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 12; i++) {
             mvc.perform(get("/api/v1/news/stream").with(req -> { req.setRemoteAddr(sseIp); return req; }))
                     .andExpect(status().isOk());
         }

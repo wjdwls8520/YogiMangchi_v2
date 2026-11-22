@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -172,6 +173,12 @@ public class ApiErrors {
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<ProblemDetail> unexpected(Exception e, HttpServletRequest request) {
+        if (isClientDisconnect(e)) {
+            log.debug("Ignoring client disconnect method={} uri={} reqId={} rootCauseType={}",
+                    requestMethod(request), OpsErrorBuffer.sanitizeUri(requestUri(request)),
+                    resolveRequestId(request), rootCauseType(e));
+            return null;
+        }
         if (isLockTimeout(e)) {
             return logAndRespondLockConflict(e, request);
         }
@@ -239,6 +246,31 @@ public class ApiErrors {
             if (topAppFrame != null) details.put("topAppFrame", topAppFrame);
             alertService.alert(key, severity, title, details);
         }
+    }
+
+    private static boolean isClientDisconnect(Throwable e) {
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            String simpleName = cause.getClass().getSimpleName();
+            if ("AsyncRequestNotUsableException".equals(simpleName)
+                    || "ClientAbortException".equals(simpleName)) {
+                return true;
+            }
+            if (cause instanceof java.io.IOException) {
+                String msg = cause.getMessage();
+                if (msg != null) {
+                    String lower = msg.toLowerCase(Locale.ROOT);
+                    if (lower.contains("broken pipe")
+                            || lower.contains("connection reset")
+                            || lower.contains("aborted")
+                            || lower.contains("closed")
+                            || msg.contains("중단")
+                            || msg.contains("강제로 끊겼습니다")) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean isLockTimeout(Throwable e) {

@@ -20,6 +20,7 @@ public class ContentNotificationSseService {
     private static final int MAX_EMITTERS_PER_MEMBER = 5;
 
     private final Map<Long, Set<SseEmitter>> emittersByMember = new ConcurrentHashMap<>();
+    private final Map<SseEmitter, Runnable> releaseCallbacks = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "content-notification-sse-heartbeat");
         thread.setDaemon(true);
@@ -48,17 +49,28 @@ public class ContentNotificationSseService {
             Long memberId,
             ContentNotificationService.NotificationStatusResponse initialStatus,
             List<ContentNotificationService.ReplayEvent> missedEvents) {
+        return subscribe(memberId, initialStatus, missedEvents, null);
+    }
+
+    public SseEmitter subscribe(
+            Long memberId,
+            ContentNotificationService.NotificationStatusResponse initialStatus,
+            List<ContentNotificationService.ReplayEvent> missedEvents,
+            Runnable onRelease) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         Set<SseEmitter> memberEmitters = emittersByMember.computeIfAbsent(memberId, k -> ConcurrentHashMap.newKeySet());
         if (memberEmitters.size() >= MAX_EMITTERS_PER_MEMBER) {
             SseEmitter oldest = memberEmitters.iterator().next();
-            memberEmitters.remove(oldest);
+            removeEmitter(memberId, oldest);
             try {
                 oldest.complete();
             } catch (Exception ignored) {
             }
         }
         memberEmitters.add(emitter);
+        if (onRelease != null) {
+            releaseCallbacks.put(emitter, onRelease);
+        }
 
         Runnable cleanup = () -> removeEmitter(memberId, emitter);
         emitter.onCompletion(cleanup);
@@ -152,6 +164,13 @@ public class ContentNotificationSseService {
         Set<SseEmitter> removed = emittersByMember.remove(memberId);
         if (removed != null) {
             for (SseEmitter emitter : removed) {
+                Runnable release = releaseCallbacks.remove(emitter);
+                if (release != null) {
+                    try {
+                        release.run();
+                    } catch (Exception ignored) {
+                    }
+                }
                 try {
                     emitter.complete();
                 } catch (Exception ignored) {
@@ -166,6 +185,13 @@ public class ContentNotificationSseService {
             set.remove(emitter);
             if (set.isEmpty()) {
                 emittersByMember.remove(memberId, set);
+            }
+        }
+        Runnable release = releaseCallbacks.remove(emitter);
+        if (release != null) {
+            try {
+                release.run();
+            } catch (Exception ignored) {
             }
         }
     }

@@ -72,11 +72,7 @@ public class ContentNotificationController {
                 ? rateLimiter.acquireSseSlot(request != null ? request.getRemoteAddr() : "unknown")
                 : null;
         try {
-            SseEmitter emitter = notifications.subscribe(Long.valueOf(jwt.getSubject()), lastEventId);
-            if (rateLimiter != null && release != null) {
-                rateLimiter.bindSseRelease(emitter, release);
-            }
-            return emitter;
+            return notifications.subscribe(Long.valueOf(jwt.getSubject()), lastEventId, release);
         } catch (RuntimeException ex) {
             if (release != null) {
                 release.run();
