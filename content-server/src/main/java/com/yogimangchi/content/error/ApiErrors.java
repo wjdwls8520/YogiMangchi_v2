@@ -143,7 +143,9 @@ public class ApiErrors {
 
     @ExceptionHandler({
             org.springframework.dao.DataAccessResourceFailureException.class,
-            org.springframework.transaction.CannotCreateTransactionException.class
+            org.springframework.dao.QueryTimeoutException.class,
+            org.springframework.transaction.CannotCreateTransactionException.class,
+            org.springframework.transaction.TransactionTimedOutException.class
     })
     ResponseEntity<ProblemDetail> unavailable(Exception e, HttpServletRequest request) {
         String method = requestMethod(request);
@@ -168,6 +170,9 @@ public class ApiErrors {
         if (isLockTimeout(e)) {
             return logAndRespondLockConflict(e, request);
         }
+        if (isTransientTimeout(e)) {
+            return unavailable(e, request);
+        }
         return unexpected(e, request);
     }
 
@@ -181,6 +186,9 @@ public class ApiErrors {
         }
         if (isLockTimeout(e)) {
             return logAndRespondLockConflict(e, request);
+        }
+        if (isTransientTimeout(e)) {
+            return unavailable(e, request);
         }
         String method = requestMethod(request);
         String uri = requestUri(request);
@@ -279,6 +287,18 @@ public class ApiErrors {
                     || cause instanceof jakarta.persistence.PessimisticLockException
                     || cause instanceof jakarta.persistence.LockTimeoutException
                     || cause instanceof SQLException sql && "55P03".equals(sql.getSQLState())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isTransientTimeout(Throwable e) {
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof org.springframework.transaction.TransactionTimedOutException
+                    || cause instanceof org.springframework.dao.QueryTimeoutException
+                    || cause instanceof jakarta.persistence.QueryTimeoutException
+                    || cause instanceof SQLException sql && "57014".equals(sql.getSQLState())) {
                 return true;
             }
         }

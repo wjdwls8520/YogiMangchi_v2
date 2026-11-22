@@ -51,7 +51,7 @@ public class AuthService {
         }
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public Flow flow(VerifiedIdentity identity) {
         identity.requireFresh();
         ensureNotBanned(identity);
@@ -76,7 +76,7 @@ public class AuthService {
         return new Flow("SIGNUP_REQUIRED", identity.provider().name(), identity.email(), null, null);
     }
 
-    @Transactional(timeout = 5)
+    @Transactional(timeout = 10)
     public Issued signup(VerifiedIdentity identity, SignupRequest request) {
         identity.requireFresh();
         ensureNotBanned(identity);
@@ -103,7 +103,7 @@ public class AuthService {
         return issue(member, UUID.randomUUID(), now, now.plus(Duration.ofDays(7)));
     }
 
-    @Transactional(timeout = 5)
+    @Transactional(timeout = 10)
     public Issued completeLogin(VerifiedIdentity identity) {
         identity.requireFresh();
         ensureNotBanned(identity);
@@ -114,7 +114,7 @@ public class AuthService {
         return issue(allowedForLogin(link.getMemberId()), UUID.randomUUID(), now, now.plus(Duration.ofDays(7)));
     }
 
-    @Transactional(timeout = 5, noRollbackFor = AuthFailure.class)
+    @Transactional(timeout = 10, noRollbackFor = AuthFailure.class)
     public Issued refresh(String token) {
         if (!RefreshTokens.valid(token)) {
             throw AuthFailure.unauthorized();
@@ -146,7 +146,7 @@ public class AuthService {
         return issue(member, old.getFamilyId(), now, old.getExpiresAt()); // Fixed 7-day lifetime, no unlimited sliding session.
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public boolean hasActiveRefreshSession(String token) {
         if (!RefreshTokens.valid(token)) {
             return false;
@@ -166,7 +166,7 @@ public class AuthService {
         return Boolean.TRUE.equals(active);
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public boolean isMemberSessionEligible(Long memberId) {
         if (memberId == null || memberId <= 0) {
             return false;
@@ -178,7 +178,7 @@ public class AuthService {
         return Boolean.TRUE.equals(eligible);
     }
 
-    @Transactional(timeout = 5)
+    @Transactional(timeout = 10)
     public void logout(String token) {
         if (!RefreshTokens.valid(token)) {
             return;
@@ -194,7 +194,7 @@ public class AuthService {
         sessions.lockByHash(hash).ifPresent(s -> sessions.revokeFamily(s.getFamilyId(), now()));
     }
 
-    @Transactional(timeout = 5)
+    @Transactional(timeout = 10)
     public int logoutAll(Long memberId) {
         if (memberId == null || memberId <= 0) {
             throw AuthFailure.unauthorized();

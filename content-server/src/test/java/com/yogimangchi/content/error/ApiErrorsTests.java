@@ -45,4 +45,19 @@ class ApiErrorsTests {
                 .andExpect(header().doesNotExist("Set-Cookie"))
                 .andExpect(header().string("Cache-Control","no-store"));
     }
+    @Test void transactionTimedOutMapsTo503WithoutCookieMutation() throws Exception {
+        var auth=mock(AuthService.class);
+        when(auth.refresh(null))
+                .thenThrow(new org.springframework.transaction.TransactionTimedOutException("Transaction timed out"))
+                .thenThrow(new org.springframework.orm.jpa.JpaSystemException(
+                        new RuntimeException(new org.springframework.transaction.TransactionTimedOutException("Transaction timed out"))));
+        var mvc=MockMvcBuilders.standaloneSetup(new AuthController(auth,false)).setControllerAdvice(new ApiErrors()).build();
+        for (int i = 0; i < 2; i++) {
+            mvc.perform(post("/api/v1/auth/refresh")).andExpect(status().isServiceUnavailable())
+                    .andExpect(jsonPath("$.code").value("SERVICE_TEMPORARILY_UNAVAILABLE"))
+                    .andExpect(jsonPath("$.detail").value("SERVICE_TEMPORARILY_UNAVAILABLE"))
+                    .andExpect(header().doesNotExist("Set-Cookie"))
+                    .andExpect(header().string("Cache-Control","no-store"));
+        }
+    }
 }
