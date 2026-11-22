@@ -5,7 +5,15 @@ import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
-import { MemberProvider } from "../src/features/member/components/member-provider";
+import {
+  MemberProvider,
+  shouldPreserveQueryOnSessionChange,
+} from "../src/features/member/components/member-provider";
+import {
+  CommunityPageSkeleton,
+  MainPortalPageSkeleton,
+  MyPageSkeleton,
+} from "../src/features/member/components/page-skeletons";
 import { NotificationCenterProvider } from "../src/features/member/notifications/notification-context";
 import { NotificationsPageView } from "../src/features/member/notifications/notifications-page-view";
 import {
@@ -93,7 +101,7 @@ import {
 import { MemberAccount } from "../src/features/member/components/member-account";
 import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
 import { PublicMember } from "../src/features/member/components/public-member";
-import { V1Header } from "../src/features/member/components/v1-ui";
+import { V1AssetSummaryCard, V1Header } from "../src/features/member/components/v1-ui";
 import { SiteFooter } from "../src/components/site-footer";
 import {
   buildExchangeRateChartGeometry,
@@ -4559,4 +4567,79 @@ test("V1Header /members/me sync avoids infinite re-fetch loop and member hooks m
     "V1Header /members/me effect must not depend on the memberCtx wrapper object",
   );
   assert.match(meEffect[0], /verifiedSessionKeyRef\.current === sessionKey/);
+});
+
+test("shouldPreserveQueryOnSessionChange preserves public market queries without leaking personalized data on logout or account switch", () => {
+  // Public market / symbol / contest sidebar queries survive all session transitions
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-redis-market-overview", "https://t"], null, 7), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-redis-tickers", "https://t"], 7, null), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["community-sidebar-contest-seasons", "https://t"], 7, 8), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["community-sidebar-contest-top5", "https://t", 1], 7, null), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["trading", "symbols", "https://t"], 7, null), true);
+
+  // Anonymous portal feeds stay during initial null -> member restore to avoid skeleton double-flash,
+  // but are always purged on logout (7 -> null) or account switch (7 -> 8).
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-news", "https://c", 0], null, 7), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-posts", "https://c", 0], null, 7), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-news", "https://c", 1], 7, null), false);
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-posts", "https://c", 1], 7, 8), false);
+
+  // Member-private queries are ALWAYS purged on every session transition
+  assert.equal(shouldPreserveQueryOnSessionChange(["member", "profile", 7, 1], null, 7), false);
+  assert.equal(shouldPreserveQueryOnSessionChange(["member", "consents"], 7, null), false);
+  assert.equal(shouldPreserveQueryOnSessionChange(["member", "public-portfolio", 7], 7, 8), false);
+  assert.equal(shouldPreserveQueryOnSessionChange(["trading", "account", 7], 7, null), false);
+});
+
+test("Main, Community, and MyPage shimmer skeletons and non-blocking community routes render cleanly", () => {
+  const mainSkel = renderToStaticMarkup(<MainPortalPageSkeleton />);
+  const communitySkel = renderToStaticMarkup(<CommunityPageSkeleton />);
+  const myPageSkel = renderToStaticMarkup(<MyPageSkeleton />);
+
+  for (const [name, html] of [
+    ["main", mainSkel],
+    ["community", communitySkel],
+    ["mypage", myPageSkel],
+  ] as const) {
+    assert.match(html, new RegExp(`data-page-skeleton="${name}"`));
+    assert.match(html, /role="status"/);
+    assert.match(html, /aria-busy="true"/);
+    assert.match(html, /ym-skeleton/);
+    assert.equal(html.includes("transition-all"), false);
+  }
+  assert.match(myPageSkel, /ym-skeleton-dark/);
+
+  // V1AssetSummaryCard loading state renders dark shimmer bars instead of 0.00 USDT flash
+  const loadingCardHtml = renderToStaticMarkup(
+    <V1AssetSummaryCard
+      loading
+      summary={{
+        title: "내 모의투자 자산",
+        totalAsset: "0.00 USDT",
+        cashBalance: "0.00 USDT",
+        totalBuyAmount: "0.00 USDT",
+        totalCoinValue: "0.00 USDT",
+        totalProfit: "0.00 USDT",
+        totalRoi: "0.00%",
+      }}
+    />,
+  );
+  assert.match(loadingCardHtml, /ym-skeleton-dark/);
+  assert.match(loadingCardHtml, /aria-busy="true"/);
+  assert.equal(loadingCardHtml.includes("0.00 USDT"), false);
+
+  // Community pages no longer block navigation behind SSR 3-step loadInitialContestSidebarSnapshot
+  for (const routeFile of [
+    "src/app/community/page.tsx",
+    "src/app/community/all/page.tsx",
+    "src/app/community/[category]/page.tsx",
+    "src/app/community/[category]/[id]/page.tsx",
+  ]) {
+    const src = fs.readFileSync(path.join(process.cwd(), routeFile), "utf8");
+    assert.equal(
+      src.includes("loadInitialContestSidebarSnapshot"),
+      false,
+      `${routeFile} must not block route transitions with SSR sidebar waterfall`,
+    );
+  }
 });

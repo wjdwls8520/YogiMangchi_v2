@@ -56,6 +56,7 @@ import {
   V1UserAvatar,
   V1IconHeart,
 } from "./v1-ui";
+import { CardListSkeleton, TableRowsSkeleton } from "./page-skeletons";
 
 type ProfileResponse = {
   memberId?: number;
@@ -1081,6 +1082,7 @@ export function MemberMyProfilePage({
 
             <V1AssetSummaryCard
               summary={assetSummary}
+              loading={isOwnAndLoggedIn && publicPortfolioQuery.isLoading}
               footerSlot={
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-gray-400">
@@ -1289,16 +1291,18 @@ export function MemberMyProfilePage({
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
                             {displayPositions.length === 0 ? (
-                              <tr>
-                                <td
-                                  colSpan={9}
-                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
-                                >
-                                  {publicPortfolioQuery.isLoading
-                                    ? "포지션 현황을 불러오는 중입니다…"
-                                    : "현재 보유 중인 선물 포지션이 없습니다."}
-                                </td>
-                              </tr>
+                              publicPortfolioQuery.isLoading ? (
+                                <TableRowsSkeleton colSpan={9} rows={3} label="포지션 현황을 불러오는 중입니다…" />
+                              ) : (
+                                <tr>
+                                  <td
+                                    colSpan={9}
+                                    className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                                  >
+                                    현재 보유 중인 선물 포지션이 없습니다.
+                                  </td>
+                                </tr>
+                              )
                             ) : (
                               displayPositions.map(pos => (
                                 <tr key={`${pos.id}-${pos.side}`} className="hover:bg-gray-50">
@@ -1414,16 +1418,18 @@ export function MemberMyProfilePage({
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
                             {closedPnlRows.length === 0 ? (
-                              <tr>
-                                <td
-                                  colSpan={7}
-                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
-                                >
-                                  {ownerClosedPositionsQuery.isLoading
-                                    ? "손익현황을 불러오는 중입니다…"
-                                    : "종료된 포지션 손익 이력이 없습니다."}
-                                </td>
-                              </tr>
+                              ownerClosedPositionsQuery.isLoading ? (
+                                <TableRowsSkeleton colSpan={7} rows={3} label="손익현황을 불러오는 중입니다…" />
+                              ) : (
+                                <tr>
+                                  <td
+                                    colSpan={7}
+                                    className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                                  >
+                                    종료된 포지션 손익 이력이 없습니다.
+                                  </td>
+                                </tr>
+                              )
                             ) : (
                               closedPnlRows.map(row => (
                                 <tr key={row.id} className="hover:bg-gray-50">
@@ -1542,16 +1548,18 @@ export function MemberMyProfilePage({
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
                             {filteredOrders.length === 0 ? (
-                              <tr>
-                                <td
-                                  colSpan={8}
-                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
-                                >
-                                  {ownerOrdersQuery.isLoading
-                                    ? "주문내역을 불러오는 중입니다…"
-                                    : "조회된 주문 내역이 없습니다."}
-                                </td>
-                              </tr>
+                              ownerOrdersQuery.isLoading ? (
+                                <TableRowsSkeleton colSpan={8} rows={3} label="주문내역을 불러오는 중입니다…" />
+                              ) : (
+                                <tr>
+                                  <td
+                                    colSpan={8}
+                                    className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                                  >
+                                    조회된 주문 내역이 없습니다.
+                                  </td>
+                                </tr>
+                              )
                             ) : (
                               filteredOrders.map(order => (
                                 <tr key={order.id} className="hover:bg-gray-50">
@@ -1616,16 +1624,18 @@ export function MemberMyProfilePage({
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
                           {tradeRows.length === 0 ? (
-                            <tr>
-                              <td
-                                colSpan={8}
-                                className="px-4 py-10 text-center text-xs font-bold text-gray-400"
-                              >
-                                {ownerFillsQuery.isLoading
-                                  ? "거래내역을 불러오는 중입니다…"
-                                  : "체결된 거래 내역이 없습니다."}
-                              </td>
-                            </tr>
+                            ownerFillsQuery.isLoading ? (
+                              <TableRowsSkeleton colSpan={8} rows={3} label="거래내역을 불러오는 중입니다…" />
+                            ) : (
+                              <tr>
+                                <td
+                                  colSpan={8}
+                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                                >
+                                  체결된 거래 내역이 없습니다.
+                                </td>
+                              </tr>
+                            )
                           ) : (
                             tradeRows.map(trade => (
                               <tr key={trade.id} className="hover:bg-gray-50">
@@ -1676,16 +1686,18 @@ export function MemberMyProfilePage({
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
                           {openOrders.length === 0 ? (
-                            <tr>
-                              <td
-                                colSpan={6}
-                                className="px-4 py-10 text-center text-xs font-bold text-gray-400"
-                              >
-                                {ownerPendingOrdersQuery.isLoading
-                                  ? "미체결 주문을 확인하는 중입니다…"
-                                  : "현재 대기 중인 미체결 주문이 없습니다."}
-                              </td>
-                            </tr>
+                            ownerPendingOrdersQuery.isLoading ? (
+                              <TableRowsSkeleton colSpan={6} rows={3} label="미체결 주문을 확인하는 중입니다…" />
+                            ) : (
+                              <tr>
+                                <td
+                                  colSpan={6}
+                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                                >
+                                  현재 대기 중인 미체결 주문이 없습니다.
+                                </td>
+                              </tr>
+                            )
                           ) : (
                             openOrders.map(order => (
                               <tr key={order.id} className="hover:bg-gray-50">
@@ -1830,12 +1842,12 @@ export function MemberMyProfilePage({
                           );
                         })}
                       </div>
+                    ) : memberContestSeasonsQuery.isLoading ? (
+                      <CardListSkeleton count={2} label="대회 참가 정보를 불러오는 중입니다…" />
                     ) : (
                       <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-8 text-center space-y-3">
                         <p className="text-sm font-bold text-gray-600">
-                          {memberContestSeasonsQuery.isLoading
-                            ? "대회 참가 정보를 불러오는 중입니다…"
-                            : "현재 참가 중인 진행 시즌 대회가 없습니다."}
+                          현재 참가 중인 진행 시즌 대회가 없습니다.
                         </p>
                         <Link
                           href="/contest"
@@ -1857,11 +1869,13 @@ export function MemberMyProfilePage({
                       </div>
 
                       {finishedContestSeasonsDisplay.length === 0 ? (
-                        <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-8 text-center text-xs font-bold text-gray-400">
-                          {memberContestSeasonsQuery.isLoading
-                            ? "정산 이력을 확인하는 중입니다…"
-                            : "종료된 대회 참가 이력이 없습니다."}
-                        </div>
+                        memberContestSeasonsQuery.isLoading ? (
+                          <CardListSkeleton count={2} label="정산 이력을 확인하는 중입니다…" />
+                        ) : (
+                          <div className="rounded-2xl border border-gray-200 bg-[#F9FAFB] p-8 text-center text-xs font-bold text-gray-400">
+                            종료된 대회 참가 이력이 없습니다.
+                          </div>
+                        )
                       ) : (
                         <div className="overflow-x-auto rounded-2xl border border-gray-200">
                           <table className="w-full min-w-[680px] text-left text-xs">
@@ -2079,18 +2093,20 @@ export function MemberMyProfilePage({
                           </thead>
                           <tbody className="divide-y divide-gray-100 bg-white">
                             {displayPositions.length === 0 ? (
-                              <tr>
-                                <td
-                                  colSpan={7}
-                                  className="px-4 py-10 text-center text-xs font-bold text-gray-400"
-                                >
-                                  {!isOwnAndLoggedIn
-                                    ? "로그인하면 내 모의투자 포지션 포트폴리오를 확인할 수 있습니다."
-                                    : publicPortfolioQuery.isLoading
-                                      ? "포트폴리오를 불러오는 중입니다…"
+                              isOwnAndLoggedIn && publicPortfolioQuery.isLoading ? (
+                                <TableRowsSkeleton colSpan={7} rows={3} label="포트폴리오를 불러오는 중입니다…" />
+                              ) : (
+                                <tr>
+                                  <td
+                                    colSpan={7}
+                                    className="px-4 py-10 text-center text-xs font-bold text-gray-400"
+                                  >
+                                    {!isOwnAndLoggedIn
+                                      ? "로그인하면 내 모의투자 포지션 포트폴리오를 확인할 수 있습니다."
                                       : "현재 보유 중인 선물 포지션이 없습니다."}
-                                </td>
-                              </tr>
+                                  </td>
+                                </tr>
+                              )
                             ) : (
                               displayPositions.map(pos => (
                                 <tr key={`${pos.id}-${pos.side}`} className="hover:bg-gray-50">
@@ -2172,13 +2188,19 @@ export function MemberMyProfilePage({
                     <h3 className="text-base font-black text-gray-900">시즌별 대회 참가 성적 요약</h3>
                     {finishedContestSeasonsDisplay.length === 0 &&
                     liveContestParticipations.length === 0 ? (
-                      <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        {!isOwnAndLoggedIn
-                          ? "로그인하면 참여한 모의투자 대회 시즌 기록을 확인할 수 있습니다."
-                          : memberContestSeasonsQuery.isLoading
-                            ? "대회 시즌 기록을 불러오는 중입니다…"
+                      isOwnAndLoggedIn && memberContestSeasonsQuery.isLoading ? (
+                        <CardListSkeleton
+                          count={2}
+                          label="대회 시즌 기록을 불러오는 중입니다…"
+                          gridClassName="grid grid-cols-1 gap-4 sm:grid-cols-2"
+                        />
+                      ) : (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          {!isOwnAndLoggedIn
+                            ? "로그인하면 참여한 모의투자 대회 시즌 기록을 확인할 수 있습니다."
                             : "참여한 모의투자 대회 시즌 기록이 없습니다."}
-                      </div>
+                        </div>
+                      )
                     ) : (
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         {liveContestParticipations.map(liveItem => {
@@ -2256,13 +2278,15 @@ export function MemberMyProfilePage({
                 {communityTab === "posts" && (
                   <div className="space-y-3">
                     {liveMyPosts.length === 0 ? (
-                      <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        {!isOwnAndLoggedIn
-                          ? "로그인하면 작성한 커뮤니티 게시글을 확인할 수 있습니다."
-                          : communityPostsInfinite.isLoading
-                            ? "작성한 게시글을 불러오는 중입니다…"
+                      isOwnAndLoggedIn && communityPostsInfinite.isLoading ? (
+                        <CardListSkeleton count={3} label="작성한 게시글을 불러오는 중입니다…" />
+                      ) : (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          {!isOwnAndLoggedIn
+                            ? "로그인하면 작성한 커뮤니티 게시글을 확인할 수 있습니다."
                             : "작성한 커뮤니티 게시글이 없습니다."}
-                      </div>
+                        </div>
+                      )
                     ) : (
                       liveMyPosts.map(post => (
                         <article key={post.id} className="rounded-xl border border-gray-200 p-4">
@@ -2289,13 +2313,15 @@ export function MemberMyProfilePage({
                 {communityTab === "replies" && (
                   <div className="space-y-3">
                     {liveMyComments.length === 0 ? (
-                      <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        {!isOwnAndLoggedIn
-                          ? "로그인하면 작성한 댓글 내역을 확인할 수 있습니다."
-                          : communityCommentsInfinite.isLoading
-                            ? "작성한 댓글을 불러오는 중입니다…"
+                      isOwnAndLoggedIn && communityCommentsInfinite.isLoading ? (
+                        <CardListSkeleton count={3} label="작성한 댓글을 불러오는 중입니다…" />
+                      ) : (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          {!isOwnAndLoggedIn
+                            ? "로그인하면 작성한 댓글 내역을 확인할 수 있습니다."
                             : "작성한 댓글 내역이 없습니다."}
-                      </div>
+                        </div>
+                      )
                     ) : (
                       liveMyComments.map(comment => (
                         <div
@@ -2318,13 +2344,15 @@ export function MemberMyProfilePage({
                 {communityTab === "likedPosts" && (
                   <div className="space-y-3">
                     {liveLikedPosts.length === 0 ? (
-                      <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        {!isOwnAndLoggedIn
-                          ? "로그인하면 좋아요한 게시글을 확인할 수 있습니다."
-                          : communityLikedPostsInfinite.isLoading
-                            ? "좋아요한 게시글을 불러오는 중입니다…"
+                      isOwnAndLoggedIn && communityLikedPostsInfinite.isLoading ? (
+                        <CardListSkeleton count={3} label="좋아요한 게시글을 불러오는 중입니다…" />
+                      ) : (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          {!isOwnAndLoggedIn
+                            ? "로그인하면 좋아요한 게시글을 확인할 수 있습니다."
                             : "좋아요한 게시글 내역이 없습니다."}
-                      </div>
+                        </div>
+                      )
                     ) : (
                       liveLikedPosts.map(post => (
                         <div
@@ -2350,13 +2378,15 @@ export function MemberMyProfilePage({
                 {communityTab === "likedReplies" && (
                   <div className="space-y-3">
                     {liveLikedComments.length === 0 ? (
-                      <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        {!isOwnAndLoggedIn
-                          ? "로그인하면 좋아요한 댓글을 확인할 수 있습니다."
-                          : communityLikedCommentsInfinite.isLoading
-                            ? "좋아요한 댓글을 불러오는 중입니다…"
+                      isOwnAndLoggedIn && communityLikedCommentsInfinite.isLoading ? (
+                        <CardListSkeleton count={3} label="좋아요한 댓글을 불러오는 중입니다…" />
+                      ) : (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          {!isOwnAndLoggedIn
+                            ? "로그인하면 좋아요한 댓글을 확인할 수 있습니다."
                             : "좋아요한 댓글 내역이 없습니다."}
-                      </div>
+                        </div>
+                      )
                     ) : (
                       liveLikedComments.map(comment => (
                         <div
@@ -2383,11 +2413,13 @@ export function MemberMyProfilePage({
                 {isOwnAndLoggedIn && communityTab === "reports" && (
                   <div className="space-y-3">
                     {liveReports.length === 0 ? (
-                      <div className="py-10 text-center text-xs font-bold text-gray-400">
-                        {communityReportsInfinite.isLoading
-                          ? "신고 내역을 불러오는 중입니다…"
-                          : "접수된 신고 내역이 없습니다."}
-                      </div>
+                      communityReportsInfinite.isLoading ? (
+                        <CardListSkeleton count={3} label="신고 내역을 불러오는 중입니다…" />
+                      ) : (
+                        <div className="py-10 text-center text-xs font-bold text-gray-400">
+                          접수된 신고 내역이 없습니다.
+                        </div>
+                      )
                     ) : (
                       liveReports.map(item => {
                         const statusMeta =

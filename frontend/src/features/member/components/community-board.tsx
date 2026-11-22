@@ -2178,15 +2178,15 @@ export function CommunityBoard({
                     className="rounded-2xl border border-gray-200 bg-white p-5 space-y-3"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="h-9 w-9 animate-pulse rounded-full bg-gray-200" />
+                      <div className="h-9 w-9 rounded-full ym-skeleton" />
                       <div className="space-y-1.5">
-                        <div className="h-3.5 w-28 animate-pulse rounded bg-gray-200" />
-                        <div className="h-3 w-20 animate-pulse rounded bg-gray-100" />
+                        <div className="h-3.5 w-28 rounded ym-skeleton" />
+                        <div className="h-3 w-20 rounded ym-skeleton" />
                       </div>
                     </div>
-                    <div className="h-4 w-3/4 animate-pulse rounded bg-gray-200" />
-                    <div className="h-3.5 w-full animate-pulse rounded bg-gray-100" />
-                    <div className="h-3.5 w-2/3 animate-pulse rounded bg-gray-100" />
+                    <div className="h-4 w-3/4 rounded ym-skeleton" />
+                    <div className="h-3.5 w-full rounded ym-skeleton" />
+                    <div className="h-3.5 w-2/3 rounded ym-skeleton" />
                   </div>
                 ))}
               </div>
@@ -3361,10 +3361,10 @@ export function CommunityBoard({
                                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-500">
                                   {rank}
                                 </span>
-                                <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-gray-200" />
-                                <div className="h-3.5 w-16 animate-pulse rounded bg-gray-200" />
+                                <div className="h-7 w-7 shrink-0 rounded-full ym-skeleton" />
+                                <div className="h-3.5 w-16 rounded ym-skeleton" />
                               </div>
-                              <div className="h-3.5 w-12 animate-pulse rounded bg-gray-200" />
+                              <div className="h-3.5 w-12 rounded ym-skeleton" />
                             </div>
                           ))}
                         </div>

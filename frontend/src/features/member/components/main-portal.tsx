@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMember } from "./member-provider";
 import {
   communityPostsPath,
@@ -200,6 +200,7 @@ export function MainPortal({
 
   const newsQuery = useQuery({
     queryKey: ["portal-news", origin, snapshot.generation],
+    placeholderData: keepPreviousData,
     queryFn: async () =>
       parseNewsPage(
         await readCommunityOrPublic(origin, session, snapshot, newsPath({ size: 6 })),
@@ -208,6 +209,7 @@ export function MainPortal({
 
   const postsQuery = useQuery({
     queryKey: ["portal-posts", origin, snapshot.generation],
+    placeholderData: keepPreviousData,
     queryFn: async () =>
       parseCommunityPostPage(
         await readCommunityOrPublic(
@@ -407,7 +409,7 @@ export function MainPortal({
           {isOverviewLoading ? (
             <div className="flex flex-wrap items-center gap-3" aria-busy="true" aria-label="실시간 마켓 지표 불러오는 중">
               {[0, 1, 2, 3].map(idx => (
-                <span key={idx} className="inline-block h-4 w-28 animate-pulse rounded bg-gray-100" />
+                <span key={idx} className="inline-block h-4 w-28 rounded ym-skeleton" />
               ))}
             </div>
           ) : marketOverview ? (
@@ -532,7 +534,7 @@ export function MainPortal({
                     <span className="text-xs font-bold text-gray-400">실시간 환율 변동 (USD/KRW)</span>
                     <div className="mt-1 flex flex-wrap items-baseline gap-2 tabular-nums">
                       {isOverviewLoading ? (
-                        <div className="h-8 w-52 animate-pulse rounded-lg bg-gray-100" />
+                        <div className="h-8 w-52 rounded-lg ym-skeleton" />
                       ) : exchangeRate !== null ? (
                         <>
                           <strong className="whitespace-nowrap text-xl font-black text-gray-900 sm:text-3xl">
@@ -587,12 +589,12 @@ export function MainPortal({
                 {/* SVG 라인 차트 (실제 시계열이 있을 때만 렌더링, No gradient) */}
                 <div className="h-[200px] w-full rounded-2xl border border-gray-100 bg-[#F9FAFB] p-4 flex flex-col justify-between">
                   {isOverviewLoading ? (
-                    <div className="flex h-full flex-col justify-between animate-pulse">
-                      <div className="h-32 w-full rounded-xl bg-gray-200/70" />
+                    <div className="flex h-full flex-col justify-between">
+                      <div className="h-32 w-full rounded-xl ym-skeleton" />
                       <div className="flex justify-between">
-                        <span className="h-3 w-20 rounded bg-gray-200" />
-                        <span className="h-3 w-20 rounded bg-gray-200" />
-                        <span className="h-3 w-20 rounded bg-gray-200" />
+                        <span className="h-3 w-20 rounded ym-skeleton" />
+                        <span className="h-3 w-20 rounded ym-skeleton" />
+                        <span className="h-3 w-20 rounded ym-skeleton" />
                       </div>
                     </div>
                   ) : exchangeChart ? (
@@ -777,7 +779,7 @@ export function MainPortal({
                     </div>
                   </div>
                   {isTickersLoading ? (
-                    <span className="h-6 w-16 animate-pulse rounded-lg bg-gray-100" />
+                    <span className="h-6 w-16 rounded-lg ym-skeleton" />
                   ) : coin.available && coin.changeRate !== null ? (
                     <span
                       className={
@@ -798,9 +800,9 @@ export function MainPortal({
 
                 <div className="my-5 space-y-2 tabular-nums">
                   {isTickersLoading ? (
-                    <div className="space-y-2 animate-pulse" aria-busy="true">
-                      <div className="h-7 w-32 rounded bg-gray-200" />
-                      <div className="h-4 w-40 rounded bg-gray-100" />
+                    <div className="space-y-2" aria-busy="true">
+                      <div className="h-7 w-32 rounded ym-skeleton" />
+                      <div className="h-4 w-40 rounded ym-skeleton" />
                     </div>
                   ) : coin.available ? (
                     <>
@@ -969,17 +971,17 @@ export function MainPortal({
               {[0, 1, 2, 3].map(idx => (
                 <div
                   key={idx}
-                  className="h-44 animate-pulse rounded-2xl border border-gray-200 bg-white p-6"
+                  className="h-44 rounded-2xl border border-gray-200 bg-white p-6"
                 >
                   <div className="mb-3 flex items-center gap-2.5">
-                    <div className="h-8 w-8 rounded-full bg-gray-200" />
+                    <div className="h-8 w-8 rounded-full ym-skeleton" />
                     <div className="space-y-1.5">
-                      <div className="h-3 w-20 rounded bg-gray-200" />
-                      <div className="h-2.5 w-16 rounded bg-gray-100" />
+                      <div className="h-3 w-20 rounded ym-skeleton" />
+                      <div className="h-2.5 w-16 rounded ym-skeleton" />
                     </div>
                   </div>
-                  <div className="mb-2 h-4 w-3/4 rounded bg-gray-200" />
-                  <div className="h-3 w-full rounded bg-gray-100" />
+                  <div className="mb-2 h-4 w-3/4 rounded ym-skeleton" />
+                  <div className="h-3 w-full rounded ym-skeleton" />
                 </div>
               ))}
             </div>
@@ -1085,11 +1087,11 @@ export function MainPortal({
                 {[0, 1, 2, 3].map(idx => (
                   <div
                     key={idx}
-                    className="h-24 animate-pulse rounded-xl border border-gray-100 bg-[#F9FAFB] p-4"
+                    className="h-24 rounded-xl border border-gray-100 bg-[#F9FAFB] p-4"
                   >
-                    <div className="mb-2 h-3 w-28 rounded bg-gray-200" />
-                    <div className="mb-1.5 h-4 w-3/4 rounded bg-gray-200" />
-                    <div className="h-3 w-full rounded bg-gray-100" />
+                    <div className="mb-2 h-3 w-28 rounded ym-skeleton" />
+                    <div className="mb-1.5 h-4 w-3/4 rounded ym-skeleton" />
+                    <div className="h-3 w-full rounded ym-skeleton" />
                   </div>
                 ))}
               </div>

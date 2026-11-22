@@ -2663,6 +2663,49 @@ body:has([data-dark-page="true"]) .ym-suspended-banner {
   white-space: nowrap;
 }
 
+/* Shimmer skeleton loading placeholders (light & dark navy cards) */
+@keyframes ym-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.ym-skeleton {
+  background-color: #EEF1F6;
+  background-image: linear-gradient(
+    90deg,
+    #EEF1F6 0%,
+    #F8FAFC 45%,
+    #E2E8F0 55%,
+    #EEF1F6 100%
+  );
+  background-size: 220% 100%;
+  animation: ym-shimmer 1.4s ease-in-out infinite;
+}
+
+.ym-skeleton-dark {
+  background-color: rgba(255, 255, 255, 0.08);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.07) 0%,
+    rgba(255, 255, 255, 0.18) 50%,
+    rgba(255, 255, 255, 0.07) 100%
+  );
+  background-size: 220% 100%;
+  animation: ym-shimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ym-skeleton,
+  .ym-skeleton-dark {
+    animation: none;
+    background-image: none;
+  }
+}
+
 /* Native <select> exact box-model vertical centering & single-line truncation across all viewports */
 select.rounded-xl,
 select.rounded-lg {

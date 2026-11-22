@@ -852,10 +852,12 @@ export function V1AssetSummaryCard({
   summary,
   className,
   footerSlot,
+  loading = false,
 }: {
   summary: V1AssetSummary;
   className?: string;
   footerSlot?: ReactNode;
+  loading?: boolean;
 }) {
   const isZeroProfit =
     summary.totalProfit.trim().startsWith("0.00") || summary.totalProfit.trim() === "0 USDT";
@@ -873,6 +875,7 @@ export function V1AssetSummaryCard({
         "relative overflow-hidden rounded-3xl bg-[#0F172A] border border-gray-800 p-6 sm:p-8 text-white",
         className,
       )}
+      aria-busy={loading || undefined}
     >
       <div className="relative z-10 mb-6 flex items-center justify-between gap-2">
         <span className="min-w-0 truncate rounded-full bg-white/10 px-3 py-1.5 text-xs sm:text-sm font-bold text-gray-200">
@@ -886,35 +889,59 @@ export function V1AssetSummaryCard({
       <div className="relative z-10 space-y-5">
         <div>
           <p className="mb-1 text-sm font-medium text-gray-400">총 보유 자산 (총 자산 추산)</p>
-          <h3 className="break-words text-2xl sm:text-3xl font-black tracking-tight text-white tabular-nums">
-            {summary.totalAsset}
-          </h3>
+          {loading ? (
+            <div className="h-9 w-48 rounded-lg ym-skeleton-dark" aria-hidden="true" />
+          ) : (
+            <h3 className="break-words text-2xl sm:text-3xl font-black tracking-tight text-white tabular-nums">
+              {summary.totalAsset}
+            </h3>
+          )}
         </div>
 
         <div>
           <p className="mb-1 text-sm font-medium text-gray-400">가용 잔고 (보유 현금)</p>
-          <h3 className="break-words text-xl sm:text-2xl font-bold tracking-tight text-gray-200 tabular-nums">
-            {summary.cashBalance}
-          </h3>
+          {loading ? (
+            <div className="h-7 w-40 rounded-lg ym-skeleton-dark" aria-hidden="true" />
+          ) : (
+            <h3 className="break-words text-xl sm:text-2xl font-bold tracking-tight text-gray-200 tabular-nums">
+              {summary.cashBalance}
+            </h3>
+          )}
         </div>
       </div>
 
       <div className="relative z-10 mt-6 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-white/10 pt-5 tabular-nums">
         <div className="text-left">
           <p className="mb-1 text-xs font-medium text-gray-400">사용 증거금 (총 매수금액)</p>
-          <p className="break-words text-sm font-bold text-white">{summary.totalBuyAmount}</p>
+          {loading ? (
+            <div className="h-5 w-24 rounded ym-skeleton-dark" aria-hidden="true" />
+          ) : (
+            <p className="break-words text-sm font-bold text-white">{summary.totalBuyAmount}</p>
+          )}
         </div>
         <div className="text-right">
           <p className="mb-1 text-xs font-medium text-gray-400">지갑 잔고 (확정 원장)</p>
-          <p className="break-words text-sm font-bold text-white">{summary.totalCoinValue}</p>
+          {loading ? (
+            <div className="ml-auto h-5 w-24 rounded ym-skeleton-dark" aria-hidden="true" />
+          ) : (
+            <p className="break-words text-sm font-bold text-white">{summary.totalCoinValue}</p>
+          )}
         </div>
         <div className="text-left">
           <p className="mb-1 text-xs font-medium text-gray-400">평가손익 (미실현/실현)</p>
-          <p className={cn("break-words text-sm font-bold", valueColorClass)}>{summary.totalProfit}</p>
+          {loading ? (
+            <div className="h-5 w-24 rounded ym-skeleton-dark" aria-hidden="true" />
+          ) : (
+            <p className={cn("break-words text-sm font-bold", valueColorClass)}>{summary.totalProfit}</p>
+          )}
         </div>
         <div className="text-right">
           <p className="mb-1 text-xs font-medium text-gray-400">수익률 (ROE)</p>
-          <p className={cn("break-words text-sm font-bold", valueColorClass)}>{summary.totalRoi}</p>
+          {loading ? (
+            <div className="ml-auto h-5 w-16 rounded ym-skeleton-dark" aria-hidden="true" />
+          ) : (
+            <p className={cn("break-words text-sm font-bold", valueColorClass)}>{summary.totalRoi}</p>
+          )}
         </div>
       </div>
 
