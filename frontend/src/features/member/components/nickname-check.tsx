@@ -42,7 +42,11 @@ export function NicknameCheck() {
       <p
         id={feedbackId}
         role={feedback && feedback.kind !== "available" ? "alert" : "status"}
-        className={feedback ? `member-message ${feedback.kind === "available" ? "is-available" : ""}` : "sr-only"}
+        className={
+          feedback
+            ? `member-message ym-nickname-feedback ${feedback.kind === "available" ? "is-available" : ""}`
+            : "sr-only"
+        }
       >
         {feedback?.message}
       </p>

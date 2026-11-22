@@ -146,10 +146,26 @@ export function ProfileImageUploadSlot({
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
+  function openFilePicker() {
+    fileInputRef.current?.click();
+  }
+
+  const displayValue = activeSelected
+    ? `${activeSelected.name} (${formatBytes(activeSelected.sizeBytes)})`
+    : resetRequested
+      ? "기본 프로필 이미지로 초기화 예정"
+      : "";
+
   return (
     <div className="ym-s3-profile-slot" data-s3-slot={slotName}>
       <div className="ym-s3-profile-row">
-        <div className={`ym-avatar-frame ${compact ? "is-compact" : "is-large"}`} aria-label={initialLabel}>
+        <button
+          type="button"
+          className={`ym-avatar-frame cursor-pointer transition-opacity hover:opacity-85 ${compact ? "is-compact" : "is-large"}`}
+          aria-label={`${initialLabel} 변경`}
+          title="클릭하여 프로필 이미지 선택"
+          onClick={openFilePicker}
+        >
           {activeSelected?.previewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={activeSelected.previewUrl} alt="선택한 프로필 미리보기" className="ym-avatar-img" />
@@ -159,21 +175,23 @@ export function ProfileImageUploadSlot({
           ) : (
             <span className="ym-avatar-placeholder" aria-hidden="true">YM</span>
           )}
-        </div>
+        </button>
         <div className="ym-file-box">
           <input
             type="text"
             readOnly
-            className="myInput ym-file-display"
-            aria-label="선택된 프로필 이미지 파일명"
-            value={
-              activeSelected
-                ? `${activeSelected.name} (${formatBytes(activeSelected.sizeBytes)})`
-                : resetRequested
-                  ? "기본 프로필 이미지로 초기화 예정"
-                  : ""
-            }
-            placeholder="프로필 이미지 선택 (JPG, PNG, WEBP, GIF · 최대 5MB)"
+            className="myInput ym-file-display cursor-pointer"
+            aria-label="선택된 프로필 이미지 파일명 (클릭하여 파일 선택)"
+            title={displayValue || "클릭하여 프로필 이미지 선택"}
+            value={displayValue}
+            placeholder="프로필 이미지 선택"
+            onClick={openFilePicker}
+            onKeyDown={event => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openFilePicker();
+              }
+            }}
           />
           <label htmlFor={inputId} className="ym-file-trigger">
             파일 선택
@@ -202,7 +220,7 @@ export function ProfileImageUploadSlot({
           )}
         </div>
       </div>
-      <small className="ym-helper-primary">
+      <small className="ym-helper-primary text-center sm:text-left">
         JPG, PNG, WEBP (최대 5MB) · GIF (최대 3MB)
       </small>
       {error && (

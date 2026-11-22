@@ -150,8 +150,8 @@ export function ProfileEditForm({
       <fieldset disabled={pending} className="space-y-6">
         <div className="ym-field-group">
           <span className="ym-field-title mb-2 block text-sm font-bold text-gray-900">닉네임</span>
-          <div className="ym-input-btn-row flex gap-2">
-            <label className="ym-input-grow flex-1">
+          <div className="ym-input-btn-row">
+            <label className="ym-input-grow">
               <span className="sr-only">닉네임</span>
               <NicknameInput initialValue={nickname} />
             </label>

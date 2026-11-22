@@ -1353,7 +1353,7 @@ body:has(.member-shell) :focus-visible {
 
 .ym-input-btn-row {
   display: grid;
-  grid-template-columns: calc(100% - 128px) 120px;
+  grid-template-columns: minmax(0, 1fr) 120px;
   gap: 8px;
   align-items: start;
 }
@@ -1363,8 +1363,13 @@ body:has(.member-shell) :focus-visible {
 }
 
 .ym-nickname-check-wrap {
-  display: flex;
-  flex-direction: column;
+  display: contents;
+}
+
+.ym-input-btn-row .ym-nickname-feedback {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 2px 0 0;
 }
 
 .member-shell .ym-inline-check-btn {
@@ -1876,12 +1881,15 @@ body:has(.member-shell) :focus-visible {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  width: 100%;
+  max-width: 460px;
 }
 
 .ym-s3-profile-row {
   display: flex;
   align-items: center;
   gap: 12px;
+  width: 100%;
 }
 
 .ym-avatar-frame {
@@ -1891,6 +1899,7 @@ body:has(.member-shell) :focus-visible {
   justify-content: center;
   width: 64px;
   height: 64px;
+  padding: 0;
   overflow: hidden;
   border: 1px solid #DEE1E6;
   border-radius: 50%;
@@ -1930,20 +1939,31 @@ body:has(.member-shell) :focus-visible {
 
 .member-shell .ym-file-display,
 .ym-file-display {
-  flex: 1;
-  min-width: 160px;
-  height: 64px;
-  min-height: 64px;
+  flex: 1 1 140px;
+  min-width: 0;
+  width: 0;
+  height: 48px;
+  min-height: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
   background-color: #F8F9FB !important;
+}
+
+.member-shell .ym-file-display:hover,
+.ym-file-display:hover {
+  border-color: #0058FF;
 }
 
 .ym-file-trigger {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  height: 64px;
-  min-height: 64px;
-  padding: 0 16px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 14px;
   border: 1px solid #0058FF;
   border-radius: 8px;
   background-color: #FFFFFF;
@@ -1956,10 +1976,11 @@ body:has(.member-shell) :focus-visible {
 
 .ym-file-reset {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  height: 64px;
-  min-height: 64px;
+  height: 44px;
+  min-height: 44px;
   padding: 0 12px;
   border: 1px solid #DEE1E6;
   border-radius: 8px;
