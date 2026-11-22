@@ -3,12 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useOptionalMember } from "./member-provider";
+import { V1IconClose } from "./v1-ui";
 
 export function MemberSuspendedBanner() {
   const ctx = useOptionalMember();
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   if (!ctx) return null;
   const { snapshot } = ctx;
   if (snapshot.phase !== "ready" || snapshot.accountStatus !== "SUSPENDED") return null;
+  const bannerKey = `suspended:${snapshot.memberId ?? "0"}:${snapshot.suspensionReason ?? ""}`;
+  if (dismissedKey === bannerKey) return null;
 
   return (
     <aside
@@ -40,6 +44,14 @@ export function MemberSuspendedBanner() {
         >
           회원 탈퇴
         </Link>
+        <button
+          type="button"
+          onClick={() => setDismissedKey(bannerKey)}
+          aria-label="계정 일시 정지 안내 닫기"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-current/20 transition-opacity hover:opacity-75"
+        >
+          <V1IconClose className="h-4 w-4" />
+        </button>
       </div>
     </aside>
   );
@@ -50,6 +62,7 @@ export function MemberRecoveryStatus() {
   const session = ctx?.session;
   const snapshot = ctx?.snapshot;
   const [readyAt, setReadyAt] = useState(0);
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!session || !snapshot?.recovery) return;
@@ -69,6 +82,8 @@ export function MemberRecoveryStatus() {
   }, [session, snapshot?.recovery, snapshot?.expiresAt, snapshot?.phase]);
 
   if (!session || !snapshot?.recovery) return null;
+  const bannerKey = `recovery:${snapshot.phase}:${snapshot.recovery.uncertain ? "1" : "0"}:${snapshot.recovery.retryAt}`;
+  if (dismissedKey === bannerKey) return null;
   const busy = readyAt < snapshot.recovery.retryAt;
 
   return (
@@ -99,6 +114,14 @@ export function MemberRecoveryStatus() {
         >
           로그인 다시 하기
         </Link>
+        <button
+          type="button"
+          onClick={() => setDismissedKey(bannerKey)}
+          aria-label="세션 복구 안내 닫기"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-current/20 transition-opacity hover:opacity-75"
+        >
+          <V1IconClose className="h-4 w-4" />
+        </button>
       </div>
     </aside>
   );
@@ -106,28 +129,50 @@ export function MemberRecoveryStatus() {
 
 export function MemberConsentStatusBanner() {
   const ctx = useOptionalMember();
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   if (!ctx) return null;
-  const { snapshot } = ctx;
+  const { snapshot, retryConsents } = ctx;
   if (snapshot.phase !== "ready") return null;
   if (snapshot.accountStatus === "SUSPENDED") return null;
   if (snapshot.consentStatus !== "required" && snapshot.consentStatus !== "unavailable") return null;
+  const bannerKey = `consent:${snapshot.memberId ?? "0"}:${snapshot.generation}:${snapshot.consentStatus}`;
+  if (dismissedKey === bannerKey) return null;
 
   return (
     <aside
       className="member-consent-banner flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 bg-blue-50/90 px-5 py-2.5 text-xs font-medium text-gray-800"
       aria-label="필수 정책 동의 상태"
     >
-      <span>
+      <span className="min-w-0 flex-1">
         {snapshot.consentStatus === "unavailable"
           ? "정책 동의 상태를 확인하지 못했습니다. 회원 모의투자를 사용하기 전에 다시 확인해 주세요."
           : "약관이 개정되었습니다. 최신 약관을 확인하고 동의해 주세요."}
       </span>
-      <Link
-        href="/account#policy-consents"
-        className="inline-flex min-h-8 items-center justify-center rounded-full bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
-      >
-        정책 확인
-      </Link>
+      <div className="flex shrink-0 items-center gap-2">
+        {snapshot.consentStatus === "unavailable" && (
+          <button
+            type="button"
+            onClick={() => retryConsents()}
+            className="inline-flex min-h-8 items-center justify-center rounded-full border border-blue-200 bg-white px-3 text-xs font-bold text-[#0058FF] transition-colors hover:bg-blue-50"
+          >
+            다시 확인
+          </button>
+        )}
+        <Link
+          href="/account#policy-consents"
+          className="inline-flex min-h-8 items-center justify-center rounded-full bg-[#0058FF] px-3.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+        >
+          정책 확인
+        </Link>
+        <button
+          type="button"
+          onClick={() => setDismissedKey(bannerKey)}
+          aria-label="필수 정책 동의 안내 닫기"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-blue-100 hover:text-gray-800"
+        >
+          <V1IconClose className="h-3.5 w-3.5" />
+        </button>
+      </div>
     </aside>
   );
 }

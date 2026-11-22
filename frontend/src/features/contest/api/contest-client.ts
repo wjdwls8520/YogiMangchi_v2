@@ -1,7 +1,7 @@
 import { TradingApiError, tradingOrigin } from "../../trading/api/client";
 import { ContentApiError, contentJson, contentOrigin } from "../../member/api/client";
 import { parseProfile } from "../../member/api/contracts";
-import { resolveTradingOrigin } from "../../../lib/api-origins";
+import { resolveContentOrigin, resolveTradingOrigin } from "../../../lib/api-origins";
 import { extractRequestId } from "../../../lib/request-id";
 
 export class ContestApiError extends TradingApiError {
@@ -464,9 +464,7 @@ export async function loadInitialContestSidebarSnapshot(options: {
     });
     const profiles: Record<number, ContestSidebarTraderProfile> = {};
     const memberOrigin = contentOrigin(
-      options.contentBaseUrl ??
-        process.env.NEXT_PUBLIC_CONTENT_SERVER_URL ??
-        "http://localhost:8080",
+      options.contentBaseUrl ?? resolveContentOrigin(),
     );
     const uniqueMemberIds = Array.from(
       new Set((leaderboard.items ?? []).slice(0, 5).map(item => item.memberId)),
