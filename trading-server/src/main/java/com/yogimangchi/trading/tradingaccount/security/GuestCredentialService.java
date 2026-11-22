@@ -11,7 +11,7 @@ public class GuestCredentialService {
     private final TradingAccountRepository accounts;
     public GuestCredentialService(TradingAccountRepository accounts) { this.accounts = accounts; }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public Optional<TradingPrincipal> authenticate(String token) {
         if (!GuestCredentials.isValidFormat(token)) return Optional.empty();
         return accounts.findByCredentialHash(GuestCredentials.hash(token))

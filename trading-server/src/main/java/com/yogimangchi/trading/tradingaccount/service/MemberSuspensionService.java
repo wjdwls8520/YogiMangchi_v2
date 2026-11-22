@@ -64,7 +64,7 @@ public class MemberSuspensionService {
         }
     }
 
-    @Transactional(readOnly = true, timeout = 3)
+    @Transactional(readOnly = true, timeout = 10)
     public boolean isSuspended(Long memberId) {
         if (memberId == null || memberId <= 0) {
             return false;

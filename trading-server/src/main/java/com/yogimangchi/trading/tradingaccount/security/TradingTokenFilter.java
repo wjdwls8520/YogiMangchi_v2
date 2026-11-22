@@ -23,7 +23,7 @@ import org.springframework.http.converter.json.ProblemDetailJacksonMixin;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionException;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 public class TradingTokenFilter extends OncePerRequestFilter {
@@ -107,7 +107,7 @@ public class TradingTokenFilter extends OncePerRequestFilter {
                 problem(request, response, ErrorCode.MEMBER_SUSPENDED.status().value(),
                         ErrorCode.MEMBER_SUSPENDED.name(), ErrorCode.MEMBER_SUSPENDED.message());
                 return;
-            } catch (DataAccessException | CannotCreateTransactionException exception) {
+            } catch (DataAccessException | TransactionException exception) {
                 if (optional) {
                     chain.doFilter(request, response);
                     return;

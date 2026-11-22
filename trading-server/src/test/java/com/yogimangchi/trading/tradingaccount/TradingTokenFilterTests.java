@@ -137,4 +137,19 @@ class TradingTokenFilterTests {
         assertThat(suspRes.getStatus()).isEqualTo(403);
         assertThat(JSON.readTree(suspRes.getContentAsString()).path("code").asText()).isEqualTo("MEMBER_SUSPENDED");
     }
+
+    @Test
+    void transactionTimedOutExceptionReturns503InsteadOfLeakingTo403() throws Exception {
+        TradingCredentials credentials = mock(TradingCredentials.class);
+        String jwt = "header.member.sig";
+        when(credentials.authenticate(jwt)).thenThrow(new org.springframework.transaction.TransactionTimedOutException("Transaction timed out"));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/trading/notifications/status");
+        request.addHeader("Authorization", "Bearer " + jwt);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        new TradingTokenFilter(credentials).doFilter(request, response, (req, res) -> {
+            throw new AssertionError("Timed out auth must not proceed");
+        });
+        assertThat(response.getStatus()).isEqualTo(503);
+        assertThat(JSON.readTree(response.getContentAsString()).path("code").asText()).isEqualTo("AUTHENTICATION_UNAVAILABLE");
+    }
 }
