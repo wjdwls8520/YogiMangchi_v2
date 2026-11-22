@@ -6,6 +6,7 @@ import com.yogimangchi.trading.marketdata.LatestMarkPrice;
 import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import com.yogimangchi.trading.marketdata.RedisMarketDataBridge;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,8 @@ public class TradingEngineGate {
     // Single-node ordering, not the financial lock. Distributed ownership is required before adding another worker.
     private final ReentrantReadWriteLock ordering = new ReentrantReadWriteLock(true);
     private volatile Map<Long, LatestMarkPrice> processed = Map.of();
+    private final ConcurrentHashMap<Long, LatestMarkPrice> idleProcessed = new ConcurrentHashMap<>();
+    private volatile long idleGapSequence = -1;
     private volatile boolean ready;
     private volatile long gapSequence = -1;
     private final com.yogimangchi.trading.execution.recovery.RiskAdmission risk;
@@ -36,7 +39,10 @@ public class TradingEngineGate {
             Thread.currentThread().interrupt(); throw new BusinessException(ErrorCode.ENGINE_RECOVERING);
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override public void afterCompletion(int status) { ordering.readLock().unlock(); }
+            @Override public void afterCompletion(int status) {
+                if (risk != null) risk.markExposureDirty();
+                ordering.readLock().unlock();
+            }
         });
         if(risk!=null)risk.enterTransaction();
     }
@@ -46,9 +52,27 @@ public class TradingEngineGate {
         return () -> ordering.writeLock().unlock();
     }
 
-    public void recovering() { ready = false; }
+    public void recovering() { ready = false; idleProcessed.clear(); idleGapSequence = -1; }
     public void processed(Map<Long, LatestMarkPrice> book, long gapSequence) {
+        if (this.idleGapSequence != gapSequence) {
+            idleProcessed.clear();
+            this.idleGapSequence = gapSequence;
+        }
         this.processed = Map.copyOf(book); this.gapSequence = gapSequence; this.ready = true;
+    }
+    /** Marks an unexposed (zero positions/orders/holds) symbol tick as observed in memory without DB journal I/O. */
+    public void markIdleSymbolProcessed(LatestMarkPrice tick, long currentGapSequence) {
+        if (tick == null) return;
+        if (this.idleGapSequence != currentGapSequence) {
+            idleProcessed.clear();
+            this.idleGapSequence = currentGapSequence;
+        }
+        idleProcessed.merge(tick.tradingSymbolId(), tick,
+                (existing, incoming) -> incoming.eventTime().isAfter(existing.eventTime()) ? incoming : existing);
+    }
+    /** Clears an idle-tracked symbol as soon as it becomes exposed so requireCaughtUp demands durable worker commit. */
+    public void clearIdleSymbol(Long symbolId) {
+        if (symbolId != null) idleProcessed.remove(symbolId);
     }
     public String status() {
         var health = bridge.health();
@@ -57,10 +81,19 @@ public class TradingEngineGate {
     }
     public void requireCaughtUp(Map<Long, LatestPriceStore.Snapshot> current) {
         Map<Long, LatestMarkPrice> book = processed;
+        long activeGapSeq = this.gapSequence;
+        boolean idleValid = this.idleGapSequence == activeGapSeq;
         if (!status().equals("READY") || current.entrySet().stream().anyMatch(entry -> {
-            LatestMarkPrice known = book.get(entry.getKey());
+            LatestMarkPrice dbKnown = book.get(entry.getKey());
+            LatestMarkPrice idleKnown = idleValid ? idleProcessed.get(entry.getKey()) : null;
+            LatestMarkPrice known = newerOf(dbKnown, idleKnown);
             return known == null || entry.getValue().latestPrice().isEmpty()
                     || known.eventTime().isBefore(entry.getValue().latestPrice().orElseThrow().eventTime());
         })) throw new BusinessException(ErrorCode.ENGINE_RECOVERING);
+    }
+    private static LatestMarkPrice newerOf(LatestMarkPrice a, LatestMarkPrice b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return b.eventTime().isAfter(a.eventTime()) ? b : a;
     }
 }

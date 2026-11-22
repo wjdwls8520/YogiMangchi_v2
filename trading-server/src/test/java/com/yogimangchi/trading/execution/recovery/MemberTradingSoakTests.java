@@ -29,7 +29,7 @@ import static org.awaitility.Awaitility.await;
 
 /** Opt-in: real Binance ingress + real HTTP/JWT/private WS; no user database or Content secrets. */
 @Tag("soak")
-@SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={"trading.risk-journal.enabled=true","trading.member-auth.enabled=true","trading.trigger.enabled=false","trading.reconciliation.enabled=false","trading.guest-cleanup.enabled=false","binance.mark-price.enabled=true","binance.order-book.enabled=false"})
+@SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={"trading.risk-journal.enabled=true","trading.risk-journal.skip-idle-symbols=false","trading.member-auth.enabled=true","trading.trigger.enabled=false","trading.reconciliation.enabled=false","trading.guest-cleanup.enabled=false","binance.mark-price.enabled=true","binance.order-book.enabled=false"})
 @Import(DurableRiskIntegrationTests.Infrastructure.class)
 class MemberTradingSoakTests {
     static final RSAKey KEY=key();

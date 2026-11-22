@@ -40,6 +40,13 @@ trading:
     enabled: ${TRADING_MEMBER_AUTH_ENABLED:true}
     issuer: ${YOGIMANGCHI_JWT_ISSUER}
     public-key-path: ${TRADING_JWT_PUBLIC_KEY_PATH}
+  trigger:
+    poll-interval-ms: ${TRADING_TRIGGER_POLL_INTERVAL_MS:500}
+  risk-journal:
+    skip-idle-symbols: ${TRADING_RISK_JOURNAL_SKIP_IDLE_SYMBOLS:true}
+  risk:
+    retention:
+      duration: ${TRADING_RISK_RETENTION_DURATION:PT12H}
 marketdata:
   clock:
     skew-check-enabled: true

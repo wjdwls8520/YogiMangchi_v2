@@ -42,6 +42,8 @@ public class DurableRiskWorker {
     private final JdbcTemplate jdbc;private final ObjectMapper json;private final RiskWorkRunner runner;
     private final TradingEngineGate gate;private final RedisMarketDataBridge bridge;private final boolean enabled;
     private final ObjectProvider<OpsAlertService> alerts;
+    private final ObjectProvider<RiskAdmission> admissionProvider;
+    private final long pollIntervalMs;
     private final ScheduledExecutorService executor=Executors.newSingleThreadScheduledExecutor(r -> {var t=new Thread(r,"durable-risk-worker");t.setDaemon(true);return t;});
     private final java.util.concurrent.atomic.AtomicBoolean nudgePending=new java.util.concurrent.atomic.AtomicBoolean();
     private volatile boolean closed;
@@ -51,13 +53,24 @@ public class DurableRiskWorker {
     public record Measurements(long committedWork,long maxReceiveCommitMs,long maxWorkDelayMs,long failedWork,long lockTimeouts,long readyQueries,long readyQueryNanos,long maxReadyQueryNanos,long selectedWork,long admissionDeferrals) { }
     public synchronized Measurements measurements(){return new Measurements(committedWork,maxReceiveCommitMs,maxWorkDelayMs,failedWork,lockTimeouts,readyQueries,readyQueryNanos,maxReadyQueryNanos,selectedWork,admissionDeferrals);}
     public DurableRiskWorker(JdbcTemplate jdbc,ObjectMapper json,RiskWorkRunner runner,TradingEngineGate gate,RedisMarketDataBridge bridge,@Value("${trading.trigger.enabled:true}")boolean enabled) {
-        this(jdbc,json,runner,gate,bridge,enabled,null);
+        this(jdbc,json,runner,gate,bridge,enabled,null,null,500L);
     }
     @Autowired
-    public DurableRiskWorker(JdbcTemplate jdbc,ObjectMapper json,RiskWorkRunner runner,TradingEngineGate gate,RedisMarketDataBridge bridge,@Value("${trading.trigger.enabled:true}")boolean enabled,ObjectProvider<OpsAlertService> alerts) {
+    public DurableRiskWorker(
+            JdbcTemplate jdbc,
+            ObjectMapper json,
+            RiskWorkRunner runner,
+            TradingEngineGate gate,
+            RedisMarketDataBridge bridge,
+            @Value("${trading.trigger.enabled:true}") boolean enabled,
+            ObjectProvider<OpsAlertService> alerts,
+            ObjectProvider<RiskAdmission> admissionProvider,
+            @Value("${trading.trigger.poll-interval-ms:500}") long pollIntervalMs) {
         this.jdbc=jdbc;this.json=json;this.runner=runner;this.gate=gate;this.bridge=bridge;this.enabled=enabled;this.alerts=alerts;
+        this.admissionProvider=admissionProvider;
+        this.pollIntervalMs=Math.max(50L, pollIntervalMs);
     }
-    @EventListener(ApplicationReadyEvent.class) public void start(){if(enabled)executor.scheduleWithFixedDelay(this::pump,0,50,TimeUnit.MILLISECONDS);}
+    @EventListener(ApplicationReadyEvent.class) public void start(){if(enabled)executor.scheduleWithFixedDelay(this::pump,0,pollIntervalMs,TimeUnit.MILLISECONDS);}
     public boolean isEnabled(){return enabled&&!closed;}
     private boolean backingOff(){return failures>0&&System.nanoTime()-retryAfter<0;}
     public void nudge() {
@@ -91,15 +104,18 @@ public class DurableRiskWorker {
         Map<Long,LatestMarkPrice> book=json.readValue(checkpoint.get("price_book").toString(),new TypeReference<HashMap<Long,LatestMarkPrice>>(){});
         if(book==null)throw new IllegalStateException("Invalid risk checkpoint");
         var events=jdbc.queryForList("select id,kind,payload from trading.risk_price_event where id>? order by id limit 256",cursor);
-        for(var row:events) {
-            var event=json.readValue(row.get("payload").toString(),MarketDataEvent.class);
-            if("PRICE".equals(row.get("kind")))book.put(event.price().tradingSymbolId(),event.price());else event.tradingSymbolIds().forEach(book::remove);
-            cursor=((Number)row.get("id")).longValue();
+        if (!events.isEmpty()) {
+            for(var row:events) {
+                var event=json.readValue(row.get("payload").toString(),MarketDataEvent.class);
+                if("PRICE".equals(row.get("kind")))book.put(event.price().tradingSymbolId(),event.price());else event.tradingSymbolIds().forEach(book::remove);
+                cursor=((Number)row.get("id")).longValue();
+            }
+            jdbc.update("update trading.risk_dispatch_cursor set event_id=?,price_book=?::jsonb where id=1",cursor,json.writeValueAsString(book));
         }
-        jdbc.update("update trading.risk_dispatch_cursor set event_id=?,price_book=?::jsonb where id=1",cursor,json.writeValueAsString(book));
         gate.processed(book,bridge.health().gapSequence());
         long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(250);
         boolean progressed;
+        boolean anyCommitted = false;
         do {
             long queryStarted=System.nanoTime();
             var jobs=jdbc.queryForList(READY_WORK);
@@ -112,7 +128,7 @@ public class DurableRiskWorker {
                     int processed=runner.processBatch(account,event);
                     if(processed>0) {
                         // The transactional proxy has returned: the financial transaction and DONE are committed.
-                        var committed=java.time.Instant.now();committedWork+=processed;progressed=true;
+                        var committed=java.time.Instant.now();committedWork+=processed;progressed=true;anyCommitted=true;
                         maxReceiveCommitMs=Math.max(maxReceiveCommitMs,java.time.Duration.between(((java.sql.Timestamp)job.get("occurred_at")).toInstant(),committed).toMillis());
                         maxWorkDelayMs=Math.max(maxWorkDelayMs,java.time.Duration.between(((java.sql.Timestamp)job.get("recorded_at")).toInstant(),committed).toMillis());
                     }
@@ -129,6 +145,10 @@ public class DurableRiskWorker {
                 if(System.nanoTime()>=deadline)break;
             }
         } while(progressed&&System.nanoTime()<deadline);
+        if (anyCommitted && admissionProvider != null) {
+            RiskAdmission admission = admissionProvider.getIfAvailable();
+            if (admission != null) admission.markExposureDirty();
+        }
         if(progressed)nudge();
     }
     @PreDestroy public synchronized void close(){closed=true;gate.recovering();executor.shutdownNow();}

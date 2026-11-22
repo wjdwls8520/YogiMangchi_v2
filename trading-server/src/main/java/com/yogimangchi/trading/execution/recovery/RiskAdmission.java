@@ -13,10 +13,15 @@ public class RiskAdmission {
     private final JdbcTemplate jdbc;
     private final boolean enabled;
     private volatile boolean ingressHealthy=true;
+    private final java.util.concurrent.atomic.AtomicBoolean exposureDirty=new java.util.concurrent.atomic.AtomicBoolean(true);
     public RiskAdmission(JdbcTemplate jdbc,@Value("${trading.risk-journal.enabled:true}") boolean enabled) {this.jdbc=jdbc;this.enabled=enabled;}
+    public void markExposureDirty(){exposureDirty.set(true);}
+    public boolean isExposureDirty(){return exposureDirty.get();}
+    public boolean consumeExposureDirty(){return exposureDirty.getAndSet(false);}
     public void enterTransaction() {
         if(!enabled)return;
         if(!TransactionSynchronizationManager.isActualTransactionActive())throw new IllegalStateException("Financial ingress fence requires transaction");
+        exposureDirty.set(true);
         jdbc.execute("SET LOCAL lock_timeout='250ms'");
         try {jdbc.queryForList("select pg_advisory_xact_lock_shared(?)",INGRESS_LOCK);}
         catch(org.springframework.dao.DataAccessException failure) {
@@ -56,12 +61,14 @@ public class RiskAdmission {
     /** Final administrative retirement preserves evidence while terminating work for a closed account. */
     public void retireWithdrawal(Long accountId) {
         if(!enabled)return;
+        exposureDirty.set(true);
         jdbc.update("update trading.risk_account_work set status='RETIRED',completed_at=clock_timestamp(),completion_reason='MEMBER_WITHDRAWAL' where account_id=? and status in ('PENDING','HELD')",accountId);
         jdbc.update("update trading.risk_hold set resolved_at=clock_timestamp(),resolution_reference='MEMBER_WITHDRAWAL: administrative retirement, not reconstructed execution' where account_id=? and resolved_at is null",accountId);
     }
     /** Administrative retirement for expired guest accounts; terminates pending risk work without fake fills. */
     public void retireGuestExpired(Long accountId) {
         if(!enabled)return;
+        exposureDirty.set(true);
         jdbc.update("update trading.risk_account_work set status='RETIRED',completed_at=clock_timestamp(),completion_reason='GUEST_EXPIRED' where account_id=? and status in ('PENDING','HELD')",accountId);
         jdbc.update("update trading.risk_hold set resolved_at=clock_timestamp(),resolution_reference='GUEST_EXPIRED: administrative retirement of expired guest' where account_id=? and resolved_at is null",accountId);
     }
