@@ -4,6 +4,7 @@ import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -36,6 +37,7 @@ public class CommunityUxSseService {
     private final int maxEmitters;
     private final AtomicLong emitterSequence = new AtomicLong();
     private final ConcurrentSkipListMap<Long, SseEmitter> emitters = new ConcurrentSkipListMap<>();
+    private final ConcurrentHashMap<Long, Runnable> releaseCallbacks = new ConcurrentHashMap<>();
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "community-ux-sse-heartbeat");
         thread.setDaemon(true);
@@ -72,8 +74,12 @@ public class CommunityUxSseService {
     }
 
     public SseEmitter subscribeFeed() {
+        return subscribeFeed(null);
+    }
+
+    public SseEmitter subscribeFeed(Runnable onRelease) {
         SseEmitter emitter = newEmitter();
-        long id = registerEmitter(emitter);
+        long id = registerEmitter(emitter, onRelease);
 
         try {
             emitter.send(SseEmitter.event()
@@ -81,6 +87,7 @@ public class CommunityUxSseService {
                     .data(Map.of("status", "CONNECTED", "timestamp", Instant.now().toString()), MediaType.APPLICATION_JSON));
         } catch (IOException e) {
             emitters.remove(id, emitter);
+            runQuietly(releaseCallbacks.remove(id));
             completeQuietly(emitter);
         }
         return emitter;
@@ -92,7 +99,9 @@ public class CommunityUxSseService {
             try {
                 emitter.send(SseEmitter.event().comment("heartbeat"));
             } catch (Exception e) {
-                emitters.remove(entry.getKey(), emitter);
+                if (emitters.remove(entry.getKey(), emitter)) {
+                    runQuietly(releaseCallbacks.remove(entry.getKey()));
+                }
                 completeQuietly(emitter);
             }
         }
@@ -122,7 +131,9 @@ public class CommunityUxSseService {
                         .name("UX_COMMUNITY_POST_CREATED")
                         .data(event, MediaType.APPLICATION_JSON));
             } catch (Exception e) {
-                emitters.remove(entry.getKey(), emitter);
+                if (emitters.remove(entry.getKey(), emitter)) {
+                    runQuietly(releaseCallbacks.remove(entry.getKey()));
+                }
                 completeQuietly(emitter);
             }
         }
@@ -133,8 +144,15 @@ public class CommunityUxSseService {
     }
 
     long registerEmitter(SseEmitter emitter) {
+        return registerEmitter(emitter, null);
+    }
+
+    long registerEmitter(SseEmitter emitter, Runnable onRelease) {
         long id = emitterSequence.incrementAndGet();
         emitters.put(id, emitter);
+        if (onRelease != null) {
+            releaseCallbacks.put(id, onRelease);
+        }
         while (emitters.size() > maxEmitters) {
             Map.Entry<Long, SseEmitter> oldest = emitters.pollFirstEntry();
             if (oldest == null) {
@@ -144,10 +162,14 @@ public class CommunityUxSseService {
                 emitters.put(id, emitter);
                 break;
             }
+            runQuietly(releaseCallbacks.remove(oldest.getKey()));
             completeQuietly(oldest.getValue());
         }
 
-        Runnable cleanup = () -> emitters.remove(id, emitter);
+        Runnable cleanup = () -> {
+            emitters.remove(id, emitter);
+            runQuietly(releaseCallbacks.remove(id));
+        };
         emitter.onCompletion(cleanup);
         emitter.onTimeout(() -> {
             cleanup.run();
@@ -155,6 +177,14 @@ public class CommunityUxSseService {
         });
         emitter.onError(e -> cleanup.run());
         return id;
+    }
+
+    private static void runQuietly(Runnable runnable) {
+        if (runnable == null) return;
+        try {
+            runnable.run();
+        } catch (Exception ignored) {
+        }
     }
 
     private static void completeQuietly(SseEmitter emitter) {

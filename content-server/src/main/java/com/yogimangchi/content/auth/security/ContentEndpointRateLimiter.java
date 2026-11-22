@@ -23,7 +23,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Component
 public class ContentEndpointRateLimiter {
     public static final int DEFAULT_MAX_TRACKED_KEYS = 50_000;
-    public static final int DEFAULT_MAX_SSE_PER_IP = 5;
+    public static final int DEFAULT_MAX_SSE_PER_IP = 12;
 
     private final boolean enabled;
     private final SlidingWindow csrfLimiter;
@@ -47,7 +47,7 @@ public class ContentEndpointRateLimiter {
             @Value("${content.rate-limit.support-write-per-minute:30}") int supportWritePerMinute,
             @Value("${content.rate-limit.profile-write-per-minute:30}") int profileWritePerMinute,
             @Value("${content.rate-limit.client-errors-per-minute:20}") int clientErrorsPerMinute,
-            @Value("${content.rate-limit.max-sse-per-ip:5}") int maxSsePerIp) {
+            @Value("${content.rate-limit.max-sse-per-ip:12}") int maxSsePerIp) {
         this(enabled, csrfPerMinute, authPerMinute, newsPerMinute, communityWritePerMinute,
                 supportWritePerMinute, profileWritePerMinute, clientErrorsPerMinute, maxSsePerIp,
                 Duration.ofMinutes(1), DEFAULT_MAX_TRACKED_KEYS, Clock.systemUTC());

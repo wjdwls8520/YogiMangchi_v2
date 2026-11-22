@@ -85,11 +85,7 @@ public class NewsController {
     public SseEmitter stream(HttpServletRequest request) {
         Runnable release = rateLimiter != null ? rateLimiter.acquireSseSlot(clientIp(request)) : null;
         try {
-            SseEmitter emitter = sse.subscribe();
-            if (rateLimiter != null && release != null) {
-                rateLimiter.bindSseRelease(emitter, release);
-            }
-            return emitter;
+            return sse.subscribe(release);
         } catch (RuntimeException ex) {
             if (release != null) {
                 release.run();

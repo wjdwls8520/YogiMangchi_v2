@@ -195,6 +195,11 @@ public class ContentNotificationService {
 
     @Transactional(readOnly = true, timeout = 3)
     public SseEmitter subscribe(Long memberId, String lastEventIdHeader) {
+        return subscribe(memberId, lastEventIdHeader, null);
+    }
+
+    @Transactional(readOnly = true, timeout = 3)
+    public SseEmitter subscribe(Long memberId, String lastEventIdHeader, Runnable onRelease) {
         requireActiveMember(memberId);
         NotificationStatusResponse status = queryStatusInternal(memberId);
         List<ReplayEvent> missed = List.of();
@@ -210,7 +215,7 @@ public class ContentNotificationService {
                     .map(item -> new ReplayEvent(defaultEventNameForType(item.type()), item))
                     .toList();
         }
-        return sse.subscribe(memberId, status, missed);
+        return sse.subscribe(memberId, status, missed, onRelease);
     }
 
     @Transactional(timeout = 3)
