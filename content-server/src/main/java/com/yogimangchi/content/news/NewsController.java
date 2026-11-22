@@ -29,19 +29,35 @@ public class NewsController {
     private final NewsService news;
     private final NewsSseService sse;
     private final ContentEndpointRateLimiter rateLimiter;
+    private final NewsIngestionService ingestion;
 
     public NewsController(NewsService news, NewsSseService sse) {
-        this(news, sse, null);
+        this(news, sse, null, null);
+    }
+
+    public NewsController(
+            NewsService news,
+            NewsSseService sse,
+            ContentEndpointRateLimiter rateLimiter) {
+        this(news, sse, rateLimiter, null);
     }
 
     @Autowired
     public NewsController(
             NewsService news,
             NewsSseService sse,
-            @Autowired(required = false) ContentEndpointRateLimiter rateLimiter) {
+            @Autowired(required = false) ContentEndpointRateLimiter rateLimiter,
+            @Autowired(required = false) NewsIngestionService ingestion) {
         this.news = news;
         this.sse = sse;
         this.rateLimiter = rateLimiter;
+        this.ingestion = ingestion;
+    }
+
+    private void triggerOnDemandRefresh() {
+        if (ingestion != null) {
+            ingestion.triggerRefreshIfStale();
+        }
     }
 
     @GetMapping
@@ -60,6 +76,7 @@ public class NewsController {
             @RequestParam(required = false) Integer size,
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest request) {
+        triggerOnDemandRefresh();
         String actorKey = resolveReactionActorKey(jwt, request);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
@@ -72,6 +89,7 @@ public class NewsController {
             description = "Public. Aggregates top breaking flashes, popular articles by views and reactions, trending keyword issues, newsroom recommendations, and overall bull/bear sentiment."
     )
     public ResponseEntity<NewsService.NewsHighlightsResponse> highlights() {
+        triggerOnDemandRefresh();
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(news.highlights());
@@ -85,7 +103,9 @@ public class NewsController {
     public SseEmitter stream(HttpServletRequest request) {
         Runnable release = rateLimiter != null ? rateLimiter.acquireSseSlot(clientIp(request)) : null;
         try {
-            return sse.subscribe(release);
+            SseEmitter emitter = sse.subscribe(release);
+            triggerOnDemandRefresh();
+            return emitter;
         } catch (RuntimeException ex) {
             if (release != null) {
                 release.run();

@@ -55,3 +55,8 @@ content:
     local-media-dir: ${CONTENT_LOCAL_MEDIA_DIR:.gradle/local-runtime/uploads}
     bucket: ${S3_BUCKET:}
     region: ${S3_REGION:ap-northeast-2}
+  news:
+    collector:
+      interval-ms: ${CONTENT_NEWS_COLLECTOR_INTERVAL_MS:600000}
+      initial-delay-ms: ${CONTENT_NEWS_COLLECTOR_INITIAL_DELAY_MS:600000}
+      on-demand-cooldown-ms: ${CONTENT_NEWS_ON_DEMAND_COOLDOWN_MS:60000}
