@@ -1118,8 +1118,8 @@ function parseOpsAlertSummary(raw: unknown): OpsAlertSummary | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = asRecord(raw);
   return {
-    configured: asBoolean(r.configured, false),
-    targetType: asNullableString(r.targetType),
+    configured: asBoolean(r.configured ?? r.enabled, false),
+    targetType: asNullableString(r.targetType ?? r.format ?? r.lastStatus),
     cooldownSeconds: asNumber(r.cooldownSeconds),
     recentDispatches: asArray(r.recentDispatches, item => {
       const row = asRecord(item);
@@ -1129,8 +1129,8 @@ function parseOpsAlertSummary(raw: unknown): OpsAlertSummary | null {
         title: asNullableString(row.title),
         status: asNullableString(row.status),
         httpStatus: asNullableNumber(row.httpStatus),
-        dispatchedAt: asNullableString(row.dispatchedAt),
-        message: asNullableString(row.message),
+        dispatchedAt: asNullableString(row.dispatchedAt ?? row.occurredAt),
+        message: asNullableString(row.message ?? row.errorSummary),
       };
     }),
   };
@@ -1203,16 +1203,21 @@ export function parseContentOpsSummary(raw: unknown): ContentOpsSummary {
     },
     rssSources: asArray(r.rssSources, item => {
       const row = asRecord(item);
+      const consecutiveFailures = asNumber(row.consecutiveFailures);
+      const lastError = asNullableString(row.lastError);
       return {
-        name: asString(row.name, "-"),
+        name: asString(row.sourceName ?? row.name, "-"),
         section: asNullableString(row.section),
         subCategory: asNullableString(row.subCategory),
-        healthy: asBoolean(row.healthy, false),
-        consecutiveFailures: asNumber(row.consecutiveFailures),
+        healthy:
+          typeof row.healthy === "boolean"
+            ? row.healthy
+            : consecutiveFailures === 0 && !lastError,
+        consecutiveFailures,
         lastSuccessAt: asNullableString(row.lastSuccessAt),
         lastFailureAt: asNullableString(row.lastFailureAt),
-        lastError: asNullableString(row.lastError),
-        lastIngestedCount: asNumber(row.lastIngestedCount),
+        lastError,
+        lastIngestedCount: asNumber(row.lastItemCount ?? row.lastIngestedCount),
       };
     }),
     s3Storage: s3
@@ -1224,10 +1229,10 @@ export function parseContentOpsSummary(raw: unknown): ContentOpsSummary {
             const row = asRecord(item);
             return {
               id: asNumber(row.id),
-              objectKey: asString(row.objectKey, "-"),
+              objectKey: asString(row.s3Key ?? row.objectKey, "-"),
               attemptCount: asNumber(row.attemptCount),
               lastError: asNullableString(row.lastError),
-              updatedAt: asNullableString(row.updatedAt),
+              updatedAt: asNullableString(row.updatedAt ?? row.createdAt),
             };
           }),
         }
@@ -1495,11 +1500,11 @@ function parseTestAlertResult(raw: unknown): OpsTestAlertResult {
   const r = asRecord(raw);
   return {
     enabled: asBoolean(r.enabled, false),
-    targetType: asNullableString(r.targetType),
+    targetType: asNullableString(r.targetType ?? r.format),
     status: asString(r.status, "UNKNOWN"),
     httpStatus: asNullableNumber(r.httpStatus),
-    message: asNullableString(r.message),
-    dispatchedAt: asNullableString(r.dispatchedAt),
+    message: asNullableString(r.message ?? r.errorSummary),
+    dispatchedAt: asNullableString(r.dispatchedAt ?? r.occurredAt),
   };
 }
 
