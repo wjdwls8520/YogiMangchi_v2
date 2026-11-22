@@ -10,6 +10,42 @@ import { bindMemberActivity } from "../api/activity";
 import { NotificationCenterProvider } from "../notifications/notification-context";
 import { resolveContentOrigin } from "../../../lib/api-origins";
 
+const PUBLIC_MARKET_QUERY_ROOTS = new Set([
+  "portal-redis-market-overview",
+  "portal-redis-tickers",
+  "community-sidebar-contest-seasons",
+  "community-sidebar-contest-top5",
+  "contest-sidebar-member-profile",
+]);
+
+const ANONYMOUS_FEED_QUERY_ROOTS = new Set([
+  "portal-news",
+  "portal-posts",
+]);
+
+/**
+ * 세션 전환 시 공개·비개인화 시세/카탈로그 쿼리는 유지해 불필요한 2중 재요청을 막고,
+ * 초기 익명→로그인 복구(null -> memberId)에서는 기존 익명 피드 캐시를 남겨 placeholderData로
+ * 스켈레톤 재깜빡임을 방지한다. 로그아웃 또는 계정 전환 시에는 모든 개인화 쿼리를 즉시 제거한다.
+ */
+export function shouldPreserveQueryOnSessionChange(
+  queryKey: readonly unknown[],
+  previousMemberId: number | null,
+  nextMemberId: number | null,
+): boolean {
+  const root = typeof queryKey[0] === "string" ? queryKey[0] : "";
+  if (PUBLIC_MARKET_QUERY_ROOTS.has(root)) {
+    return true;
+  }
+  if (root === "trading" && queryKey[1] === "symbols") {
+    return true;
+  }
+  if (previousMemberId === null && nextMemberId !== null && ANONYMOUS_FEED_QUERY_ROOTS.has(root)) {
+    return true;
+  }
+  return false;
+}
+
 const origin = () => contentOrigin(resolveContentOrigin());
 let browserSession: MemberSession | undefined;
 const Context = createContext<{ session: MemberSession; origin: string; announce: (type: "changed" | "ended") => void; retryConsents: () => void } | null>(null);
@@ -26,7 +62,13 @@ export function MemberProvider({ children, session: provided, client: providedCl
     const unsubscribe = session.subscribe(() => {
       const next = session.getSnapshot();
       if (next.memberId !== previous.memberId || next.generation !== previous.generation) {
-        void client.cancelQueries(); client.removeQueries(); client.getMutationCache().clear();
+        const prevMemberId = previous.memberId;
+        const nextMemberId = next.memberId;
+        const shouldPurge = (query: { queryKey: readonly unknown[] }) =>
+          !shouldPreserveQueryOnSessionChange(query.queryKey, prevMemberId, nextMemberId);
+        void client.cancelQueries({ predicate: shouldPurge });
+        client.removeQueries({ predicate: shouldPurge });
+        client.getMutationCache().clear();
       }
       previous = next;
     });
