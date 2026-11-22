@@ -4,7 +4,9 @@ import com.yogimangchi.trading.ops.OpsAlertService;
 import com.yogimangchi.trading.ops.OpsErrorBuffer;
 import com.yogimangchi.trading.ops.RequestIdMdcFilter;
 import jakarta.servlet.http.HttpServletRequest;
+import java.io.IOException;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -136,6 +138,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ProblemDetail handleUnexpectedException(Exception exception) {
+        if (isClientDisconnect(exception)) {
+            HttpServletRequest request = currentRequest();
+            log.debug("Ignoring client disconnect method={} uri={} reqId={} rootCause={}",
+                    request != null ? request.getMethod() : null,
+                    request != null ? request.getRequestURI() : null,
+                    currentRequestId(),
+                    rootCauseName(exception));
+            return null;
+        }
         HttpServletRequest request = currentRequest();
         String method = request != null ? request.getMethod() : null;
         String uri = request != null ? request.getRequestURI() : null;
@@ -153,6 +164,31 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         problem.setProperty("outcome", "UNKNOWN");
         attachRequestId(problem);
         return problem;
+    }
+
+    private static boolean isClientDisconnect(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            String simpleName = cause.getClass().getSimpleName();
+            if ("AsyncRequestNotUsableException".equals(simpleName)
+                    || "ClientAbortException".equals(simpleName)) {
+                return true;
+            }
+            if (cause instanceof IOException) {
+                String msg = cause.getMessage();
+                if (msg != null) {
+                    String lower = msg.toLowerCase(Locale.ROOT);
+                    if (lower.contains("broken pipe")
+                            || lower.contains("connection reset")
+                            || lower.contains("aborted")
+                            || lower.contains("closed")
+                            || msg.contains("중단")
+                            || msg.contains("강제로 끊겼습니다")) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     @Override
