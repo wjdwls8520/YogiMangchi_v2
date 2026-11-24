@@ -459,7 +459,7 @@ export function ContestOngoingSection({
                       className={cn(
                         "mt-0.5 text-xs font-black tabular-nums",
                         contest.myRoi.startsWith("+")
-                          ? "text-[#0ECB81]"
+                          ? "text-bull"
                           : contest.myRoi.startsWith("-")
                             ? "text-[#F6465D]"
                             : "text-gray-700",
@@ -513,7 +513,7 @@ export function ContestOngoingSection({
   );
 }
 
-const ONGOING_DOT_PALETTE = ["#0058FF", "#0ECB81", "#F59E0B", "#0EA5E9", "#F6465D"];
+const ONGOING_DOT_PALETTE = ["#0058FF", "var(--color-bull)", "#F59E0B", "#0EA5E9", "#F6465D"];
 
 function mapSeasonViewToItem(
   view: ContestSeasonView,
@@ -1557,7 +1557,7 @@ export function ContestHub() {
                             ? "text-[#F6465D]"
                             : entry.roi === "0.00%"
                               ? "text-gray-700"
-                              : "text-[#0ECB81]",
+                              : "text-bull",
                         )}
                       >
                         {entry.roi}
@@ -1643,7 +1643,7 @@ export function ContestHub() {
                             ? "text-[#F6465D]"
                             : entry.realizedPnl === "0.00 USDT"
                               ? "text-gray-700"
-                              : "text-[#0ECB81]",
+                              : "text-bull",
                         )}
                       >
                         {entry.realizedPnl}
@@ -1655,7 +1655,7 @@ export function ContestHub() {
                             ? "text-[#F6465D]"
                             : entry.roi === "0.00%"
                               ? "text-gray-700"
-                              : "text-[#0ECB81]",
+                              : "text-bull",
                         )}
                       >
                         {entry.roi}

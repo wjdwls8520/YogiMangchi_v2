@@ -537,7 +537,7 @@ export function AdminReportsView() {
                               "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold",
                               isDeleted
                                 ? "bg-red-50 text-[#F6465D]"
-                                : "bg-emerald-50 text-[#0ECB81]",
+                                : "bg-emerald-50 text-bull",
                             )}
                           >
                             {isDeleted ? "삭제됨 (Y)" : "활성 (N)"}

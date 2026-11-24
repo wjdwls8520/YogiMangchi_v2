@@ -721,7 +721,7 @@ export function AdminCommunity() {
                                 "inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-black",
                                 isDeleted
                                   ? "bg-gray-100 text-gray-500"
-                                  : "bg-emerald-50 text-[#0ECB81]",
+                                  : "bg-emerald-50 text-bull",
                               )}
                             >
                               {isDeleted ? "삭제됨 (Y)" : "정상 (N)"}

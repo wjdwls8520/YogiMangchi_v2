@@ -1771,7 +1771,7 @@ export function NewsFeed({
             </div>
             <div className="mt-2.5 flex h-6 overflow-hidden rounded-lg text-[11px] font-extrabold text-white">
               <div
-                className="flex items-center justify-center bg-[#0ECB81] px-1.5 whitespace-nowrap overflow-hidden"
+                className="flex items-center justify-center bg-bull px-1.5 whitespace-nowrap overflow-hidden"
                 style={{ width: `${sentimentBullPct}%` }}
               >
                 {sentimentBullPct >= 20
@@ -2482,7 +2482,7 @@ export function NewsFeed({
                                   onClick={() => toggleReaction(item.id, "bull")}
                                   className={`inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-0 items-center justify-center gap-1 rounded-lg px-2.5 py-1 transition-colors ${
                                     userReaction === "bull"
-                                      ? "bg-emerald-50 text-[#0ECB81]"
+                                      ? "bg-emerald-50 text-bull"
                                       : "hover:bg-gray-100 hover:text-gray-700"
                                   }`}
                                 >
@@ -2786,7 +2786,7 @@ export function NewsFeed({
                   onClick={() => toggleReaction(selectedDetail.id, "bull")}
                   className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-bold transition-colors ${
                     modalReaction === "bull"
-                      ? "border-[#0ECB81] bg-emerald-50 text-[#0ECB81]"
+                      ? "border-bull bg-emerald-50 text-bull"
                       : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
                   }`}
                 >

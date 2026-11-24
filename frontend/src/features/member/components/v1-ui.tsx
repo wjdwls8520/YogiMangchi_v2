@@ -866,7 +866,7 @@ export function V1AssetSummaryCard({
     : summary.isNegative || summary.totalProfit.trim().startsWith("-")
       ? "text-[#F6465D]"
       : summary.isPositive
-        ? "text-[#0ECB81]"
+        ? "text-bull"
         : "text-white";
 
   return (

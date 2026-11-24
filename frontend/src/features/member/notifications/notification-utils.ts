@@ -386,12 +386,12 @@ export function getNotificationTradeToneStyles(tone: NotificationTradeTone) {
     case "buy":
     case "long":
       return {
-        accent: "bg-[#0ECB81]",
-        dot: "bg-[#0ECB81]",
-        unreadSurface: "bg-[#0ECB81]/[0.04]",
-        highlightSurface: "bg-[#0ECB81]/[0.1]",
-        badge: "bg-[#0ECB81]/12 text-[#0ECB81]",
-        icon: "bg-[#0ECB81]/12 text-[#0ECB81]",
+        accent: "bg-bull",
+        dot: "bg-bull",
+        unreadSurface: "bg-bull/[0.04]",
+        highlightSurface: "bg-bull/[0.1]",
+        badge: "bg-bull/12 text-bull",
+        icon: "bg-bull/12 text-bull",
       } as const;
     case "sell":
     case "short":

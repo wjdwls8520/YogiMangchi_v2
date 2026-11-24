@@ -5,6 +5,8 @@ export interface MarketOverviewData {
   btcDominancePercent: number | null;
   btcDominanceChange24h: number | null;
   kimchiPremiumPercent: number | null;
+  ethKimchiPremiumPercent?: number | null;
+  xrpKimchiPremiumPercent?: number | null;
   openInterestBillionsUsd: number | null;
   fearGreedValue: number | null;
   fearGreedLabelKr: string | null;
@@ -145,6 +147,8 @@ export function parseMarketOverviewPayload(value: unknown): MarketOverviewData |
   const rawDominance = finiteOrNull(data.btcDominancePercent);
   const rawDominanceChange = finiteOrNull(data.btcDominanceChange24h);
   const rawKimchi = finiteOrNull(data.kimchiPremiumPercent);
+  const rawEthKimchi = finiteOrNull(data.ethKimchiPremiumPercent);
+  const rawXrpKimchi = finiteOrNull(data.xrpKimchiPremiumPercent);
   const rawOi = finiteOrNull(data.openInterestBillionsUsd);
   const rawFng = finiteOrNull(data.fearGreedValue);
   const fearGreedValue =
@@ -197,6 +201,8 @@ export function parseMarketOverviewPayload(value: unknown): MarketOverviewData |
     btcDominanceChange24h:
       rawDominanceChange !== null ? Number(rawDominanceChange.toFixed(2)) : null,
     kimchiPremiumPercent: rawKimchi !== null ? Number(rawKimchi.toFixed(2)) : null,
+    ethKimchiPremiumPercent: rawEthKimchi !== null ? Number(rawEthKimchi.toFixed(2)) : null,
+    xrpKimchiPremiumPercent: rawXrpKimchi !== null ? Number(rawXrpKimchi.toFixed(2)) : null,
     openInterestBillionsUsd: rawOi !== null ? Number(rawOi.toFixed(1)) : null,
     fearGreedValue,
     fearGreedLabelKr: rawLabel,
@@ -259,6 +265,8 @@ export async function fetchLiveMarketOverview(
 ): Promise<MarketOverviewData | null> {
   const [
     binanceResult,
+    binanceEthResult,
+    binanceXrpResult,
     coingeckoGlobalResult,
     upbitResult,
     fxResult,
@@ -267,8 +275,10 @@ export async function fetchLiveMarketOverview(
     takerRatioResult,
   ] = await Promise.allSettled([
     fetchJsonWithTimeout("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=BTCUSDT", fetchImpl),
+    fetchJsonWithTimeout("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=ETHUSDT", fetchImpl),
+    fetchJsonWithTimeout("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=XRPUSDT", fetchImpl),
     fetchJsonWithTimeout("https://api.coingecko.com/api/v3/global", fetchImpl),
-    fetchJsonWithTimeout("https://api.upbit.com/v1/ticker?markets=KRW-BTC", fetchImpl),
+    fetchJsonWithTimeout("https://api.upbit.com/v1/ticker?markets=KRW-BTC,KRW-ETH,KRW-XRP", fetchImpl),
     fetchJsonWithTimeout("https://open.er-api.com/v6/latest/USD", fetchImpl),
     fetchJsonWithTimeout(
       "https://api.coingecko.com/api/v3/derivatives/exchanges?per_page=10",
@@ -280,6 +290,17 @@ export async function fetchLiveMarketOverview(
       fetchImpl,
     ),
   ]);
+
+  let ethUsd = Number.NaN;
+  if (binanceEthResult.status === "fulfilled" && binanceEthResult.value && typeof binanceEthResult.value === "object") {
+    const obj = binanceEthResult.value as Record<string, unknown>;
+    ethUsd = Number(obj.lastPrice ?? obj.price);
+  }
+  let xrpUsd = Number.NaN;
+  if (binanceXrpResult.status === "fulfilled" && binanceXrpResult.value && typeof binanceXrpResult.value === "object") {
+    const obj = binanceXrpResult.value as Record<string, unknown>;
+    xrpUsd = Number(obj.lastPrice ?? obj.price);
+  }
 
   let btcUsd = Number.NaN;
   let btcChange24hPct = Number.NaN;
@@ -350,9 +371,23 @@ export async function fetchLiveMarketOverview(
   }
 
   let upbitBtcKrw = Number.NaN;
-  if (upbitResult.status === "fulfilled" && Array.isArray(upbitResult.value) && upbitResult.value[0]) {
-    const first = upbitResult.value[0] as Record<string, unknown>;
-    upbitBtcKrw = Number(first.trade_price);
+  let upbitEthKrw = Number.NaN;
+  let upbitXrpKrw = Number.NaN;
+  if (upbitResult.status === "fulfilled" && Array.isArray(upbitResult.value)) {
+    for (const rawRow of upbitResult.value) {
+      if (!rawRow || typeof rawRow !== "object") continue;
+      const row = rawRow as Record<string, unknown>;
+      const market = typeof row.market === "string" ? row.market.toUpperCase() : "";
+      const price = Number(row.trade_price);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      if (market === "KRW-BTC" || (!market && !Number.isFinite(upbitBtcKrw))) {
+        upbitBtcKrw = price;
+      } else if (market === "KRW-ETH") {
+        upbitEthKrw = price;
+      } else if (market === "KRW-XRP") {
+        upbitXrpKrw = price;
+      }
+    }
   }
 
   let usdKrwRate = Number.NaN;
@@ -425,6 +460,14 @@ export async function fetchLiveMarketOverview(
   const kimchiPremiumPercent =
     Number.isFinite(upbitBtcKrw) && Number.isFinite(btcUsd) && Number.isFinite(usdKrwRate)
       ? computeKimchiPremiumPercent(upbitBtcKrw, btcUsd, usdKrwRate)
+      : null;
+  const ethKimchiPremiumPercent =
+    Number.isFinite(upbitEthKrw) && Number.isFinite(ethUsd) && Number.isFinite(usdKrwRate)
+      ? computeKimchiPremiumPercent(upbitEthKrw, ethUsd, usdKrwRate)
+      : null;
+  const xrpKimchiPremiumPercent =
+    Number.isFinite(upbitXrpKrw) && Number.isFinite(xrpUsd) && Number.isFinite(usdKrwRate)
+      ? computeKimchiPremiumPercent(upbitXrpKrw, xrpUsd, usdKrwRate)
       : null;
 
   let openInterestBillionsUsd: number | null = null;
@@ -538,6 +581,8 @@ export async function fetchLiveMarketOverview(
     btcDominancePercent,
     btcDominanceChange24h,
     kimchiPremiumPercent,
+    ethKimchiPremiumPercent,
+    xrpKimchiPremiumPercent,
     openInterestBillionsUsd,
     fearGreedValue,
     fearGreedLabelKr,
