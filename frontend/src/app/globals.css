@@ -1291,6 +1291,11 @@ body:has(.member-shell) :focus-visible {
   color: #1D1D1F;
 }
 
+.member-shell .member-card [data-contest-hub] h2 {
+  margin: 0;
+  line-height: 1.25;
+}
+
 /* Inputs & Buttons (xrhub.co.kr exact specifications) */
 .member-shell .myInput,
 .member-shell .member-fields input:not([type="checkbox"]):not([type="file"]),

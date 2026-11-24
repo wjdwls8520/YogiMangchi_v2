@@ -3437,6 +3437,45 @@ test("회원-대회-심볼-탈퇴보호 전 생애주기 API 계약 및 금지 �
   assert.equal(waitCardHtml.includes('data-contest-action="cancel-application"'), true);
   assert.equal(waitCardHtml.includes("신청 취소"), true);
 
+  // 4-b. 모집중 카드(apply) 비로그인/로그인 분기 및 대회 섹션 제목 수직 정렬 CSS 규칙 검증
+  const applySeasonSample = {
+    id: 202609,
+    title: "2026년 11월 요기망치 선물 트레이딩 챌린지",
+    description: "모집중 로그인 가드 테스트",
+    seedMoney: "10,000 USDT",
+    recruitmentStartAt: "2026.11.20 00:00",
+    recruitmentEndAt: "2026.12.07 23:59",
+    contestStartAt: "2026.11.23 00:00",
+    contestEndAt: "2026.12.14 23:59",
+    participantCount: 15,
+    cardType: "apply" as const,
+    accentLabel: "모집중",
+    actionLabel: "신청",
+  };
+  const anonApplyCardHtml = renderToStaticMarkup(
+    <ContestListCard contest={applySeasonSample} isLoggedIn={false} onApply={() => {}} />,
+  );
+  assert.match(
+    anonApplyCardHtml,
+    /<a[^>]*data-contest-action="apply-login-required"[^>]*href="\/login"[^>]*><span>로그인 후 신청 가능<\/span><\/a>/,
+  );
+  assert.equal(anonApplyCardHtml.includes('data-contest-action="apply"'), false);
+
+  const memberApplyCardHtml = renderToStaticMarkup(
+    <ContestListCard contest={applySeasonSample} isLoggedIn={true} onApply={() => {}} />,
+  );
+  assert.equal(memberApplyCardHtml.includes('data-contest-action="apply"'), true);
+  assert.equal(memberApplyCardHtml.includes("로그인 후 신청 가능"), false);
+
+  const contestGlobalsCss = fs.readFileSync(
+    path.join(process.cwd(), "src/app/globals.css"),
+    "utf8",
+  );
+  assert.match(
+    contestGlobalsCss,
+    /\.member-shell\s+\.member-card\s+\[data-contest-hub\]\s+h2\s*\{[^}]*margin:\s*0;/,
+  );
+
   // 5. 탈퇴/미존재 회원 및 대회 신청 에러 한국어 메시지 매핑 검증
   assert.equal(
     contentMessage(new ContentApiError(404, "MEMBER_NOT_FOUND")),

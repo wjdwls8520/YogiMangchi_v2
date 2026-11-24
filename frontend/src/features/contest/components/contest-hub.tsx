@@ -172,17 +172,27 @@ export function ContestListCard({
             {contest.accentLabel}
           </span>
           <div className="flex items-center gap-2 shrink-0">
-            {contest.cardType === "apply" && onApply ? (
-              <button
-                type="button"
-                data-contest-action="apply"
-                disabled={busy}
-                onClick={() => onApply(contest)}
-                className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 cursor-pointer disabled:opacity-50"
-              >
-                <span>{busy ? "신청 중…" : contest.actionLabel || "신청"}</span>
-                <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
-              </button>
+            {contest.cardType === "apply" ? (
+              !isLoggedIn ? (
+                <Link
+                  href="/login"
+                  data-contest-action="apply-login-required"
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
+                >
+                  <span>로그인 후 신청 가능</span>
+                </Link>
+              ) : onApply ? (
+                <button
+                  type="button"
+                  data-contest-action="apply"
+                  disabled={busy}
+                  onClick={() => onApply(contest)}
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-emerald-600 px-3.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{busy ? "신청 중…" : contest.actionLabel || "신청"}</span>
+                  <V1IconArrowRight className="h-3.5 w-3.5 shrink-0" />
+                </button>
+              ) : null
             ) : contest.cardType === "live" ? (
               canEnterTrading ? (
                 <Link
@@ -361,8 +371,8 @@ export function ContestOngoingSection({
     <section data-contest-section="ongoing" className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
-          <span className="h-4 w-1 rounded-full bg-[#0058FF]" />
-          <h2 className="text-base font-black text-gray-900">내 진행 중인 대회</h2>
+          <span aria-hidden="true" className="h-4 w-1 shrink-0 rounded-full bg-[#0058FF]" />
+          <h2 className="m-0! text-base font-black leading-tight text-gray-900">내 진행 중인 대회</h2>
           <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-[#0058FF]">
             {contests.length}시즌
           </span>
@@ -1102,7 +1112,7 @@ export function ContestHub() {
       variant="wide"
       hideCardHeading
     >
-      <div className="mx-auto max-w-7xl space-y-10 pb-12">
+      <div data-contest-hub="" className="mx-auto max-w-7xl space-y-10 pb-12">
         {/* 상단 대회 헤더 */}
         <header className="flex flex-col gap-4 border-b border-gray-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2">
@@ -1226,8 +1236,8 @@ export function ContestHub() {
             {/* 공개 대회 3단 섹션 순차 표시 */}
             <section data-public-contest-stage="running" className="space-y-4">
               <div className="flex items-center gap-2">
-                <span className="h-4 w-1 rounded-full bg-[#0058FF]" />
-                <h2 className="text-lg font-black text-gray-900">진행중인 대회</h2>
+                <span aria-hidden="true" className="h-4 w-1 shrink-0 rounded-full bg-[#0058FF]" />
+                <h2 className="m-0! text-lg font-black leading-tight text-gray-900">진행중인 대회</h2>
               </div>
               {publicRunningContests.length === 0 ? (
                 <div className="flex h-28 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white">
@@ -1251,8 +1261,8 @@ export function ContestHub() {
 
             <section data-public-contest-stage="recruiting" className="space-y-4">
               <div className="flex items-center gap-2">
-                <span className="h-4 w-1 rounded-full bg-emerald-600" />
-                <h2 className="text-lg font-black text-gray-900">참가 모집중 대회</h2>
+                <span aria-hidden="true" className="h-4 w-1 shrink-0 rounded-full bg-emerald-600" />
+                <h2 className="m-0! text-lg font-black leading-tight text-gray-900">참가 모집중 대회</h2>
               </div>
               {availableContests.length === 0 ? (
                 <div className="flex h-28 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white">
@@ -1264,6 +1274,7 @@ export function ContestHub() {
                     <ContestListCard
                       key={contest.id}
                       contest={contest}
+                      isLoggedIn={false}
                       onApply={handleApplySeason}
                       defaultExpanded={idx === 0}
                     />
@@ -1274,8 +1285,8 @@ export function ContestHub() {
 
             <section data-public-contest-stage="finished" className="space-y-4">
               <div className="flex items-center gap-2">
-                <span className="h-4 w-1 rounded-full bg-gray-400" />
-                <h2 className="text-lg font-black text-gray-900">종료된 대회</h2>
+                <span aria-hidden="true" className="h-4 w-1 shrink-0 rounded-full bg-gray-400" />
+                <h2 className="m-0! text-lg font-black leading-tight text-gray-900">종료된 대회</h2>
               </div>
               {historyContests.length === 0 ? (
                 <div className="flex h-28 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white">
@@ -1287,6 +1298,7 @@ export function ContestHub() {
                     <ContestListCard
                       key={contest.id}
                       contest={contest}
+                      isLoggedIn={false}
                       defaultExpanded={idx === 0}
                     />
                   ))}
@@ -1305,8 +1317,8 @@ export function ContestHub() {
             {otherPublicRunningContests.length > 0 ? (
               <section data-public-contest-stage="running-other" className="space-y-4">
                 <div className="flex items-center gap-2">
-                  <span className="h-4 w-1 rounded-full bg-indigo-500" />
-                  <h2 className="text-base font-black text-gray-900">현재 진행 중인 전체 대회</h2>
+                  <span aria-hidden="true" className="h-4 w-1 shrink-0 rounded-full bg-indigo-500" />
+                  <h2 className="m-0! text-base font-black leading-tight text-gray-900">현재 진행 중인 전체 대회</h2>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
                   {otherPublicRunningContests.map((contest, idx) => (
@@ -1413,8 +1425,8 @@ export function ContestHub() {
           <div className="flex flex-col gap-4 border-b border-gray-100 pb-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <V1IconMedal className="h-5 w-5 text-[#0058FF]" />
-                <h2 className="text-lg sm:text-xl font-black text-gray-900">
+                <V1IconMedal className="h-5 w-5 shrink-0 text-[#0058FF]" />
+                <h2 className="m-0! text-lg sm:text-xl font-black leading-tight text-gray-900">
                   시즌별 대회 리더보드 & 정산 순위
                 </h2>
                 {currentLeaderboard ? (
