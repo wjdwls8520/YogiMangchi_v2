@@ -12,6 +12,8 @@ public record MarketOverviewResponse(
         @Schema(description = "BTC 시가총액 도미넌스 (%)", example = "59.7") String btcDominancePercent,
         @Schema(description = "24h BTC 도미넌스 변동폭 (%p)", example = "1.85") String btcDominanceChange24h,
         @Schema(description = "업비트 KRW-BTC 대비 바이낸스 BTCUSDT * USD/KRW 실시간 김치프리미엄 (%)", example = "1.26") String kimchiPremiumPercent,
+        @Schema(description = "업비트 KRW-ETH 대비 바이낸스 ETHUSDT * USD/KRW 실시간 김치프리미엄 (%)", nullable = true, example = "1.34") String ethKimchiPremiumPercent,
+        @Schema(description = "업비트 KRW-XRP 대비 바이낸스 XRPUSDT * USD/KRW 실시간 김치프리미엄 (%)", nullable = true, example = "1.42") String xrpKimchiPremiumPercent,
         @Schema(description = "글로벌 선물 24h 미결제약정 규모 (십억 USD)", example = "30.5") String openInterestBillionsUsd,
         @Schema(description = "공포·탐욕 지수 (0~100)", example = "32") int fearGreedValue,
         @Schema(description = "공포·탐욕 지수 한글 분류", example = "공포") String fearGreedLabelKr,

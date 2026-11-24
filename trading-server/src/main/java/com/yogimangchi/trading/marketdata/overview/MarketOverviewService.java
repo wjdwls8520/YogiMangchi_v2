@@ -16,6 +16,7 @@ import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,15 +68,40 @@ public class MarketOverviewService {
     }
 
     public MarketOverviewResponse getOverview() {
-        Long btcSymbolId = findBtcSymbolId();
-        List<String> keys = btcSymbolId == null
-                ? List.of(RedisMarketOverviewStore.OVERVIEW_KEY)
-                : List.of(
-                        RedisMarketOverviewStore.OVERVIEW_KEY,
-                        RedisMarketDataBridge.snapshotKey(btcSymbolId),
-                        RedisMarketDataBridge.stateKey(btcSymbolId),
-                        RedisTickerStore.snapshotKey(btcSymbolId)
-                );
+        List<TradingSymbolResponse> activeSymbols = symbols.findActiveSymbols();
+        Long btcSymbolId = findSymbolId(activeSymbols, "BTC");
+        Long ethSymbolId = findSymbolId(activeSymbols, "ETH");
+        Long xrpSymbolId = findSymbolId(activeSymbols, "XRP");
+
+        List<String> keys = new ArrayList<>();
+        keys.add(RedisMarketOverviewStore.OVERVIEW_KEY);
+        int btcSnapIdx = -1;
+        int btcStateIdx = -1;
+        int btcTickerIdx = -1;
+        if (btcSymbolId != null) {
+            btcSnapIdx = keys.size();
+            keys.add(RedisMarketDataBridge.snapshotKey(btcSymbolId));
+            btcStateIdx = keys.size();
+            keys.add(RedisMarketDataBridge.stateKey(btcSymbolId));
+            btcTickerIdx = keys.size();
+            keys.add(RedisTickerStore.snapshotKey(btcSymbolId));
+        }
+        int ethSnapIdx = -1;
+        int ethStateIdx = -1;
+        if (ethSymbolId != null) {
+            ethSnapIdx = keys.size();
+            keys.add(RedisMarketDataBridge.snapshotKey(ethSymbolId));
+            ethStateIdx = keys.size();
+            keys.add(RedisMarketDataBridge.stateKey(ethSymbolId));
+        }
+        int xrpSnapIdx = -1;
+        int xrpStateIdx = -1;
+        if (xrpSymbolId != null) {
+            xrpSnapIdx = keys.size();
+            keys.add(RedisMarketDataBridge.snapshotKey(xrpSymbolId));
+            xrpStateIdx = keys.size();
+            keys.add(RedisMarketDataBridge.stateKey(xrpSymbolId));
+        }
 
         List<String> values;
         try {
@@ -97,18 +123,34 @@ public class MarketOverviewService {
         Instant now = clock.instant();
         LatestMarkPrice liveBtcMark = null;
         MarketTicker liveBtcTicker = null;
-        if (btcSymbolId != null && values.size() == 4) {
-            LatestMarkPrice parsedMark = readMark(values.get(1), btcSymbolId);
-            if (parsedMark != null && LatestPriceStore.isFreshAt(parsedMark, now) && "FRESH".equals(values.get(2))) {
+        if (btcSymbolId != null && values.size() > btcTickerIdx) {
+            LatestMarkPrice parsedMark = readMark(values.get(btcSnapIdx), btcSymbolId);
+            if (parsedMark != null && LatestPriceStore.isFreshAt(parsedMark, now) && "FRESH".equals(values.get(btcStateIdx))) {
                 liveBtcMark = parsedMark;
             }
-            MarketTicker parsedTicker = readTicker(values.get(3), btcSymbolId);
+            MarketTicker parsedTicker = readTicker(values.get(btcTickerIdx), btcSymbolId);
             if (parsedTicker != null && parsedTicker.isFreshAt(now)) {
                 liveBtcTicker = parsedTicker;
             }
         }
+        LatestMarkPrice liveEthMark = null;
+        if (ethSymbolId != null && values.size() > ethStateIdx) {
+            LatestMarkPrice parsedMark = readMark(values.get(ethSnapIdx), ethSymbolId);
+            if (parsedMark != null && LatestPriceStore.isFreshAt(parsedMark, now) && "FRESH".equals(values.get(ethStateIdx))) {
+                liveEthMark = parsedMark;
+            }
+        }
+        LatestMarkPrice liveXrpMark = null;
+        if (xrpSymbolId != null && values.size() > xrpStateIdx) {
+            LatestMarkPrice parsedMark = readMark(values.get(xrpSnapIdx), xrpSymbolId);
+            if (parsedMark != null && LatestPriceStore.isFreshAt(parsedMark, now) && "FRESH".equals(values.get(xrpStateIdx))) {
+                liveXrpMark = parsedMark;
+            }
+        }
 
         BigDecimal kimchiPremium = snapshot.kimchiPremiumPercent();
+        BigDecimal ethKimchiPremium = snapshot.ethKimchiPremiumPercent();
+        BigDecimal xrpKimchiPremium = snapshot.xrpKimchiPremiumPercent();
         BigDecimal openInterestBillions = snapshot.openInterestBillionsUsd();
         if (liveBtcMark != null) {
             BigDecimal btcMarkUsd = liveBtcMark.domainMarkPrice();
@@ -125,6 +167,20 @@ public class MarketOverviewService {
                         btcMarkUsd
                 );
             }
+        }
+        if (liveEthMark != null && snapshot.upbitEthKrw() != null && snapshot.usdKrwRate() != null) {
+            ethKimchiPremium = MarketOverviewMath.computeKimchiPremiumPercent(
+                    snapshot.upbitEthKrw(),
+                    liveEthMark.domainMarkPrice(),
+                    snapshot.usdKrwRate()
+            );
+        }
+        if (liveXrpMark != null && snapshot.upbitXrpKrw() != null && snapshot.usdKrwRate() != null) {
+            xrpKimchiPremium = MarketOverviewMath.computeKimchiPremiumPercent(
+                    snapshot.upbitXrpKrw(),
+                    liveXrpMark.domainMarkPrice(),
+                    snapshot.usdKrwRate()
+            );
         }
 
         BigDecimal btcChange24h = snapshot.btcChange24h();
@@ -160,15 +216,18 @@ public class MarketOverviewService {
                 snapshot.usdKrwChangeAmount(),
                 snapshot.usdKrwChangePct(),
                 snapshot.usdKrwHistory(),
-                snapshot.updatedAt()
+                snapshot.updatedAt(),
+                snapshot.upbitEthKrw(),
+                ethKimchiPremium,
+                snapshot.upbitXrpKrw(),
+                xrpKimchiPremium
         );
         return toResponse(merged, fresh ? FRESH : STALE);
     }
 
-    private Long findBtcSymbolId() {
-        List<TradingSymbolResponse> active = symbols.findActiveSymbols();
+    private Long findSymbolId(List<TradingSymbolResponse> active, String baseSymbol) {
         for (TradingSymbolResponse symbol : active) {
-            if ("BTC".equalsIgnoreCase(symbol.symbol()) && "USDT".equalsIgnoreCase(symbol.quoteAsset())) {
+            if (baseSymbol.equalsIgnoreCase(symbol.symbol()) && "USDT".equalsIgnoreCase(symbol.quoteAsset())) {
                 return symbol.id();
             }
         }
@@ -204,6 +263,8 @@ public class MarketOverviewService {
                 s.btcDominancePercent().setScale(1, RoundingMode.HALF_UP).toPlainString(),
                 s.btcDominanceChange24h().setScale(2, RoundingMode.HALF_UP).toPlainString(),
                 s.kimchiPremiumPercent().setScale(2, RoundingMode.HALF_UP).toPlainString(),
+                s.ethKimchiPremiumPercent() != null ? s.ethKimchiPremiumPercent().setScale(2, RoundingMode.HALF_UP).toPlainString() : null,
+                s.xrpKimchiPremiumPercent() != null ? s.xrpKimchiPremiumPercent().setScale(2, RoundingMode.HALF_UP).toPlainString() : null,
                 s.openInterestBillionsUsd().setScale(1, RoundingMode.HALF_UP).toPlainString(),
                 s.fearGreedValue(),
                 s.fearGreedLabelKr(),
