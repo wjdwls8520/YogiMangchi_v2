@@ -5,14 +5,19 @@ import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTarget;
 import com.yogimangchi.trading.binance.subscription.BinanceSubscriptionTargetLoader;
 import com.yogimangchi.trading.marketdata.orderbook.OrderBookSnapshot;
 import com.yogimangchi.trading.marketdata.orderbook.RedisOrderBookStore;
+import com.yogimangchi.trading.marketdata.websocket.MarketWebSocketHandler;
+import com.yogimangchi.trading.ops.OpsAlertService;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
 import java.net.http.*;
 import java.time.*;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.function.*;
 import org.slf4j.*;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -24,6 +29,8 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(name = "binance.order-book.enabled", havingValue = "true", matchIfMissing = true)
 public class BinanceOrderBookClient {
     private static final Logger log = LoggerFactory.getLogger(BinanceOrderBookClient.class);
+    private record RawFrame(BinanceOrderBookProtocol protocol, String payload, Instant receivedAt) { }
+
     private final Supplier<List<BinanceSubscriptionTarget>> targets;
     private final ObjectMapper mapper;
     private final Consumer<OrderBookSnapshot> sink;
@@ -31,21 +38,55 @@ public class BinanceOrderBookClient {
     private final ScheduledExecutorService executor;
     private final Clock clock;
     private final LongSupplier nanoTime;
+    private final ObjectProvider<OpsAlertService> alerts;
+    private final LongPredicate hasViewer;
+    private final ConcurrentHashMap<Long, RawFrame> latestRawFrames = new ConcurrentHashMap<>();
     private volatile boolean stopping;
     private volatile Session current;
     private boolean started;
     private int attempts;
+    private volatile long reconnectCount;
+    private volatile String lastDisconnectReason;
     private ScheduledFuture<?> retry, watchdog;
 
-    @Autowired public BinanceOrderBookClient(BinanceSubscriptionTargetLoader targets, ObjectMapper mapper, RedisOrderBookStore store) {
+    @Autowired public BinanceOrderBookClient(BinanceSubscriptionTargetLoader targets, ObjectMapper mapper, RedisOrderBookStore store,
+            ObjectProvider<OpsAlertService> alerts, ObjectProvider<MarketWebSocketHandler> wsHandler) {
         this(targets::loadActiveTargets, mapper, store::accept, connector(),
                 Executors.newSingleThreadScheduledExecutor(task -> { var thread = new Thread(task, "binance-orderbook"); thread.setDaemon(true); return thread; }),
-                Clock.systemUTC(), System::nanoTime);
+                Clock.systemUTC(), System::nanoTime, alerts,
+                store.isLocalDirect()
+                        ? symbolId -> {
+                            MarketWebSocketHandler handler = wsHandler != null ? wsHandler.getIfAvailable() : null;
+                            return handler == null || handler.hasSubscribers(symbolId);
+                        }
+                        : symbolId -> true);
+        if (store.isLocalDirect()) {
+            store.setLazyResolver(this::resolveCachedFrame);
+        }
     }
     BinanceOrderBookClient(Supplier<List<BinanceSubscriptionTarget>> targets, ObjectMapper mapper, Consumer<OrderBookSnapshot> sink,
             BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect, ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime) {
+        this(targets, mapper, sink, connect, executor, clock, nanoTime, null, symbolId -> true);
+    }
+    BinanceOrderBookClient(Supplier<List<BinanceSubscriptionTarget>> targets, ObjectMapper mapper, Consumer<OrderBookSnapshot> sink,
+            BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect, ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime,
+            ObjectProvider<OpsAlertService> alerts) {
+        this(targets, mapper, sink, connect, executor, clock, nanoTime, alerts, symbolId -> true);
+    }
+    BinanceOrderBookClient(Supplier<List<BinanceSubscriptionTarget>> targets, ObjectMapper mapper, Consumer<OrderBookSnapshot> sink,
+            BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connect, ScheduledExecutorService executor, Clock clock, LongSupplier nanoTime,
+            ObjectProvider<OpsAlertService> alerts, LongPredicate hasViewer) {
         this.targets = targets; this.mapper = mapper; this.sink = sink; this.connect = connect;
-        this.executor = executor; this.clock = clock; this.nanoTime = nanoTime;
+        this.executor = executor; this.clock = clock; this.nanoTime = nanoTime; this.alerts = alerts;
+        this.hasViewer = hasViewer != null ? hasViewer : symbolId -> true;
+    }
+
+    /** Lazily parses the latest cached raw frame for a symbol that had 0 viewers until now. */
+    Optional<OrderBookSnapshot> resolveCachedFrame(long tradingSymbolId) {
+        RawFrame frame = latestRawFrames.remove(tradingSymbolId);
+        if (frame == null) return Optional.empty();
+        Optional<OrderBookSnapshot> parsed = frame.protocol().parse(frame.payload(), frame.receivedAt());
+        return parsed.filter(book -> book.isFreshAt(clock.instant()));
     }
     private static BiFunction<URI, WebSocket.Listener, CompletableFuture<WebSocket>> connector() {
         var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
@@ -80,18 +121,35 @@ public class BinanceOrderBookClient {
     private void failed(Session session, Throwable failure) {
         if (stopping || current != session || retry != null) return;
         current = null;
+        latestRawFrames.clear();
         if (session != null) session.abort();
         attempts = Math.min(31, attempts + 1);
+        reconnectCount++;
         long ceiling = Math.min(30000L, 1000L << Math.min(5, attempts - 1));
         long delay = ThreadLocalRandom.current().nextLong(ceiling * 8 / 10, ceiling + 1);
         while (failure instanceof CompletionException && failure.getCause() != null) failure = failure.getCause();
-        if (failure instanceof WebSocketHandshakeException handshake && (handshake.getResponse().statusCode() == 429 || handshake.getResponse().statusCode() == 418)) {
-            long seconds = 60;
-            try { seconds = Long.parseLong(handshake.getResponse().headers().firstValue("Retry-After").orElse("60")); }
-            catch (NumberFormatException ignored) { }
-            delay = Math.max(60000, Math.min(604800000, TimeUnit.SECONDS.toMillis(Math.min(seconds, 604800))));
+        int httpStatus = 0;
+        if (failure instanceof WebSocketHandshakeException handshake) {
+            httpStatus = handshake.getResponse().statusCode();
+            lastDisconnectReason = "WebSocketHandshakeException httpStatus=" + httpStatus;
+            if (httpStatus == 429 || httpStatus == 418) {
+                long seconds = 60;
+                try { seconds = Long.parseLong(handshake.getResponse().headers().firstValue("Retry-After").orElse("60")); }
+                catch (NumberFormatException ignored) { }
+                delay = Math.max(60000, Math.min(604800000, TimeUnit.SECONDS.toMillis(Math.min(seconds, 604800))));
+                alertOps("binance-orderbook-ws:http-" + httpStatus, "CRITICAL",
+                        "Binance OrderBook WS rate-limited/banned (HTTP " + httpStatus + ")",
+                        Map.of("httpStatus", httpStatus, "retryMs", delay, "attempts", attempts));
+            }
+        } else {
+            lastDisconnectReason = failure == null ? "health/close" : failure.getClass().getSimpleName();
         }
-        log.warn("[Order book] disconnected reason={} retryMs={}", failure == null ? "health/close" : failure.getClass().getSimpleName(), delay);
+        if (attempts >= 3) {
+            alertOps("binance-orderbook-ws:reconnect", "WARN",
+                    "Binance OrderBook WS repeated disconnects",
+                    Map.of("attempts", attempts, "reconnectCount", reconnectCount, "reason", lastDisconnectReason));
+        }
+        log.warn("[Order book] disconnected reason={} retryMs={}", lastDisconnectReason, delay);
         retry = executor.schedule(this::attempt, delay, TimeUnit.MILLISECONDS);
     }
     private void checkHealth() {
@@ -107,6 +165,7 @@ public class BinanceOrderBookClient {
     }
     @PreDestroy public void stop() {
         stopping = true;
+        latestRawFrames.clear();
         if (retry != null) retry.cancel(false);
         if (watchdog != null) watchdog.cancel(false);
         var session = current;
@@ -122,6 +181,32 @@ public class BinanceOrderBookClient {
         }
     }
 
+    public String connectionStatus() {
+        if (stopping) {
+            return "STOPPING";
+        }
+        Session session = this.current;
+        if (session == null) {
+            return "DISCONNECTED";
+        }
+        return session.healthy ? "CONNECTED" : "CONNECTING";
+    }
+
+    public long reconnectCount() {
+        return reconnectCount;
+    }
+
+    public String lastDisconnectReason() {
+        return lastDisconnectReason;
+    }
+
+    private void alertOps(String key, String severity, String title, Map<String, Object> details) {
+        OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+        if (alertService != null) {
+            alertService.alert(key, severity, title, details);
+        }
+    }
+
     private final class Session implements WebSocket.Listener {
         final BinanceOrderBookProtocol protocol;
         final StringBuilder text = new StringBuilder();
@@ -129,7 +214,7 @@ public class BinanceOrderBookClient {
         volatile WebSocket socket;
         CompletableFuture<WebSocket> handshake;
         long opened, lastData;
-        boolean healthy;
+        volatile boolean healthy;
         Session(BinanceOrderBookProtocol protocol) { this.protocol = protocol; }
         void abort() {
             if (socket != null) socket.abort();
@@ -148,7 +233,21 @@ public class BinanceOrderBookClient {
                 if (text.length() + fragment.length() > 65_536) { failed(this, null); return; }
                 text.append(fragment);
                 if (last) {
-                    var book = protocol.parse(text.toString(), clock.instant()); text.setLength(0);
+                    String raw = text.toString(); text.setLength(0);
+                    Instant receivedAt = clock.instant();
+                    if (healthy) {
+                        var targetId = protocol.resolveTargetSymbolId(raw);
+                        if (targetId.isPresent() && !hasViewer.test(targetId.getAsLong())) {
+                            latestRawFrames.put(targetId.getAsLong(), new RawFrame(protocol, raw, receivedAt));
+                            lastData = nanoTime.getAsLong();
+                            ws.request(1);
+                            return;
+                        }
+                        if (targetId.isPresent()) {
+                            latestRawFrames.remove(targetId.getAsLong());
+                        }
+                    }
+                    var book = protocol.parse(raw, receivedAt);
                     if (book.isPresent()) {
                         lastData = nanoTime.getAsLong();
                         if (!healthy) { healthy = true; attempts = 0; log.info("[Order book] connected; receiving top-20 snapshots"); }

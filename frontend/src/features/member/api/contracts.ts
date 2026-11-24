@@ -13,12 +13,73 @@ function instant(value: unknown) {
 }
 export const nicknamePattern = "[\\p{L}\\p{N}]{1,8}";
 export function validNickname(value: string) { return /^[\p{L}\p{N}]{1,8}$/u.test(value); }
-export function parseAccess(value: unknown) {
+export type MemberRole = "MEMBER" | "ADMIN";
+function decodeBase64Url(segment: string): string | null {
+  try {
+    const normalized = segment.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
+    if (typeof globalThis.atob === "function") {
+      const binary = globalThis.atob(padded);
+      const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
+      return new TextDecoder().decode(bytes);
+    }
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(padded, "base64").toString("utf8");
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+export function parseJwtRole(accessToken: string, fallbackRole?: unknown): MemberRole {
+  if (fallbackRole === "ADMIN" || fallbackRole === "ROLE_ADMIN") return "ADMIN";
+  const segment = accessToken.split(".")[1];
+  if (!segment) return "MEMBER";
+  const decoded = decodeBase64Url(segment);
+  if (!decoded) return "MEMBER";
+  try {
+    const payload = JSON.parse(decoded) as Record<string, unknown>;
+    if (
+      Array.isArray(payload.roles) &&
+      payload.roles.some(item => item === "ADMIN" || item === "ROLE_ADMIN")
+    ) {
+      return "ADMIN";
+    }
+    if (payload.role === "ADMIN" || payload.role === "ROLE_ADMIN") {
+      return "ADMIN";
+    }
+  } catch {
+    // Ignore non-JSON payload in synthetic test tokens
+  }
+  return "MEMBER";
+}
+export function parseAccess(value: unknown, _nowMs?: number) {
+  void _nowMs;
   const data = row(value), accessToken = text(data.accessToken, 8192);
   if (data.tokenType !== "Bearer" || data.expiresIn !== 900 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(accessToken)) return invalid();
-  return { memberId: id(data.memberId), nickname: text(data.nickname, 16), accessToken, expiresAt: instant(data.expiresAt) };
+  const role = parseJwtRole(accessToken, data.role);
+  const rawStatus = typeof data.accountStatus === "string" ? data.accountStatus : typeof data.status === "string" ? data.status : undefined;
+  const accountStatus = rawStatus && rawStatus.trim().length > 0 && rawStatus.length <= 32 ? rawStatus.trim().toUpperCase() : undefined;
+  const rawReason = typeof data.suspensionReason === "string" ? data.suspensionReason : typeof data.suspendedReason === "string" ? data.suspendedReason : undefined;
+  const suspensionReason = rawReason && rawReason.trim().length > 0 ? rawReason.trim().slice(0, 500) : null;
+  return {
+    memberId: id(data.memberId),
+    nickname: text(data.nickname, 16),
+    accessToken,
+    expiresAt: instant(data.expiresAt),
+    role,
+    ...(accountStatus ? { accountStatus } : {}),
+    ...(rawReason !== undefined ? { suspensionReason } : {}),
+  };
 }
 export type MemberAccess = ReturnType<typeof parseAccess>;
+export type AccessSession = MemberAccess;
+export function parseSessionProbe(value: unknown): { authenticated: boolean; hasRefreshCookie: boolean } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  if (typeof data.authenticated !== "boolean" || typeof data.hasRefreshCookie !== "boolean") return null;
+  return { authenticated: data.authenticated, hasRefreshCookie: data.hasRefreshCookie };
+}
 export function parseCsrf(value: unknown) {
   const data = row(value);
   if (data.headerName !== "X-CSRF-TOKEN") return invalid();
@@ -26,20 +87,75 @@ export function parseCsrf(value: unknown) {
 }
 export function parseFlow(value: unknown) {
   const data = row(value);
-  if (!["SIGNUP_REQUIRED", "LOGIN_READY"].includes(String(data.status)) || !["GOOGLE", "KAKAO"].includes(String(data.provider))) return invalid();
+  if (!["SIGNUP_REQUIRED", "LOGIN_READY", "WITHDRAWAL_PENDING"].includes(String(data.status)) || !["GOOGLE", "KAKAO"].includes(String(data.provider))) return invalid();
   const email = text(data.email, 320), separator = email.lastIndexOf("@");
-  return { status: data.status as "SIGNUP_REQUIRED" | "LOGIN_READY", provider: data.provider as "GOOGLE" | "KAKAO",
-    accountHint: separator > 0 ? `${email[0]}***${email.slice(separator)}` : "확인된 소셜 계정" };
+  const accountStatus =
+    typeof data.accountStatus === "string" && data.accountStatus.trim().length > 0 && data.accountStatus.length <= 32
+      ? data.accountStatus.trim().toUpperCase()
+      : undefined;
+  const suspensionReason =
+    typeof data.suspensionReason === "string" && data.suspensionReason.trim().length > 0
+      ? data.suspensionReason.trim().slice(0, 500)
+      : null;
+  return {
+    status: data.status as "SIGNUP_REQUIRED" | "LOGIN_READY" | "WITHDRAWAL_PENDING",
+    provider: data.provider as "GOOGLE" | "KAKAO",
+    accountHint: separator > 0 ? `${email[0]}***${email.slice(separator)}` : "확인된 소셜 계정",
+    ...(accountStatus ? { accountStatus } : {}),
+    ...(data.suspensionReason !== undefined ? { suspensionReason } : {}),
+  };
 }
-export function parseProfile(value: unknown) {
+export function parseProfile(value: unknown): {
+  memberId: number;
+  nickname: string;
+  profileMessage: string;
+  profileImgUrl?: string | null;
+  createdAt: string;
+} {
   const data = row(value);
-  return { memberId: id(data.memberId), nickname: text(data.nickname, 16), profileMessage: text(data.profileMessage, 300, true), createdAt: instant(data.createdAt) };
+  const profileImgUrl =
+    data.profileImgUrl === null || data.profileImgUrl === undefined
+      ? null
+      : text(data.profileImgUrl, 1000, true) || null;
+  return {
+    memberId: id(data.memberId),
+    nickname: text(data.nickname, 16),
+    profileMessage: text(data.profileMessage, 300, true),
+    ...(data.profileImgUrl !== undefined ? { profileImgUrl } : {}),
+    createdAt: instant(data.createdAt),
+  };
 }
 export type MemberProfile = ReturnType<typeof parseProfile>;
 export function parseOwnProfile(value: unknown, memberId: number) {
   const data = row(value), profile = parseProfile(value);
   if (profile.memberId !== memberId || !["MEMBER", "ADMIN"].includes(String(data.role))) return invalid();
-  return { ...profile, role: data.role as "MEMBER" | "ADMIN" };
+  const rawStatus =
+    typeof data.accountStatus === "string" && data.accountStatus.trim().length > 0
+      ? data.accountStatus
+      : typeof data.status === "string" && data.status.trim().length > 0
+        ? data.status
+        : undefined;
+  const status = rawStatus && rawStatus.length <= 32 ? rawStatus.trim().toUpperCase() : undefined;
+  const suspendedAt =
+    typeof data.suspendedAt === "string" && Number.isFinite(Date.parse(data.suspendedAt))
+      ? data.suspendedAt
+      : null;
+  const rawReason =
+    typeof data.suspensionReason === "string" && data.suspensionReason.trim().length > 0
+      ? data.suspensionReason
+      : typeof data.suspendedReason === "string" && data.suspendedReason.trim().length > 0
+        ? data.suspendedReason
+        : null;
+  const suspendedReason = rawReason ? rawReason.trim().slice(0, 500) : null;
+  return {
+    ...profile,
+    role: data.role as "MEMBER" | "ADMIN",
+    ...(status !== undefined ? { status, accountStatus: status } : {}),
+    ...(data.suspendedAt !== undefined ? { suspendedAt } : {}),
+    ...(data.suspendedReason !== undefined || data.suspensionReason !== undefined
+      ? { suspendedReason, suspensionReason: suspendedReason }
+      : {}),
+  };
 }
 function count(value: unknown) { return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : invalid(); }
 function boolean(value: unknown) { return typeof value === "boolean" ? value : invalid(); }
@@ -51,10 +167,21 @@ export function parseFollowSummary(value: unknown, memberId: number) {
 }
 export function parseFollowPage(value: unknown) {
   const data = row(value);
-  if (!Array.isArray(data.content) || data.content.length > 10) return invalid();
+  if (!Array.isArray(data.content) || data.content.length > 50) return invalid();
   const content = data.content.map(value => {
     const entry = row(value);
-    return { memberId: id(entry.memberId), nickname: text(entry.nickname, 16), profileMessage: text(entry.profileMessage, 300, true), followedAt: instant(entry.followedAt) };
+    const profileImgUrl =
+      entry.profileImgUrl === null || entry.profileImgUrl === undefined
+        ? null
+        : text(entry.profileImgUrl, 1000, true) || null;
+    return {
+      memberId: id(entry.memberId),
+      nickname: text(entry.nickname, 16),
+      profileMessage: text(entry.profileMessage, 300, true),
+      ...(entry.profileImgUrl !== undefined ? { profileImgUrl } : {}),
+      ...(typeof entry.followedByMe === "boolean" ? { followedByMe: entry.followedByMe } : {}),
+      followedAt: instant(entry.followedAt),
+    };
   });
   if (new Set(content.map(entry => entry.memberId)).size !== content.length) return invalid();
   const hasNext = boolean(data.hasNext), nextCursorId = data.nextCursorId === null ? null : id(data.nextCursorId);
@@ -63,7 +190,7 @@ export function parseFollowPage(value: unknown) {
 }
 export function parseWithdrawal(value: unknown) {
   const data = row(value);
-  return data.status === "PENDING" || data.status === "COMPLETED" ? data.status : invalid();
+  return data.status === "PENDING" || data.status === "COMPLETED" || data.status === "NOT_REQUESTED" ? data.status : invalid();
 }
 export function parseNicknameAvailability(value: unknown) { return boolean(row(value).available); }
 export function parseFollowChange(value: unknown, memberId: number) {

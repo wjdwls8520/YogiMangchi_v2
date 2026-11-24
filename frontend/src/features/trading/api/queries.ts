@@ -7,8 +7,9 @@ import { tradingKeys } from "./query-keys";
 import { parseOrders } from "./orders";
 import { useEffect, useState } from "react";
 import { marketTickersJson } from "./client";
-import { parseTickers, visibleTicker } from "../market/tickers";
+import { nextTickerExpiryDelay, parseTickers, visibleTicker } from "../market/tickers";
 import { HISTORY_LIMIT, historyPath, parseClosedPositions, parseFills, parseOrderHistory, validHistoryDates, type HistoryFilters, type HistoryKind } from "./history";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
 
 export function useTradingSummary() {
   const { session, snapshot } = useGuestSession();
@@ -19,7 +20,8 @@ export function useTradingSummary() {
   });
   const error = snapshot.phase === "error" || query.isError;
   return {
-    data: !error && snapshot.phase === "ready" ? query.data : undefined,
+    data: snapshot.phase === "ready" ? query.data : undefined,
+    stale: query.isError && query.data !== undefined,
     loading: !error && (snapshot.phase === "loading" || snapshot.phase === "creating" || (snapshot.phase === "ready" && query.isPending)), error,
     busy: snapshot.phase === "loading" || snapshot.phase === "creating" || query.isFetching,
     retry: () => { if (snapshot.phase === "error") void session.restore(); else if (snapshot.phase === "ready") void query.refetch({ cancelRefetch: false }); },
@@ -35,7 +37,8 @@ export function useTradingOrders(kind: "pending" | "history") {
   });
   const error = snapshot.phase === "error" || query.isError;
   return {
-    data: !error && snapshot.phase === "ready" ? query.data : undefined,
+    data: snapshot.phase === "ready" ? query.data : undefined,
+    stale: query.isError && query.data !== undefined,
     loading: !error && (snapshot.phase === "loading" || snapshot.phase === "creating" || (snapshot.phase === "ready" && query.isPending)), error,
     busy: snapshot.phase === "loading" || snapshot.phase === "creating" || query.isFetching,
     retry: () => { if (snapshot.phase === "error") void session.restore(); else if (snapshot.phase === "ready") void query.refetch({ cancelRefetch: false }); },
@@ -81,15 +84,21 @@ export function useClosedHistory(filters: HistoryFilters, active: boolean) {
 }
 
 export function useMarketTickers() {
-  const origin = process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081";
+  const origin = resolveTradingOrigin();
   const query = useQuery<ReturnType<typeof parseTickers>>({ queryKey: ["market", origin, "tickers"],
     queryFn: async ({ signal }) => parseTickers(await marketTickersJson(origin, signal)),
     staleTime: 1000, refetchInterval: (query) => query.state.status === "error" ? false : 2000,
   });
   const [now, setNow] = useState(Date.now);
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  const currentNow = Math.max(now, query.dataUpdatedAt);
+  const delay = nextTickerExpiryDelay(query.dataUpdatedAt, Boolean(query.data?.length) && !query.isError, currentNow);
+  useEffect(() => {
+    if (delay === null) return;
+    const timer = window.setTimeout(() => setNow(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [delay, query.dataUpdatedAt]);
   return { ...query, tickers: query.isError ? [] : (query.data ?? []).flatMap((ticker) => {
-    const visible = visibleTicker(ticker, now - query.dataUpdatedAt);
+    const visible = visibleTicker(ticker, currentNow - query.dataUpdatedAt);
     return visible ? [visible] : [];
   }) };
 }

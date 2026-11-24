@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.execution;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.error.*;
 import com.yogimangchi.trading.execution.trigger.*;
@@ -49,6 +51,7 @@ class FuturesFeeIntegrationTests {
         guest=accounts.createGuest();
         btc=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
         prices.beginSubscription(Set.of(btc)); mark("1000");
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),btc);
     }
     @AfterEach void cleanup() { prices.markUnavailable(); }
 
@@ -96,7 +99,7 @@ class FuturesFeeIntegrationTests {
     @Test void leverageReallocatesOnlyMarginWhilePendingFeeAndHistoricalRatesStayFixed() {
         open(TradingOrder.Type.MARKET,Position.Side.LONG,"1",null);
         var pending=open(TradingOrder.Type.LIMIT,Position.Side.LONG,"1","990");
-        leverages.change(guest.accountId(),btc,20);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,20);
         var current=orders.pending(guest.accountId()).get(0);
         assertThat(n(current.reservedMargin())).isEqualByComparingTo("49.797");
         assertThat(n(current.reservedFee())).isEqualByComparingTo("0.297");
@@ -107,7 +110,8 @@ class FuturesFeeIntegrationTests {
     }
 
     @Test void limitCloseChargesPointZeroThreePercentAndKeepsOppositePosition() {
-        leverages.change(guest.accountId(),btc,1);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,1);
+        leverages.change(guest.accountId(),btc,Position.Side.SHORT,1);
         var opened=open(TradingOrder.Type.MARKET,Position.Side.LONG,"1",null);
         open(TradingOrder.Type.MARKET,Position.Side.SHORT,"1",null);
         var pending=orders.createLimitClose(guest.accountId(),opened.positionId(),key(),new LimitCloseRequest(n("0.4"),n("1100")));
@@ -141,7 +145,7 @@ class FuturesFeeIntegrationTests {
     @Test void quoteUsesExactRemainingBasisAfterPartialCloseAndHundredTimesSharedLeverage() {
         var opened=open(TradingOrder.Type.MARKET,Position.Side.LONG,"3",null);
         orders.close(guest.accountId(),opened.positionId(),key(),new ClosePositionRequest(n("1")));
-        leverages.change(guest.accountId(),btc,100);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100);
         var quote=quotes.quote(guest.accountId(),new OrderQuoteRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,null,100,null));
         assertThat(quote.leverage()).isEqualTo(100);
         var accepted=orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n(quote.quantity()),100,null));
@@ -200,7 +204,7 @@ class FuturesFeeIntegrationTests {
         assertThat(n(wallet.realizedPnl())).isEqualByComparingTo(pnl);
     }
     private OrderResponse open(TradingOrder.Type type,Position.Side side,String quantity,String limit) {
-        return orders.create(guest.accountId(),key(),new CreateOrderRequest(type,btc,side,n(quantity),leverages.current(guest.accountId(),btc),limit==null?null:n(limit)));
+        return orders.create(guest.accountId(),key(),new CreateOrderRequest(type,btc,side,n(quantity),leverages.current(guest.accountId(),btc,side),limit==null?null:n(limit)));
     }
     private LatestMarkPrice mark(String amount) {
         Instant now=Instant.now();

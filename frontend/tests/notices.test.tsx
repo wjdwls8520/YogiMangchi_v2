@@ -1,21 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createNoticeStore, NOTICE_LIFETIME, orderFailureNotice, orderNotice } from "../src/features/trading/api/notices";
+import { createNoticeStore, NOTICE_ERROR_LIFETIME, NOTICE_LIFETIME, orderFailureNotice, orderNotice } from "../src/features/trading/api/notices";
 import { TradingNoticeList } from "../src/features/trading/components/trading-notices";
 import { TradingApiError } from "../src/features/trading/api/client";
 import type { TradingOrder } from "../src/features/trading/api/orders";
 
-test("notices stack in arrival order and expire individually after 1500ms, with manual dismissal and cleanup",()=>{
+test("notices stack in arrival order and auto-expire (1500ms success, 5000ms error/warning) with manual dismissal and cleanup",()=>{
   const timers: { callback:()=>void; delay:number; canceled:boolean }[]=[];
   const store=createNoticeStore((callback,delay)=>{const timer={callback,delay,canceled:false};timers.push(timer);return()=>{timer.canceled=true;};});
   const one=store.push({kind:"success",title:"first",message:"done"},"account-1");
   const two=store.push({kind:"error",title:"second",message:"failed"},"account-1");
-  assert.equal(NOTICE_LIFETIME,1500);assert.deepEqual(timers.map(timer=>timer.delay),[1500,1500]);
+  assert.equal(NOTICE_LIFETIME,1500);assert.equal(NOTICE_ERROR_LIFETIME,5000);assert.deepEqual(timers.map(timer=>timer.delay),[1500,5000]);
   assert.deepEqual(store.getSnapshot().map(notice=>notice.id),[one,two]);
   timers[0].callback();assert.deepEqual(store.getSnapshot().map(notice=>notice.id),[two]);
-  store.dismiss(two);assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers[1].canceled,true);
+  store.dismiss(two!);assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers[1].canceled,true);
   store.push({kind:"warning",title:"third",message:"unknown"},"account-2");
+  assert.equal(timers.length,3);assert.equal(timers[2].delay,5000);
   store.clear();assert.deepEqual(store.getSnapshot(),[]);assert.equal(timers[2].canceled,true);
 });
 
@@ -35,4 +36,17 @@ test("toast markup has accessible status/error feedback and an individually labe
   const html=renderToStaticMarkup(<TradingNoticeList notices={[{id:1,kind:"success",title:"주문 완료",message:"Long 시장가"},{id:2,kind:"error",title:"주문 실패",message:"잔액 부족"}]} dismiss={()=>{}}/>);
   assert.match(html,/role="status"/);assert.match(html,/role="alert"/);
   assert.match(html,/주문 완료 알림 닫기/);assert.match(html,/주문 실패 알림 닫기/);
+});
+
+
+test("REST and WS results deduplicate by identity/order/status even after dismissal", () => {
+  const store = createNoticeStore(() => () => {});
+  const result = { kind: "error" as const, title: "거절", message: "사유", resultKey: "7:REJECTED" };
+  const first = store.push(result, "guest-1");
+  assert.equal(store.push(result, "guest-1"), null);
+  store.dismiss(first!);
+  assert.equal(store.push(result, "guest-1"), null);
+  assert.notEqual(store.push({...result,resultKey:"7:FILLED"}, "guest-1"),null);
+  store.clear();
+  assert.notEqual(store.push(result, "member-1"),null);
 });

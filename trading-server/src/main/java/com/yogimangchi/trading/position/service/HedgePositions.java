@@ -26,7 +26,7 @@ public class HedgePositions {
         if (target.getLeverage() != leverage) throw new IllegalStateException("Position leverage differs from symbol setting");
         TradingMath.validateQuantity(target.getQuantity().add(quantity));
         BigDecimal basis = target.getEntryNotional().add(price.multiply(quantity));
-        if (basis.compareTo(TradingMath.MAX_NOTIONAL) > 0) throw new IllegalArgumentException("Position notional limit exceeded");
+        if (basis.compareTo(TradingMath.MAX_NOTIONAL) > 0) throw new TradingMath.LimitExceeded();
         return TradingMath.basisMargin(basis, leverage).subtract(target.getMargin());
     }
 

@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.tradingevent;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.*;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.execution.trigger.TradingEngineGate;
@@ -135,6 +137,7 @@ class TradingEventWebSocketIntegrationTests {
         client.next("AUTHENTICATED"); return client;
     }
     private com.yogimangchi.trading.order.dto.OrderResponse open(GuestAccountResponse account) {
+        LegacyLeverageFixtures.tenTimes(jdbc,account.accountId(),btc,Position.Side.LONG);
         return orders.create(account.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,BigDecimal.ONE,10,null));
     }
     private Client connect(String path,String origin) throws Exception {

@@ -25,6 +25,11 @@ public class Wallet {
         return initialize(accountId,TradingMath.INITIAL_BALANCE);
     }
 
+    public static Wallet openWithSeed(Long accountId, BigDecimal seedMoney) {
+        if (seedMoney == null || seedMoney.signum() <= 0) throw new IllegalArgumentException("Seed money must be positive");
+        return initialize(accountId, seedMoney);
+    }
+
     public static Wallet emptyMemberWallet(Long accountId) { return initialize(accountId,BigDecimal.ZERO); }
 
     private static Wallet initialize(Long accountId,BigDecimal initial) {

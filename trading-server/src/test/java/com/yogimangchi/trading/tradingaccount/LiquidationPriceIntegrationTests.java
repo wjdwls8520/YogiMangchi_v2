@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.tradingaccount;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.execution.trigger.*;
@@ -48,12 +50,13 @@ class LiquidationPriceIntegrationTests {
         btc=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
         eth=jdbc.queryForObject("select id from trading.trading_symbol where symbol='ETH'",Long.class);
         prices.beginSubscription(Set.of(btc,eth)); mark(btc,n("1000")); mark(eth,n("100"));
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),btc);
     }
     @AfterEach void cleanup() { prices.markUnavailable(); }
 
     @ParameterizedTest @EnumSource(Position.Side.class)
     void actualLiquidationWorkerIsSafeOneUlpBeforeAndLiquidatesAtTheReportedThreshold(Position.Side side) {
-        leverages.change(guest.accountId(),btc,100);
+        leverages.change(guest.accountId(),btc,side,100);
         var order=open(btc,side,"100");
         var estimate=accounts.summary(guest.accountId()).positions().get(0);
         BigDecimal price=n(estimate.liquidationPrice());
@@ -93,7 +96,7 @@ class LiquidationPriceIntegrationTests {
         var close=orders.createLimitClose(guest.accountId(),opened.positionId(),key(),new LimitCloseRequest(n("1"),n("900")));
         assertThat(accounts.summary(guest.accountId()).positions().get(0).liquidationPrice()).isEqualTo(before);
         for(int leverage:List.of(1,14,100)) {
-            leverages.change(guest.accountId(),btc,leverage);
+            leverages.change(guest.accountId(),btc,Position.Side.SHORT,leverage);
             assertThat(accounts.summary(guest.accountId()).positions().get(0).liquidationPrice()).isNotEqualTo(before);
         }
         var after=accounts.summary(guest.accountId()).positions().get(0).liquidationPrice();
@@ -134,8 +137,9 @@ class LiquidationPriceIntegrationTests {
     }
 
     @Test void liquidationOnlyReleasesItsOwnCloseOrdersAndPreservesOppositeSideOtherSymbolsAndPendingOpen() {
-        leverages.change(guest.accountId(),btc,100);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100);
         var longOrder=open(btc,Position.Side.LONG,"10");
+        leverages.change(guest.accountId(),btc,Position.Side.SHORT,100);
         var shortOrder=open(btc,Position.Side.SHORT,"10");
         open(eth,Position.Side.LONG,"1");
         var ownClose=orders.createLimitClose(guest.accountId(),longOrder.positionId(),key(),new LimitCloseRequest(n("7"),n("1100")));
@@ -154,7 +158,7 @@ class LiquidationPriceIntegrationTests {
     }
 
     @Test void gapUsesActualMarkAndGrossLossWhileSeparateAdjustmentProtectsUnusedCash() {
-        leverages.change(guest.accountId(),btc,100);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100);
         open(btc,Position.Side.LONG,"10");
         var tick=mark(btc,n("800"));
         trigger.process(guest.accountId(),tick,Map.of(btc,tick));
@@ -173,7 +177,7 @@ class LiquidationPriceIntegrationTests {
     }
 
     @Test void longAndShortRiskOnDifferentSymbolsSettleIndependentlyExactlyOnceInTheSameTransaction() {
-        leverages.change(guest.accountId(),btc,100); leverages.change(guest.accountId(),eth,100);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100); leverages.change(guest.accountId(),eth,Position.Side.SHORT,100);
         open(btc,Position.Side.LONG,"10"); open(eth,Position.Side.SHORT,"1");
         var btcRisk=mark(btc,n("800")); var ethRisk=mark(eth,n("120"));
         var book=Map.of(btc,btcRisk,eth,ethRisk);
@@ -186,7 +190,7 @@ class LiquidationPriceIntegrationTests {
     }
 
     @Test void unavailableUnrelatedMarkDoesNotDelayTheRiskyPositionsLiquidation() {
-        leverages.change(guest.accountId(),btc,100);
+        leverages.change(guest.accountId(),btc,Position.Side.LONG,100);
         open(btc,Position.Side.LONG,"10"); open(eth,Position.Side.LONG,"1");
         prices.beginSubscription(Set.of(btc,eth));
         var tick=mark(btc,n("800"));
@@ -255,7 +259,7 @@ class LiquidationPriceIntegrationTests {
     }
 
     private OrderResponse open(long symbol,Position.Side side,String quantity) {
-        return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,n(quantity),leverages.current(guest.accountId(),symbol),null));
+        return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,n(quantity),leverages.current(guest.accountId(),symbol,side),null));
     }
     private LatestMarkPrice mark(long symbol,BigDecimal price) {
         Instant now=Instant.now();

@@ -22,10 +22,15 @@ import org.springframework.transaction.annotation.*;
 
 @Service
 public class MemberRounds {
+    public static final long NORMAL_RESTART_COOLDOWN_SECONDS = 86_400L;
+    public static final long BANKRUPT_RESTART_COOLDOWN_SECONDS = 300L;
+    public static final int BANKRUPT_MAX_RESTARTS_PER_24H = 3;
+
     public record Round(Long roundId,int roundNumber,String status,String funding,String initialBalance,Instant startedAt,Instant endedAt,String endReason,JsonNode finalWallet,boolean currentRound) { }
     public record Page(List<Round> content,Long nextCursorId) { }
     public record Summary(Round round,AccountSummaryResponse currentAccount,boolean restartAvailable,Instant nextAvailableAt,String realizedPnl,String feesPaid,String settlementAdjustment) { }
     public record Restart(Long roundId,int roundNumber,String balance,Instant restartedAt,Instant nextAvailableAt,int canceledOrderCount,int closedPositionCount) { }
+    private final com.yogimangchi.trading.execution.recovery.RiskAdmission risk;
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
     private final AccountLock locks;
@@ -35,8 +40,16 @@ public class MemberRounds {
     private final TradingOrderRepository orders;
     private final TradingEvents events;
     private final EntityManager entities;
-    public MemberRounds(JdbcTemplate jdbc,ObjectMapper mapper,AccountLock locks,TradingAccountService summaries,WalletRepository wallets,PositionRepository positions,TradingOrderRepository orders,TradingEvents events,EntityManager entities) {
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits;
+    public MemberRounds(JdbcTemplate jdbc,ObjectMapper mapper,AccountLock locks,TradingAccountService summaries,WalletRepository wallets,PositionRepository positions,TradingOrderRepository orders,TradingEvents events,EntityManager entities,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {
+        this(jdbc,mapper,locks,summaries,wallets,positions,orders,events,entities,risk,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public MemberRounds(JdbcTemplate jdbc,ObjectMapper mapper,AccountLock locks,TradingAccountService summaries,WalletRepository wallets,PositionRepository positions,TradingOrderRepository orders,TradingEvents events,EntityManager entities,com.yogimangchi.trading.execution.recovery.RiskAdmission risk,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits) {
+        this.risk=risk;
         this.jdbc=jdbc;this.mapper=mapper;this.locks=locks;this.summaries=summaries;this.wallets=wallets;this.positions=positions;this.orders=orders;this.events=events;this.entities=entities;
+        this.takeProfits=takeProfits;
     }
     @Transactional(propagation=Propagation.MANDATORY)
     public long begin(TradingAccount account,Wallet wallet,String funding,int number,Instant now) {
@@ -56,11 +69,13 @@ public class MemberRounds {
     }
     @Transactional(timeout=10)
     public Restart restart(Long accountId,String key) {
+        risk.enterTransaction();
         if(key==null||!key.matches("[A-Za-z0-9_-]{8,100}")) throw new BusinessException(ErrorCode.INVALID_IDEMPOTENCY_KEY);
         var account=member(accountId);
         var previous=jdbc.query("select s.*,r.round_number from trading.member_restart s join trading.member_trading_round r on r.id=s.new_round_id where s.account_id=? and s.request_key=?",(r,n)->new Restart(r.getLong("new_round_id"),r.getInt("round_number"),"10000.000000000000000000",r.getTimestamp("restarted_at").toInstant(),r.getTimestamp("restarted_at").toInstant().plusSeconds(86400),r.getInt("canceled_order_count"),r.getInt("closed_position_count")),accountId,key);
         if(!previous.isEmpty()) return previous.get(0);
-        Instant now=dbNow(),next=next(accountId);
+        risk.requireClear(accountId);
+        Instant now=dbNow(),next=nextAvailableAt(account,now);
         if(next!=null&&now.isBefore(next)) throw new RestartLimited(next);
         var old=currentRow(accountId);
         var wallet=wallets.findById(accountId).orElseThrow();
@@ -74,7 +89,8 @@ public class MemberRounds {
             order.cancelForMemberRestart(now);events.record(order,null);
         }
         captureRetirement(accountId);
-        for(var position:open) released=released.add(position.closeForMemberRestart(now));
+        var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
+        for(var position:open) {released=released.add(position.closeForMemberRestart(now));events.recordStopLoss(position);if(tpService!=null)tpService.expireIfActive(position,"MEMBER_RESTART",now);}
         wallet.releaseExposure(released,reserved);
         finish(accountId,wallet,"MEMBER_RESTART",now);
         wallet.restartMember();account.restartMember(now);
@@ -83,14 +99,15 @@ public class MemberRounds {
         return new Restart(id,old.roundNumber()+1,wallet.getBalance().toPlainString(),now,now.plusSeconds(86400),pending.size(),open.size());
     }
     @Transactional(timeout=5)
-    public Summary current(Long accountId) {member(accountId);return summaryLocked(accountId,currentRow(accountId));}
+    public Summary current(Long accountId) {var account=member(accountId);return summaryLocked(account,currentRow(accountId));}
     @Transactional(timeout=5)
-    public Summary summary(Long accountId,Long roundId) {member(accountId);return summaryLocked(accountId,owned(accountId,roundId));}
-    private Summary summaryLocked(Long accountId,Round round) {
-        Instant next=next(accountId);boolean active=round.currentRound();
+    public Summary summary(Long accountId,Long roundId) {var account=member(accountId);return summaryLocked(account,owned(accountId,roundId));}
+    private Summary summaryLocked(TradingAccount account,Round round) {
+        Long accountId=account.getId();
+        Instant now=dbNow(),next=nextAvailableAt(account,now);boolean active=round.currentRound();
         var wallet=wallets.findById(accountId).orElseThrow();
         var baseline=jdbc.queryForMap("select start_realized_pnl,start_fees_paid,start_adjustment from trading.member_trading_round where id=?",round.roundId());
-        return new Summary(round,active?summaries.summary(accountId):null,next==null||!dbNow().isBefore(next),next,
+        return new Summary(round,active?summaries.summary(accountId):null,next==null||!now.isBefore(next),next,
             active?wallet.getRealizedPnl().subtract((BigDecimal)baseline.get("start_realized_pnl")).toPlainString():round.finalWallet().path("realizedPnl").asText(),
             active?wallet.getFeesPaid().subtract((BigDecimal)baseline.get("start_fees_paid")).toPlainString():round.finalWallet().path("feesPaid").asText(),
             active?wallet.getSettlementAdjustment().subtract((BigDecimal)baseline.get("start_adjustment")).toPlainString():round.finalWallet().path("settlementAdjustment").asText());
@@ -102,13 +119,20 @@ public class MemberRounds {
         var page=rows.stream().limit(limit).toList();return new Page(page,rows.size()>limit?page.get(page.size()-1).roundId():null);
     }
     @Transactional(timeout=5)
-    public RoundLedger.Page<RoundLedger.Order> orders(Long accountId,Long roundId,Long beforeId,int limit) {return ledger(accountId,roundId,"orders",beforeId,limit,RoundLedger.Order.class);}
+    public RoundLedger.Page<RoundLedger.Order> orders(Long accountId,Long roundId,Long beforeId,int limit) {return orders(accountId,roundId,beforeId,limit,null);}
     @Transactional(timeout=5)
-    public RoundLedger.Page<RoundLedger.Fill> fills(Long accountId,Long roundId,Long beforeId,int limit) {return ledger(accountId,roundId,"fills",beforeId,limit,RoundLedger.Fill.class);}
+    public RoundLedger.Page<RoundLedger.Order> orders(Long accountId,Long roundId,Long beforeId,int limit,String symbol) {return ledger(accountId,roundId,"orders",beforeId,limit,symbol,RoundLedger.Order.class);}
     @Transactional(timeout=5)
-    public RoundLedger.Page<RoundLedger.Position> positions(Long accountId,Long roundId,Long beforeId,int limit) {return ledger(accountId,roundId,"positions",beforeId,limit,RoundLedger.Position.class);}
-    private <T> RoundLedger.Page<T> ledger(Long accountId,Long roundId,String kind,Long beforeId,int limit,Class<T> type) {
+    public RoundLedger.Page<RoundLedger.Fill> fills(Long accountId,Long roundId,Long beforeId,int limit) {return fills(accountId,roundId,beforeId,limit,null);}
+    @Transactional(timeout=5)
+    public RoundLedger.Page<RoundLedger.Fill> fills(Long accountId,Long roundId,Long beforeId,int limit,String symbol) {return ledger(accountId,roundId,"fills",beforeId,limit,symbol,RoundLedger.Fill.class);}
+    @Transactional(timeout=5)
+    public RoundLedger.Page<RoundLedger.Position> positions(Long accountId,Long roundId,Long beforeId,int limit) {return positions(accountId,roundId,beforeId,limit,null);}
+    @Transactional(timeout=5)
+    public RoundLedger.Page<RoundLedger.Position> positions(Long accountId,Long roundId,Long beforeId,int limit,String symbol) {return ledger(accountId,roundId,"positions",beforeId,limit,symbol,RoundLedger.Position.class);}
+    private <T> RoundLedger.Page<T> ledger(Long accountId,Long roundId,String kind,Long beforeId,int limit,String symbol,Class<T> type) {
         member(accountId);owned(accountId,roundId);validate(beforeId,limit);
+        String pattern=com.yogimangchi.trading.execution.TradingOrderService.normalizeSymbolPattern(symbol);
         // All values remain decimal strings. No Entity/internal credential columns returned.
         String sql=switch(kind) {
             case "orders" -> "select id,round_id,position_id,trading_symbol_id,type,action,side,status,quantity::text,filled_price::text,limit_price::text,leverage,created_at,completed_at,reason from trading.trading_order where account_id=? and round_id=?";
@@ -117,7 +141,14 @@ public class MemberRounds {
             default -> throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
         };
         String alias=kind.equals("fills")?"f.":kind.equals("positions")?"p.":"";
-        var rows=jdbc.queryForList(sql+" and "+alias+"id<? order by "+alias+"id desc limit ?",accountId,roundId,beforeId==null?Long.MAX_VALUE:beforeId,limit+1);
+        String symbolColumn=kind.equals("fills")?"o.trading_symbol_id":kind.equals("positions")?"p.trading_symbol_id":"trading_symbol_id";
+        List<Object> args=new ArrayList<>(List.of(accountId,roundId));
+        if(pattern!=null) {
+            sql+=" and exists (select 1 from trading.trading_symbol s where s.id="+symbolColumn+" and (upper(s.symbol) like ? or upper(s.provider_symbol) like ? or upper(s.symbol||s.quote_asset) like ?))";
+            args.add(pattern);args.add(pattern);args.add(pattern);
+        }
+        args.add(beforeId==null?Long.MAX_VALUE:beforeId);args.add(limit+1);
+        var rows=jdbc.queryForList(sql+" and "+alias+"id<? order by "+alias+"id desc limit ?",args.toArray());
         // Stable camelCase names and ISO timestamps are part of the API contract.
         var page=rows.stream().limit(limit).map(row->{Map<String,Object> item=new LinkedHashMap<>();row.forEach((k,v)->{
             StringBuilder name=new StringBuilder();boolean upper=false;for(char c:k.toCharArray()){if(c=='_')upper=true;else {name.append(upper?Character.toUpperCase(c):c);upper=false;}}
@@ -135,7 +166,31 @@ public class MemberRounds {
     private List<Round> rows(String sql,Object... args) {
         return jdbc.query(sql,(r,n)->{try{return new Round(r.getLong("id"),r.getInt("round_number"),r.getString("status"),r.getString("funding"),r.getString("initial_balance"),r.getTimestamp("started_at").toInstant(),r.getTimestamp("ended_at")==null?null:r.getTimestamp("ended_at").toInstant(),r.getString("end_reason"),r.getString("final_wallet")==null?null:mapper.readTree(r.getString("final_wallet")),r.getString("status").equals("ACTIVE"));}catch(com.fasterxml.jackson.core.JsonProcessingException e){throw new IllegalStateException("Invalid round snapshot",e);}},args);
     }
-    private Instant next(Long id) {var time=jdbc.queryForObject("select max(restarted_at)+interval '24 hours' from trading.member_restart where account_id=?",java.sql.Timestamp.class,id);return time==null?null:time.toInstant();}
+    private Instant nextAvailableAt(TradingAccount account, Instant now) {
+        java.sql.Timestamp lastTs = jdbc.queryForObject(
+                "select max(restarted_at) from trading.member_restart where account_id=?",
+                java.sql.Timestamp.class, account.getId());
+        if (lastTs == null) {
+            return null;
+        }
+        Instant lastRestartedAt = lastTs.toInstant();
+        if (account.getStatus() != TradingAccount.Status.BANKRUPT) {
+            return lastRestartedAt.plusSeconds(NORMAL_RESTART_COOLDOWN_SECONDS);
+        }
+        Instant floor = lastRestartedAt.plusSeconds(BANKRUPT_RESTART_COOLDOWN_SECONDS);
+        List<Instant> recentBankrupt = jdbc.query(
+                "select restarted_at from trading.member_restart where account_id=? and balance_before<=0 and restarted_at>? order by restarted_at desc limit ?",
+                (r, n) -> r.getTimestamp("restarted_at").toInstant(),
+                account.getId(),
+                at(now.minusSeconds(NORMAL_RESTART_COOLDOWN_SECONDS)),
+                BANKRUPT_MAX_RESTARTS_PER_24H);
+        if (recentBankrupt.size() >= BANKRUPT_MAX_RESTARTS_PER_24H) {
+            Instant quotaAvailableAt = recentBankrupt.get(BANKRUPT_MAX_RESTARTS_PER_24H - 1)
+                    .plusSeconds(NORMAL_RESTART_COOLDOWN_SECONDS);
+            return quotaAvailableAt.isAfter(floor) ? quotaAvailableAt : floor;
+        }
+        return floor;
+    }
     private Instant dbNow() {return jdbc.queryForObject("select clock_timestamp()",java.sql.Timestamp.class).toInstant();}
     private static OffsetDateTime at(Instant value) {return value.atOffset(ZoneOffset.UTC);}
     private static void validate(Long before,int limit) {if(before!=null&&before<=0||limit<1||limit>100)throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);}

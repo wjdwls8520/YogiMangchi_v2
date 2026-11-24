@@ -3,17 +3,36 @@ spring:
     url: ${TRADING_DB_URL}
     username: ${TRADING_DB_USERNAME}
     password: ${TRADING_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+      leak-detection-threshold: 10000
   flyway:
     url: ${TRADING_DB_URL}
     user: ${TRADING_FLYWAY_USERNAME}
     password: ${TRADING_FLYWAY_PASSWORD}
 server:
   address: 0.0.0.0
+  shutdown: graceful
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: ${TRADING_INTERNAL_PROXIES:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.1[6-9]\.\d{1,3}\.\d{1,3}|172\.2[0-9]\.\d{1,3}\.\d{1,3}|172\.3[0-1]\.\d{1,3}\.\d{1,3}|0:0:0:0:0:0:0:1|::1}
 springdoc:
   api-docs:
     enabled: false
   swagger-ui:
     enabled: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
 trading:
   http:
     allowed-origins: ${TRADING_HTTP_ALLOWED_ORIGINS}
@@ -21,6 +40,19 @@ trading:
     enabled: ${TRADING_MEMBER_AUTH_ENABLED:true}
     issuer: ${YOGIMANGCHI_JWT_ISSUER}
     public-key-path: ${TRADING_JWT_PUBLIC_KEY_PATH}
+  trigger:
+    poll-interval-ms: ${TRADING_TRIGGER_POLL_INTERVAL_MS:500}
+  risk-journal:
+    skip-idle-symbols: ${TRADING_RISK_JOURNAL_SKIP_IDLE_SYMBOLS:true}
+  risk:
+    retention:
+      duration: ${TRADING_RISK_RETENTION_DURATION:PT12H}
 marketdata:
+  clock:
+    skew-check-enabled: true
+  overview:
+    interval-ms: ${MARKET_OVERVIEW_INTERVAL_MS:30000}
+  order-book:
+    local-direct: ${MARKET_ORDER_BOOK_LOCAL_DIRECT:true}
   websocket:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS}

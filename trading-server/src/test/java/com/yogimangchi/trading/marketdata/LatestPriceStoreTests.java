@@ -2,6 +2,7 @@ package com.yogimangchi.trading.marketdata;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -205,6 +206,45 @@ class LatestPriceStoreTests {
 
     private LatestMarkPrice price(Long id, String price, Instant eventTime, Instant receivedAt) {
         return new LatestMarkPrice(id, new BigDecimal(price), eventTime, receivedAt);
+    }
+
+    @Test
+    void unattendedPolicyIgnoresMultiDayWallClockDriftWhilePreservingLocalFreshnessAndMonotonicOrdering() {
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(LatestPriceStore.class);
+        var logs = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            var unattended = new LatestPriceStore(clock, event -> { }, MarkPriceTimePolicy.UNATTENDED);
+            unattended.beginSubscription(Set.of(1L));
+
+            Instant providerTime = clock.instant().minus(Duration.ofDays(30));
+            var first = price(1L, "94280.50", providerTime, clock.instant());
+            assertThat(unattended.update(first)).isTrue();
+            assertThat(unattended.find(1L).status()).isEqualTo(LatestPriceStore.Status.FRESH);
+            assertThat(unattended.marketClockSnapshot().status()).isEqualTo(MarkPriceTimePolicy.ClockStatus.NORMAL);
+            assertThat(unattended.marketClockSnapshot().skewMs()).isEqualTo(-Duration.ofDays(30).toMillis());
+            assertThat(logs.list).isEmpty();
+
+            // Out-of-order or duplicate provider eventTime is still rejected
+            clock.advanceMillis(1000);
+            assertThat(unattended.update(price(1L, "99999", providerTime, clock.instant()))).isFalse();
+            assertThat(unattended.update(price(1L, "99999", providerTime.minusMillis(1), clock.instant()))).isFalse();
+
+            // Monotonically advancing provider eventTime (+30 days ahead of local clock too) succeeds cleanly
+            Instant futureProviderTime = clock.instant().plus(Duration.ofDays(30));
+            assertThat(unattended.update(price(1L, "94310.00", futureProviderTime, clock.instant()))).isTrue();
+            assertThat(unattended.find(1L).status()).isEqualTo(LatestPriceStore.Status.FRESH);
+            assertThat(unattended.marketClockSnapshot().status()).isEqualTo(MarkPriceTimePolicy.ClockStatus.NORMAL);
+            assertThat(logs.list).isEmpty();
+
+            // Local receipt staleness (5 seconds without receiving a tick) still transitions to STALE
+            clock.advanceMillis(5000);
+            assertThat(unattended.find(1L).status()).isEqualTo(LatestPriceStore.Status.STALE);
+        } finally {
+            logger.detachAppender(logs);
+            logs.stop();
+        }
     }
 
     private static final class MutableClock extends Clock {

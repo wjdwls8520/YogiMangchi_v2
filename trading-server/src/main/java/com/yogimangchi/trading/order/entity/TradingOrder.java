@@ -124,9 +124,31 @@ public class TradingOrder {
         finish(Status.FILLED, null, now);
     }
     public void cancel(Instant now) { requirePending(); finish(Status.CANCELED, "CLIENT_CANCEL", now); }
+    public void cancelForStopLoss(Instant now) { requirePending(); finish(Status.CANCELED,"STOP_LOSS",now); }
+    public static TradingOrder stopLoss(Position position,BigDecimal quantity,BigDecimal price,Instant now) {
+        TradingOrder order=market(position,Action.CLOSE,quantity,price,"stoploss:position:"+position.getId(),"0".repeat(64),now);
+        order.reason="STOP_LOSS";
+        return order;
+    }
+    public void cancelForTakeProfit(Instant now) { requirePending(); finish(Status.CANCELED,"TAKE_PROFIT",now); }
+    public static TradingOrder takeProfit(Position position,BigDecimal quantity,BigDecimal price,Instant now) {
+        TradingOrder order=market(position,Action.CLOSE,quantity,price,"takeprofit:position:"+position.getId(),"0".repeat(64),now);
+        order.reason="TAKE_PROFIT";
+        return order;
+    }
     public void cancelForWithdrawal(Instant now) { requirePending(); finish(Status.CANCELED,"MEMBER_WITHDRAWAL",now); }
     public void cancelForGuestRetry(Instant now) { requirePending(); finish(Status.CANCELED,"GUEST_RETRY",now); }
+    public void cancelForGuestExpiration(Instant now) { requirePending(); finish(Status.CANCELED,"GUEST_EXPIRED",now); }
     public void cancelForMemberRestart(Instant now) {requirePending();finish(Status.CANCELED,"MEMBER_RESTART",now);}
+    public void cancelForContestSettlement(Instant now) { requirePending(); finish(Status.CANCELED, "CONTEST_SETTLEMENT", now); }
+    public void cancelForContestCancellation(Instant now) { requirePending(); finish(Status.CANCELED, "CONTEST_CANCELED", now); }
+    public void cancelForContestDisqualification(Instant now) { requirePending(); finish(Status.CANCELED, "CONTEST_DISQUALIFIED", now); }
+    public static TradingOrder contestLiquidation(Position position, BigDecimal quantity, BigDecimal price, Instant now) {
+        TradingOrder order = market(position, Action.LIQUIDATE, quantity, price,
+                "contest-settlement:position:" + position.getId(), "0".repeat(64), now);
+        order.reason = "CONTEST_SETTLEMENT";
+        return order;
+    }
     public void reject(String reason, Instant now) { requirePending(); finish(Status.REJECTED, reason, now); }
     private void requirePending() { if (status != Status.PENDING) throw new IllegalStateException("Order is not pending"); }
     private void finish(Status status, String reason, Instant now) {
@@ -157,6 +179,27 @@ public class TradingOrder {
         if (action != Action.OPEN) throw new IllegalStateException("Only OPEN reservations use leverage");
         reservedMargin = TradingFees.reservation(limitPrice, quantity, effectiveLeverage, feeRate);
         leverage = effectiveLeverage;
+    }
+    public void amendPendingOpen(BigDecimal newQuantity, BigDecimal newLimitPrice, int effectiveLeverage) {
+        requirePending();
+        if (type != Type.LIMIT || action != Action.OPEN) {
+            throw new IllegalStateException("Only PENDING LIMIT OPEN orders reserve margin");
+        }
+        TradingMath.validateNewOrder(newQuantity, effectiveLeverage, newLimitPrice);
+        quantity = newQuantity.setScale(TradingMath.QUANTITY_SCALE);
+        limitPrice = TradingMath.amount(newLimitPrice);
+        leverage = effectiveLeverage;
+        reservedMargin = TradingFees.reservation(newLimitPrice, newQuantity, effectiveLeverage, feeRate);
+    }
+    public void amendPendingClose(BigDecimal newQuantity, BigDecimal newLimitPrice) {
+        requirePending();
+        if (type != Type.LIMIT || action != Action.CLOSE) {
+            throw new IllegalStateException("Only PENDING LIMIT CLOSE orders reserve close quantity");
+        }
+        TradingMath.validateQuantity(newQuantity);
+        TradingMath.validatePrice(newLimitPrice);
+        quantity = newQuantity.setScale(TradingMath.QUANTITY_SCALE);
+        limitPrice = TradingMath.amount(newLimitPrice);
     }
     public BigDecimal getFilledPrice() { return filledPrice; }
     public String getRequestFingerprint() { return requestFingerprint; }

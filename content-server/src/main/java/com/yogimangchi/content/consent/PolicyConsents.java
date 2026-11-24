@@ -24,16 +24,19 @@ public class PolicyConsents {
     public record Document(String type,String version,String documentStatus,String sha256,String text) { }
     @Transactional(readOnly=true,timeout=3)
     public Document document(String type,String version) {
-        var docs=jdbc.query("select document_text,document_sha256 from content.policy_version where policy_type=? and version=?",(r,n)->new Document(type,version,"DEVELOPMENT_DRAFT",r.getString(2),r.getString(1)),type,version);
+        var docs=jdbc.query("select document_text,document_sha256,document_status from content.policy_version where policy_type=? and version=?",(r,n)->new Document(type,version,r.getString(3),r.getString(2),r.getString(1)),type,version);
         if(docs.isEmpty())throw new AuthFailure("POLICY_NOT_FOUND",HttpStatus.NOT_FOUND);return docs.get(0);
     }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
     public void validate(Acceptance body) {
+        if(body==null || !body.termAgree() || !body.privateAgree()) throw new AuthFailure("REQUIRED_CONSENT_MISSING",HttpStatus.BAD_REQUEST);
+        if(body.termsVersion()==null || body.privacyVersion()==null || body.termsVersion().isBlank() || body.privacyVersion().isBlank())
+            throw new AuthFailure("POLICY_VERSION_REQUIRED",HttpStatus.BAD_REQUEST);
         // Keep policy activation from racing signup/reconsent. Policy versions are append-only.
         var current=jdbc.queryForList("select policy_type,version,required from content.policy_version where current order by policy_type for share");
-        if(body==null || !body.termAgree() || !body.privateAgree() || current.size()!=2
+        if(current.size()!=2
             || current.stream().anyMatch(p->!p.get("version").equals(p.get("policy_type").equals("TERMS")?body.termsVersion():body.privacyVersion())))
-            throw new AuthFailure("POLICY_VERSION_OR_CONSENT_INVALID",HttpStatus.CONFLICT);
+            throw new AuthFailure("POLICY_VERSION_CHANGED",HttpStatus.CONFLICT);
     }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
     public void record(Long memberId,Acceptance body,Instant now) {
@@ -44,7 +47,7 @@ public class PolicyConsents {
     @Transactional(timeout=5)
     public State accept(Long memberId,Acceptance body) {
         var status=jdbc.queryForList("select status from content.member where id=? for update",String.class,memberId);
-        if(status.isEmpty() || !status.get(0).equals("ACTIVE")) throw AuthFailure.unauthorized();
+        if(status.isEmpty() || !("ACTIVE".equals(status.get(0)) || "SUSPENDED".equals(status.get(0)))) throw AuthFailure.unauthorized();
         record(memberId,body,Instant.now());return current(memberId);
     }
 }

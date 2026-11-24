@@ -1,10 +1,15 @@
 spring:
+  config:
+    import: optional:file:.env[.properties],optional:file:../.env[.properties]
   application:
     name: content-server
   datasource:
     url: jdbc:postgresql://localhost:${YOGIMANGCHI_DB_PORT:5432}/yogimangchi
     username: ${YOGIMANGCHI_DB_USERNAME}
     password: ${YOGIMANGCHI_DB_PASSWORD}
+    hikari:
+      # Fail before the Frontend's10s auth timeout; a transaction timeout does not bound pool acquisition.
+      connection-timeout: 3000
   jpa:
     open-in-view: false
     hibernate:
@@ -19,6 +24,10 @@ spring:
   sql:
     init:
       mode: never
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 55MB
 server:
   address: 127.0.0.1
   port: ${CONTENT_SERVER_PORT:8080}
@@ -41,10 +50,16 @@ springdoc:
   swagger-ui:
     enabled: true
 content:
+  retention:
+    enabled: ${CONTENT_RETENTION_ENABLED:true}
+    duration: ${CONTENT_RETENTION_DURATION:PT720H}
+    batch-size: ${CONTENT_RETENTION_BATCH_SIZE:500}
+    fixed-delay-ms: ${CONTENT_RETENTION_FIXED_DELAY_MS:3600000}
   withdrawal:
-    delivery-enabled: ${CONTENT_WITHDRAWAL_DELIVERY_ENABLED:false}
+    delivery-enabled: ${CONTENT_WITHDRAWAL_DELIVERY_ENABLED:true}
     trading-base-url: ${CONTENT_TRADING_BASE_URL:http://localhost:8081}
   auth:
+    nickname-lookups-per-minute: ${CONTENT_NICKNAME_LOOKUPS_PER_MINUTE:300}
     issuer: ${YOGIMANGCHI_JWT_ISSUER:http://localhost:8080}
     private-key-path: ${CONTENT_JWT_PRIVATE_KEY_PATH}
     key-id: ${CONTENT_JWT_KEY_ID:content-1}
@@ -53,3 +68,43 @@ content:
     allowed-origins: ${CONTENT_HTTP_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
   oauth:
     enabled: ${CONTENT_OAUTH_ENABLED:false}
+  s3:
+    enabled: ${CONTENT_S3_ENABLED:false}
+    public-base-url: ${CONTENT_PUBLIC_BASE_URL:http://localhost:${CONTENT_SERVER_PORT:8080}}
+    local-media-dir: ${CONTENT_LOCAL_MEDIA_DIR:.gradle/local-runtime/uploads}
+    bucket: ${S3_BUCKET:}
+    access-key: ${S3_ACCESS:}
+    secret-key: ${S3_SECRET:}
+    region: ${S3_REGION:ap-northeast-2}
+  news:
+    collector:
+      enabled: ${CONTENT_NEWS_COLLECTOR_ENABLED:true}
+      interval-ms: ${CONTENT_NEWS_COLLECTOR_INTERVAL_MS:60000}
+      initial-delay-ms: ${CONTENT_NEWS_COLLECTOR_INITIAL_DELAY_MS:60000}
+      max-items-per-feed: ${CONTENT_NEWS_COLLECTOR_MAX_ITEMS_PER_FEED:8}
+  ops:
+    alert-webhook-url: ${OPS_ALERT_WEBHOOK_URL:}
+    alert-cooldown-seconds: ${OPS_ALERT_COOLDOWN_SECONDS:${CONTENT_OPS_ALERT_COOLDOWN_SECONDS:300}}
+    alert-telegram-chat-id: ${OPS_ALERT_TELEGRAM_CHAT_ID:${CONTENT_OPS_ALERT_TELEGRAM_CHAT_ID:}}
+    resource-watchdog-enabled: ${CONTENT_OPS_RESOURCE_WATCHDOG_ENABLED:true}
+    resource-watchdog-interval-ms: ${CONTENT_OPS_RESOURCE_WATCHDOG_INTERVAL_MS:60000}
+  rate-limit:
+    enabled: ${CONTENT_RATE_LIMIT_ENABLED:true}
+    csrf-per-minute: ${CONTENT_RATE_LIMIT_CSRF_PER_MINUTE:60}
+    auth-per-minute: ${CONTENT_RATE_LIMIT_AUTH_PER_MINUTE:120}
+    news-interaction-per-minute: ${CONTENT_RATE_LIMIT_NEWS_PER_MINUTE:120}
+    community-write-per-minute: ${CONTENT_RATE_LIMIT_COMMUNITY_WRITE_PER_MINUTE:60}
+    support-write-per-minute: ${CONTENT_RATE_LIMIT_SUPPORT_WRITE_PER_MINUTE:30}
+    profile-write-per-minute: ${CONTENT_RATE_LIMIT_PROFILE_WRITE_PER_MINUTE:30}
+    client-errors-per-minute: ${CONTENT_RATE_LIMIT_CLIENT_ERRORS_PER_MINUTE:20}
+    max-sse-per-ip: ${CONTENT_RATE_LIMIT_MAX_SSE_PER_IP:12}
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

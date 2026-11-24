@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:file:.env[.properties],optional:file:../.env[.properties]
   application:
     name: trading-server
   data:
@@ -44,9 +46,29 @@ springdoc:
   swagger-ui:
     enabled: true
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
 marketdata:
+  clock:
+    skew-check-enabled: ${MARKET_CLOCK_SKEW_CHECK_ENABLED:false}
+    warning-threshold: ${MARKET_CLOCK_WARNING_THRESHOLD:12h}
+    degraded-threshold: ${MARKET_CLOCK_DEGRADED_THRESHOLD:48h}
+    reject-threshold: ${MARKET_CLOCK_REJECT_THRESHOLD:365d}
+    max-receipt-future: ${MARKET_CLOCK_MAX_RECEIPT_FUTURE:5m}
   websocket:
     allowed-origins: ${TRADING_WS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  overview:
+    enabled: ${MARKET_OVERVIEW_COLLECTOR_ENABLED:true}
+    interval-ms: ${MARKET_OVERVIEW_INTERVAL_MS:5000}
 
 binance:
   order-book:
@@ -61,5 +83,26 @@ trading:
     enabled: ${TRADING_GUEST_CLEANUP_ENABLED:true}
   trigger:
     enabled: ${TRADING_TRIGGER_ENABLED:true}
+  risk:
+    retention:
+      enabled: ${TRADING_RISK_RETENTION_ENABLED:true}
+      duration: ${TRADING_RISK_RETENTION_DURATION:PT72H}
+      batch-size: ${TRADING_RISK_RETENTION_BATCH_SIZE:500}
+      interval-ms: ${TRADING_RISK_RETENTION_INTERVAL_MS:3600000}
+      initial-delay-ms: ${TRADING_RISK_RETENTION_INITIAL_DELAY_MS:120000}
   http:
     allowed-origins: ${TRADING_HTTP_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  guest-creation:
+    rate-limit-enabled: ${TRADING_GUEST_RATE_LIMIT_ENABLED:true}
+    max-per-window: ${TRADING_GUEST_RATE_LIMIT_MAX:10}
+    window-seconds: ${TRADING_GUEST_RATE_LIMIT_WINDOW_SECONDS:600}
+  rate-limit:
+    enabled: ${TRADING_RATE_LIMIT_ENABLED:true}
+    candles-per-minute: ${TRADING_RATE_LIMIT_CANDLES_PER_MINUTE:60}
+    orders-per-minute: ${TRADING_RATE_LIMIT_ORDERS_PER_MINUTE:120}
+  ops:
+    alert-webhook-url: ${OPS_ALERT_WEBHOOK_URL:}
+    alert-cooldown-seconds: ${OPS_ALERT_COOLDOWN_SECONDS:300}
+    alert-telegram-chat-id: ${OPS_ALERT_TELEGRAM_CHAT_ID:}
+    resource-watchdog-enabled: ${TRADING_OPS_RESOURCE_WATCHDOG_ENABLED:true}
+    resource-watchdog-interval-ms: ${TRADING_OPS_RESOURCE_WATCHDOG_INTERVAL_MS:60000}

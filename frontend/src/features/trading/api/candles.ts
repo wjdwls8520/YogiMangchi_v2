@@ -5,9 +5,10 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { marketCandlesJson } from "./client";
 import { parseCandles, type CandleBook, type CandleInterval } from "../market/candles";
 import { CandleHistoryPager } from "../market/candle-history";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
 
 export const candleQueryKey = (origin: string, symbolId: number, interval: CandleInterval, before: string | null = null) => ["market", origin, "candles", symbolId, interval, before] as const;
-const candleOrigin = () => process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081";
+const candleOrigin = () => resolveTradingOrigin();
 export function useCandleHistory(symbolId: number, interval: CandleInterval) {
   const origin = candleOrigin();
   const queryKey = useMemo(() => candleQueryKey(origin, symbolId, interval), [origin, symbolId, interval]);

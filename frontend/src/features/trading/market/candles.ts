@@ -7,7 +7,7 @@ export type CandleInterval = typeof CANDLE_INTERVALS[number];
 const minutes: Record<CandleInterval, number> = { "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "12h": 720, "24h": 1440 };
 export const candleMillis = (interval: CandleInterval) => minutes[interval] * 60_000;
 export const candleBucket = (time: number, interval: CandleInterval) => Math.floor(time / candleMillis(interval)) * candleMillis(interval);
-export type Candle = { openTime: number; closeTime: number; open: string; high: string; low: string; close: string };
+export type Candle = { openTime: number; closeTime: number; open: string; high: string; low: string; close: string; volume?: string };
 export const MAX_CANDLES = 10_000;
 const MAX_PAGE_CANDLES = 500;
 function price(value: unknown) {
@@ -25,7 +25,8 @@ export function parseCandles(value: unknown, interval: CandleInterval): Candle[]
       || closeTime !== openTime + candleMillis(interval) - 1 || comparePrices(high, open) < 0 || comparePrices(high, close) < 0
       || comparePrices(low, open) > 0 || comparePrices(low, close) > 0 || comparePrices(high, low) < 0) return invalidContract();
     previous = openTime;
-    return { openTime, closeTime, open, high, low, close };
+    const rawVolume = typeof row.volume === "string" && /^\d+(\.\d+)?$/.test(row.volume) ? row.volume : undefined;
+    return rawVolume !== undefined ? { openTime, closeTime, open, high, low, close, volume: rawVolume } : { openTime, closeTime, open, high, low, close };
   });
   return candles.length <= MAX_PAGE_CANDLES ? candles : invalidContract();
 }

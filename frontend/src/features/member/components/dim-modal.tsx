@@ -1,0 +1,307 @@
+"use client";
+
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
+import { V1IconClose } from "./v1-ui";
+import { useFocusTrap } from "../../../lib/use-focus-trap";
+
+interface ScrollLockTargetWindow {
+  scrollY: number;
+  innerWidth?: number;
+  location?: { href?: string };
+  scrollTo: (x: number, y: number) => void;
+}
+
+interface ScrollLockTargetDocument {
+  body: {
+    style: Record<string, string>;
+    dataset: Record<string, string | undefined>;
+  };
+  documentElement: {
+    scrollTop?: number;
+    clientWidth?: number;
+    style: Record<string, string>;
+  };
+}
+
+let activeLockCount = 0;
+let savedScrollY = 0;
+let savedLocationHref: string | null = null;
+let compensatedPaddingRight = false;
+let previousPaddingRight = "";
+interface OverlayEscapeEntry {
+  id: string;
+  onClose: () => void;
+}
+
+const activeOverlayStack: OverlayEscapeEntry[] = [];
+let globalEscapeListenerBound = false;
+
+function handleGlobalOverlayKeyDown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  const top = activeOverlayStack[activeOverlayStack.length - 1];
+  if (!top) return;
+  event.preventDefault();
+  event.stopPropagation();
+  top.onClose();
+}
+
+function syncGlobalEscapeListener() {
+  if (typeof window === "undefined") return;
+  if (activeOverlayStack.length > 0 && !globalEscapeListenerBound) {
+    window.addEventListener("keydown", handleGlobalOverlayKeyDown);
+    globalEscapeListenerBound = true;
+  } else if (activeOverlayStack.length === 0 && globalEscapeListenerBound) {
+    window.removeEventListener("keydown", handleGlobalOverlayKeyDown);
+    globalEscapeListenerBound = false;
+  }
+}
+
+export function registerOverlayEscape(id: string, onClose: () => void): () => void {
+  const existingIdx = activeOverlayStack.findIndex(entry => entry.id === id);
+  if (existingIdx >= 0) {
+    activeOverlayStack.splice(existingIdx, 1);
+  }
+  activeOverlayStack.push({ id, onClose });
+  syncGlobalEscapeListener();
+  return () => {
+    const index = activeOverlayStack.findIndex(entry => entry.id === id);
+    if (index >= 0) {
+      activeOverlayStack.splice(index, 1);
+    }
+    syncGlobalEscapeListener();
+  };
+}
+
+export function getActiveDimModalStack(): readonly string[] {
+  return activeOverlayStack.map(entry => entry.id);
+}
+
+export function resetDimModalStackForTest() {
+  activeOverlayStack.length = 0;
+  syncGlobalEscapeListener();
+}
+
+export function lockBodyScroll(
+  win: ScrollLockTargetWindow | undefined = typeof window !== "undefined" ? window : undefined,
+  doc: ScrollLockTargetDocument | undefined = typeof document !== "undefined" ? (document as unknown as ScrollLockTargetDocument) : undefined,
+): number {
+  if (!win || !doc) return 0;
+  if (activeLockCount === 0) {
+    savedScrollY = win.scrollY || doc.documentElement.scrollTop || 0;
+    savedLocationHref = typeof win.location?.href === "string" ? win.location.href : null;
+    const scrollbarGap =
+      typeof win.innerWidth === "number" && typeof doc.documentElement.clientWidth === "number"
+        ? Math.max(0, win.innerWidth - doc.documentElement.clientWidth)
+        : 0;
+    doc.body.dataset.scrollLocked = "true";
+    doc.body.dataset.savedScrollY = String(savedScrollY);
+    doc.body.style.position = "fixed";
+    doc.body.style.top = `-${savedScrollY}px`;
+    doc.body.style.left = "0";
+    doc.body.style.right = "0";
+    doc.body.style.width = "100%";
+    doc.body.style.overflow = "hidden";
+    if (scrollbarGap > 0) {
+      compensatedPaddingRight = true;
+      previousPaddingRight = doc.body.style.paddingRight ?? "";
+      doc.body.style.paddingRight = `${scrollbarGap}px`;
+    } else {
+      compensatedPaddingRight = false;
+      previousPaddingRight = "";
+    }
+    doc.documentElement.style.overflow = "hidden";
+    doc.documentElement.style.scrollbarWidth = "none";
+  }
+  activeLockCount += 1;
+  return savedScrollY;
+}
+
+export function unlockBodyScroll(
+  win: ScrollLockTargetWindow | undefined = typeof window !== "undefined" ? window : undefined,
+  doc: ScrollLockTargetDocument | undefined = typeof document !== "undefined" ? (document as unknown as ScrollLockTargetDocument) : undefined,
+): number {
+  if (!win || !doc) return 0;
+  if (activeLockCount > 0) {
+    activeLockCount -= 1;
+  }
+  if (activeLockCount === 0) {
+    const restoreY = Number(doc.body.dataset.savedScrollY ?? savedScrollY) || 0;
+    const currentHref = typeof win.location?.href === "string" ? win.location.href : null;
+    const navigatedAway = savedLocationHref !== null && currentHref !== null && currentHref !== savedLocationHref;
+    savedLocationHref = null;
+    delete doc.body.dataset.scrollLocked;
+    delete doc.body.dataset.savedScrollY;
+    doc.body.style.position = "";
+    doc.body.style.top = "";
+    doc.body.style.left = "";
+    doc.body.style.right = "";
+    doc.body.style.width = "";
+    doc.body.style.overflow = "";
+    if (compensatedPaddingRight) {
+      doc.body.style.paddingRight = previousPaddingRight;
+      compensatedPaddingRight = false;
+      previousPaddingRight = "";
+    }
+    doc.documentElement.style.overflow = "";
+    doc.documentElement.style.scrollbarWidth = "";
+    if (!navigatedAway) {
+      win.scrollTo(0, restoreY);
+    }
+    return navigatedAway ? 0 : restoreY;
+  }
+  return savedScrollY;
+}
+
+export function resetScrollLockForTest() {
+  activeLockCount = 0;
+  savedScrollY = 0;
+  savedLocationHref = null;
+  compensatedPaddingRight = false;
+  previousPaddingRight = "";
+}
+
+export function useDimScrollLock(open: boolean) {
+  useEffect(() => {
+    if (!open) return;
+    lockBodyScroll();
+    return () => {
+      unlockBodyScroll();
+    };
+  }, [open]);
+}
+
+export function useDialogScrollLock(
+  dialogRef: RefObject<HTMLDialogElement | null>,
+  initialOpen = false,
+  options?: { closeOnBackdrop?: boolean; canClose?: () => boolean; onBackdropClose?: () => void },
+) {
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
+
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el || typeof MutationObserver === "undefined") return;
+    let locked = false;
+    let previousFocus: HTMLElement | null = null;
+    const sync = () => {
+      const isOpen = el.hasAttribute("open") || el.open;
+      if (isOpen && !locked) {
+        locked = true;
+        if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement && !el.contains(document.activeElement)) {
+          previousFocus = document.activeElement;
+        }
+        lockBodyScroll();
+      } else if (!isOpen && locked) {
+        locked = false;
+        unlockBodyScroll();
+        if (previousFocus && previousFocus.isConnected && typeof previousFocus.focus === "function") {
+          const toFocus = previousFocus;
+          previousFocus = null;
+          try {
+            toFocus.focus();
+          } catch {
+            // Ignore focus error
+          }
+        }
+      }
+    };
+    const handleBackdropClick = (event: MouseEvent) => {
+      if (optionsRef.current?.closeOnBackdrop === false) return;
+      if (event.target !== el) return;
+      if (optionsRef.current?.canClose && !optionsRef.current.canClose()) return;
+      if (optionsRef.current?.onBackdropClose) {
+        optionsRef.current.onBackdropClose();
+      } else if (el.open) {
+        el.close();
+      }
+    };
+    sync();
+    el.addEventListener("click", handleBackdropClick);
+    const observer = new MutationObserver(sync);
+    observer.observe(el, { attributes: true, attributeFilter: ["open"] });
+    return () => {
+      el.removeEventListener("click", handleBackdropClick);
+      observer.disconnect();
+      if (locked) {
+        locked = false;
+        unlockBodyScroll();
+      }
+    };
+  }, [dialogRef, initialOpen]);
+}
+
+export function DimModal({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  maxWidth = "560px",
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  maxWidth?: string;
+}) {
+  const titleId = useId();
+  const modalId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useDimScrollLock(open);
+  useFocusTrap(open, panelRef);
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+    return registerOverlayEscape(modalId, () => onCloseRef.current());
+  }, [open, modalId]);
+
+  if (!open) return null;
+
+  const modalNode = (
+    <div
+      className="ym-dim-backdrop is-open"
+      data-dim-modal="open"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onClick={onClose}
+    >
+      <div
+        ref={panelRef}
+        className="ym-dim-panel"
+        style={{ maxWidth }}
+        onClick={event => event.stopPropagation()}
+      >
+        <header className="ym-dim-header">
+          <div>
+            <h2 id={titleId} className="ym-dim-title">{title}</h2>
+            {subtitle && <p className="ym-dim-subtitle">{subtitle}</p>}
+          </div>
+          <button
+            type="button"
+            className="ym-dim-close"
+            aria-label="모달 닫기"
+            onClick={onClose}
+          >
+            <V1IconClose className="h-4 w-4" />
+          </button>
+        </header>
+        <div className="ym-dim-body">{children}</div>
+        {footer && <footer className="ym-dim-footer">{footer}</footer>}
+      </div>
+    </div>
+  );
+
+  if (typeof document !== "undefined" && document.body) {
+    return createPortal(modalNode, document.body);
+  }
+  return modalNode;
+}

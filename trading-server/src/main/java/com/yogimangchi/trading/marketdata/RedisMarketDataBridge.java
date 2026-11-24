@@ -2,12 +2,14 @@ package com.yogimangchi.trading.marketdata;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yogimangchi.trading.ops.OpsAlertService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executors;
@@ -17,6 +19,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -42,7 +46,7 @@ public class RedisMarketDataBridge {
             local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
             local ttl = tonumber(ARGV[2]) + tonumber(ARGV[5]) - now
             if ttl <= 0 or tonumber(ARGV[2]) > now + tonumber(ARGV[6])
-                or math.abs(tonumber(ARGV[1]) - tonumber(ARGV[2])) > tonumber(ARGV[7]) then return -1 end
+                or (tonumber(ARGV[7]) >= 0 and math.abs(tonumber(ARGV[1]) - tonumber(ARGV[2])) > tonumber(ARGV[7])) then return -1 end
             ttl = math.min(ttl, tonumber(ARGV[5]))
             redis.call('SET', KEYS[1], ARGV[3], 'PX', ttl)
             redis.call('SET', KEYS[2], ARGV[1], 'EX', 86400)
@@ -68,6 +72,8 @@ public class RedisMarketDataBridge {
     private final StringRedisTemplate redis;
     private final ObjectMapper mapper;
     private final MarketDataFanout fanout;
+    private final MarkPriceTimePolicy.Policy policy;
+    private final ObjectProvider<OpsAlertService> alerts;
     private final ArrayBlockingQueue<MarketDataEvent> pending = new ArrayBlockingQueue<>(1024);
     private final ScheduledExecutorService publisher = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "market-data-redis");
@@ -88,10 +94,23 @@ public class RedisMarketDataBridge {
     private volatile boolean closed;
 
     public RedisMarketDataBridge(RedisConnectionFactory connectionFactory, ObjectMapper mapper, MarketDataFanout fanout) {
+        this(connectionFactory, mapper, fanout, MarkPriceTimePolicy.STRICT, null);
+    }
+
+    public RedisMarketDataBridge(RedisConnectionFactory connectionFactory, ObjectMapper mapper,
+            MarketDataFanout fanout, MarkPriceTimePolicy.Policy policy) {
+        this(connectionFactory, mapper, fanout, policy, null);
+    }
+
+    @Autowired
+    public RedisMarketDataBridge(RedisConnectionFactory connectionFactory, ObjectMapper mapper,
+            MarketDataFanout fanout, MarkPriceTimePolicy.Policy policy, ObjectProvider<OpsAlertService> alerts) {
         this.connectionFactory = connectionFactory;
         this.redis = new StringRedisTemplate(connectionFactory);
         this.mapper = mapper;
         this.fanout = fanout;
+        this.policy = policy;
+        this.alerts = alerts;
     }
 
     @PostConstruct
@@ -127,6 +146,16 @@ public class RedisMarketDataBridge {
         return new Health(state, gapSequence.get());
     }
 
+    public Long pingLatencyMs() {
+        long start = System.nanoTime();
+        try (var connection = connectionFactory.getConnection()) {
+            connection.ping();
+            return TimeUnit.NANOSECONDS.toMillis(Math.max(0L, System.nanoTime() - start));
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
     /** A cache miss or failure is never a usable execution price. Prefer the local store on this single node. */
     public LatestPriceStore.Snapshot readSharedSnapshot(long symbolId) {
         try {
@@ -139,7 +168,7 @@ public class RedisMarketDataBridge {
             }
             LatestMarkPrice price = mapper.readValue(json, MarketDataEvent.class).price();
             Instant now = Instant.now();
-            boolean fresh = LatestPriceStore.isFreshAt(price, now);
+            boolean fresh = policy.isFreshAt(price, now);
             return new LatestPriceStore.Snapshot(fresh ? LatestPriceStore.Status.FRESH
                     : LatestPriceStore.Status.STALE, Optional.of(price));
         } catch (Exception ex) {
@@ -212,8 +241,8 @@ public class RedisMarketDataBridge {
                     watermarkKey(price.tradingSymbolId()), stateKey(price.tradingSymbolId()), STREAM_KEY, CHANNEL),
                     Long.toString(price.eventTime().toEpochMilli()), Long.toString(price.receivedAt().toEpochMilli()),
                     payload, Long.toString(STREAM_MAX_LENGTH), Long.toString(MarkPriceTimePolicy.FRESH_FOR.toMillis()),
-                    Long.toString(MarkPriceTimePolicy.MAX_RECEIPT_FUTURE.toMillis()),
-                    Long.toString(MarkPriceTimePolicy.REJECT_THRESHOLD.toMillis()));
+                    Long.toString(policy.maxReceiptFuture().toMillis()),
+                    Long.toString(policy.redisRejectThresholdMillis()));
             if (Long.valueOf(-1).equals(accepted)) {
                 gapSequence.incrementAndGet();
             }
@@ -232,9 +261,17 @@ public class RedisMarketDataBridge {
             return;
         }
         if (state != State.UNAVAILABLE) {
-            gapSequence.incrementAndGet();
+            long seq = gapSequence.incrementAndGet();
             retryAfter = System.nanoTime() + RETRY_DELAY.toNanos();
             log.warn("[Redis market data] UNAVAILABLE reason={} localFallback=true replayContinuity=false", reason);
+            OpsAlertService alertService = alerts != null ? alerts.getIfAvailable() : null;
+            if (alertService != null) {
+                alertService.alert(
+                        "redis-market-bridge:unavailable",
+                        "CRITICAL",
+                        "Redis Market Data Bridge transitioned to UNAVAILABLE",
+                        Map.of("reason", reason == null ? "unknown" : reason, "gapSequence", seq));
+            }
         }
         state = State.UNAVAILABLE;
     }

@@ -8,7 +8,7 @@ import { CandlestickChart } from "./candlestick-chart";
 import { ChartState } from "./chart-state";
 
 const statusLabels: Record<MarketState, string> = {
-  CONNECTING: "연결 중", WAITING_FOR_FIRST_PRICE: "첫 시세 대기", READY: "READY",
+  CONNECTING: "연결 중", WAITING_FOR_FIRST_PRICE: "첫 시세 대기", READY: "연결됨",
   UNAVAILABLE: "시세 이용 불가", RECONNECTING: "재연결 중",
 };
 

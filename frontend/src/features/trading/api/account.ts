@@ -1,4 +1,6 @@
 import { decimal, id, instant, invalidContract, list, nullable, record, text } from "./contracts";
+import { parseStopLoss } from "./stop-loss-contract";
+import { parseTakeProfit } from "./take-profit-contract";
 import { marginMode, transitionStatus } from "./margin";
 import type { TradingSymbol } from "../market/catalog";
 
@@ -12,6 +14,8 @@ export function parsePosition(value: unknown) {
   if (liquidationPriceStatus.startsWith("ESTIMATED_") && (liquidationPrice === null || liquidationPriceAsOf === null || !/^[0-9.]+$/.test(liquidationPrice) || !/[1-9]/.test(liquidationPrice))) return invalidContract();
   if (!liquidationPriceStatus.startsWith("ESTIMATED_") && liquidationPrice !== null) return invalidContract();
   return {
+    stopLoss: row.stopLoss === undefined ? undefined : parseStopLoss(row.stopLoss, id(row.id), id(row.tradingSymbolId), row.side),
+    takeProfit: row.takeProfit === undefined || row.takeProfit === null ? undefined : parseTakeProfit(row.takeProfit, id(row.id), id(row.tradingSymbolId), row.side),
     marginMode: marginMode(row.marginMode), openedMarginMode: text(row.openedMarginMode), liquidationPrice, liquidationPriceStatus, liquidationPriceAsOf,
     id: id(row.id), tradingSymbolId: id(row.tradingSymbolId), side: row.side,
     quantity: decimal(row.quantity), reservedCloseQuantity: decimal(row.reservedCloseQuantity),
@@ -31,12 +35,10 @@ export function parseSummary(value: unknown, accountId: number | null) {
   if (wallet.quoteAsset !== "USDT") return invalidContract();
   const positions = list(row.positions, parsePosition);
   const sides = new Set<string>(), ids = new Set<number>();
-  const leverages = new Map<number, number>();
   for (const position of positions) {
     const key = `${position.tradingSymbolId}:${position.side}`;
-    if (position.status !== "OPEN" || position.leverage > 100 || sides.has(key) || ids.has(position.id)
-      || (leverages.has(position.tradingSymbolId) && leverages.get(position.tradingSymbolId) !== position.leverage)) return invalidContract();
-    sides.add(key); ids.add(position.id); leverages.set(position.tradingSymbolId, position.leverage);
+    if (position.status !== "OPEN" || position.leverage > 100 || sides.has(key) || ids.has(position.id)) return invalidContract();
+    sides.add(key); ids.add(position.id);
   }
   return {
     accountId, status: text(row.status), createdAt: instant(row.createdAt), valuedAt: instant(row.valuedAt),

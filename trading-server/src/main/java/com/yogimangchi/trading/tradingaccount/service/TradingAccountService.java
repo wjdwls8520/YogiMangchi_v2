@@ -4,6 +4,9 @@ import com.yogimangchi.trading.execution.TradingMath;
 import com.yogimangchi.trading.marketdata.LatestPriceStore;
 import com.yogimangchi.trading.position.entity.Position;
 import com.yogimangchi.trading.position.repository.PositionRepository;
+import com.yogimangchi.trading.takeprofit.PositionTakeProfit;
+import com.yogimangchi.trading.takeprofit.PositionTakeProfitRepository;
+import com.yogimangchi.trading.takeprofit.TakeProfitResponse;
 import com.yogimangchi.trading.tradingaccount.dto.*;
 import com.yogimangchi.trading.tradingaccount.entity.TradingAccount;
 import com.yogimangchi.trading.tradingaccount.entity.Wallet;
@@ -14,8 +17,12 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,15 +32,24 @@ public class TradingAccountService {
     private final TradingAccountRepository accounts;
     private final WalletRepository wallets;
     private final PositionRepository positions;
+    private final PositionTakeProfitRepository takeProfits;
     private final AccountLock accountLock;
     private final AccountValuation valuation;
     private final LiquidationPriceEstimator liquidationPrices;
 
     public TradingAccountService(TradingAccountRepository accounts, WalletRepository wallets,
             PositionRepository positions, AccountLock accountLock, AccountValuation valuation, LiquidationPriceEstimator liquidationPrices) {
+        this(accounts, wallets, positions, null, accountLock, valuation, liquidationPrices);
+    }
+
+    @Autowired
+    public TradingAccountService(TradingAccountRepository accounts, WalletRepository wallets,
+            PositionRepository positions, PositionTakeProfitRepository takeProfits,
+            AccountLock accountLock, AccountValuation valuation, LiquidationPriceEstimator liquidationPrices) {
         this.accounts = accounts;
         this.wallets = wallets;
         this.positions = positions;
+        this.takeProfits = takeProfits;
         this.accountLock = accountLock;
         this.valuation = valuation;
         this.liquidationPrices = liquidationPrices;
@@ -54,10 +70,20 @@ public class TradingAccountService {
     public AccountSummaryResponse summary(Long accountId) {
         Snapshot state = snapshot(accountId);
         var estimates = liquidationPrices.estimate(state.open(), state.value().prices(), state.account().isIsolated());
+        Map<Long, PositionTakeProfit> tpByPosition = loadTakeProfits(state.open());
         return new AccountSummaryResponse(state.account().getId(), state.account().getStatus().name(), state.account().getCreatedAt(),
                 walletResponse(state.account(), state.wallet(), state.value()),
                 state.open().stream().map(position -> response(position, state.value().prices().get(position.getTradingSymbolId()),
-                        estimates.get(position.getId()), state.account().getMarginMode())).toList(), state.value().capturedAt());
+                        estimates.get(position.getId()), state.account().getMarginMode(), tpByPosition.get(position.getId()))).toList(), state.value().capturedAt());
+    }
+
+    private Map<Long, PositionTakeProfit> loadTakeProfits(List<Position> open) {
+        if (takeProfits == null || open.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = open.stream().map(Position::getId).toList();
+        return takeProfits.findByPositionIdIn(ids).stream()
+                .collect(Collectors.toMap(PositionTakeProfit::getPositionId, Function.identity()));
     }
 
     @Transactional
@@ -85,16 +111,19 @@ public class TradingAccountService {
                 account.getMarginMode(), account.getMarginTransitionStatus().name());
     }
 
-    private PositionResponse response(Position position, LatestPriceStore.Snapshot snapshot, LiquidationPriceEstimator.Estimate estimate, String marginMode) {
+    private PositionResponse response(Position position, LatestPriceStore.Snapshot snapshot, LiquidationPriceEstimator.Estimate estimate, String marginMode, PositionTakeProfit tp) {
         boolean fresh = snapshot.status() == LatestPriceStore.Status.FRESH;
         BigDecimal mark = fresh ? snapshot.latestPrice().orElseThrow().domainMarkPrice() : null;
         BigDecimal pnl = fresh ? position.unrealizedPnl(mark) : null;
+        TakeProfitResponse takeProfitSnapshot = tp != null ? TakeProfitResponse.from(tp) : TakeProfitResponse.none(position);
         return new PositionResponse(position.getId(), position.getTradingSymbolId(), position.getSide().name(), decimal(position.getQuantity()),
                 decimal(position.getReservedCloseQuantity()), decimal(position.getFreeCloseQuantity()),
                 decimal(position.getEntryPrice()), position.getLeverage(), decimal(position.getMargin()), position.getStatus().name(),
                 decimal(position.getRealizedPnl()), decimal(mark), decimal(pnl), snapshot.status().name(),
                 snapshot.latestPrice().map(price -> price.eventTime()).orElse(null), position.getOpenedAt(),
-                decimal(estimate.price()), estimate.status(), estimate.asOf(), marginMode, position.getOpenedMarginMode());
+                decimal(estimate.price()), estimate.status(), estimate.asOf(), marginMode, position.getOpenedMarginMode(),
+                com.yogimangchi.trading.stoploss.StopLossResponse.from(position),
+                takeProfitSnapshot);
     }
 
     private static String decimal(BigDecimal value) { return value == null ? null : value.toPlainString(); }

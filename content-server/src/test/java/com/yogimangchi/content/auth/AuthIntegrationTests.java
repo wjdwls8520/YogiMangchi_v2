@@ -186,7 +186,7 @@ class AuthIntegrationTests extends TestEnvironment {
                 .andExpect(status().isBadRequest());
         assertThat(jdbc.queryForObject("select count(*) from content.member",Long.class)).isEqualTo(count);
         var first=signup(identity); String nick=first.access().nickname();
-        assertThatThrownBy(() -> auth.signup(identity(Provider.KAKAO,"duplicate@example.test"),new SignupRequest(nick,true,true,"","ym-terms-v1","ym-privacy-v1")))
+        assertThatThrownBy(() -> auth.signup(identity(Provider.KAKAO,"duplicate@example.test"),new SignupRequest(nick,true,true,"","ym-terms-v3","ym-privacy-v3")))
                 .isInstanceOf(AuthFailure.class);
     }
 
@@ -204,9 +204,9 @@ class AuthIntegrationTests extends TestEnvironment {
                 .expiresAt(expiry).claim("token_use",use).build();
         return encoder.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).build(),claims)).getTokenValue();
     }
-    private AuthService.Issued signup(VerifiedIdentity identity) { return auth.signup(identity,new SignupRequest(nickname(),true,true,"","ym-terms-v1","ym-privacy-v1")); }
+    private AuthService.Issued signup(VerifiedIdentity identity) { return auth.signup(identity,new SignupRequest(nickname(),true,true,"","ym-terms-v3","ym-privacy-v3")); }
     private static VerifiedIdentity identity(Provider provider,String email) { return new VerifiedIdentity(provider,UUID.randomUUID().toString(),email,Instant.now().plusSeconds(300)); }
     private static MockHttpSession proof(VerifiedIdentity identity) { var session=new MockHttpSession(); session.setAttribute(VerifiedIdentity.SESSION_KEY,identity); return session; }
     private static String nickname() { return UUID.randomUUID().toString().replace("-","").substring(0,8); }
-    private static String body(String name,boolean terms,boolean privacy) { return "{\"nickname\":\""+name+"\",\"termAgree\":"+terms+",\"privateAgree\":"+privacy+",\"termsVersion\":\"ym-terms-v1\",\"privacyVersion\":\"ym-privacy-v1\",\"role\":\"ADMIN\",\"memberId\":1}"; }
+    private static String body(String name,boolean terms,boolean privacy) { return "{\"nickname\":\""+name+"\",\"termAgree\":"+terms+",\"privateAgree\":"+privacy+",\"termsVersion\":\"ym-terms-v3\",\"privacyVersion\":\"ym-privacy-v3\",\"role\":\"ADMIN\",\"memberId\":1}"; }
 }

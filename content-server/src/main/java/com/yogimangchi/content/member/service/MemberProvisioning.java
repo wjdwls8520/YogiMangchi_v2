@@ -16,5 +16,8 @@ public class MemberProvisioning {
     @Transactional(timeout=3)
     public void acknowledged(Long id){jdbc.update("update content.member_trading_provision set status='COMPLETED' where member_id=? and status='PENDING'",id);}
     @Transactional(timeout=3)
-    public void failed(Long id){jdbc.update("update content.member_trading_provision set attempts=least(attempts+1,1000000),next_attempt_at=now()+make_interval(secs=>least(300,5*power(2,least(attempts,6)))::int) where member_id=? and status='PENDING'",id);}
+    public int failed(Long id){
+        var rows=jdbc.queryForList("update content.member_trading_provision set attempts=least(attempts+1,1000000),next_attempt_at=now()+make_interval(secs=>least(300,5*power(2,least(attempts,6)))::int) where member_id=? and status='PENDING' returning attempts",Integer.class,id);
+        return rows.isEmpty() ? 0 : rows.get(0);
+    }
 }

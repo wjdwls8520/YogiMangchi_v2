@@ -14,15 +14,36 @@ public class AccessTokens {
     private final JwtEncoder encoder;
     private final String issuer;
     private final String keyId;
-    public AccessTokens(JwtEncoder encoder,@Value("${content.auth.issuer}") String issuer,@Value("${content.auth.key-id}") String keyId) {
-        this.encoder=encoder; this.issuer=issuer; this.keyId=keyId;
+
+    public AccessTokens(JwtEncoder encoder, @Value("${content.auth.issuer}") String issuer, @Value("${content.auth.key-id}") String keyId) {
+        this.encoder = encoder;
+        this.issuer = issuer;
+        this.keyId = keyId;
     }
-    public AccessResponse issue(Member member,Instant now) {
-        Instant expires=now.plus(Duration.ofMinutes(15));
-        var claims=JwtClaimsSet.builder().issuer(issuer).subject(member.getId().toString()).issuedAt(now).expiresAt(expires)
-                .audience(List.of("content","trading")).id(UUID.randomUUID().toString())
-                .claim("token_use","access").claim("roles",List.of(member.getRole().name())).build();
-        String token=encoder.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).keyId(keyId).build(),claims)).getTokenValue();
-        return new AccessResponse(member.getId(),member.getNickname(),token,"Bearer",900,expires);
+
+    public AccessResponse issue(Member member, Instant now) {
+        Instant expires = now.plus(Duration.ofMinutes(15));
+        String accountStatus = member.getStatus().name();
+        var claims = JwtClaimsSet.builder()
+                .issuer(issuer)
+                .subject(member.getId().toString())
+                .issuedAt(now)
+                .expiresAt(expires)
+                .audience(List.of("content", "trading"))
+                .id(UUID.randomUUID().toString())
+                .claim("token_use", "access")
+                .claim("roles", List.of(member.getRole().name()))
+                .claim("account_status", accountStatus)
+                .build();
+        String token = encoder.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).keyId(keyId).build(), claims)).getTokenValue();
+        return new AccessResponse(
+                member.getId(),
+                member.getNickname(),
+                token,
+                "Bearer",
+                900,
+                expires,
+                accountStatus,
+                member.getSuspendedReason());
     }
 }

@@ -1,30 +1,47 @@
 import { marketEndpoints } from "../market/catalog";
+import { extractRequestId } from "../../../lib/request-id";
 
 export class TradingApiError extends Error {
-  constructor(readonly status: number, message = "Trading 데이터를 불러올 수 없습니다.", readonly code?: string) {
+  constructor(
+    readonly status: number,
+    message = "모의투자 데이터를 불러올 수 없습니다.",
+    readonly code?: string,
+    readonly nextAvailableAt?: string,
+    readonly outcome?: "NOT_ACCEPTED" | "UNKNOWN",
+    readonly attemptOutcome?: "NOT_ACCEPTED",
+    readonly requestId?: string,
+    readonly retryAfterSeconds?: number,
+  ) {
     super(message);
     this.name = "TradingApiError";
   }
 }
 
-const serverCodes = new Set(["MARGIN_MIGRATION_REQUIRED", "GUEST_ACCOUNT_REQUIRED", "GUEST_CREDENTIAL_EXPIRED", "INVALID_LEVERAGE", "LEVERAGE_MISMATCH", "TRADING_BUSY", "CLOSE_QUANTITY_EXCEEDED", "ENGINE_RECOVERING", "ORDER_NOT_FOUND",
+const serverCodes = new Set(["INVALID_STOP_LOSS", "STOP_LOSS_NOT_PROTECTIVE", "STOP_LOSS_BEYOND_LIQUIDATION", "STOP_LOSS_VERSION_CONFLICT", "INVALID_TAKE_PROFIT", "TAKE_PROFIT_NOT_PROFITABLE", "TAKE_PROFIT_VERSION_CONFLICT", "INVALID_PORTFOLIO_PREFERENCE", "MEMBER_CREDENTIAL_REQUIRED", "MEMBER_SUSPENDED", "ACCOUNT_RISK_PENDING", "ACCOUNT_RECOVERY_HELD", "ORDER_SIZE_LIMIT_EXCEEDED", "POSITION_LIQUIDATION", "MARGIN_MIGRATION_REQUIRED", "GUEST_ACCOUNT_REQUIRED", "GUEST_CREDENTIAL_EXPIRED", "INVALID_LEVERAGE", "LEVERAGE_MISMATCH", "TRADING_BUSY", "CLOSE_QUANTITY_EXCEEDED", "ENGINE_RECOVERING", "ORDER_NOT_FOUND",
   "ORDER_NOT_PENDING", "PENDING_LIMIT_REACHED", "INVALID_ORDER", "INVALID_IDEMPOTENCY_KEY", "IDEMPOTENCY_CONFLICT",
-  "PRICE_NOT_FRESH", "INSUFFICIENT_MARGIN", "ACCOUNT_AT_RISK", "ACCOUNT_NOT_ACTIVE", "POSITION_NOT_FOUND",
-  "POSITION_NOT_OPEN", "SYMBOL_NOT_AVAILABLE", "POSITION_LIMIT_REACHED", "ACCOUNT_NOT_FOUND", "MARKETABLE_LIMIT_NOT_ALLOWED"]);
+  "PRICE_NOT_FRESH", "INSUFFICIENT_MARGIN", "ACCOUNT_AT_RISK", "ACCOUNT_NOT_ACTIVE", "POSITION_NOT_FOUND", "MEMBER_ACCOUNT_REQUIRED", "MEMBER_RESTART_LIMITED", "RATE_LIMITED", "INVALID_SYMBOL_STATUS", "ROUND_NOT_FOUND", "TRADING_ACCOUNT_REQUIRED",
+  "POSITION_NOT_OPEN", "SYMBOL_NOT_AVAILABLE", "POSITION_LIMIT_REACHED", "ACCOUNT_NOT_FOUND", "MARKETABLE_LIMIT_NOT_ALLOWED", "CONTEST_NOT_RUNNING", "CONTEST_PARTICIPATION_REQUIRED", "CONTEST_SEASON_NOT_FOUND",
+  "CONTEST_APPLICATION_NOT_PENDING", "CONTEST_RECRUITMENT_CLOSED", "CONTEST_ALREADY_APPLIED"]);
 
 export function tradingOrigin(base: string) {
   try { return new URL(marketEndpoints(base).symbols).origin; }
-  catch { throw new TradingApiError(400, "Trading Server 주소 설정을 확인해 주세요."); }
+  catch { throw new TradingApiError(400, "모의투자 서버 주소 설정을 확인해 주세요."); }
 }
 
 // Never propagate response bodies, URLs, headers or fetch error causes into UI/errors.
 export async function tradingJson(origin: string, path: string, options: {
-  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT"; body?: object; idempotencyKey?: string;
+  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; body?: object; idempotencyKey?: string;
 } = {}, transport: typeof fetch = fetch): Promise<unknown> {
   return apiJson(origin, `/api/v1/trading/${path}`, options, transport);
 }
+export async function marketSymbolsJson(origin: string, signal?: AbortSignal, transport: typeof fetch = fetch) {
+  return apiJson(origin, "/api/v1/symbols", { signal }, transport);
+}
 export async function marketTickersJson(origin: string, signal: AbortSignal) {
   return apiJson(origin, "/api/v1/market/tickers", { signal });
+}
+export async function marketOverviewJson(origin: string, signal?: AbortSignal, transport: typeof fetch = fetch) {
+  return apiJson(origin, "/api/v1/market/overview", { signal }, transport);
 }
 export async function marketCandlesJson(origin: string, symbolId: number, interval: string, signal: AbortSignal, transport: typeof fetch = fetch, before?: string) {
   const query = new URLSearchParams({ tradingSymbolId: String(symbolId), interval, limit: "300" });
@@ -32,7 +49,7 @@ export async function marketCandlesJson(origin: string, symbolId: number, interv
   return apiJson(origin, `/api/v1/market/candles?${query}`, { signal }, transport);
 }
 async function apiJson(origin: string, path: string, options: {
-  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT"; body?: object; idempotencyKey?: string;
+  token?: string; signal?: AbortSignal; method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; body?: object; idempotencyKey?: string;
 }, transport: typeof fetch = fetch): Promise<unknown> {
   const signal = AbortSignal.any([AbortSignal.timeout(10_000), ...(options.signal ? [options.signal] : [])]);
   try {
@@ -45,14 +62,38 @@ async function apiJson(origin: string, path: string, options: {
     });
     if (!response.ok) {
       let code: string | undefined;
+      let outcome: "NOT_ACCEPTED" | "UNKNOWN" | undefined;
+      let attemptOutcome: "NOT_ACCEPTED" | undefined;
+      let nextAvailableAt: string | undefined;
+      let problem: unknown;
       try {
-        const problem: unknown = await response.json();
+        problem = await response.json();
         // Retain only known business codes, never arbitrary server strings.
         if (problem && typeof problem === "object" && !Array.isArray(problem)
           && typeof (problem as Record<string, unknown>).code === "string"
           && serverCodes.has((problem as Record<string, unknown>).code as string)) code = (problem as Record<string, unknown>).code as string;
+        if (problem && typeof problem === "object") {
+          const value = (problem as Record<string, unknown>).outcome;
+          if (value === "UNKNOWN" || value === "NOT_ACCEPTED") outcome = value;
+          if ((problem as Record<string, unknown>).attemptOutcome === "NOT_ACCEPTED"
+            && (response.status === 409 && code === "TRADING_BUSY" || response.status === 503 && code === "ENGINE_RECOVERING")) attemptOutcome = "NOT_ACCEPTED";
+        }
+        const next = problem && typeof problem === "object" ? (problem as Record<string, unknown>).nextAvailableAt : null;
+        if (response.status === 429 && code === "MEMBER_RESTART_LIMITED" && typeof next === "string"
+          && next.length < 100 && /^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(next) && Number.isFinite(Date.parse(next))) nextAvailableAt = next;
       } catch { /* An unreadable error body must not replace the HTTP status. */ }
-      throw new TradingApiError(response.status, undefined, code);
+      const requestId = extractRequestId(problem, response);
+      let retryAfterSeconds: number | undefined;
+      if (response.status === 429) {
+        const rawRetryAfter = response.headers.get("retry-after");
+        if (rawRetryAfter) {
+          const parsed = Number.parseInt(rawRetryAfter.trim(), 10);
+          if (Number.isFinite(parsed) && parsed > 0) {
+            retryAfterSeconds = parsed;
+          }
+        }
+      }
+      throw new TradingApiError(response.status, undefined, code, nextAvailableAt, outcome, attemptOutcome, requestId, retryAfterSeconds);
     }
     try { return await response.json(); }
     catch { throw new TradingApiError(422, "서버 응답 형식을 확인할 수 없습니다."); }

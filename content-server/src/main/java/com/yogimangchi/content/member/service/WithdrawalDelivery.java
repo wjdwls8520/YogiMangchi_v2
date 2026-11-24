@@ -1,10 +1,13 @@
 package com.yogimangchi.content.member.service;
 
+import com.yogimangchi.content.ops.OpsAlertService;
+import com.yogimangchi.content.ops.RequestIdMdcFilter;
 import java.net.URI;
 import java.net.http.*;
 import java.time.*;
 import java.util.*;
 import org.slf4j.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
@@ -19,41 +22,69 @@ public class WithdrawalDelivery {
     private static final Logger log=LoggerFactory.getLogger(WithdrawalDelivery.class);
     private final MemberWithdrawals withdrawals;
     private final JwtEncoder encoder;
+    private final OpsAlertService alerts;
     private final String issuer,keyId,baseUrl;
     private final HttpClient client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).followRedirects(HttpClient.Redirect.NEVER).build();
-    public WithdrawalDelivery(MemberWithdrawals withdrawals,JwtEncoder encoder,@Value("${content.auth.issuer}") String issuer,
+
+    public WithdrawalDelivery(MemberWithdrawals withdrawals,JwtEncoder encoder,String issuer,String keyId,String baseUrl) {
+        this(withdrawals,encoder,null,issuer,keyId,baseUrl);
+    }
+
+    @Autowired
+    public WithdrawalDelivery(MemberWithdrawals withdrawals,JwtEncoder encoder,@Autowired(required=false) OpsAlertService alerts,
+            @Value("${content.auth.issuer}") String issuer,
             @Value("${content.auth.key-id}") String keyId,@Value("${content.withdrawal.trading-base-url}") String baseUrl) {
         URI uri=URI.create(baseUrl);
         if(uri.getHost()==null || uri.getUserInfo()!=null || uri.getQuery()!=null || uri.getFragment()!=null
                 || !(uri.getScheme().equals("https") || uri.getScheme().equals("http")) || !Set.of("","/").contains(uri.getPath()))
             throw new IllegalArgumentException("Explicit trusted Trading base URL required");
-        this.withdrawals=withdrawals; this.encoder=encoder; this.issuer=issuer; this.keyId=keyId;
+        this.withdrawals=withdrawals; this.encoder=encoder; this.alerts=alerts; this.issuer=issuer; this.keyId=keyId;
         this.baseUrl=baseUrl.endsWith("/") ? baseUrl.substring(0,baseUrl.length()-1) : baseUrl;
     }
+
     @Scheduled(fixedDelayString="${content.withdrawal.poll-ms:5000}")
     public void deliverPending() {
         for(Long id:withdrawals.pending()) {
+            String reqId = RequestIdMdcFilter.currentOrGenerate();
             try {
                 Instant now=Instant.now();
                 var claims=JwtClaimsSet.builder().issuer(issuer).subject(id.toString()).issuedAt(now).expiresAt(now.plusSeconds(60))
                         .audience(List.of("trading-internal")).id(UUID.randomUUID().toString()).claim("token_use","member_withdrawal").build();
                 String token=encoder.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).keyId(keyId).build(),claims)).getTokenValue();
                 var request=HttpRequest.newBuilder(URI.create(baseUrl+"/internal/v1/members/"+id+"/withdrawal"))
-                        .timeout(Duration.ofSeconds(3)).header("Authorization","Bearer "+token).POST(HttpRequest.BodyPublishers.noBody()).build();
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Authorization","Bearer "+token)
+                        .header(RequestIdMdcFilter.HEADER_NAME, reqId)
+                        .POST(HttpRequest.BodyPublishers.noBody()).build();
                 var response=client.send(request,HttpResponse.BodyHandlers.ofInputStream());
                 int status=response.statusCode();
                 // Only the acknowledgement status is needed; do not wait for an arbitrary response body.
                 response.body().close();
                 if(status==204) withdrawals.delivered(id);
                 else {
-                    withdrawals.failed(id);
-                    log.warn("Member withdrawal delivery deferred HTTP status={}",status);
+                    int attempts=withdrawals.failed(id);
+                    log.warn("Member withdrawal delivery deferred memberId={} attempts={} httpStatus={} reqId={}",id,attempts,status,reqId);
+                    alertIfStuck(id, attempts, "HTTP_" + status, reqId);
                 }
             } catch(InterruptedException failure) { Thread.currentThread().interrupt(); return; }
             catch(Exception failure) {
-                withdrawals.failed(id);
-                log.warn("Member withdrawal delivery deferred: {}",failure.getClass().getSimpleName());
+                int attempts=withdrawals.failed(id);
+                String cause = failure.getClass().getSimpleName();
+                log.warn("Member withdrawal delivery deferred memberId={} attempts={} cause={} reqId={}",id,attempts,cause,reqId);
+                alertIfStuck(id, attempts, cause, reqId);
             }
+        }
+    }
+
+    private void alertIfStuck(Long memberId, int attempts, String error, String reqId) {
+        if (alerts != null && attempts >= 3) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("memberId", memberId);
+            details.put("attempts", attempts);
+            details.put("error", error);
+            details.put("requestId", reqId);
+            alerts.alert("member-withdrawal-delivery-stuck", "CRITICAL",
+                    "Member withdrawal delivery to trading-server failing", details);
         }
     }
 }

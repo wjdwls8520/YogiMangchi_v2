@@ -14,7 +14,7 @@ public final class TradingMath {
     public static final BigDecimal MAX_NOTIONAL = new BigDecimal("1000000");
     public static final BigDecimal MAX_QUANTITY = new BigDecimal("1000000000000");
     public static final int MAX_LEVERAGE = 100;
-    public static final int DEFAULT_LEVERAGE = 10;
+    public static final int DEFAULT_LEVERAGE = 1;
     public static final int BASIS_SCALE = 26;
     public static final int MAX_OPEN_POSITIONS = 100;
     public static final int MAX_PENDING_ORDERS = 100;
@@ -30,19 +30,24 @@ public final class TradingMath {
         return result;
     }
 
+    public static final class LimitExceeded extends IllegalArgumentException {
+        public LimitExceeded(){super("Supported order/position notional limit exceeded");}
+    }
+
     public static void validateOrder(BigDecimal quantity, int leverage, BigDecimal price) {
         validateQuantity(quantity);
         validateLeverage(leverage);
         validatePrice(price);
         BigDecimal notional = quantity.multiply(price);
-        if (notional.compareTo(MIN_NOTIONAL) < 0 || notional.compareTo(MAX_NOTIONAL) > 0) {
+        if(notional.compareTo(MAX_NOTIONAL)>0)throw new LimitExceeded();
+        if (notional.compareTo(MIN_NOTIONAL) < 0) {
             throw new IllegalArgumentException("Execution notional must be between 1 and 1000000 USDT");
         }
     }
 
     public static void validateQuantity(BigDecimal quantity) {
-        if (quantity == null || quantity.signum() <= 0 || quantity.stripTrailingZeros().scale() > QUANTITY_SCALE
-                || quantity.compareTo(MAX_QUANTITY) > 0) {
+        if (quantity == null || quantity.signum() <= 0 || quantity.compareTo(MAX_QUANTITY) > 0
+                || quantity.stripTrailingZeros().scale() > QUANTITY_SCALE) {
             throw new IllegalArgumentException("Quantity must be positive with at most 8 decimal places");
         }
     }
@@ -65,8 +70,8 @@ public final class TradingMath {
     }
 
     public static void validatePrice(BigDecimal price) {
-        if (price == null || price.signum() <= 0 || price.stripTrailingZeros().scale() > AMOUNT_SCALE
-                || price.precision() - price.scale() > 20) throw new IllegalArgumentException("Invalid price precision");
+        if (price == null || price.signum() <= 0 || (long) price.precision() - price.scale() > 20
+                || price.stripTrailingZeros().scale() > AMOUNT_SCALE) throw new IllegalArgumentException("Invalid price precision");
     }
 
     /** Keep rounding dust on the remaining lot; the final close releases every remaining unit. */

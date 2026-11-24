@@ -68,7 +68,16 @@ class MemberFollowIntegrationTests extends TestEnvironment {
         assertThat(first.toString()).doesNotContain("email","role","provider","profileImgUrl");
         mvc.perform(get(url).param("keyword","%")).andExpect(jsonPath("$.content.length()").value(0));
         mvc.perform(get(url).param("keyword",b.access().nickname().toUpperCase(Locale.ROOT))).andExpect(jsonPath("$.content.length()").value(1));
-        mvc.perform(get("/api/v1/members/"+b.access().memberId()+"/followers")).andExpect(jsonPath("$.content[0].memberId").value(a.access().memberId()));
+        mvc.perform(get("/api/v1/members/"+b.access().memberId()+"/followers"))
+                .andExpect(jsonPath("$.content[0].memberId").value(a.access().memberId()))
+                .andExpect(jsonPath("$.content[0].followedByMe").doesNotExist());
+        mvc.perform(get("/api/v1/members/"+b.access().memberId()+"/followers").header("Authorization","Bearer "+b.access().accessToken()))
+                .andExpect(jsonPath("$.content[0].memberId").value(a.access().memberId()))
+                .andExpect(jsonPath("$.content[0].followedByMe").value(false));
+        follows.change(b.access().memberId(),a.access().memberId(),true);
+        mvc.perform(get("/api/v1/members/"+b.access().memberId()+"/followers").header("Authorization","Bearer "+b.access().accessToken()))
+                .andExpect(jsonPath("$.content[0].memberId").value(a.access().memberId()))
+                .andExpect(jsonPath("$.content[0].followedByMe").value(true));
     }
     @Test void countsAndRelationshipAreDerivedFromActiveRelationsAndVerifiedViewer() throws Exception {
         follows.change(a.access().memberId(),b.access().memberId(),true);
@@ -125,6 +134,6 @@ class MemberFollowIntegrationTests extends TestEnvironment {
     private long rows(boolean active) { return jdbc.queryForObject("select count(*) from content.member_follow where follower_id=? and following_id=? and active=?",Long.class,a.access().memberId(),b.access().memberId(),active); }
     private static String url(AuthService.Issued member) { return "/api/v1/members/"+member.access().memberId()+"/follows"; }
     private AuthService.Issued member() {
-        return auth.signup(new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"follow@example.test",Instant.now().plusSeconds(300)),new SignupRequest(UUID.randomUUID().toString().replace("-","").substring(0,8),true,true,"follow profile","ym-terms-v1","ym-privacy-v1"));
+        return auth.signup(new VerifiedIdentity(Provider.GOOGLE,UUID.randomUUID().toString(),"follow@example.test",Instant.now().plusSeconds(300)),new SignupRequest(UUID.randomUUID().toString().replace("-","").substring(0,8),true,true,"follow profile","ym-terms-v3","ym-privacy-v3"));
     }
 }

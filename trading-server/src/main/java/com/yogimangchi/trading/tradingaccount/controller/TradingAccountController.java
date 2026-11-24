@@ -1,13 +1,16 @@
 package com.yogimangchi.trading.tradingaccount.controller;
 
 import com.yogimangchi.trading.tradingaccount.dto.*;
+import com.yogimangchi.trading.tradingaccount.security.GuestCreationRateLimiter;
 import com.yogimangchi.trading.tradingaccount.security.TradingPrincipal;
 import com.yogimangchi.trading.tradingaccount.service.TradingAccountService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityScheme;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,13 +23,20 @@ import org.springframework.web.bind.annotation.*;
         description = "Opaque Guest Trading MVP credential; not a Content JWT. Issued by POST /api/v1/trading/accounts/guest.")
 public class TradingAccountController {
     private final TradingAccountService accounts;
-    public TradingAccountController(TradingAccountService accounts) { this.accounts = accounts; }
+    private final GuestCreationRateLimiter rateLimiter;
+
+    @Autowired
+    public TradingAccountController(TradingAccountService accounts, GuestCreationRateLimiter rateLimiter) {
+        this.accounts = accounts;
+        this.rateLimiter = rateLimiter;
+    }
 
     @PostMapping("/accounts/guest")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Create a guest simulation account with 10000 USDT",
-            description = "Explicit opt-in: each POST creates one new Guest account and wallet with initial 10000 USDT. Public market data, candles and WebSocket access do not create an account and require no Guest credential. Returns an opaque bearer credential once, valid for exactly 7 days until expiresAt. Lost credentials cannot be recovered. Expired credentials return 401 and are never automatically renewed or replaced. Never share or log the token.")
-    public ResponseEntity<GuestAccountResponse> createGuest() {
+            description = "Explicit opt-in: each POST creates one new Guest account and wallet with initial 10000 USDT. Public market data, candles and WebSocket access do not create an account and require no Guest credential. Returns an opaque bearer credential once, valid for exactly 7 days until expiresAt. Lost credentials cannot be recovered. Expired credentials return 401 and are never automatically renewed or replaced. Never share or log the token. Protected by per-IP sliding-window rate limiting (429 RATE_LIMITED with Retry-After header).")
+    public ResponseEntity<GuestAccountResponse> createGuest(HttpServletRequest request) {
+        rateLimiter.check(request != null ? request.getRemoteAddr() : null);
         return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(accounts.createGuest());
     }
 

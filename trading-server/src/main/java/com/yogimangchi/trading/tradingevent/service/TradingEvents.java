@@ -22,21 +22,32 @@ import org.springframework.transaction.support.*;
 public class TradingEvents {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications;
     private final Map<Long,AtomicBoolean> watchers=new ConcurrentHashMap<>();
-    public TradingEvents(JdbcTemplate jdbc,ObjectMapper mapper) { this.jdbc=jdbc; this.mapper=mapper; }
+    public TradingEvents(JdbcTemplate jdbc,ObjectMapper mapper) { this(jdbc,mapper,null); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public TradingEvents(JdbcTemplate jdbc,ObjectMapper mapper,org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.notification.TradingNotificationService> notifications) {
+        this.jdbc=jdbc; this.mapper=mapper; this.notifications=notifications;
+    }
 
     @Transactional(propagation=Propagation.MANDATORY)
     public void record(TradingOrder order,Fill fill) {
-        String type=order.getAction()==TradingOrder.Action.LIQUIDATE ? "POSITION_LIQUIDATED" : switch(order.getStatus()) {
-            case PENDING -> "ORDER_PENDING"; case FILLED -> "ORDER_FILLED";
-            case CANCELED -> "ORDER_CANCELED"; case REJECTED -> "ORDER_REJECTED";
-        };
+        String type = (order.getAction() == TradingOrder.Action.LIQUIDATE && order.getStatus() == TradingOrder.Status.FILLED)
+                ? "POSITION_LIQUIDATED"
+                : switch (order.getStatus()) {
+                    case PENDING -> "ORDER_PENDING";
+                    case FILLED -> "ORDER_FILLED";
+                    case CANCELED -> "ORDER_CANCELED";
+                    case REJECTED -> "ORDER_REJECTED";
+                };
         String payload;
         try { payload=mapper.writeValueAsString(OrderResponse.from(order,fill)); }
         catch(JsonProcessingException e) { throw new IllegalStateException("Cannot retain trading event snapshot",e); }
         Instant time=order.getCompletedAt()==null ? order.getCreatedAt() : order.getCompletedAt();
         jdbc.update("insert into trading.trading_event(account_id,order_id,order_status,event_type,payload,occurred_at) values (?,?,?,?,cast(? as jsonb),?) on conflict(order_id,order_status) do nothing",
                 order.getAccountId(),order.getId(),order.getStatus().name(),type,payload,time.atOffset(ZoneOffset.UTC));
+        var notifier=notifications!=null ? notifications.getIfAvailable() : null;
+        if(notifier!=null) notifier.notifyOrderEventAfterCommit(order,fill);
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
                 var signal=watchers.get(order.getAccountId());
@@ -46,6 +57,30 @@ public class TradingEvents {
     }
 
     public void watch(long accountId) { watchers.computeIfAbsent(accountId,id -> new AtomicBoolean(true)); }
+    @Transactional(propagation=Propagation.MANDATORY)
+    public void recordStopLoss(com.yogimangchi.trading.position.entity.Position position) {
+        if(position.getStopLossVersion()==0) return;
+        String payload;
+        try {payload=mapper.writeValueAsString(com.yogimangchi.trading.stoploss.StopLossResponse.from(position));}
+        catch(JsonProcessingException exception){throw new IllegalStateException("Cannot retain stop loss event",exception);}
+        jdbc.update("insert into trading.trading_event(account_id,position_id,stop_loss_version,event_type,payload,occurred_at) values(?,?,?,'STOP_LOSS_CHANGED',?::jsonb,?) on conflict(position_id,stop_loss_version) where event_type='STOP_LOSS_CHANGED' do nothing",
+                position.getAccountId(),position.getId(),position.getStopLossVersion(),payload,position.getStopLossUpdatedAt().atOffset(ZoneOffset.UTC));
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
+            @Override public void afterCommit(){var signal=watchers.get(position.getAccountId());if(signal!=null)signal.set(true);}
+        });
+    }
+    @Transactional(propagation=Propagation.MANDATORY)
+    public void recordTakeProfit(com.yogimangchi.trading.takeprofit.PositionTakeProfit takeProfit) {
+        if(takeProfit==null || takeProfit.getVersion()==0) return;
+        String payload;
+        try {payload=mapper.writeValueAsString(com.yogimangchi.trading.takeprofit.TakeProfitResponse.from(takeProfit));}
+        catch(JsonProcessingException exception){throw new IllegalStateException("Cannot retain take profit event",exception);}
+        jdbc.update("insert into trading.trading_event(account_id,position_id,take_profit_version,event_type,payload,occurred_at) values(?,?,?,'TAKE_PROFIT_CHANGED',?::jsonb,?) on conflict(position_id,take_profit_version) where event_type='TAKE_PROFIT_CHANGED' do nothing",
+                takeProfit.getAccountId(),takeProfit.getPositionId(),takeProfit.getVersion(),payload,takeProfit.getUpdatedAt().atOffset(ZoneOffset.UTC));
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
+            @Override public void afterCommit(){var signal=watchers.get(takeProfit.getAccountId());if(signal!=null)signal.set(true);}
+        });
+    }
     public void unwatch(long accountId) { watchers.remove(accountId); }
     public boolean consumeDirty(long accountId) {
         var signal=watchers.get(accountId);
@@ -54,12 +89,39 @@ public class TradingEvents {
 
     @Transactional(readOnly=true, timeout=3)
     public List<TradingEventResponse> after(long accountId,long afterId,int limit) {
+        return query(accountId,afterId,limit,false);
+    }
+
+    @Transactional(readOnly=true, timeout=3)
+    public List<TradingEventResponse> query(long accountId,long afterId,int limit,boolean latest) {
         if(afterId<0 || limit<1 || limit>100) throw new BusinessException(ErrorCode.INVALID_HISTORY_REQUEST);
         if(Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from trading.trading_account where id=? and status='WITHDRAWN')",Boolean.class,accountId)))
             throw new BusinessException(ErrorCode.ACCOUNT_NOT_ACTIVE);
-        return jdbc.query("select e.id,e.event_type,e.payload,e.occurred_at,e.round_id,r.round_number from trading.trading_event e left join trading.member_trading_round r on r.id=e.round_id where e.account_id=? and e.id>? order by e.id limit ?",(r,row) -> {
-            try { return new TradingEventResponse(Long.toString(r.getLong("id")),r.getString("event_type"),r.getTimestamp("occurred_at").toInstant(),mapper.readValue(r.getString("payload"),OrderResponse.class),r.getObject("round_id",Long.class),r.getObject("round_number",Integer.class)); }
-            catch(JsonProcessingException e) { throw new IllegalStateException("Invalid retained trading event snapshot",e); }
-        },accountId,afterId,limit);
+        if(latest && afterId==0) {
+            return jdbc.query("select e.id,e.event_type,e.payload,e.occurred_at,e.round_id,r.round_number from trading.trading_event e left join trading.member_trading_round r on r.id=e.round_id where e.account_id=? order by e.id desc limit ?",
+                    (r,row) -> mapEventRow(r), accountId, limit);
+        }
+        return jdbc.query("select e.id,e.event_type,e.payload,e.occurred_at,e.round_id,r.round_number from trading.trading_event e left join trading.member_trading_round r on r.id=e.round_id where e.account_id=? and e.id>? order by e.id limit ?",
+                (r,row) -> mapEventRow(r), accountId, afterId, limit);
+    }
+
+    private TradingEventResponse mapEventRow(java.sql.ResultSet r) throws java.sql.SQLException {
+        try {
+            String eventType = r.getString("event_type");
+            boolean stop = "STOP_LOSS_CHANGED".equals(eventType);
+            boolean tp = "TAKE_PROFIT_CHANGED".equals(eventType);
+            String payload = r.getString("payload");
+            return new TradingEventResponse(
+                    Long.toString(r.getLong("id")),
+                    eventType,
+                    r.getTimestamp("occurred_at").toInstant(),
+                    (stop || tp) ? null : mapper.readValue(payload, OrderResponse.class),
+                    r.getObject("round_id", Long.class),
+                    r.getObject("round_number", Integer.class),
+                    stop ? mapper.readValue(payload, com.yogimangchi.trading.stoploss.StopLossResponse.class) : null,
+                    tp ? mapper.readValue(payload, com.yogimangchi.trading.takeprofit.TakeProfitResponse.class) : null);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Invalid retained trading event snapshot", e);
+        }
     }
 }

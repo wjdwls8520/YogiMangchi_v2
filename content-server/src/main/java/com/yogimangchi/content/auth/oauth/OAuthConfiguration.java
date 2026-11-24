@@ -88,15 +88,22 @@ public class OAuthConfiguration {
                                 session.setAttribute(VerifiedIdentity.SESSION_KEY,identity);
                                 response.setHeader("Cache-Control","no-store"); response.sendRedirect(returnUri);
                             } catch(AuthFailure failure) {
-                                log.info("OAuth login proof rejected reason={}",failure.code());
+                                String code=switch(failure.code()) {
+                                    case "VERIFIED_EMAIL_REQUIRED" -> "verified_email_required";
+                                    case "OAUTH_IDENTITY_INVALID" -> "oauth_invalid_response";
+                                    default -> "oauth_failed";
+                                };
+                                log.info("OAuth login proof rejected reason={}",code);
                                 if(request.getSession(false)!=null) request.getSession(false).invalidate();
-                                response.sendRedirect(returnUri+"?error=oauth_failed");
+                                response.setHeader("Cache-Control","no-store");
+                                response.sendRedirect(returnUri+"?error="+code);
                             }
                         }).failureHandler((request,response,failure) -> {
-                            String code=failure instanceof OAuth2AuthenticationException oauthFailure ? oauthFailure.getError().getErrorCode() : "oauth_failed";
-                            log.info("OAuth login rejected reason={}",code.matches("[a-z_]{1,64}") ? code : "oauth_failed");
+                            String code=OAuthErrors.code(failure);
+                            log.info("OAuth login rejected reason={}",code);
                             if(request.getSession(false)!=null) request.getSession(false).invalidate();
-                            response.sendRedirect(returnUri+"?error=oauth_failed");
+                            response.setHeader("Cache-Control","no-store");
+                            response.sendRedirect(returnUri+"?error="+code);
                         }));
         return http.build();
     }

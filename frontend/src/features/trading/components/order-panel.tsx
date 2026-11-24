@@ -1,5 +1,7 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
+import { reportAdmissionRejection } from "../api/admission-rejection";
 import { useTradingNotices } from "./trading-notices";
 import { useEffect, useRef, useState } from "react";
 import { AccountWallet } from "./account-wallet";
@@ -8,171 +10,495 @@ import { useSelectedMarket } from "./selected-market-provider";
 import { useGuestSession } from "./trading-data-provider";
 import { freshMarkPrice } from "../market/selected-market";
 import { useTradingSummary } from "../api/queries";
-import { readQuote } from "../api/quote";
+import { isRecoveringQuote, readSubmitQuote } from "../api/quote";
 import { useOrderQuote } from "../api/quote-query";
+import { TradingApiError } from "../api/client";
 import { mutationMessage } from "../api/mutation-request";
 import { isolatedReady } from "../api/margin";
 import { useSymbolLeverage } from "../api/leverage";
 import { useTradingMutation } from "../api/mutations";
-import { validLimitPrice, validQuantity, validSizingPrice } from "../api/order-input";
-import { formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
+import {
+  decimalUnits,
+  estimatedOrderWithFee,
+  feeInclusiveRatioQuantity,
+  suggestPassiveLimitPrice,
+  validLimitPrice,
+  validQuantity,
+  validSizingPrice,
+} from "../api/order-input";
+import { balanceIssue, formForSymbol, formForSide, formForBookPrice, marketableLimitIssue, minimumOpenIssue, preflightOrder, sizingUnavailable, type OpenForm, type OrderIssue } from "../api/order-preflight";
 import { formatDecimal } from "../api/account";
 import type { TradingOrder } from "../api/orders";
 import { formatMarketPrice } from "../market/price-format";
-import { GuestStartPrompt } from "./guest-access";
+import { GuestStartPrompt, useGuestAccess } from "./guest-access";
+import { useMember } from "../../member/components/member-provider";
+import { AnonymousOrderPanel, isAnonymousOrderEntry } from "./anonymous-order-panel";
 import { WalletOverview } from "./wallet-overview";
 import { CloseOrderPanel } from "./close-order-panel";
 import { TradingNavigation } from "./trading-navigation";
+import { RecoveryStatus } from "./recovery-status";
 import { GuestRetry } from "./guest-retry";
 
-type Form = OpenForm & { identity: string };
-export function OrderPanel() {
+type Form = OpenForm & { identity: string; scope: number };
+export function OrderPanel({
+  urlSide = null,
+  urlLeverage = null,
+}: {
+  urlSide?: "LONG" | "SHORT" | null;
+  urlLeverage?: number | null;
+} = {}) {
   const [intent,setIntent]=useState<"open"|"close">("open");
   const {snapshot}=useGuestSession(),account=useTradingSummary();
+  const member = useMember(), access = useGuestAccess();
+  if (isAnonymousOrderEntry(member.snapshot, snapshot)) {
+    return (
+      <AnonymousOrderPanel
+        onGuest={access.open}
+        storageError={snapshot.phase === "error"}
+        initialSide={urlSide}
+        initialLeverage={urlLeverage}
+      />
+    );
+  }
   return <section className="order-panel trading-section" aria-labelledby="order-heading">
-    <header className="section-heading"><h2 id="order-heading" className="section-title">주문</h2><span className="preview-label">모의투자</span></header>
+    <h2 id="order-heading" className="sr-only">주문</h2>
     <TradingNavigation label="주문 목적" prefix="order" activeId={intent} onSelect={value=>{if(value==="open"||value==="close")setIntent(value);}} className="order-intent-tabs" tabs={[{id:"open",label:"진입 · Open",controls:"order-open-panel"},{id:"close",label:"청산 · Close",controls:"order-close-panel"}]}/>
-    <div id="order-open-panel" role="tabpanel" aria-labelledby="order-open-tab" hidden={intent!=="open"}><OpenOrderPanel active={intent==="open"}/></div>
+    {snapshot.phase === "ready" && <RecoveryStatus />}
+    <div id="order-open-panel" role="tabpanel" aria-labelledby="order-open-tab" hidden={intent!=="open"}><OpenOrderPanel active={intent==="open"} urlSide={urlSide} urlLeverage={urlLeverage} /></div>
     <div id="order-close-panel" role="tabpanel" aria-labelledby="order-close-tab" hidden={intent!=="close"}><CloseOrderPanel active={intent==="close"}/></div>
-    {snapshot.phase === "ready" && account.data && <WalletOverview wallet={account.data.wallet} />}
+    {snapshot.phase === "ready" && account.data && <WalletOverview wallet={account.data.wallet} stale={account.stale} />}
     <GuestRetry />
   </section>;
 }
-function OpenOrderPanel({active}:{active:boolean}) {
+function OpenOrderPanel({
+  active,
+  urlSide = null,
+  urlLeverage = null,
+}: {
+  active: boolean;
+  urlSide?: "LONG" | "SHORT" | null;
+  urlLeverage?: number | null;
+}) {
   const { symbol, market, bookSelection } = useSelectedMarket();
   const { session, snapshot } = useGuestSession();
   const account = useTradingSummary();
   const notices = useTradingNotices();
+  const client = useQueryClient();
   const sizingRequest = useRef<AbortController | null>(null), sizingTicket = useRef(0), submitting = useRef(false);
   const preflightRequest = useRef<AbortController | null>(null);
-  const [sizing,setSizing] = useState<{identity:string;symbolId:number;ticket:number}|null>(null);
+  const recoveringQuoteNotice = useRef<number | null>(null);
   const [preparing,setPreparing] = useState(false);
+  const [tpSlOpen, setTpSlOpen] = useState(false);
+  const [entryTakeProfit, setEntryTakeProfit] = useState("");
+  const [entryStopLoss, setEntryStopLoss] = useState("");
+  const [tpSlError, setTpSlError] = useState<string | null>(null);
   const identity = `${snapshot.accountId}:${snapshot.generation}`;
-  const [stored, setForm] = useState<Form>({ identity, symbolId: null, type: "MARKET", side: "LONG", leverage: 10, quantity: "", limitPrice: "", ratio: 0 });
-  const leverageState = useSymbolLeverage(symbol?.id ?? null);
-  const leverage = leverageState.data?.leverage ?? 10;
+  const [stored, setForm] = useState<Form>(() => ({
+    identity,
+    scope: 0,
+    symbolId: null,
+    type: "MARKET",
+    side: urlSide === "SHORT" ? "SHORT" : "LONG",
+    leverage: 1,
+    quantity: "",
+    limitPrice: "",
+    ratio: 0,
+  }));
+  const appliedUrlSideRef = useRef<string | null>(urlSide);
+  const appliedUrlLeverageRef = useRef<number | null>(null);
+  const longLeverage = useSymbolLeverage(symbol?.id ?? null, "LONG"), shortLeverage = useSymbolLeverage(symbol?.id ?? null, "SHORT");
+  const leverageState = stored.side === "LONG" ? longLeverage : shortLeverage;
+  const leverage = leverageState.data?.leverage ?? 1;
+  useEffect(() => {
+    if (urlSide && urlSide !== appliedUrlSideRef.current) {
+      appliedUrlSideRef.current = urlSide;
+      setForm(prev => (prev.side === urlSide ? prev : { ...prev, side: urlSide }));
+    }
+  }, [urlSide]);
+  useEffect(() => {
+    if (!urlLeverage || appliedUrlLeverageRef.current === urlLeverage || !leverageState.ready || !leverageState.data) return;
+    const maxLev = leverageState.data.maxLeverage ?? 100;
+    appliedUrlLeverageRef.current = urlLeverage;
+    if (Number.isInteger(urlLeverage) && urlLeverage >= 1 && urlLeverage <= maxLev && urlLeverage !== leverageState.data.leverage) {
+      void leverageState.change(urlLeverage);
+    }
+  }, [urlLeverage, leverageState]);
   const [seenBookSelection, setSeenBookSelection] = useState(bookSelection);
-  const [result, setResult] = useState<{ order: TradingOrder; identity: string } | null>(null);
   const [serverWarning, setServerWarning] = useState<{ side: OpenForm["side"]; issue: OrderIssue } | null>(null);
   const switched = stored.symbolId !== (symbol?.id ?? null) || stored.identity !== identity;
-  const form: Form = { ...formForSide(switched ? { ...formForSymbol(stored, symbol?.id ?? null), quantity: "", limitPrice: "", ratio: 0 } : stored, stored.side, leverage), identity };
+  const scope = stored.scope + (switched ? 1 : 0);
+  const form: Form = { ...formForSide(switched ? { ...formForSymbol(stored, symbol?.id ?? null), quantity: "", limitPrice: "", ratio: 0 } : stored, stored.side, leverage), identity, scope };
   // Commit the reset, so switching A -> B -> A cannot resurrect A's old inputs.
-  if (switched) { setForm(form); setResult(null); setServerWarning(null); }
+  if (switched) { setForm(form); setServerWarning(null); setEntryTakeProfit(""); setEntryStopLoss(""); setTpSlError(null); }
   useEffect(() => () => { sizingRequest.current?.abort(); preflightRequest.current?.abort(); }, [identity,symbol?.id]);
-  const action = useTradingMutation((issue, command, requestSession) => {
-    if (command.kind !== "open" || command.tradingSymbolId !== symbol?.id || `${requestSession.accountId}:${requestSession.generation}` !== identity
-      || command.quantity !== form.quantity.trim() || command.type !== form.type || command.leverage !== leverage
-      || (command.type === "LIMIT" && command.limitPrice !== form.limitPrice.trim())) return;
-    setServerWarning({ side: command.side, issue });
-  });
+  const action = useTradingMutation(
+    (issue, command, requestSession) => {
+      if (command.kind !== "open" || command.tradingSymbolId !== symbol?.id || `${requestSession.accountId}:${requestSession.generation}` !== identity
+        || command.quantity !== form.quantity.trim() || command.type !== form.type || command.leverage !== leverage
+        || (command.type === "LIMIT" && command.limitPrice !== form.limitPrice.trim())) return;
+      setServerWarning({ side: command.side, issue });
+    },
+    (error, command) => {
+      if (command.kind === "open" && error instanceof TradingApiError && error.code === "LEVERAGE_MISMATCH") {
+        void (command.side === "LONG" ? longLeverage : shortLeverage).refresh();
+      }
+    },
+    { suppressErrorNotice: true },
+  );
   const mark = freshMarkPrice(market);
-  const ready = isolatedReady(account.data?.wallet) && leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
-  const locked = snapshot.retrying || preparing || action.pending || action.unconfirmed || leverageState.pending || snapshot.phase !== "ready";
+  const ready = !account.error && isolatedReady(account.data?.wallet) && leverageState.ready && snapshot.phase === "ready" && account.data?.status === "ACTIVE" && !!symbol && !!mark;
+  const locked = snapshot.retrying || preparing || action.pending || action.unconfirmed || snapshot.phase !== "ready";
+  const submitLocked = locked || action.blocked || longLeverage.pending || shortLeverage.pending;
   if (bookSelection !== seenBookSelection) {
     setSeenBookSelection(bookSelection);
     const next = bookSelection && bookSelection.identity === identity && active && !locked ? formForBookPrice(form,bookSelection.symbolId,bookSelection.price) : null;
-    if (next) { setForm({...next,identity}); setResult(null); setServerWarning(null); }
+    if (next) { setForm({...next,identity,scope}); setServerWarning(null); }
   }
+  const availableBalance = account.data?.wallet.availableBalance;
   const price = form.type === "LIMIT" ? form.limitPrice.trim() : mark?.decimal ?? "";
   const quantity = form.quantity.trim();
   const valid = validQuantity(quantity) && (form.type === "MARKET" || validLimitPrice(price));
-  const canSize = ready && account.data?.wallet.availableBalance != null && (form.type === "LIMIT" ? validLimitPrice(price) : validSizingPrice(price));
+  const minimumIssue = valid ? minimumOpenIssue(quantity, price) : null;
+  const passiveRelation = form.type === "LIMIT" ? marketableLimitIssue(form.side, price, mark?.decimal) : null;
+  const suggestedPassive = suggestPassiveLimitPrice(mark?.decimal, form.side, symbol?.priceTickSize);
+  const canSize = ready && availableBalance != null && (form.type === "LIMIT" ? (validLimitPrice(price) || !!suggestedPassive) : validSizingPrice(price));
   const ratioDisabled = locked || (form.type === "MARKET" && !canSize);
+  const hasSameSidePosition = Boolean(
+    symbol && account.data?.positions.some((p) => p.tradingSymbolId === symbol.id && p.side === form.side),
+  );
   const quoteRequest = symbol ? {tradingSymbolId:symbol.id,type:form.type,side:form.side,quantity,...(form.type === "LIMIT" ? {limitPrice:price} : {})} : null;
-  const quote = useOrderQuote(quoteRequest, ready && valid && !preparing);
-  const estimate = quote.data?.leverage === leverage ? quote.data : undefined;
-  const sizingPending = sizing?.identity === identity && sizing.symbolId === symbol?.id;
-  function update(values: Partial<OpenForm>) {
-    sizingRequest.current?.abort(); sizingRequest.current=null; sizingTicket.current++; setSizing(null);
-    setForm({ ...formForSide({...form,...values},values.side??form.side,leverage), identity }); setResult(null); setServerWarning(null); action.clearError();
+  // Local 18-decimal BigInt math already computes exact standalone margin + fee in 0ms;
+  // reserve server /orders/quote calls for open Hedge position merges to eliminate DB lock contention.
+  const quote = useOrderQuote(quoteRequest, active && ready && hasSameSidePosition && valid && !minimumIssue && !passiveRelation && !preparing);
+  const localEstimate = valid && validSizingPrice(price) ? estimatedOrderWithFee(quantity, price, leverage, form.type) : null;
+  const estimate = (quote.data?.leverage === leverage ? quote.data : undefined) ?? localEstimate ?? undefined;
+  function update(values: Partial<OpenForm>, nextLeverageOverride?: number) {
+    sizingRequest.current?.abort(); sizingRequest.current=null; sizingTicket.current++;
+    setForm({ ...formForSide({...form,...values},values.side??form.side,nextLeverageOverride ?? leverage), identity, scope }); setServerWarning(null); action.clearError();
   }
-  async function selectRatio(percent: number) {
+  function applySuggestedLimitPrice() {
+    if (locked || !suggestedPassive) return;
+    const resized = form.ratio > 0 && availableBalance != null
+      ? feeInclusiveRatioQuantity(availableBalance, suggestedPassive, leverage, form.ratio, "LIMIT")
+      : form.quantity;
+    update({ type: "LIMIT", limitPrice: suggestedPassive, quantity: resized });
+  }
+  function switchToMarketOrder() {
     if (locked) return;
-    if (percent === 0 || (form.type === "LIMIT" && !validLimitPrice(price))) { update({ratio:percent,quantity:"0"}); return; }
-    if (!canSize || !symbol) return;
-    update({ratio:percent});
+    const marketPrice = mark?.decimal ?? "";
+    const resized = form.ratio > 0 && availableBalance != null && validSizingPrice(marketPrice)
+      ? feeInclusiveRatioQuantity(availableBalance, marketPrice, leverage, form.ratio, "MARKET")
+      : form.quantity;
+    update({ type: "MARKET", quantity: resized });
+  }
+  async function selectRatio(percent: number, settle = false) {
+    if (locked) return;
+    if (percent === 0) { update({ratio:0,quantity:"0"}); return; }
+    const effectiveLimitPrice = form.type === "LIMIT"
+      ? (validLimitPrice(price) ? price : (suggestedPassive ?? ""))
+      : "";
+    if (form.type === "LIMIT" && !validLimitPrice(effectiveLimitPrice)) {
+      update({ratio:percent,quantity:"0"});
+      return;
+    }
+    const targetPrice = form.type === "LIMIT" ? effectiveLimitPrice : (mark?.decimal ?? "");
+    if (availableBalance == null || !validSizingPrice(targetPrice)) {
+      update({
+        ratio: percent,
+        ...(form.type === "LIMIT" && !validLimitPrice(price) && effectiveLimitPrice ? { limitPrice: effectiveLimitPrice } : {}),
+        quantity: "0",
+      });
+      return;
+    }
+    const instantQuantity = feeInclusiveRatioQuantity(availableBalance, targetPrice, leverage, percent, form.type);
+    const nextLimitPatch = form.type === "LIMIT" && !validLimitPrice(price) && effectiveLimitPrice
+      ? { limitPrice: effectiveLimitPrice }
+      : {};
+    update({ ratio: percent, ...nextLimitPatch, quantity: instantQuantity });
+    const crossing = form.type === "LIMIT" ? marketableLimitIssue(form.side, targetPrice, mark?.decimal) : null;
+    const belowMin = validQuantity(instantQuantity) ? minimumOpenIssue(instantQuantity, targetPrice) : null;
+    // Standalone positions already get exact 8-decimal fee-inclusive sizing locally without locking the server row.
+    if (!hasSameSidePosition || !ready || !symbol || crossing || belowMin || !validQuantity(instantQuantity)) return;
     const ticket=++sizingTicket.current, controller=new AbortController(); sizingRequest.current=controller;
-    setSizing({identity,symbolId:symbol.id,ticket});
+    const requestType = form.type, requestSide = form.side, requestLimitInput = nextLimitPatch.limitPrice ?? form.limitPrice;
     try {
-      const value=await readQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side:form.side,balancePercentage:percent,...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
+      if (settle) {
+        await new Promise<void>(resolve => {
+          const finish = () => {
+            clearTimeout(timer);
+            controller.signal.removeEventListener("abort", finish);
+            resolve();
+          };
+          const timer = setTimeout(finish, 150);
+          controller.signal.addEventListener("abort", finish, { once: true });
+        });
+        if (controller.signal.aborted || sizingTicket.current !== ticket) return;
+      }
+      const value=await readSubmitQuote(session,snapshot,{tradingSymbolId:symbol.id,type:requestType,side:requestSide,balancePercentage:percent,...(requestType==="LIMIT" ? {limitPrice:targetPrice} : {})},controller.signal);
       if (sizingTicket.current!==ticket || value.leverage!==leverage) return;
-      setForm(current=>current.identity===identity&&current.symbolId===symbol.id&&current.ratio===percent&&current.type===form.type&&current.side===form.side&&current.limitPrice===form.limitPrice ? {...current,quantity:value.quantity,ratio:percent} : current);
+      setForm(current=>current.identity===identity&&current.symbolId===symbol.id&&current.ratio===percent&&current.type===requestType&&current.side===requestSide&&current.limitPrice===requestLimitInput ? {...current,quantity:value.quantity,ratio:percent} : current);
     } catch(error) {
-      if (!controller.signal.aborted && sizingTicket.current===ticket) notices.push({kind:"error",title:"비율 수량을 계산하지 못했습니다",message:mutationMessage(error)});
+      if (!controller.signal.aborted) reportAdmissionRejection(client, snapshot, error);
     } finally {
       if (sizingTicket.current===ticket) sizingRequest.current=null;
-      setSizing(current=>current?.ticket===ticket ? null : current);
     }
   }
   function complete(order: TradingOrder | null) {
-    if (!order) return;
-    setResult({ order, identity });
-    setForm((current) => current.identity === identity && current.symbolId === order.tradingSymbolId ? { ...current, quantity: "", ratio: 0 } : current);
+    if (!order || (order.status !== "FILLED" && order.status !== "PENDING")) return;
+    setForm((current) => current.scope === scope && current.symbolId === order.tradingSymbolId ? { ...current, quantity: "", ratio: 0 } : current);
+    setEntryTakeProfit("");
+    setEntryStopLoss("");
+    setTpSlError(null);
   }
   async function submit(side: "LONG" | "SHORT") {
-    if (locked || leverageState.blocked() || submitting.current || sizingRequest.current) return;
-    update({ side });
-    const commandForm = formForSide(form,side,leverage);
-    const issue = preflightOrder(commandForm, side, ready, freshMarkPrice(market)?.decimal, account.data?.wallet.availableBalance);
-    if (issue) { setServerWarning({ side, issue }); notices.push({kind:"error",title:"주문을 제출할 수 없습니다",message:issue.message}); return; }
+    const targetLeverageState = side === "LONG" ? longLeverage : shortLeverage;
+    if (submitLocked || targetLeverageState.blocked() || !targetLeverageState.data || submitting.current) return;
+    setTpSlError(null);
+    const trimmedTp = form.type === "MARKET" && tpSlOpen ? entryTakeProfit.trim() : "";
+    const trimmedSl = form.type === "MARKET" && tpSlOpen ? entryStopLoss.trim() : "";
+    if (trimmedTp && !validLimitPrice(trimmedTp)) {
+      setTpSlError("익절(TP) 가격은 양수로 입력해 주세요.");
+      return;
+    }
+    if (trimmedSl && !validLimitPrice(trimmedSl)) {
+      setTpSlError("손절(SL) 가격은 양수로 입력해 주세요.");
+      return;
+    }
+    const tpSlFields = {
+      ...(trimmedTp ? { takeProfitPrice: trimmedTp } : {}),
+      ...(trimmedSl ? { stopLossPrice: trimmedSl } : {}),
+    };
+    const submitLeverage = targetLeverageState.data.leverage;
+    const latestMark = freshMarkPrice(market)?.decimal;
+    const sameSideOpen = Boolean(
+      symbol && account.data?.positions.some((p) => p.tradingSymbolId === symbol.id && p.side === side),
+    );
+    // When no same-side Hedge position exists, size directly in 0ms and dispatch POST /orders in a single round-trip!
+    const directQuantity = !sameSideOpen && form.ratio > 0 && availableBalance != null
+      ? feeInclusiveRatioQuantity(
+          availableBalance,
+          form.type === "LIMIT" ? price : (latestMark ?? ""),
+          submitLeverage,
+          form.ratio,
+          form.type,
+        )
+      : quantity;
+
+    update({ side, ...(directQuantity !== quantity && validQuantity(directQuantity) ? { quantity: directQuantity, ratio: form.ratio } : {}) }, submitLeverage);
+    const commandForm = formForSide({ ...form, quantity: directQuantity }, side, submitLeverage);
+    const issue = preflightOrder(commandForm, side, ready, latestMark, availableBalance);
+    if (issue && !(sameSideOpen && form.ratio > 0 && (issue.kind === "balance" || issue.kind === "minimum"))) {
+      setServerWarning({ side, issue });
+      return;
+    }
     if (!symbol) return;
+
+    if (!sameSideOpen) {
+      const submitPrice = form.type === "LIMIT" ? price : (latestMark ?? "");
+      const withFee = estimatedOrderWithFee(directQuantity, submitPrice, submitLeverage, form.type);
+      if (availableBalance != null && withFee && decimalUnits(withFee.totalRequired) > decimalUnits(availableBalance)) {
+        const feeBalanceIssue = balanceIssue(form.type);
+        setServerWarning({ side, issue: feeBalanceIssue });
+        return;
+      }
+      submitting.current = true;
+      try {
+        complete(await action.submit({
+          kind: "open",
+          tradingSymbolId: symbol.id,
+          type: form.type,
+          side,
+          quantity: directQuantity,
+          leverage: submitLeverage,
+          ...(form.type === "LIMIT" ? { limitPrice: price } : tpSlFields),
+        }));
+      } finally {
+        submitting.current = false;
+      }
+      return;
+    }
+
     submitting.current=true; setPreparing(true);
     const controller=new AbortController(); preflightRequest.current=controller;
     try {
-      const value=await readQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side,quantity,...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
-      if(controller.signal.aborted)return;
-      if (value.leverage!==leverage) { await leverageState.refresh(); notices.push({kind:"warning",title:"레버리지를 확인해 주세요",message:"서버 설정을 다시 조회했습니다. 확인 후 직접 주문해 주세요."}); return; }
-      complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity,
-        leverage: value.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : {}) }));
-    } catch(error) { if(!controller.signal.aborted)notices.push({kind:"error",title:"주문 견적을 확인하지 못했습니다",message:mutationMessage(error)}); }
+      const value=await readSubmitQuote(session,snapshot,{tradingSymbolId:symbol.id,type:form.type,side,...(form.ratio > 0 ? {balancePercentage:form.ratio} : {quantity}),...(form.type==="LIMIT" ? {limitPrice:price} : {})},controller.signal);
+      const currentSession = session.getSnapshot();
+      if (controller.signal.aborted || currentSession.phase !== "ready" || currentSession.accountId !== snapshot.accountId || currentSession.generation !== snapshot.generation) return;
+      if (recoveringQuoteNotice.current !== null) {
+        notices.dismiss(recoveringQuoteNotice.current);
+        recoveringQuoteNotice.current = null;
+      }
+      if (value.leverage!==submitLeverage) { await targetLeverageState.refresh(); notices.push({kind:"warning",title:"레버리지를 확인해 주세요",message:"서버 설정을 다시 조회했습니다. 확인 후 직접 주문해 주세요."}); return; }
+      complete(await action.submit({ kind: "open", tradingSymbolId: symbol.id, type: form.type, side, quantity: value.quantity,
+        leverage: value.leverage, ...(form.type === "LIMIT" ? { limitPrice: price } : tpSlFields) }));
+    } catch(error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+      reportAdmissionRejection(client, snapshot, error);
+      const notice = {kind:"error" as const,title:"주문 견적을 확인하지 못했습니다",message:mutationMessage(error)};
+      if (isRecoveringQuote(error)) {
+        if (recoveringQuoteNotice.current !== null) notices.dismiss(recoveringQuoteNotice.current);
+        recoveringQuoteNotice.current = notices.push(notice);
+      } else notices.push(notice);
+    }
     finally { preflightRequest.current=null;submitting.current=false;setPreparing(false); }
   }
   function warning(side: OpenForm["side"]) {
     if (serverWarning?.side === side) return serverWarning.issue;
     const relation = form.type === "LIMIT" ? marketableLimitIssue(side, price, mark?.decimal) : null;
     if (relation) return relation;
-    const check = valid ? preflightOrder(formForSide(form,side,leverage), side, ready, mark?.decimal, account.data?.wallet.availableBalance) : null;
-    return check?.kind === "balance" ? check : null;
+    const target = side === "LONG" ? longLeverage : shortLeverage;
+    const check = valid ? preflightOrder(formForSide(form,side,target.data?.leverage ?? 1), side, ready && target.ready, mark?.decimal, availableBalance) : null;
+    return check?.kind === "balance" && form.ratio === 0 ? check : null;
   }
-  return <div aria-describedby={snapshot.phase === "ready" ? "order-preview-note" : undefined}>
+  return <div>
     {snapshot.phase !== "ready" ? <div className="order-panel-body"><GuestStartPrompt /></div> : <form className="order-panel-body" onSubmit={(event) => { event.preventDefault(); void submit(form.side); }}>
       <AccountWallet />
-      <details className="order-settings" open>
-        <summary>주문 설정</summary>
+      <div className="order-settings">
         <div className="order-settings-fields" data-order-type={form.type}>
-          <OrderChoices legend="주문 유형" name="order-type" selected={form.type} disabled={locked} onChange={(value) => { if (value === "MARKET" || value === "LIMIT") update({ type: value, ratio: 0 }); }} choices={[{ value: "MARKET", label: "시장가" }, { value: "LIMIT", label: "지정가" }]} />
-          <OrderChoices legend="포지션 방향" name="position-side" selected={form.side} disabled={locked} onChange={(value) => { if (value === "LONG" || value === "SHORT") update({ side: value }); }} choices={[{ value: "LONG", label: "↗ Long" }, { value: "SHORT", label: "↘ Short" }]} />
-          <OrderLeverage value={leverageState.data?.leverage} max={leverageState.data?.maxLeverage} disabled={locked || !leverageState.ready} onChange={value => { update({ratio:0}); void leverageState.change(value); }} />
-          {leverageState.pending && <p role="status" className="order-input-hint">레버리지 변경 및 계정 갱신 중…</p>}
-          {leverageState.error && <div><p role="alert" className="order-warning">{leverageState.error}</p><button type="button" className="account-refresh" disabled={leverageState.pending} onClick={()=>void leverageState.refresh()}>레버리지 다시 조회</button></div>}
-          {form.type === "LIMIT" && <OrderInput id="limit-price" label="지정가" unit="USDT" placeholder="가격 입력" value={form.limitPrice} disabled={locked} onChange={(value) => update({ limitPrice: value, ratio: 0 })} hint="양수 · 소수점 최대 18자리" />}
-          <OrderInput id="order-quantity" label="주문 수량" unit={symbol?.symbol ?? "—"} placeholder="0.000" value={form.quantity} disabled={locked || !symbol} onChange={(value) => update({ quantity: value, ratio: 0 })} hint="양수 · 소수점 최대 8자리" />
+          <OrderChoices legend="주문 유형" name="order-type" selected={form.type} disabled={locked} onChange={(value) => {
+            if (value !== "MARKET" && value !== "LIMIT") return;
+            const autoLimit = value === "LIMIT" && !validLimitPrice(price) && suggestedPassive ? suggestedPassive : form.limitPrice;
+            const nextPrice = value === "LIMIT" ? autoLimit.trim() : (mark?.decimal ?? "");
+            const resized = form.ratio > 0 && availableBalance != null && validSizingPrice(nextPrice)
+              ? feeInclusiveRatioQuantity(availableBalance, nextPrice, leverage, form.ratio, value)
+              : form.quantity;
+            update({ type: value, limitPrice: autoLimit, quantity: resized });
+          }} choices={[{ value: "MARKET", label: "시장가" }, { value: "LIMIT", label: "지정가" }]} />
+          <OrderChoices legend="포지션 방향" name="position-side" selected={form.side} disabled={locked} onChange={(value) => {
+            if (value !== "LONG" && value !== "SHORT") return;
+            const nextLev = (value === "LONG" ? longLeverage : shortLeverage).data?.leverage ?? 1;
+            const resized = form.ratio > 0 && availableBalance != null && validSizingPrice(price)
+              ? feeInclusiveRatioQuantity(availableBalance, price, nextLev, form.ratio, form.type)
+              : form.quantity;
+            update({ side: value, quantity: resized }, nextLev);
+          }} choices={[{ value: "LONG", label: "↗ Long" }, { value: "SHORT", label: "↘ Short" }]} />
+          <OrderLeverage side={form.side} value={leverageState.data?.leverage} max={leverageState.data?.maxLeverage} disabled={locked || !leverageState.ready} onChange={value => {
+            const resized = form.ratio > 0 && availableBalance != null && validSizingPrice(price)
+              ? feeInclusiveRatioQuantity(availableBalance, price, value, form.ratio, form.type)
+              : form.quantity;
+            update({ quantity: resized }, value);
+            void leverageState.change(value);
+          }} />
+          {(longLeverage.pending || shortLeverage.pending) && <p role="status" className="order-input-hint">{[longLeverage.pending ? "Long" : null, shortLeverage.pending ? "Short" : null].filter(Boolean).join(" · ")} 레버리지 변경 중…</p>}
+          {leverageState.error && <div><p role="alert" className="order-warning">{leverageState.error}</p><button type="button" className="account-refresh" disabled={leverageState.pending} onClick={()=>void leverageState.refresh()}>다시 조회</button></div>}
+          {form.type === "LIMIT" && (
+            <div className="col-span-2 flex flex-col gap-1.5">
+              <OrderInput id="limit-price" label="지정가" unit="USDT" placeholder="가격 입력" value={form.limitPrice} disabled={locked} onChange={(value) => update({ limitPrice: value, ratio: 0 })} />
+              {passiveRelation ? (
+                <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-2.5 text-xs leading-5 text-amber-200" role="status" data-limit-crossing-helper="true">
+                  <p className="font-semibold text-amber-100">
+                    {passiveRelation.message} (현재가 {formatMarketPrice(mark?.decimal, symbol?.priceTickSize)} USDT)
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {suggestedPassive ? (
+                      <button
+                        type="button"
+                        disabled={locked}
+                        onClick={applySuggestedLimitPrice}
+                        className="rounded-md border border-amber-400/50 bg-amber-500/20 px-2.5 py-1 text-[11px] font-semibold text-amber-100 transition-colors hover:bg-amber-500/30 cursor-pointer"
+                      >
+                        {form.side === "LONG" ? "롱" : "숏"} 가능가({formatMarketPrice(suggestedPassive, symbol?.priceTickSize)}) 맞춤
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={locked}
+                      onClick={switchToMarketOrder}
+                      className="rounded-md border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/20 cursor-pointer"
+                    >
+                      시장가 전환
+                    </button>
+                  </div>
+                </div>
+              ) : suggestedPassive ? (
+                <div className="flex items-center justify-between gap-2 text-[11px] text-terminal-muted">
+                  <span>Mark {formatMarketPrice(mark?.decimal, symbol?.priceTickSize)}</span>
+                  <button
+                    type="button"
+                    disabled={locked}
+                    onClick={applySuggestedLimitPrice}
+                    className="rounded border border-terminal-line bg-terminal-header px-2 py-0.5 font-medium text-terminal-secondary transition-colors hover:text-terminal-text cursor-pointer"
+                  >
+                    {form.side === "LONG" ? "-1틱" : "+1틱"} ({formatMarketPrice(suggestedPassive, symbol?.priceTickSize)})
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )}
+          <OrderInput id="order-quantity" label="수량" unit={symbol?.symbol ?? "—"} placeholder="0.000" value={form.quantity} disabled={locked || !symbol} onChange={(value) => update({ quantity: value, ratio: 0 })} />
           <div className="order-ratio">
-            <label htmlFor="order-ratio" className="field-label">참고 자산 비율 <span className="float-right font-semibold tabular-nums text-brand-700">{form.ratio}%</span></label>
-            <input id="order-ratio" type="range" min="0" max="100" step="1" value={form.ratio} disabled={ratioDisabled} onChange={(event) => selectRatio(Number(event.target.value))} className="h-8 w-full accent-brand-600" />
-            <OrderChoices legend="비율 선택" name="ratio-preset" selected={String(form.ratio)} disabled={ratioDisabled} onChange={(value) => selectRatio(Number(value))} choices={[25, 50, 75, 100].map((value) => ({ value: String(value), label: `${value}%` }))} />
-            <p className="order-input-hint">선택 비율로 수량을 채웁니다. 가격 변경 시 수량은 유지됩니다.</p>
-            {!canSize && <p role="status" className="order-input-hint">{sizingUnavailable(form.type,price,ready,account.data?.wallet.availableBalance)}</p>}
+            <label htmlFor="order-ratio" className="field-label">비율 <span className="float-right font-semibold tabular-nums text-brand-700">{form.ratio}%</span></label>
+            <input id="order-ratio" type="range" min="0" max="100" step="1" value={form.ratio} disabled={ratioDisabled} onChange={(event) => void selectRatio(Number(event.target.value), true)} className="h-8 w-full accent-brand-600" />
+            <OrderChoices legend="비율 선택" name="ratio-preset" selected={String(form.ratio)} disabled={ratioDisabled} onChange={(value) => void selectRatio(Number(value))} choices={[25, 50, 75, 100].map((value) => ({ value: String(value), label: `${value}%` }))} />
+            {!canSize && <p role="status" className="order-input-hint">{sizingUnavailable(form.type,price,ready,availableBalance)}</p>}
           </div>
-          <dl className="order-estimates"><div><dt>예상 주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>예상 필요 증거금 · <span data-side={form.side}>{form.side === "LONG" ? "Long" : "Short"} {leverageState.data ? `${form.leverage}×` : "—"}</span></dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>예상 수수료</dt><dd>{formatDecimal(estimate?.estimatedFee)} USDT</dd></div><div><dt>총 필요 자산 · 담보 + 수수료</dt><dd>{formatDecimal(estimate?.totalRequired)} USDT</dd></div></dl>
+          {form.type === "MARKET" && (
+            <div className="col-span-2 rounded-lg border border-terminal-line bg-terminal-header/40 px-2.5 py-2" data-entry-tpsl-box="true">
+              <label className="flex cursor-pointer items-center justify-between gap-2 text-xs font-semibold text-terminal-secondary">
+                <span className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={tpSlOpen}
+                    disabled={locked}
+                    onChange={(event) => {
+                      const next = event.currentTarget.checked;
+                      setTpSlOpen(next);
+                      setTpSlError(null);
+                      if (!next) {
+                        setEntryTakeProfit("");
+                        setEntryStopLoss("");
+                      }
+                    }}
+                    className="h-3.5 w-3.5 accent-[#F0B90B]"
+                  />
+                  <span>진입 시 TP/SL 설정</span>
+                </span>
+                <span className="text-[11px] font-normal text-terminal-muted">선택 · Mark 기준</span>
+              </label>
+              {tpSlOpen && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <OrderInput
+                    id="entry-take-profit"
+                    label="익절가 (TP)"
+                    unit="USDT"
+                    placeholder="선택 입력"
+                    value={entryTakeProfit}
+                    disabled={locked}
+                    onChange={(value) => { setTpSlError(null); setEntryTakeProfit(value); }}
+                  />
+                  <OrderInput
+                    id="entry-stop-loss"
+                    label="손절가 (SL)"
+                    unit="USDT"
+                    placeholder="선택 입력"
+                    value={entryStopLoss}
+                    disabled={locked}
+                    onChange={(value) => { setTpSlError(null); setEntryStopLoss(value); }}
+                  />
+                </div>
+              )}
+              {tpSlError && <p role="alert" className="order-warning mt-1.5">{tpSlError}</p>}
+            </div>
+          )}
+          <dl className="order-estimates"><div><dt>주문 금액</dt><dd>{formatDecimal(estimate?.notional)} USDT</dd></div><div><dt>필요 증거금</dt><dd>{formatDecimal(estimate?.margin)} USDT</dd></div><div><dt>예상 수수료</dt><dd>{formatDecimal(estimate?.estimatedFee)} USDT</dd></div><div><dt>합계</dt><dd>{formatDecimal(estimate?.totalRequired)} USDT</dd></div></dl>
         </div>
-      </details>
-      {sizingPending && <p role="status" className="order-input-hint">서버에서 수수료 포함 비율 수량을 계산 중입니다.</p>}
-      {quote.error && <p role="status" className="order-input-hint">서버 견적: {quote.error}</p>}
+      </div>
+      {quote.error && !passiveRelation && <p role="status" className="order-input-hint">서버 견적: {quote.error}</p>}
+      {minimumIssue && <p role="status" className="order-warning">{minimumIssue.message}</p>}
       {form.quantity && !validQuantity(quantity) && !(form.type === "LIMIT" && quantity === "0" && !validLimitPrice(price)) && <p role="alert" className="order-input-hint">수량은 0보다 커야 하며 소수점은 8자리까지 지원합니다.</p>}
       {form.type === "LIMIT" && form.limitPrice && !validLimitPrice(price) && <p role="alert" className="order-input-hint">양수 지정가를 입력해 주세요. 소수점은 18자리까지 지원합니다.</p>}
-      {account.data && !isolatedReady(account.data.wallet) && <p role="alert" className="order-warning">이전 담보 방식의 전환 확인이 필요합니다. 전환 완료 전에는 주문할 수 없습니다.</p>}
-      {!ready && <p role="status" className="order-input-hint">거래할 계정과 선택 종목의 최신 시세를 확인하는 중입니다.</p>}
+      {account.data && !isolatedReady(account.data.wallet) && <p role="alert" className="order-warning">담보 방식 전환 완료 후 주문할 수 있습니다.</p>}
+      {!ready && (account.data?.status === "BANKRUPT"
+        ? <p role="alert" className="order-warning">{snapshot.contestSeasonId ? "현재 대회 회차 잔고가 모두 소진되어 추가 진입할 수 없습니다." : "현재 회차 잔고가 소진되었습니다. 자산 · 종목 성과에서 새 회차를 시작할 수 있습니다."}</p>
+        : <p role="status" className="order-input-hint">{!mark ? "최신 시세 수신 대기 중…" : account.error ? "계정 상태를 확인하지 못했습니다." : !account.data ? "계정 상태 확인 중…" : !leverageState.ready ? "레버리지 설정 확인 중…" : "주문 준비 상태를 확인 중…"}</p>)}
       <div className="order-actions" role="group" aria-label="포지션 진입">
         {(["LONG", "SHORT"] as const).map((side) => <div key={side}>
-          <button type="button" disabled={!ready || !valid || locked || !leverageState.ready || sizingPending} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{leverageState.data ? `${leverage}×` : "—"} · {action.pending || preparing ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
+          <button type="button" disabled={!ready || !valid || submitLocked || !(side === "LONG" ? longLeverage : shortLeverage).ready} onClick={() => void submit(side)} data-side={side}>{side === "LONG" ? "↗ Long" : "↘ Short"} <span>{(side === "LONG" ? longLeverage : shortLeverage).data ? `${(side === "LONG" ? longLeverage : shortLeverage).data!.leverage}×` : "—"} · {action.pending || preparing ? "처리 중" : side === "LONG" ? "매수" : "매도"}</span></button>
           {warning(side) && <p role="alert" className="order-warning" data-warning-side={side}>{warning(side)?.message}</p>}
         </div>)}
       </div>
       {action.error && !serverWarning && (action.command?.kind !== "open" || action.command.tradingSymbolId === symbol?.id) && <p role="alert" className="order-warning">{action.error}</p>}
-      {action.unconfirmed && <button type="button" className="account-refresh" disabled={action.pending} onClick={() => void action.retry().then(complete)}>같은 주문 결과 확인</button>}
-      {result && result.identity === identity && result.order.tradingSymbolId === symbol?.id && <p role="status" className="order-input-hint">주문 #{result.order.orderId} · {result.order.status}{result.order.fill ? ` · 체결가 ${formatMarketPrice(result.order.fill.price, symbol.priceTickSize)} USDT` : ""}</p>}
-      <p id="order-preview-note" className="order-preview-note">가상 자산을 사용하는 모의투자입니다. 금액은 체결 시 확정됩니다.</p>
+      {action.unconfirmed && <button type="button" className="account-refresh" disabled={action.pending} onClick={() => void action.retry().then(complete)}>원래 주문 재전송</button>}
     </form>}
   </div>;
 }

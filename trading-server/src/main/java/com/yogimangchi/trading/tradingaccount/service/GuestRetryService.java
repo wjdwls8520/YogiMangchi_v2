@@ -21,18 +21,29 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class GuestRetryService {
+    private final com.yogimangchi.trading.execution.recovery.RiskAdmission risk;
     private final AccountLock locks;
     private final WalletRepository wallets;
     private final PositionRepository positions;
     private final TradingOrderRepository orders;
     private final TradingEvents events;
     private final JdbcTemplate jdbc;
+    private final org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits;
     public GuestRetryService(AccountLock locks,WalletRepository wallets,PositionRepository positions,
-            TradingOrderRepository orders,TradingEvents events,JdbcTemplate jdbc) {
+            TradingOrderRepository orders,TradingEvents events,JdbcTemplate jdbc,com.yogimangchi.trading.execution.recovery.RiskAdmission risk) {
+        this(locks,wallets,positions,orders,events,jdbc,risk,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public GuestRetryService(AccountLock locks,WalletRepository wallets,PositionRepository positions,
+            TradingOrderRepository orders,TradingEvents events,JdbcTemplate jdbc,com.yogimangchi.trading.execution.recovery.RiskAdmission risk,
+            org.springframework.beans.factory.ObjectProvider<com.yogimangchi.trading.takeprofit.TakeProfitService> takeProfits) {
+        this.risk=risk;
         this.locks=locks; this.wallets=wallets; this.positions=positions; this.orders=orders; this.events=events; this.jdbc=jdbc;
+        this.takeProfits=takeProfits;
     }
     @Transactional(timeout=10)
     public GuestRetryResponse retry(Long accountId,String key) {
+        risk.enterTransaction();
         if(key==null || !key.matches("[A-Za-z0-9_-]{8,100}")) throw new BusinessException(ErrorCode.INVALID_IDEMPOTENCY_KEY);
         var account=locks.lock(accountId);
         if(!account.isGuestAccount() || account.getMemberId()!=null) throw new BusinessException(ErrorCode.GUEST_ACCOUNT_REQUIRED);
@@ -41,6 +52,7 @@ public class GuestRetryService {
         var previous=jdbc.query("select id,balance_after,canceled_order_count,closed_position_count,reset_at from trading.guest_retry where account_id=? and request_key=?",
                 (r,n) -> response(r.getLong("id"),accountId,r.getBigDecimal("balance_after"),r.getInt("canceled_order_count"),r.getInt("closed_position_count"),r.getTimestamp("reset_at").toInstant()),accountId,key);
         if(!previous.isEmpty()) return previous.get(0);
+        risk.requireClear(accountId);
         var wallet=wallets.findById(accountId).orElseThrow();
         BigDecimal before=wallet.getBalance(),released=BigDecimal.ZERO,reserved=BigDecimal.ZERO;
         var open=positions.findByAccountIdAndStatusOrderByIdAsc(accountId,Position.Status.OPEN);
@@ -51,7 +63,8 @@ public class GuestRetryService {
             else byId.get(order.getPositionId()).releaseCloseReservation(order.getQuantity());
             order.cancelForGuestRetry(now); events.record(order,null);
         }
-        for(var position:open) released=released.add(position.closeForGuestRetry(now));
+        var tpService = takeProfits != null ? takeProfits.getIfAvailable() : null;
+        for(var position:open) {released=released.add(position.closeForGuestRetry(now));events.recordStopLoss(position);if(tpService!=null)tpService.expireIfActive(position,"GUEST_RETRY",now);}
         wallet.restartGuest(released,reserved);
         account.restartGuest(now);
         Long id=jdbc.queryForObject("insert into trading.guest_retry(account_id,request_key,balance_before,balance_after,capital_adjustment,canceled_order_count,closed_position_count,reset_at) values (?,?,?,?,?,?,?,?) returning id",

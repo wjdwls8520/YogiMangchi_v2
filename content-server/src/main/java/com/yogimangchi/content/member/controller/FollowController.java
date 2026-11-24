@@ -25,9 +25,9 @@ public class FollowController {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(follows.summary(memberId,jwt==null ? null : Long.valueOf(jwt.getSubject())));
     }
     @GetMapping("/{memberId:[0-9]+}/followers")
-    @Operation(summary="List active followers",description="Public. Descending relation ID cursor; omit cursorId initially, use nextCursorId when hasNext. size1-10(default10), keyword literal nickname substring up to12 Unicode code points to support legacy names and supplementary characters, case-insensitive. Reset cursor on search change. Invalid input400, missing/inactive owner404. No avatar/best-count placeholder fields.")
-    public FollowPage followers(@PathVariable Long memberId,@RequestParam(required=false) Long cursorId,@RequestParam(required=false) Integer size,@RequestParam(required=false) String keyword) { return follows.list(memberId,true,cursorId,size,keyword); }
+    @Operation(summary="List active followers",description="Public. Descending relation ID cursor; omit cursorId initially, use nextCursorId when hasNext. size1-10(default10), keyword literal nickname substring up to12 Unicode code points to support legacy names and supplementary characters, case-insensitive. Reset cursor on search change. Invalid input400, missing/inactive owner404. Optional valid member Bearer adds followedByMe.")
+    public FollowPage followers(@PathVariable Long memberId,@RequestParam(required=false) Long cursorId,@RequestParam(required=false) Integer size,@RequestParam(required=false) String keyword,@AuthenticationPrincipal Jwt jwt) { return follows.list(memberId,true,cursorId,size,keyword,jwt==null ? null : Long.valueOf(jwt.getSubject())); }
     @GetMapping("/{memberId:[0-9]+}/followings")
-    @Operation(summary="List active followed members",description="Same cursor/size/keyword contract as followers. Soft-deleted relations and withdrawn members are excluded.")
-    public FollowPage followings(@PathVariable Long memberId,@RequestParam(required=false) Long cursorId,@RequestParam(required=false) Integer size,@RequestParam(required=false) String keyword) { return follows.list(memberId,false,cursorId,size,keyword); }
+    @Operation(summary="List active followed members",description="Same cursor/size/keyword contract as followers. Soft-deleted relations and withdrawn members are excluded. Optional valid member Bearer adds followedByMe.")
+    public FollowPage followings(@PathVariable Long memberId,@RequestParam(required=false) Long cursorId,@RequestParam(required=false) Integer size,@RequestParam(required=false) String keyword,@AuthenticationPrincipal Jwt jwt) { return follows.list(memberId,false,cursorId,size,keyword,jwt==null ? null : Long.valueOf(jwt.getSubject())); }
 }

@@ -8,7 +8,7 @@ export function TradingTable({ caption, columns, rows, variant }: {
   caption: string;
   columns: readonly TradingColumn[];
   rows: readonly TradingRow[];
-  variant?: "positions";
+  variant?: "positions" | "orders";
 }) {
   return (
     <div className="trading-table-scroll min-w-0">

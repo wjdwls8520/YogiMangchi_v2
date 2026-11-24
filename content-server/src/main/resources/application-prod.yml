@@ -3,16 +3,36 @@ spring:
     url: ${CONTENT_DB_URL}
     username: ${CONTENT_DB_USERNAME}
     password: ${CONTENT_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+      leak-detection-threshold: 10000
   flyway:
     url: ${CONTENT_DB_URL}
     user: ${CONTENT_FLYWAY_USERNAME}
     password: ${CONTENT_FLYWAY_PASSWORD}
 server:
   address: 0.0.0.0
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: ${CONTENT_INTERNAL_PROXIES:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.1[6-9]\.\d{1,3}\.\d{1,3}|172\.2[0-9]\.\d{1,3}\.\d{1,3}|172\.3[0-1]\.\d{1,3}\.\d{1,3}|0:0:0:0:0:0:0:1|::1}
+  shutdown: graceful
   servlet:
     session:
       cookie:
         secure: true
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
 springdoc:
   api-docs:
     enabled: false
@@ -29,3 +49,14 @@ content:
     secure-cookies: true
   oauth:
     enabled: ${CONTENT_OAUTH_ENABLED:true}
+  s3:
+    enabled: ${CONTENT_S3_ENABLED:false}
+    public-base-url: ${CONTENT_PUBLIC_BASE_URL:${CONTENT_S3_PUBLIC_BASE_URL:}}
+    local-media-dir: ${CONTENT_LOCAL_MEDIA_DIR:.gradle/local-runtime/uploads}
+    bucket: ${S3_BUCKET:}
+    region: ${S3_REGION:ap-northeast-2}
+  news:
+    collector:
+      interval-ms: ${CONTENT_NEWS_COLLECTOR_INTERVAL_MS:600000}
+      initial-delay-ms: ${CONTENT_NEWS_COLLECTOR_INITIAL_DELAY_MS:600000}
+      on-demand-cooldown-ms: ${CONTENT_NEWS_ON_DEMAND_COOLDOWN_MS:60000}

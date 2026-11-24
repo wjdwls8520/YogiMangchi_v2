@@ -1,19 +1,52 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
 export function SiteFooter() {
-  return <footer className="site-footer" aria-label="사이트 안내">
-    <div className="site-footer-content">
-      <div className="site-footer-brand">
-        <p className="site-footer-title">요기망치 <span>YOGIMANGCHI</span></p>
-        <p>코인 정보와 모의투자를 한곳에서.</p>
-      </div>
-      <div className="site-footer-info">
-        <p className="site-footer-heading">서비스 안내 <span>준비 중</span></p>
-        <ul><li>서비스 소개</li><li>공지사항</li><li>고객지원</li></ul>
-      </div>
-      <div className="site-footer-info">
-        <p className="site-footer-heading">이용 정책 <span>준비 중</span></p>
-        <ul><li>이용약관</li><li>개인정보처리방침</li></ul>
-      </div>
-      <p className="site-footer-copyright">© YOGIMANGCHI. All rights reserved.</p>
-    </div>
-  </footer>;
+  const pathname = usePathname() ?? "";
+
+  if (pathname === "/login" || pathname === "/signup") {
+    return null;
+  }
+
+  const isTrading =
+    pathname.startsWith("/trading") ||
+    (pathname.startsWith("/contest/") && pathname.endsWith("/trading"));
+  const linkClass = isTrading
+    ? "transition-colors hover:text-white"
+    : "transition-colors hover:text-gray-900";
+
+  return (
+    <footer
+      className={
+        isTrading
+          ? "w-full border-t border-white/10 bg-[#0B0E11] py-8 text-center text-sm text-gray-400"
+          : "w-full border-t border-gray-200 bg-white py-8 text-center text-sm text-gray-500"
+      }
+    >
+      <nav aria-label="Footer">
+        <ul className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 whitespace-nowrap px-4">
+          <li>
+            <Link href="/terms" className={linkClass}>
+              이용약관
+            </Link>
+          </li>
+          <li>
+            <Link href="/privacy" className={linkClass}>
+              개인정보처리방침
+            </Link>
+          </li>
+          <li>
+            <Link href="/support" className={linkClass}>
+              고객센터
+            </Link>
+          </li>
+        </ul>
+      </nav>
+      <small className="block pt-5 text-xs text-gray-400">
+        © 2026 YogiMangchi. All rights reserved.
+      </small>
+    </footer>
+  );
 }

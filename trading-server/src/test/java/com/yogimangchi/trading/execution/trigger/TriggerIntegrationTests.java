@@ -228,6 +228,7 @@ class TriggerIntegrationTests {
             worker.runOnce(); gate.requireCaughtUp(prices.findAll(Set.of(symbol,ether)));
         });
         market(Position.Side.LONG,"500",10);
+        leverages.change(guest.accountId(),ether,Position.Side.SHORT,10);
         orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(
                 TradingOrder.Type.MARKET,ether,Position.Side.SHORT,new BigDecimal("500"),10,null));
         LatestMarkPrice btcRisk=tick("79");
@@ -301,7 +302,7 @@ class TriggerIntegrationTests {
     }
 
     private OrderResponse limit(Position.Side side,String quantity,String limit,int leverage) {
-        if (leverages.current(guest.accountId(), symbol) != leverage) leverages.change(guest.accountId(), symbol, leverage);
+        if (leverages.current(guest.accountId(), symbol,side) != leverage) leverages.change(guest.accountId(), symbol,side, leverage);
         return orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.LIMIT,symbol,side,new BigDecimal(quantity),leverage,new BigDecimal(limit)));
     }
 
@@ -597,7 +598,7 @@ class TriggerIntegrationTests {
         assertThat(jdbc.queryForObject("select "+column+" from trading.position where id=?",BigDecimal.class,id)).isEqualByComparingTo(expected);
     }
     private OrderResponse market(Position.Side side,String quantity,int leverage) {
-        if (leverages.current(guest.accountId(), symbol) != leverage) leverages.change(guest.accountId(), symbol, leverage);
+        if (leverages.current(guest.accountId(), symbol,side) != leverage) leverages.change(guest.accountId(), symbol,side, leverage);
         return orders.create(guest.accountId(),UUID.randomUUID().toString(),new CreateOrderRequest(TradingOrder.Type.MARKET,symbol,side,new BigDecimal(quantity),leverage,null));
     }
     private LatestMarkPrice tick(String amount) {

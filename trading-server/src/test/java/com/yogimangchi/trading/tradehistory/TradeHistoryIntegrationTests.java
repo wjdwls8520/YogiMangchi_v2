@@ -1,5 +1,7 @@
 package com.yogimangchi.trading.tradehistory;
 
+import com.yogimangchi.trading.support.LegacyLeverageFixtures;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yogimangchi.trading.execution.TradingOrderService;
 import com.yogimangchi.trading.execution.trigger.*;
@@ -53,6 +55,7 @@ class TradeHistoryIntegrationTests {
         guest=accounts.createGuest();
         btc=jdbc.queryForObject("select id from trading.trading_symbol where symbol='BTC'",Long.class);
         prices.beginSubscription(Set.of(btc)); mark("1000");
+        LegacyLeverageFixtures.bothDirections(jdbc,guest.accountId(),btc);
     }
     @AfterEach void cleanup() { reset(events); events.unwatch(guest.accountId()); prices.markUnavailable(); }
 
@@ -96,7 +99,7 @@ class TradeHistoryIntegrationTests {
 
     @Test void committedEventSnapshotsAreImmutableAndDuplicateTriggersDoNotCreateAnotherEvent() {
         var pending=orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,n("1"),10,n("990")));
-        leverage.change(guest.accountId(),btc,20);
+        leverage.change(guest.accountId(),btc,Position.Side.LONG,20);
         var tick=mark("980"); trigger.process(guest.accountId(),tick,Map.of(btc,tick));
         trigger.process(guest.accountId(),tick,Map.of(btc,tick));
         var retained=events.after(guest.accountId(),0,100);
@@ -113,7 +116,7 @@ class TradeHistoryIntegrationTests {
     @Test void cancellationAndLiquidationRetainPreciselyTheirOwnTransitionsAndNetLoss() {
         var canceled=orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.LIMIT,btc,Position.Side.LONG,n("1"),10,n("990")));
         orders.cancel(guest.accountId(),canceled.orderId()); orders.cancel(guest.accountId(),canceled.orderId());
-        leverage.change(guest.accountId(),btc,100); var opened=open("10");
+        leverage.change(guest.accountId(),btc,Position.Side.LONG,100); var opened=open("10");
         orders.createLimitClose(guest.accountId(),opened.positionId(),key(),new LimitCloseRequest(n("5"),n("1100")));
         var risk=mark("800"); trigger.process(guest.accountId(),risk,Map.of(btc,risk));
         trigger.process(guest.accountId(),risk,Map.of(btc,risk));
@@ -196,6 +199,20 @@ class TradeHistoryIntegrationTests {
         mvc.perform(get("/api/v1/trading/account/positions/history").header("Authorization",bearer()).param("cursor","invalid"))
                 .andExpect(status().isBadRequest());
     }
+    @Test void fillHistoryKeepsManualReasonNullAndDoesNotExposeUnknownOrderDetails() throws Exception {
+        var opened=open("1");
+        var closed=orders.close(guest.accountId(),opened.positionId(),key());
+        jdbc.update("update trading.trading_order set reason=? where id=?","INTERNAL_SQL_DETAIL_TEST_ONLY",closed.orderId());
+        String body=mvc.perform(get("/api/v1/trading/account/fills").header("Authorization",bearer()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("INTERNAL_SQL_DETAIL_TEST_ONLY");
+        for (var fill:json.readTree(body)) {
+            assertThat(fill.has("reason")).isTrue();
+            assertThat(fill.path("reason").isNull()).isTrue();
+        }
+    }
+
     @Test void openApiDocumentsPrivateHistoryAndStringValuedFinancialFacts() throws Exception {
         var api=json.readTree(mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         for(String endpoint:List.of("fills","positions/history","events")) {
@@ -205,6 +222,9 @@ class TradeHistoryIntegrationTests {
         }
         var schemas=api.path("components").path("schemas");
         assertThat(schemas.path("FillHistoryResponse").path("properties").path("fee").path("type").asText()).isEqualTo("string");
+        var reason=schemas.path("FillHistoryResponse").path("properties").path("reason");
+        assertThat(reason.path("description").asText()).contains("STOP_LOSS","null otherwise");
+        assertThat(reason.path("type")).contains(json.getNodeFactory().textNode("string"),json.getNodeFactory().textNode("null"));
         assertThat(schemas.path("ClosedPositionResponse").path("properties").path("netRealizedPnl").path("type").asText()).isEqualTo("string");
         assertThat(schemas.path("TradingEventResponse").path("properties").path("eventId").path("type").asText()).isEqualTo("string");
         assertThat(schemas.path("ClosedPositionResponse").path("description").asText()).contains("lifecycle","not one order");
@@ -213,7 +233,7 @@ class TradeHistoryIntegrationTests {
     private List<com.yogimangchi.trading.tradehistory.dto.FillHistoryResponse> fills(Long before,int limit) {
         return history.fills(guest.accountId(),before,limit,null,null,null,null,null,null);
     }
-    private OrderResponse open(String quantity) { return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n(quantity),leverage.current(guest.accountId(),btc),null)); }
+    private OrderResponse open(String quantity) { return orders.create(guest.accountId(),key(),new CreateOrderRequest(TradingOrder.Type.MARKET,btc,Position.Side.LONG,n(quantity),leverage.current(guest.accountId(),btc,Position.Side.LONG),null)); }
     private LatestMarkPrice mark(String amount) {
         Instant now=Instant.now();
         Instant event=prices.find(btc).latestPrice().map(LatestMarkPrice::eventTime).filter(p -> !p.isBefore(now)).map(p -> p.plusNanos(1)).orElse(now);

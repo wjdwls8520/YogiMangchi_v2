@@ -1,39 +1,77 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { marketEndpoints, parseSymbols, type TradingSymbol } from "../market/catalog";
+import { marketEndpoints, parseSymbols, loadedSymbolCatalog, failedSymbolCatalog, catalogStateLabel, type SymbolCatalog, type TradingSymbol } from "../market/catalog";
 import { retryDelay } from "../market/stream";
-import { useMarketTickers, useTradingSummary } from "../api/queries";
+import { useMarketTickers, useTradingOrders, useTradingSummary } from "../api/queries";
 import { SymbolSelector } from "./symbol-selector";
 import { TradingChart } from "./trading-chart";
 import { MarketHeader } from "./market-header";
 import { TradingAccountTabs, type AccountView } from "./trading-account-tabs";
 import { TradingNavigation } from "./trading-navigation";
-import { SelectedMarketProvider, useMarketFeed, type BookSelection } from "./selected-market-provider";
+import { LiveMarketProvider, useSelectedMarket, useSelectedBook, type BookSelection } from "./selected-market-provider";
 import type { CandleInterval } from "../market/candles";
 import { OrderBookPanel } from "./order-book-panel";
 import { freshMarkPrice } from "../market/selected-market";
 import { useGuestSession } from "./trading-data-provider";
+import { resolveTradingOrigin } from "../../../lib/api-origins";
+import { useDialogScrollLock } from "../../member/components/dim-modal";
 
-export function MarketChartPanel({ children }: { children: ReactNode }) {
+export function MarketChartPanel({
+  children,
+  urlSymbol = null,
+  urlTab = null,
+}: {
+  children: ReactNode;
+  urlSymbol?: string | null;
+  urlTab?: AccountView | null;
+}) {
   const account = useTradingSummary();
+  const pendingOrders = useTradingOrders("pending");
   const {snapshot:guest} = useGuestSession();
-  const tickerQuery = useMarketTickers();
   const [mainView, setMainView] = useState<"chart" | "order" | "portfolio">("chart");
   const [analysisView, setAnalysisView] = useState<"chart" | "book">("chart");
   const [bookSelection, setBookSelection] = useState<BookSelection>();
   const [symbolSearch,setSymbolSearch]=useState("");
   const searchInput=useRef<HTMLInputElement>(null);
-  const [accountView, setAccountView] = useState<AccountView>("positions");
+  const [accountViewState, setAccountViewState] = useState<{
+    tab: AccountView;
+    forUrlTab: AccountView | null;
+  } | null>(null);
+  const normalizedUrlTab = urlTab ?? null;
+  const accountView: AccountView =
+    accountViewState && accountViewState.forUrlTab === normalizedUrlTab
+      ? accountViewState.tab
+      : (normalizedUrlTab ?? "positions");
+  const setAccountView = useCallback(
+    (next: AccountView) => {
+      setAccountViewState({ tab: next, forUrlTab: normalizedUrlTab });
+    },
+    [normalizedUrlTab],
+  );
+  const normalizedUrlSymbol = urlSymbol ? urlSymbol.trim().toUpperCase().replace(/USDT$/i, "") : null;
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheet = useRef<HTMLDialogElement>(null);
   const sheetTrigger = useRef<HTMLButtonElement>(null);
-  const [catalog, setCatalog] = useState<{ symbols: TradingSymbol[]; allSymbols: TradingSymbol[]; state: "loading" | "unavailable" | "empty" | "ready"; socket: string }>({ symbols: [], allSymbols: [], state: "loading", socket: "" });
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  useDialogScrollLock(sheet, false);
+  const [catalog, setCatalog] = useState<SymbolCatalog>({ symbols: [], allSymbols: [], state: "loading", socket: "" });
+  const [selectedIdState, setSelectedIdState] = useState<{
+    id: number | null;
+    forUrlSymbol: string | null;
+  }>({ id: null, forUrlSymbol: normalizedUrlSymbol });
+  const selectedId =
+    selectedIdState.forUrlSymbol === normalizedUrlSymbol ? selectedIdState.id : null;
+  const setSelectedId = useCallback(
+    (id: number | null) => {
+      setSelectedIdState({ id, forUrlSymbol: normalizedUrlSymbol });
+    },
+    [normalizedUrlSymbol],
+  );
   const [interval, setInterval] = useState<CandleInterval>("1m");
   const unavailableIds = useRef(new Set<number>());
   const [catalogRevision, setCatalogRevision] = useState(0);
   const refreshSubscriptionCatalog=useCallback(()=>setCatalogRevision(revision=>revision+1),[]);
+  const retryCatalog=()=>{setCatalog(current=>({...current,state:"loading"}));refreshSubscriptionCatalog();};
   const refreshAfterSymbolError = useCallback((id: number) => {
     if (unavailableIds.current.has(id)) return;
     unavailableIds.current.add(id);
@@ -49,18 +87,16 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
       controller = new AbortController();
       timeout = setTimeout(() => controller.abort(), 10_000);
       try {
-        const endpoints = marketEndpoints(process.env.NEXT_PUBLIC_TRADING_SERVER_URL || "http://127.0.0.1:8081");
+        const endpoints = marketEndpoints(resolveTradingOrigin());
         const response = await fetch(endpoints.symbols, { signal: controller.signal, credentials: "omit", cache: "no-store" });
         if (!response.ok) throw new Error("Symbol catalog unavailable");
         // A refreshed catalog can briefly still advertise the rejected ID.
         // Exclude it for this mounted screen instead of resubscribing in a loop.
         const allSymbols = parseSymbols(await response.json());
-        const symbols = allSymbols.filter((entry) => !unavailableIds.current.has(entry.id)
-          && entry.quoteAsset === "USDT");
-        if (!disposed) setCatalog({ symbols, allSymbols, socket: endpoints.socket, state: symbols.length ? "ready" : "empty" });
+        if (!disposed) setCatalog(loadedSymbolCatalog(allSymbols,endpoints.socket,unavailableIds.current));
       } catch {
         if (!disposed) {
-          setCatalog({ symbols: [], allSymbols: [], socket: "", state: "unavailable" });
+          setCatalog(current=>failedSymbolCatalog(current,unavailableIds.current));
           retry = setTimeout(load, retryDelay(attempt++));
         }
       } finally { clearTimeout(timeout); }
@@ -69,9 +105,18 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     return () => { disposed = true; controller?.abort(); clearTimeout(timeout); clearTimeout(retry); };
   }, [catalogRevision]);
   const selected = catalog.symbols.find((entry) => entry.id === selectedId)
+    ?? (normalizedUrlSymbol
+      ? catalog.symbols.find((entry) => entry.symbol.toUpperCase() === normalizedUrlSymbol)
+      : undefined)
     ?? catalog.symbols.find((entry) => entry.symbol === "BTC") ?? catalog.symbols[0] ?? null;
-  const positionIds = JSON.stringify([...new Set((account.data?.positions??[]).map(position=>position.tradingSymbolId).filter(id=>catalog.symbols.some(symbol=>symbol.id===id)))].sort((a,b)=>a-b));
-  const { market, orderBook, positionPrices } = useMarketFeed(selected?.id ?? null, catalog.socket, refreshAfterSymbolError,positionIds,`${guest.accountId}:${guest.generation}`,refreshSubscriptionCatalog);
+  const positionIds = JSON.stringify([
+    ...new Set(
+      [
+        ...(account.data?.positions ?? []).map((position) => position.tradingSymbolId),
+        ...(pendingOrders.data ?? []).map((order) => order.tradingSymbolId),
+      ].filter((id) => id !== selected?.id && catalog.symbols.some((symbol) => symbol.id === id)),
+    ),
+  ].sort((a, b) => a - b));
   function openSheet() {
     if (!sheet.current || sheet.current.open) return;
     sheet.current.showModal();
@@ -92,16 +137,18 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
     if (id === "chart" || id === "order" || id === "portfolio") setMainView(id);
   }
   return (
-    <SelectedMarketProvider symbol={selected} symbols={catalog.allSymbols} market={market} orderBook={orderBook} positionPrices={positionPrices} bookSelection={bookSelection}><div className="trading-grid" data-main-view={mainView}>
+    <LiveMarketProvider symbol={selected} symbols={catalog.allSymbols} socketUrl={catalog.socket} onSymbolUnavailable={refreshAfterSymbolError} positionIds={positionIds} identity={`${guest.accountId}:${guest.generation}`} onSubscriptionUnavailable={refreshSubscriptionCatalog} bookSelection={bookSelection}><div className="trading-grid" data-main-view={mainView}>
       <div className="market-overview"><header className="market-contract-header">
         <button ref={sheetTrigger} type="button" onClick={openSheet} aria-haspopup="dialog" aria-controls="market-symbol-sheet" aria-expanded={sheetOpen} className="market-sheet-trigger">
           <span className="market-coin-mark" aria-hidden="true">{selected?.symbol.charAt(0) ?? "·"}</span>
-          <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selected?.name ?? "거래 가능 종목 확인 중"}</span></span>
+          <span className="market-selected-label"><strong>{selected ? `${selected.symbol}USDT` : "종목 선택"}</strong><span>{selected?.name ?? catalogStateLabel(catalog.state)}</span></span>
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         <span className="preview-label">무기한 선물</span>
+        {catalog.state==="unavailable"&&<p role="alert" className="market-list-note">종목을 불러오지 못했습니다. <button type="button" className="account-refresh" onClick={retryCatalog}>다시 조회</button></p>}
+        {catalog.state==="loading"&&catalog.symbols.length>0&&<p role="status" className="market-list-note">종목 목록을 다시 조회하는 중입니다.</p>}
       </header>
-        <MarketHeader symbol={selected} market={market} ticker={tickerQuery.tickers.find((ticker) => ticker.tradingSymbolId === selected?.id && ticker.symbol === selected.symbol && ticker.quoteAsset === selected.quoteAsset)} />
+        <LiveHeader />
       </div>
       <TradingNavigation label="모바일 거래 화면" prefix="main" activeId={mainView} onSelect={selectMainView} className="main-navigation" tabs={[
         { id: "chart", label: "차트·호가", controls: "chart-view" },
@@ -111,8 +158,8 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
       <section id="chart-view" role="tabpanel" aria-labelledby="chart-heading" tabIndex={0} className="chart-view">
         <div className="analysis-navigation" role="group" aria-label="시장 정보 보기"><button type="button" aria-pressed={analysisView === "chart"} onClick={()=>setAnalysisView("chart")}>차트</button><button type="button" aria-pressed={analysisView === "book"} onClick={()=>setAnalysisView("book")}>호가</button></div>
         <div className="market-analysis" data-analysis-view={analysisView}>
-          <TradingChart symbol={selected} market={market} interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
-          <OrderBookPanel symbol={selected} book={orderBook} mark={freshMarkPrice(market)?.decimal} onSelectPrice={guest.phase === "ready" && selected ? price => {
+          <LiveChart interval={interval} onIntervalChange={setInterval} catalogView={catalog.state} />
+          <LiveBook onSelectPrice={guest.phase === "ready" && selected ? price => {
             setBookSelection({symbolId:selected.id,price,identity:`${guest.accountId}:${guest.generation}`});
             setMainView("order");
           } : undefined} />
@@ -130,11 +177,81 @@ export function MarketChartPanel({ children }: { children: ReactNode }) {
         <div className="market-sheet-content">
           <header className="section-heading"><h2 id="sheet-heading" className="section-title">Markets</h2><button type="button" onClick={closeSheet} aria-label="종목 선택 닫기" className="market-sheet-close">닫기</button></header>
           <div className="market-list-note"><label className="field-label" htmlFor="market-search">종목 검색</label><input ref={searchInput} id="market-search" className="market-search" type="search" placeholder="BTC, ETH 또는 종목명" value={symbolSearch} onChange={event=>setSymbolSearch(event.target.value)}/></div>
-          <SymbolSelector symbols={catalog.symbols.filter(symbol=>`${symbol.symbol} ${symbol.name} ${symbol.quoteAsset}`.toLowerCase().includes(symbolSearch.trim().toLowerCase()))} tickers={tickerQuery.tickers} selectedId={selected?.id ?? null} onSelect={selectFromSheet} />
-          <p className="market-list-note">Mark Price · 24h 변동률 · 최근 조회 기준</p>
-          {tickerQuery.isError && <button type="button" className="account-refresh" disabled={tickerQuery.isFetching} onClick={() => void tickerQuery.refetch({ cancelRefetch: false })}>통계 다시 조회</button>}
+          {catalog.state!=="ready"&&<p role="status" className="market-list-note">{catalogStateLabel(catalog.state)}{catalog.state==="unavailable"&&<button type="button" className="account-refresh" onClick={retryCatalog}>다시 조회</button>}</p>}
+          {sheetOpen && (
+            <SymbolList
+              symbols={catalog.symbols}
+              search={symbolSearch}
+              selectedId={selected?.id ?? null}
+              onSelect={selectFromSheet}
+              onResetSearch={() => {
+                setSymbolSearch("");
+                searchInput.current?.focus();
+              }}
+            />
+          )}
         </div>
       </dialog>
-    </div></SelectedMarketProvider>
+    </div></LiveMarketProvider>
+  );
+}
+
+function LiveHeader() {
+  const {symbol,market}=useSelectedMarket(), query=useMarketTickers();
+  return <MarketHeader symbol={symbol} market={market} ticker={query.tickers.find(ticker=>ticker.tradingSymbolId===symbol?.id&&ticker.symbol===symbol.symbol&&ticker.quoteAsset===symbol.quoteAsset)} />;
+}
+function LiveChart(props: Omit<Parameters<typeof TradingChart>[0],"symbol"|"market">) {
+  const {symbol,market}=useSelectedMarket();
+  return <TradingChart {...props} symbol={symbol} market={market} />;
+}
+function LiveBook({onSelectPrice}:{onSelectPrice?: (price:string)=>void}) {
+  const {symbol,market}=useSelectedMarket(), book=useSelectedBook(), query=useMarketTickers();
+  const ticker=query.tickers.find(item=>item.tradingSymbolId===symbol?.id&&item.symbol===symbol.symbol&&item.quoteAsset===symbol.quoteAsset);
+  const pct=ticker?.changePercent24h?.trim();
+  const trend:"up"|"down"|"flat"=!pct||!/[1-9]/.test(pct) ? "flat" : pct.startsWith("-") ? "down" : "up";
+  return book && <OrderBookPanel symbol={symbol} book={book} mark={freshMarkPrice(market)?.decimal} trend={trend} onSelectPrice={onSelectPrice} />;
+}
+function SymbolList({
+  symbols,
+  search,
+  selectedId,
+  onSelect,
+  onResetSearch,
+}: {
+  symbols: readonly TradingSymbol[];
+  search: string;
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  onResetSearch: () => void;
+}) {
+  const query = useMarketTickers();
+  const filtered = symbols.filter((symbol) =>
+    `${symbol.symbol} ${symbol.name} ${symbol.quoteAsset}`.toLowerCase().includes(search.trim().toLowerCase()),
+  );
+  return (
+    <>
+      {filtered.length === 0 ? (
+        <div className="market-list-note py-6 text-center" role="status" data-market-search-empty="true">
+          <p>일치하는 종목이 없습니다.</p>
+          {search.trim().length > 0 && (
+            <button type="button" className="account-refresh mt-2" onClick={onResetSearch}>
+              검색 초기화
+            </button>
+          )}
+        </div>
+      ) : (
+        <SymbolSelector symbols={filtered} tickers={query.tickers} selectedId={selectedId} onSelect={onSelect} />
+      )}
+      {query.isError && (
+        <button
+          type="button"
+          className="account-refresh"
+          disabled={query.isFetching}
+          onClick={() => void query.refetch({ cancelRefetch: false })}
+        >
+          통계 다시 조회
+        </button>
+      )}
+    </>
   );
 }

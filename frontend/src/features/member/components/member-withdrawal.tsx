@@ -1,0 +1,130 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useMember } from "./member-provider";
+import { ContentApiError, contentMessage, oauthUrl } from "../api/client";
+import { clearWithdrawalIntent, readWithdrawalIntent, saveWithdrawalIntent } from "../api/withdrawal-intent";
+import { WithdrawalConfirmation } from "./withdrawal-confirmation";
+import { MemberErrorActions } from "./member-error-actions";
+import { useDialogScrollLock } from "./dim-modal";
+import { RequestIdChip } from "../../../components/request-id-copy";
+import { getErrorRequestId } from "../../../lib/request-id";
+
+export function MemberWithdrawal() {
+  const { origin, session, snapshot, announce } = useMember(), dialog = useRef<HTMLDialogElement>(null), active = useRef(false);
+  const failures = useRef(0);
+  const [requestError, setRequestError] = useState<ContentApiError | null>(null);
+  const [owner, setOwner] = useState<number | null>(null);
+  const [ready, setReady] = useState(false), [acknowledged, setAcknowledged] = useState(false), [confirmation, setConfirmation] = useState("");
+  const [pending, setPending] = useState(false), [error, setError] = useState<string | null>(null), [receipt, setReceipt] = useState<"PENDING" | "COMPLETED" | "UNCERTAIN" | "NOT_REQUESTED" | null>(null);
+  const intent = snapshot.phase === "ready" && snapshot.memberId !== null ? readWithdrawalIntent() : null;
+  const returned = Boolean(intent?.returned && intent.memberId === snapshot.memberId);
+  const [dialogOpen, setDialogOpen] = useState(returned);
+  if (returned && (!ready || owner !== snapshot.memberId)) {
+    setOwner(snapshot.memberId); setReceipt(null); setReady(true); setAcknowledged(false); setConfirmation(""); setError(null); setDialogOpen(true);
+  }
+  const confirmedReady = (ready && owner === snapshot.memberId) || returned;
+  useDialogScrollLock(dialog, returned, {
+    canClose: () => !pending,
+    onBackdropClose: () => {
+      if (!pending) {
+        dialog.current?.close();
+        setDialogOpen(false);
+      }
+    },
+  });
+  const status = useCallback(async (silent = false) => {
+    if (active.current) return;
+    active.current = true; if (!silent) setPending(true);
+    try {
+      const result = await session.withdrawalStatus(); failures.current = 0; setReceipt(result); setError(null);
+      if (result === "COMPLETED") { clearWithdrawalIntent(); announce("ended"); }
+    } catch (error) { failures.current = error instanceof ContentApiError && [401, 403, 404, 422].includes(error.status) ? 3 : failures.current + 1; setError(contentMessage(error)); setRequestError(error instanceof ContentApiError ? error : null); }
+    finally { active.current = false; setPending(false); }
+  }, [session, announce]);
+  useEffect(() => {
+    if (snapshot.phase !== "withdrawing") return;
+    const timer = setInterval(() => { if (document.visibilityState !== "hidden" && failures.current < 3) void status(true); }, 5000);
+    return () => clearInterval(timer);
+  }, [snapshot.phase, status]);
+  useEffect(() => {
+    if (!confirmedReady || snapshot.phase !== "ready" || snapshot.memberId === null) return;
+    const current = readWithdrawalIntent();
+    if (!current?.returned || current.memberId !== snapshot.memberId) return;
+    failures.current = 0; clearWithdrawalIntent();
+    if (dialog.current && typeof dialog.current.showModal === "function") {
+      if (dialog.current.open) dialog.current.close();
+      dialog.current.showModal();
+      setDialogOpen(true);
+    }
+  }, [confirmedReady, snapshot.phase, snapshot.memberId]);
+  async function withdraw(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (active.current || owner !== snapshot.memberId || !ready || !acknowledged || confirmation !== "탈퇴합니다" || snapshot.phase !== "ready") return;
+    active.current = true; setPending(true); setError(null); setRequestError(null);
+    try {
+      const result = await session.withdraw({ acknowledged, confirmation, policyVersion: "ym-withdrawal-v1" });
+      if (result === "COMPLETED" || result === "PENDING") {
+        announce("ended");
+      }
+      setReceipt(result); clearWithdrawalIntent(); dialog.current?.close(); setDialogOpen(false);
+    } catch (error) {
+      setError(contentMessage(error));
+      setRequestError(error instanceof ContentApiError ? error : null);
+      if (session.getSnapshot().phase === "withdrawing") { setReceipt("UNCERTAIN"); dialog.current?.close(); setDialogOpen(false); }
+    } finally { active.current = false; setPending(false); }
+  }
+  const errorRequestId = getErrorRequestId(requestError);
+  return <section className="member-simulation space-y-3" aria-label="회원 탈퇴">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h3 className="flex items-center gap-2 text-base font-black text-gray-900">
+          <span className="inline-block h-4 w-1.5 rounded-full bg-gray-400" />
+          계정 관리 및 회원 탈퇴
+        </h3>
+        <p className="mt-1 text-xs text-gray-500">
+          회원 탈퇴 시 진행 중인 주문·포지션이 관리상 종료되며 개인정보가 파기됩니다.
+        </p>
+      </div>
+      {snapshot.phase === "ready" && <button type="button" className="account-refresh inline-flex min-h-11 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-4 text-xs font-bold text-red-600 transition-colors hover:bg-red-100" onClick={() => {
+        const intent = readWithdrawalIntent(); setOwner(snapshot.memberId); setReceipt(null); failures.current = 0; setReady((ready && owner === snapshot.memberId) || (!!intent?.returned && intent.memberId === snapshot.memberId)); clearWithdrawalIntent();
+        setAcknowledged(false); setConfirmation(""); setError(null); setRequestError(null); dialog.current?.showModal(); setDialogOpen(true);
+      }}>회원 탈퇴</button>}
+    </div>
+    {((receipt && (snapshot.memberId === null || owner === snapshot.memberId)) || snapshot.phase === "withdrawing") && <><h2>탈퇴 진행 상태</h2><p className="member-message" role="status">{receipt === "COMPLETED" ? "모의투자 정리와 개인정보 제거가 완료되었습니다. 같은 소셜 계정으로 새로 가입할 수 있으며 이전 회원 ID·회차·자산은 복구하거나 이전하지 않습니다."
+      : receipt === "NOT_REQUESTED" ? "서버에서 접수된 탈퇴 요청을 찾지 못했습니다. 로그인 상태를 다시 확인한 뒤 시도해 주세요."
+      : receipt === "UNCERTAIN" ? "탈퇴 요청 결과를 확인하지 못했습니다. 새 요청을 반복하지 않고 서버의 진행 상태를 확인합니다."
+      : "탈퇴 요청을 접수했습니다. 모의투자 주문·포지션 정리와 개인정보 제거를 진행 중이며 아직 완료되지 않았습니다."}</p>
+      {snapshot.phase === "withdrawing" && <button className="member-secondary" disabled={pending} onClick={() => void status()}>{pending ? "조회 중…" : "진행 상태 확인"}</button>}
+      {receipt === "NOT_REQUESTED" && <button className="member-secondary" onClick={() => void session.restore().catch(() => {})}>로그인 상태 다시 확인</button>}
+    </>}
+    {error && !dialogOpen && (
+      <div role="alert" className="member-message space-y-2">
+        <p>{error}{snapshot.phase === "withdrawing" && " 상태 조회 인증이 만료되면 로그인 화면에서 처리 상태를 다시 확인해 주세요."}</p>
+        {errorRequestId && <RequestIdChip requestId={errorRequestId} />}
+      </div>
+    )}
+    {error && !dialogOpen && <MemberErrorActions error={requestError} checking={pending} onCheck={snapshot.phase === "withdrawing" ? () => void status() : undefined} onLogin={event => {
+      try { if (owner) saveWithdrawalIntent(owner); } catch { event.preventDefault(); setError("본인 확인을 위한 임시 상태를 저장하지 못했습니다. 브라우저 저장 설정을 확인해 주세요."); }
+    }} />}
+    <dialog
+      key={snapshot.memberId}
+      ref={dialog}
+      open={returned || undefined}
+      className="position-close-dialog member-withdrawal-dialog"
+      aria-labelledby="member-withdraw-title"
+      onClose={() => setDialogOpen(false)}
+      onCancel={event => { if (pending) event.preventDefault(); }}
+    >
+      <WithdrawalConfirmation ready={confirmedReady} pending={pending} acknowledged={acknowledged} confirmation={confirmation} onAcknowledge={setAcknowledged} onConfirmation={setConfirmation} onSubmit={event => void withdraw(event)} onCancel={() => { dialog.current?.close(); setDialogOpen(false); }} error={error} />
+      {error && errorRequestId && (
+        <div className="mt-2">
+          <RequestIdChip requestId={errorRequestId} />
+        </div>
+      )}
+      {!confirmedReady && snapshot.memberId && <div className="member-actions">{(["google", "kakao"] as const).map(provider => <a key={provider} className="member-secondary" href={oauthUrl(origin, provider)} onClick={event => {
+        try { saveWithdrawalIntent(snapshot.memberId!); } catch { event.preventDefault(); setError("본인 확인을 위한 임시 상태를 저장하지 못했습니다. 브라우저 저장 설정을 확인해 주세요."); }
+      }}>{provider === "google" ? "Google" : "Kakao"}로 본인 확인</a>)}</div>}
+    </dialog>
+  </section>;
+}

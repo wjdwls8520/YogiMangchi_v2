@@ -16,6 +16,7 @@ import org.springframework.http.*;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping(value="/api/v1/members",produces="application/json")
@@ -24,7 +25,25 @@ public class MemberController {
     private final MemberProfiles profiles;
     private final MemberWithdrawals withdrawals;
     private final boolean secureCookies;
-    public MemberController(MemberQueries members,MemberProfiles profiles,MemberWithdrawals withdrawals,@Value("${content.auth.secure-cookies}") boolean secureCookies) { this.members=members; this.profiles=profiles; this.withdrawals=withdrawals; this.secureCookies=secureCookies; }
+    private final com.yogimangchi.content.auth.security.ContentEndpointRateLimiter rateLimiter;
+
+    public MemberController(MemberQueries members,MemberProfiles profiles,MemberWithdrawals withdrawals,boolean secureCookies) {
+        this(members, profiles, withdrawals, secureCookies, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MemberController(
+            MemberQueries members,
+            MemberProfiles profiles,
+            MemberWithdrawals withdrawals,
+            @Value("${content.auth.secure-cookies}") boolean secureCookies,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) com.yogimangchi.content.auth.security.ContentEndpointRateLimiter rateLimiter) {
+        this.members=members;
+        this.profiles=profiles;
+        this.withdrawals=withdrawals;
+        this.secureCookies=secureCookies;
+        this.rateLimiter=rateLimiter;
+    }
     @PostMapping("/me/withdrawal")
     @SecurityRequirement(name="memberBearer")
     @Operation(summary="Request own irreversible withdrawal",description="Bearer + fresh same-member Google/Kakao proof session + CSRF. Body acknowledged=true, confirmation=탈퇴합니다, policyVersion=ym-withdrawal-v1. Returns202 PENDING while Trading cleanup is unconfirmed. Only after Trading commits its account lock/cleanup does Content erase OAuth identity, profile and refresh data and return COMPLETED. Pending users cannot use Content member functions. Repeat with the same valid confirmation is safe; GET status does not require proof/CSRF. No-body requests400. No recovery/old history merge on re-signup.")
@@ -58,10 +77,41 @@ public class MemberController {
     @GetMapping("/nickname/availability")
     @Operation(summary="Check nickname availability",description="Public.1-8 Unicode code points in Letter/Number categories (L/N), matching Frontend Unicode u regex. Spaces/punctuation/emoji/control/invisible separators rejected400. Availability is advisory; signup/profile changes still enforce DB uniqueness and can return409. Legacy9-12-character nicknames remain readable/login-capable but cannot be submitted as new nickname input.")
     public NicknameAvailability available(@RequestParam String nickname) { return new NicknameAvailability(profiles.nicknameAvailable(nickname)); }
-    @PatchMapping("/me/profile")
+    @PatchMapping(value="/me/profile",consumes=MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name="memberBearer")
-    @Operation(summary="Change own nickname or profile message",description="Bearer only; memberId comes from verified JWT. A provided nickname must be1-8 Unicode Letter/Number code points (L/N). Omitted/null nickname preserves legacy9-12-character names, including on message-only changes. Messages up to255 characters; empty clears, omitted/null preserves. 400 invalid,401 inactive/invalid credential,409 duplicate nickname or lock contention. Retained older messages above255 are not silently truncated: submit a valid replacement when editing. No image upload in this endpoint.")
-    public ResponseEntity<MemberProfileResponse> update(@AuthenticationPrincipal Jwt jwt,@Valid @RequestBody UpdateProfileRequest body) {
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(profiles.change(Long.valueOf(jwt.getSubject()),body));
+    @Operation(summary="Change own nickname, profile message, or reset profile image (JSON)",description="Bearer only; memberId comes from verified JWT. A provided nickname must be1-8 Unicode Letter/Number code points (L/N). Omitted/null nickname preserves legacy9-12-character names, including on message-only changes. Messages up to255 characters; empty clears, omitted/null preserves. resetProfileImage=true clears custom avatar and schedules S3 deletion.")
+    public ResponseEntity<MemberProfileResponse> update(@AuthenticationPrincipal Jwt jwt,@Valid @RequestBody UpdateProfileRequest body,HttpServletRequest request) {
+        Long memberId = Long.valueOf(jwt.getSubject());
+        if (rateLimiter != null) {
+            rateLimiter.checkProfileWrite(memberId, request != null ? request.getRemoteAddr() : "unknown");
+        }
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(profiles.change(memberId,body));
+    }
+    @RequestMapping(value="/me/profile",method={RequestMethod.PATCH,RequestMethod.POST},consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    @SecurityRequirement(name="memberBearer")
+    @Operation(summary="Change own profile with optional S3 profile image upload or reset (Multipart)",description="Supports multipart form fields nickname, profileMessage (or profileMsg), resetProfileImage, type (upload|reset), and image file part profileImage (or file).")
+    public ResponseEntity<MemberProfileResponse> updateMultipart(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required=false) String nickname,
+            @RequestParam(required=false) String profileMessage,
+            @RequestParam(required=false) String profileMsg,
+            @RequestParam(required=false) String type,
+            @RequestParam(required=false) Boolean resetProfileImage,
+            @RequestPart(name="request",required=false) @Valid UpdateProfileRequest requestPart,
+            @RequestPart(name="profileImage",required=false) MultipartFile profileImage,
+            @RequestPart(name="file",required=false) MultipartFile file,
+            HttpServletRequest request) {
+        Long memberId = Long.valueOf(jwt.getSubject());
+        if (rateLimiter != null) {
+            rateLimiter.checkProfileWrite(memberId, request != null ? request.getRemoteAddr() : "unknown");
+        }
+        MultipartFile effectiveFile = (profileImage != null && !profileImage.isEmpty()) ? profileImage : file;
+        String effectiveMessage = profileMessage != null ? profileMessage : profileMsg;
+        UpdateProfileRequest effectiveRequest = requestPart != null
+                ? requestPart
+                : new UpdateProfileRequest(nickname,effectiveMessage,resetProfileImage);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(profiles.change(memberId,effectiveRequest,effectiveFile,type));
     }
 }

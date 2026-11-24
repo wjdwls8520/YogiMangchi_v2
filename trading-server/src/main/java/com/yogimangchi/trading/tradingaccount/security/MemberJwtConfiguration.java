@@ -23,8 +23,13 @@ public class MemberJwtConfiguration {
             throw new IllegalArgumentException("A trusted Content issuer is required");
         if(environment.acceptsProfiles(org.springframework.core.env.Profiles.of("prod")) && !uri.getScheme().equals("https"))
             throw new IllegalArgumentException("Production JWT issuer must use HTTPS");
+        Path resolvedPath=Path.of(path);
+        if(!Files.exists(resolvedPath) && !resolvedPath.isAbsolute()) {
+            Path parentRelative=Path.of("..").resolve(resolvedPath).normalize();
+            if(Files.exists(parentRelative)) resolvedPath=parentRelative;
+        }
         RSAPublicKey key;
-        try(var input=Files.newInputStream(Path.of(path))) { key=RsaKeyConverters.x509().convert(input); }
+        try(var input=Files.newInputStream(resolvedPath)) { key=RsaKeyConverters.x509().convert(input); }
         if(key==null || key.getModulus().bitLength()<2048) throw new IllegalArgumentException("RSA public key of at least2048 bits required");
         return key;
     }

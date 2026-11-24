@@ -1,25 +1,209 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRef } from "react";
-import { MemberProvider } from "../src/features/member/components/member-provider";
+import { QueryClient, useQueryClient } from "@tanstack/react-query";
+import {
+  MemberProvider,
+  shouldPreserveQueryOnSessionChange,
+} from "../src/features/member/components/member-provider";
+import {
+  CommunityPageSkeleton,
+  MainPortalPageSkeleton,
+  MyPageSkeleton,
+} from "../src/features/member/components/page-skeletons";
+import { NotificationCenterProvider } from "../src/features/member/notifications/notification-context";
+import { NotificationsPageView } from "../src/features/member/notifications/notifications-page-view";
+import {
+  formatNotificationCount,
+  formatNotificationDescription,
+  formatNotificationTitle,
+  getNotificationDetailFields,
+  getNotificationNavigationTarget,
+  getNotificationTradeMeta,
+  normalizeRawNotification,
+} from "../src/features/member/notifications/notification-utils";
+import { MemberConsentGate, MemberConsents } from "../src/features/member/components/member-consents";
 import { MemberLoginView, ProfileEditForm, SignupForm } from "../src/features/member/components/member-views";
-import { policyUrl } from "../src/features/member/components/member-auth";
 import { GuestStartDialog } from "../src/features/trading/components/guest-access";
+import { AccountQueryState } from "../src/features/trading/components/account-query-state";
+import { TradingDataProvider } from "../src/features/trading/components/trading-data-provider";
+import { TradingAccountTabs } from "../src/features/trading/components/trading-account-tabs";
 import { WithdrawalConfirmation } from "../src/features/member/components/withdrawal-confirmation";
-test("signup allows explicit required consent without configured policy links and blocks duplicate pending submissions", () => {
-  const html = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending={false} terms={null} privacy={null}/></MemberProvider>);
-  assert.equal(html.includes('disabled=""'), false);
-  assert.match(html, /<input(?=[^>]*name="termAgree")(?=[^>]*required="")[^>]*>/);
-  assert.match(html, /<input(?=[^>]*name="privateAgree")(?=[^>]*required="")[^>]*>/);
+import { MemberWithdrawal } from "../src/features/member/components/member-withdrawal";
+import { createMemberSession } from "../src/features/member/api/session";
+import { clearWithdrawalIntent, saveWithdrawalIntent } from "../src/features/member/api/withdrawal-intent";
+import { parsePolicyState, type PolicyBundle } from "../src/features/member/api/policies";
+import { ContentApiError, contentJson, contentMessage } from "../src/features/member/api/client";
+import {
+  communityCommentsPath,
+  communityPostsPath,
+  newsPath,
+  parseCommentLike,
+  parseCommunityComments,
+  parseCommunityLike,
+  parseCommunityPostPage,
+  parseCommunityReport,
+  parseLatestPostsCheck,
+  parseMemberCommunityCommentPage,
+  parseMemberCommunityReportPage,
+  parseNewsHighlights,
+  parseNewsPage,
+  parseNewsReaction,
+  parseNewsSentimentSummary,
+  SYMBOL_FILTER_TAGS,
+  parsePublicMemberPortfolio,
+  parseReportReasons,
+  parseSharedPositionSnapshot,
+  readCommunityOrPublic,
+} from "../src/features/member/api/community-news";
+import {
+  NewsFeed,
+  applyIdempotentNewsView,
+  computeLiveNewsSentiment,
+  getKstDateString,
+  getOrCreateAnonNewsViewerId,
+  hasAnonViewedNewsToday,
+  hasMemberViewedNews,
+  markAnonViewedNewsToday,
+  markMemberViewedNews,
+  sortNewsItems,
+} from "../src/features/member/components/news-feed";
+import {
+  CommunityBoard,
+  SharedPositionCard,
+  filterIncomingLatestPosts,
+  formatSidebarSeasonLabel,
+  shouldNotifyIncomingCommunityPost,
+} from "../src/features/member/components/community-board";
+import type { CommunityPost, SharedPositionSnapshot } from "../src/features/member/api/community-news";
+import {
+  formatExchangeCompactPct,
+  formatExchangeFeeUsdt,
+  formatExchangePct,
+  formatExchangePrice,
+  formatExchangeQuantity,
+  formatExchangeSeedUsdt,
+  formatExchangeSignedPct,
+  formatExchangeSignedUsdt,
+  formatExchangeUsdt,
+} from "../src/features/member/api/exchange-format";
+import { MainPortal, mapRedisTickersToPopularCoins } from "../src/features/member/components/main-portal";
+import {
+  MemberSignupPage,
+  clearLoginReturnPath,
+  consumeLoginReturnPath,
+  normalizeLoginReturnPath,
+  saveLoginReturnPath,
+} from "../src/features/member/components/member-auth";
+import { MemberAccount } from "../src/features/member/components/member-account";
+import { MemberMyProfilePage } from "../src/features/member/components/member-profile-portfolio";
+import { PublicMember } from "../src/features/member/components/public-member";
+import { V1AssetSummaryCard, V1Header } from "../src/features/member/components/v1-ui";
+import { SiteFooter } from "../src/components/site-footer";
+import {
+  buildExchangeRateChartGeometry,
+  classifyFearGreedLabelKr,
+  computeBtcDominanceChange24h,
+  computeKimchiPremiumPercent,
+  fetchLiveMarketOverview,
+  fetchRedisMarketOverview,
+  parseMarketOverviewPayload,
+} from "../src/features/member/api/market-overview";
+
+const SAMPLE_TEST_POSITION: SharedPositionSnapshot = {
+  id: "POS_BTC_LONG_10X",
+  marketLabel: "모의투자 선물",
+  symbol: "BTC",
+  pair: "BTCUSDT",
+  side: "LONG",
+  leverage: 10,
+  entryPrice: "68,420.00",
+  markPrice: "69,680.50",
+  liquidationPrice: "61,890.00",
+  roePct: "+18.42%",
+  pnlUsdt: "+184.20 USDT",
+  positive: true,
+  showPnlAmount: true,
+  verified: true,
+};
+import { DimModal, lockBodyScroll, unlockBodyScroll, resetScrollLockForTest } from "../src/features/member/components/dim-modal";
+import { ContestHub, ContestListCard } from "../src/features/contest/components/contest-hub";
+import { ContestTradingSubheader } from "../src/features/contest/components/contest-trading-terminal";
+import {
+  AdminContestList,
+  ContestCreateEditModal,
+} from "../src/features/admin/components/admin-contest-list";
+import { AdminContestDetail } from "../src/features/admin/components/admin-contest-detail";
+import { AdminHeader } from "../src/features/admin/components/admin-layout";
+import {
+  applyForContestSeason,
+  cancelContestSeasonApplication,
+  syncContestAccountNickname,
+  approveAdminContestApplicant,
+  bulkApproveAdminContestApplicants,
+  cleanupRemainingAdminContestSeason,
+  createAdminContestSeason,
+  fetchAdminContestSeasonDetail,
+  fetchAdminContestSeasons,
+  fetchContestSeasonSummary,
+  fetchMyContestOverview,
+  fetchMyContestSeasons,
+  fetchPublicContestLeaderboard,
+  fetchPublicContestSeasons,
+  fetchPublicMemberContestSeasons,
+  formatContestDateTime,
+  formatContestSeedPlain,
+  resolveTradingContestBaseUrl,
+  formatContestSignedRoi,
+  formatContestSignedUsdt,
+  formatContestUsdt,
+  formatContestWinRate,
+  toDatetimeLocalInput,
+  toIsoInstantFromInput,
+  patchAdminContestSeasonStatus,
+  rejectAdminContestApplicant,
+  settleAdminContestSeason,
+  loadInitialContestSidebarSnapshot,
+  selectDefaultContestSidebarSeasonId,
+  updateAdminContestSeason,
+} from "../src/features/contest/api/contest-client";
+import { parseAccess } from "../src/features/member/api/contracts";
+import {
+  authenticateGuestTradingSocket,
+  resolveContestTradingPath,
+} from "../src/features/trading/api/guest-session";
+import {
+  TradingApiError,
+  marketSymbolsJson,
+} from "../src/features/trading/api/client";
+import { mutationMessage } from "../src/features/trading/api/mutation-request";
+import { AdminUsers } from "../src/features/admin/components/admin-users";
+import { AdminCommunity } from "../src/features/admin/components/admin-community";
+import { AdminReportsView } from "../src/features/admin/components/admin-reports";
+import {
+  deleteAdminCommunityPost,
+  deleteAdminCommunityReply,
+  dismissAdminReport,
+  fetchAdminCommunityPosts,
+  fetchAdminCommunityReplies,
+  fetchAdminMembers,
+  fetchAdminReports,
+  moderateAdminReportTarget,
+  withdrawAdminMember,
+} from "../src/features/admin/api/admin-api";
+
+test("signup waits for the versioned original policies and blocks duplicate pending submissions", () => {
+  const html = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending={false}/></MemberProvider>);
+  assert.match(html, /disabled=""[^>]*>동의하고 가입하기/);
   assert.equal(html.includes('checked=""'), false); assert.equal(html.includes('type="password"'), false);
-  assert.match(html, /동의 문서 링크는 준비 중/);
+  assert.match(html, /필수 동의 문서를 확인/);
   assert.match(html, /최대 8자/);
-  const pending = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending terms={null} privacy={null}/></MemberProvider>);
+  const pending = renderToStaticMarkup(<MemberProvider><SignupForm onSubmit={() => {}} pending /></MemberProvider>);
   assert.match(pending, /fieldset disabled=""/);
   assert.match(pending, /disabled=""[^>]*>가입 처리 중/);
-  for (const bad of ["javascript:alert(1)", "//other.test", "/\n/other.test", "https://user:secret@example.test"]) assert.equal(policyUrl(bad), null);
-  assert.equal(policyUrl("/policy/terms"), "/policy/terms");
 });
 test("login exposes only supported providers and profile content is escaped", () => {
   const login = renderToStaticMarkup(<MemberLoginView google="http://localhost:8080/oauth2/authorization/google" kakao="http://localhost:8080/oauth2/authorization/kakao"/>);
@@ -32,19 +216,4483 @@ test("an unchanged legacy nickname remains readable and does not prevent message
   assert.match(html, /value="legacyname12"/);
   assert.equal(html.includes('pattern="[\\p{L}\\p{N}]{1,8}"'), false);
 });
-test("explicit Member account opening accurately states zero balance and excludes Guest funding promises", () => {
+test("Member account opening describes server initial grant and preserves existing account and Guest separation", () => {
   const html = renderToStaticMarkup(<GuestStartDialog member dialogRef={createRef<HTMLDialogElement>()} creating={false} failed={false} onStart={() => {}} onCancel={() => {}} onClose={() => {}} />);
-  assert.match(html, /최초 잔액은 0 USDT/); assert.equal(html.includes("10,000 USDT로 시작하기"), false);
+  assert.match(html, /1회차 시작 자금은 10,000 USDT/); assert.match(html, /기존 계정 잔액은 자동 변경하지 않습니다/);
   assert.match(html, /Guest의 체험 자산과 금융 이력을 가져오거나 초기화하지 않습니다/);
+});
+test("failed member preparation directs a read-only lookup instead of offering another creation", () => {
+  const html = renderToStaticMarkup(<GuestStartDialog member dialogRef={createRef<HTMLDialogElement>()} creating={false} failed onStart={() => {}} onCancel={() => {}} onClose={() => {}} />);
+  assert.match(html, /창을 닫고 계정을 다시 조회/);
+  assert.match(html, /disabled=""[^>]*>10,000 USDT로 시작하기/);
+  assert.doesNotMatch(html, /서버 연결과 인증 설정/);
+  const error = renderToStaticMarkup(<AccountQueryState loading={false} error onRetry={() => {}} />);
+  assert.match(error, /잔액과 거래 상태를 알 수 없습니다/);
+  assert.doesNotMatch(error, /저장소|0 USDT/);
+});
+test("account tabs wait for login and account lookup without asking the user to open another account", () => {
+  let client: QueryClient | undefined;
+  function Tabs() { client = useQueryClient(); return <TradingAccountTabs symbols={[]} />; }
+  const html = renderToStaticMarkup(<MemberProvider><TradingDataProvider><Tabs /></TradingDataProvider></MemberProvider>);
+  client?.clear();
+  assert.match(html, /로그인과 거래 계정을 확인하는 중/);
+  assert.doesNotMatch(html, /계정을 열면|로그인 또는 게스트로 참여하면/);
 });
 test("withdrawal explains irreversible identity removal and preserved records, requires explicit confirmation and blocks the unsupported API", () => {
   const html = renderToStaticMarkup(<WithdrawalConfirmation onSubmit={event => event.preventDefault()} onCancel={() => {}} />);
-  for (const text of ["복구할 수 없", "새로운 회원", "이전되지 않", "관리상 종료", "새로운 체결·손익·수수료", "게시글·댓글·대댓글", "탈퇴한회원", "Guest 기록", "서버의 확인 문구 검증과 즉시 거래 차단"])
+  for (const text of ["복구할 수 없", "새로운 회원", "이전되지 않", "관리상 종료", "새로운 체결·손익·수수료", "게시글·댓글·대댓글", "탈퇴한회원", "Guest 기록", "비식별 거래 이력과 탈퇴 시각", "최근 동일 소셜 계정으로 본인 확인을 완료한 뒤 탈퇴를 요청할 수 있습니다."])
     assert.equal(html.includes(text), true, text);
+  for (const leak of ["새로 확정된 탈퇴 정책", "서버 보존 정책", "서버의 확인 문구 검증"])
+    assert.equal(html.includes(leak), false, leak);
   assert.match(html, /<input(?=[^>]*name="acknowledged")(?=[^>]*required="")[^>]*>/);
   assert.match(html, /<input(?=[^>]*name="confirmation")(?=[^>]*required="")(?=[^>]*pattern="탈퇴합니다")[^>]*>/);
-  assert.match(html, /disabled=""[^>]*>탈퇴 요청 · 준비 중/);
+  assert.match(html, /disabled=""[^>]*>본인 확인 필요/);
   assert.equal(html.includes('checked=""'), false);
   assert.equal(html.includes("모든 정보가 완전히 삭제"), false);
   assert.equal(html.includes("공인된 전자서명"), false);
+});
+test("MemberWithdrawal automatically opens the confirmation dialog when rendered with a returned WithdrawalIntent for the active member", async () => {
+  const epoch = Date.now();
+  const session = createMemberSession("http://localhost:8080", async url => String(url).endsWith("csrf")
+    ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+    : Response.json({ memberId: 7, nickname: "회원", accessToken: "header.payload.sig", tokenType: "Bearer", expiresIn: 900, expiresAt: new Date(epoch + 900000).toISOString() }), () => epoch, fn => fn(), () => true, () => null);
+  await session.restore();
+  const store = new Map<string, string>();
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    sessionStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } },
+  };
+  try {
+    saveWithdrawalIntent(7, true);
+    const html = renderToStaticMarkup(<MemberProvider session={session}><MemberWithdrawal /></MemberProvider>);
+    assert.match(html, /<dialog[^>]*\sopen=""/);
+    assert.match(html, />탈퇴 요청<\/button>/);
+    assert.doesNotMatch(html, /Google로 본인 확인|본인 확인 필요/);
+    clearWithdrawalIntent();
+    const closed = renderToStaticMarkup(<MemberProvider session={session}><MemberWithdrawal /></MemberProvider>);
+    assert.doesNotMatch(closed, /<dialog[^>]*\sopen=/);
+    assert.match(closed, />본인 확인 필요<\/button>/);
+  } finally {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = previousWindow;
+  }
+});
+
+test("MemberConsents displays clean KST consent summaries, reconsent prompts, and sanitized policy text without internal ym-* version codes", async () => {
+  const epoch = Date.now();
+  const session = createMemberSession("http://localhost:8080", async url => String(url).endsWith("csrf")
+    ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+    : Response.json({ memberId: 7, nickname: "회원", accessToken: "header.payload.sig", tokenType: "Bearer", expiresIn: 900, expiresAt: new Date(epoch + 900000).toISOString() }), () => epoch, fn => fn(), () => true, () => null);
+  await session.restore();
+  const snapshot = session.getSnapshot();
+  const policyState = parsePolicyState({
+    reconsentRequired: false,
+    policies: [
+      { type: "TERMS", version: "ym-terms-v3", required: true, accepted: true, lastAcceptedVersion: "ym-terms-v3", lastAcceptedAt: "2026-10-25T12:00:00Z", documentUrl: "/api/v1/policies/TERMS/ym-terms-v3" },
+      { type: "PRIVACY", version: "ym-privacy-v3", required: true, accepted: true, lastAcceptedVersion: "ym-privacy-v3", lastAcceptedAt: "2026-10-25T12:00:00Z", documentUrl: "/api/v1/policies/PRIVACY/ym-privacy-v3" },
+    ],
+  });
+  const bundle: PolicyBundle = {
+    state: policyState,
+    documents: {
+      TERMS: {
+        type: "TERMS",
+        version: "ym-terms-v3",
+        documentStatus: "PUBLISHED",
+        sha256: "a".repeat(64),
+        text: "# 요기망치 이용약관 (ym-terms-v3)\n시행일: 2026-11-22 · 문서 상태: 확정(PUBLISHED)\n\n제1조 이용약관 등록 원문",
+      },
+      PRIVACY: {
+        type: "PRIVACY",
+        version: "ym-privacy-v3",
+        documentStatus: "PUBLISHED",
+        sha256: "b".repeat(64),
+        text: "# 요기망치 개인정보 처리방침 (ym-privacy-v3)\n시행일: 2026-11-22 · 문서 상태: 확정(PUBLISHED)\n\n제1조 개인정보처리방침 등록 원문",
+      },
+    },
+  };
+  const client = new QueryClient();
+  client.setQueryData(["member", "consents", snapshot.memberId, snapshot.generation], policyState);
+  client.setQueryData(["public-policies", "http://localhost:8080"], bundle);
+  try {
+    const html = renderToStaticMarkup(<MemberProvider session={session} client={client}><MemberConsents /></MemberProvider>);
+    assert.match(html, /현재 필요한 정책 동의가 완료되었습니다\./);
+    assert.match(html, /<strong>이용약관<\/strong> · 동의 완료 · 2026-10-25 21:00 KST/);
+    assert.match(html, /<strong>개인정보처리방침<\/strong> · 동의 완료 · 2026-10-25 21:00 KST/);
+    assert.match(html, /<details><summary>이용약관 전문 보기<\/summary><div class="policy-original"><h3 class="policy-doc-title">요기망치 이용약관<\/h3><p><span>시행일: 2026-11-22<\/span><\/p><p><span>제1조 이용약관 등록 원문<\/span><\/p><\/div><\/details>/);
+    assert.match(html, /<details><summary>개인정보처리방침 전문 보기<\/summary><div class="policy-original"><h3 class="policy-doc-title">요기망치 개인정보 처리방침<\/h3><p><span>시행일: 2026-11-22<\/span><\/p><p><span>제1조 개인정보처리방침 등록 원문<\/span><\/p><\/div><\/details>/);
+    assert.equal(html.includes("<pre"), false);
+    assert.equal(html.includes("# 요기망치"), false);
+    assert.equal(html.includes("ym-terms-"), false);
+    assert.equal(html.includes("ym-privacy-"), false);
+    assert.equal(html.includes("(PUBLISHED)"), false);
+    assert.equal(html.includes("동의 버전"), false);
+
+    // Pending re-consent state + banner: visible copy hides internal codes while hidden inputs keep API versions
+    const reconsentState = parsePolicyState({
+      reconsentRequired: true,
+      policies: [
+        { type: "TERMS", version: "ym-terms-v3", required: true, accepted: false, lastAcceptedVersion: "ym-terms-v1", lastAcceptedAt: "2026-10-20T00:00:00Z", documentUrl: "/api/v1/policies/TERMS/ym-terms-v3" },
+        { type: "PRIVACY", version: "ym-privacy-v3", required: true, accepted: false, lastAcceptedVersion: null, lastAcceptedAt: null, documentUrl: "/api/v1/policies/PRIVACY/ym-privacy-v3" },
+      ],
+    });
+    client.setQueryData(["member", "consents", snapshot.memberId, snapshot.generation], reconsentState);
+    const pendingHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <MemberConsentGate>
+          <MemberConsents />
+        </MemberConsentGate>
+      </MemberProvider>,
+    );
+    assert.match(pendingHtml, /약관이 개정되었습니다\. 최신 약관을 확인하고 동의해 주세요\./);
+    assert.match(pendingHtml, /<strong>이용약관<\/strong> · 약관이 개정되어 다시 동의가 필요합니다/);
+    assert.match(pendingHtml, /<strong>개인정보처리방침<\/strong> · 필수 동의가 필요합니다/);
+    assert.match(pendingHtml, /<input type="hidden" name="termsVersion" value="ym-terms-v3"\/>/);
+    assert.match(pendingHtml, /<input type="hidden" name="privacyVersion" value="ym-privacy-v3"\/>/);
+    const visiblePendingText = pendingHtml.replace(/<[^>]+>/g, " ");
+    assert.equal(visiblePendingText.includes("ym-terms-"), false);
+    assert.equal(visiblePendingText.includes("ym-privacy-"), false);
+    assert.equal(visiblePendingText.includes("(PUBLISHED)"), false);
+  } finally {
+    client.clear();
+  }
+});
+
+test("NewsFeed renders category/symbol filters, expandable article content, and trading shortcut links", async () => {
+  const path = newsPath({ category: "CRYPTO", symbolTag: "BTC", keyword: "ETF", cursorId: 12, size: 10 });
+  assert.equal(path, "/news?category=CRYPTO&symbolTag=BTC&keyword=ETF&cursorId=12&size=10");
+  assert.equal(
+    newsPath({ section: "NEWSROOM", subCategory: "CRYPTO", sort: "POPULAR", size: 10 }),
+    "/news?section=NEWSROOM&subCategory=CRYPTO&sort=POPULAR&size=10",
+  );
+
+  for (const allowedNewsPath of ["/news/highlights", "/news/stream", "/news/10/reactions"]) {
+    const res = await contentJson("http://localhost:8080", allowedNewsPath, {}, async () =>
+      Response.json({ ok: true }),
+    );
+    assert.deepEqual(res, { ok: true }, allowedNewsPath);
+  }
+
+  assert.deepEqual(
+    parseNewsReaction({
+      newsId: 10,
+      reaction: "BULL",
+      bullCount: 45,
+      bearCount: 12,
+      bullPct: 79,
+      bearPct: 21,
+    }),
+    {
+      newsId: 10,
+      reaction: "BULL",
+      userReaction: "BULL",
+      bullCount: 45,
+      bearCount: 12,
+      bullPct: 79,
+      bearPct: 21,
+    },
+  );
+
+  const rawPage = {
+    items: [
+      {
+        id: 10,
+        category: "CRYPTO",
+        section: "BREAKING",
+        subCategory: "COIN_FLASH",
+        title: "비트코인 현물 ETF 자금 유입 확대",
+        summary: "기관 중심 순유입이 이어지며 선물 미결제약정이 증가했습니다.",
+        content: "미국 현물 ETF 순유입과 함께 BTC 선물 시장의 유동성이 확대되고 있습니다.",
+        sourceName: "Yogimangchi Market Desk",
+        sourceUrl: "https://www.coindesk.com/markets/btc-etf-inflows",
+        thumbnailUrl: "https://images.coindesk.com/btc-etf-thumb.jpg",
+        aiSummary: "기관 ETF 자금 유입 확대로 BTC 단기 매수 우위 지속",
+        sentiment: "BULLISH",
+        bullCount: 52,
+        bearCount: 11,
+        viewCount: 180,
+        symbolTag: "BTC",
+        publishedAt: "2026-11-01T09:00:00Z",
+      },
+      {
+        id: 9,
+        category: "MACRO",
+        title: "미 연준 금리 동결 시사 및 달러 인덱스 보합",
+        summary: "거시 불확실성 완화로 위험자산 선호 심리가 회복세를 보였습니다.",
+        content: "FOMC 의사록 공개 이후 국채 금리 변동성이 축소되었습니다.",
+        sourceName: "Global Macro Wire",
+        symbolTag: null,
+        publishedAt: "2026-11-01T08:00:00Z",
+      },
+    ],
+    hasNext: true,
+    nextCursorId: 9,
+  };
+  const page = parseNewsPage(rawPage);
+  assert.equal(page.items.length, 2);
+  assert.equal(page.items[0].aiSummary, "기관 ETF 자금 유입 확대로 BTC 단기 매수 우위 지속");
+  assert.equal(page.items[0].sourceUrl, "https://www.coindesk.com/markets/btc-etf-inflows");
+
+  const parsedHighlights = parseNewsHighlights({
+    mustReadBreaking: [rawPage.items[0]],
+    popularByViews: [rawPage.items[0]],
+    popularByReactions: [rawPage.items[0]],
+    keywordIssues: [
+      {
+        keyword: "현물ETF",
+        label: "비트코인 현물 ETF 순유입",
+        articleCount: 4,
+        sentiment: "BULLISH",
+        articles: [rawPage.items[0]],
+      },
+    ],
+    recommendedNewsroom: [rawPage.items[0]],
+    sentimentSummary: {
+      totalBullVotes: 74,
+      totalBearVotes: 26,
+      bullPct: 74,
+      bearPct: 26,
+      dominantSentiment: "BULLISH",
+    },
+  });
+  assert.equal(parsedHighlights.sentimentSummary.bullPct, 74);
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialHighlights={parsedHighlights} />
+      </MemberProvider>,
+    );
+    for (const label of ["코인 시황 (CRYPTO)", "거시·세계 경제 (MACRO)", "온체인·수급 (ONCHAIN)", "규제·정책 (REGULATION)", "#BTC", "#ETH", "#SOL", "#XRP"]) {
+      assert.equal(html.includes(label), true, label);
+    }
+    assert.match(html, /비트코인 현물 ETF 자금 유입 확대/);
+    assert.match(html, /aria-label="실시간 뉴스 섹션 메뉴"/);
+    assert.match(html, /속보/);
+    assert.match(html, /최근 6시간 실시간 속보/);
+    assert.match(html, /data-live-status="on"/);
+    assert.match(html, /뉴스룸/);
+    assert.match(html, /전체 속보/);
+    assert.match(html, /코인 속보/);
+    assert.match(html, /경제 속보/);
+    assert.equal(
+      html.indexOf("전체 속보") < html.indexOf("코인 속보") &&
+        html.indexOf("코인 속보") < html.indexOf("경제 속보"),
+      true,
+    );
+    assert.match(html, /최신순/);
+    assert.match(html, /오래된순/);
+    assert.match(html, /지금 꼭 봐야할 속보/);
+    assert.match(html, /인기 속보/);
+    assert.match(html, /키워드로 보는 이슈/);
+    assert.match(html, /강세 74%/);
+    assert.match(html, /data-flat-icon="sparkle"/);
+    assert.match(html, /AI 분석: 기관 ETF 자금 유입 확대로 BTC 단기 매수 우위 지속/);
+    assert.match(html, /<span>원문 기사 보기<\/span><svg[^>]*data-flat-icon="external"/);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(html), false);
+    assert.match(html, /href="https:\/\/www\.coindesk\.com\/markets\/btc-etf-inflows"/);
+    assert.match(html, /data-infinite-scroll="news-sentinel"/);
+    assert.equal(html.includes("새 실시간 속보"), false);
+    assert.equal(html.includes("data-news-new-badge="), false);
+    assert.match(html, /<select[^>]*aria-label="뉴스 카테고리 필터"/);
+    assert.match(html, /<select[^>]*aria-label="뉴스 종목 태그 필터"/);
+    assert.doesNotMatch(html, /<select[^>]*aria-label="뉴스 브리핑 보기 방식"/);
+    assert.equal(html.includes("중요 헤드라인"), false);
+    assert.match(html, /미국 현물 ETF 순유입과 함께 BTC 선물 시장의 유동성이 확대되고 있습니다\./);
+    assert.equal(html.includes("선물 모의투자 이동"), false);
+    assert.equal(html.includes("선물 거래 바로가기"), false);
+    assert.match(html, /이전 뉴스 더보기/);
+    assert.match(html, /href="\/news">실시간 뉴스/);
+    assert.match(html, /href="\/community">커뮤니티/);
+    assert.equal(
+      html.indexOf("비트코인 현물 ETF 자금 유입 확대") <
+        html.indexOf("미 연준 금리 동결 시사 및 달러 인덱스 보합"),
+      true,
+    );
+
+    const oldestBreakingHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialBreakingSort="OLDEST" initialLiveActive={false} />
+      </MemberProvider>,
+    );
+    assert.match(oldestBreakingHtml, /data-live-status="off"/);
+    assert.match(oldestBreakingHtml, /OFF/);
+    assert.equal(
+      oldestBreakingHtml.indexOf("미 연준 금리 동결 시사 및 달러 인덱스 보합") <
+        oldestBreakingHtml.indexOf("비트코인 현물 ETF 자금 유입 확대"),
+      true,
+    );
+
+    const toastNewsHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialPendingNewNewsCount={2} />
+      </MemberProvider>,
+    );
+    assert.match(toastNewsHtml, /fixed left-1\/2 top-20/);
+    assert.match(toastNewsHtml, /새 실시간 속보 2건 보기/);
+    assert.match(toastNewsHtml, /data-news-new-badge="10"[^>]*>NEW<\/span>/);
+    assert.match(toastNewsHtml, /data-news-new-badge="9"[^>]*>NEW<\/span>/);
+
+    const partitionedBadgeHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed
+          initialPage={page}
+          initialBreakingSubTab="COIN"
+          initialPendingCoinCount={1}
+          initialPendingEconomyCount={3}
+        />
+      </MemberProvider>,
+    );
+    assert.match(partitionedBadgeHtml, /data-breaking-badge="all"[^>]*>4<\/span>/);
+    assert.match(partitionedBadgeHtml, /data-breaking-badge="coin"[^>]*>1<\/span>/);
+    assert.match(partitionedBadgeHtml, /data-breaking-badge="economy"[^>]*>3<\/span>/);
+    assert.match(partitionedBadgeHtml, /새 실시간 속보 1건 보기/);
+    assert.match(partitionedBadgeHtml, /data-news-new-badge="10"[^>]*>NEW<\/span>/);
+    assert.equal((partitionedBadgeHtml.match(/data-news-new-badge="/g) ?? []).length, 1);
+    assert.equal(partitionedBadgeHtml.includes("미 연준 금리 동결 시사 및 달러 인덱스 보합"), false);
+
+    const newsroomHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialSection="NEWSROOM" />
+      </MemberProvider>,
+    );
+    assert.match(newsroomHtml, /전체/);
+    assert.match(newsroomHtml, /암호화폐/);
+    assert.match(newsroomHtml, /해외증시/);
+    assert.match(newsroomHtml, /환율\/금리/);
+    assert.match(newsroomHtml, /최신 뉴스/);
+    assert.match(newsroomHtml, /많이 본 뉴스/);
+    assert.match(newsroomHtml, /오래된 순/);
+    assert.equal(newsroomHtml.includes("선물 모의투자 이동"), false);
+    assert.equal(newsroomHtml.includes("선물 거래 바로가기"), false);
+    assert.equal(newsroomHtml.includes("data-news-new-badge="), false);
+    assert.equal((newsroomHtml.match(/data-s3-slot="news-thumbnail"/g) ?? []).length, 1);
+    assert.equal((newsroomHtml.match(/data-newsroom-hashtags="true"/g) ?? []).length, 2);
+    assert.equal(
+      newsroomHtml.indexOf('data-newsroom-hashtags="true"') <
+        newsroomHtml.indexOf("출처 Yogimangchi Market Desk"),
+      true,
+    );
+
+    const newsroomToastHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPage={page} initialSection="NEWSROOM" initialPendingNewNewsCount={1} />
+      </MemberProvider>,
+    );
+    assert.match(newsroomToastHtml, /새 실시간 속보 1건 보기/);
+    assert.match(newsroomToastHtml, /data-news-new-badge="10"[^>]*>NEW<\/span>/);
+    assert.equal((newsroomToastHtml.match(/data-news-new-badge="/g) ?? []).length, 1);
+  } finally {
+    client.clear();
+  }
+});
+
+test("CommunityBoard renders LATEST/POPULAR sort, post creation, likes, comments/replies, and withdrawn author 탈퇴한회원", async () => {
+  assert.equal(
+    communityPostsPath({ category: "ANALYSIS", sort: "POPULAR", symbolTag: "ETH", keyword: "돌파", cursorId: 5, size: 10 }),
+    "/community/posts?category=ANALYSIS&sort=POPULAR&symbolTag=ETH&keyword=%EB%8F%8C%ED%8C%8C&cursorId=5&size=10",
+  );
+  assert.match(contentMessage(new ContentApiError(404, "RESOURCE_NOT_FOUND")), /찾을 수 없습니다/);
+
+  const seenUrls: string[] = [];
+  await contentJson("http://localhost:8080", "/community/posts/21/likes", { method: "PUT", access: "tok" }, async url => {
+    seenUrls.push(String(url));
+    return Response.json({ postId: 21, likeCount: 4, likedByMe: true });
+  });
+  assert.equal(seenUrls[0], "http://localhost:8080/api/v1/community/posts/21/likes");
+  assert.deepEqual(parseCommunityLike({ postId: 21, likeCount: 4, likedByMe: true }), { postId: 21, likeCount: 4, likedByMe: true });
+
+  const epoch = Date.now();
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "트레이더7",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+
+  let bearerHeader: string | null = null;
+  await readCommunityOrPublic(
+    "http://localhost:8080",
+    {
+      request: async (path, options) => {
+        bearerHeader = "Bearer header.payload.sig";
+        assert.equal(path, "/community/posts?sort=LATEST&size=10");
+        void options;
+        return { items: [], hasNext: false, nextCursorId: null };
+      },
+    },
+    session.getSnapshot(),
+    "/community/posts?sort=LATEST&size=10",
+  );
+  assert.equal(bearerHeader, "Bearer header.payload.sig");
+
+  const postPage = parseCommunityPostPage({
+    items: [
+      {
+        id: 21,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorProfileImgUrl: "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/7/avatar.png",
+        authorWithdrawn: false,
+        category: "POSITION",
+        symbolTag: "BTC",
+        title: "BTC 10배 롱 포지션 진입 및 손절가 공유",
+        content: "지지 구간 확인 후 진입했으며 손절가는 -25% ROE 지점으로 설정했습니다.",
+        likeCount: 5,
+        commentCount: 2,
+        likedByMe: true,
+        mine: true,
+        sharedPosition: SAMPLE_TEST_POSITION,
+        createdAt: "2026-11-01T10:00:00Z",
+        updatedAt: "2026-11-01T10:00:00Z",
+      },
+      {
+        id: 20,
+        memberId: 99,
+        authorNickname: "옛날닉네임",
+        authorProfileImgUrl: "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/99/old.png",
+        authorWithdrawn: true,
+        category: "FREE",
+        symbolTag: null,
+        title: "탈퇴 회원이 남긴 이전 시황 글",
+        content: "탈퇴 후에도 커뮤니티 글과 댓글은 보존됩니다.",
+        likeCount: 1,
+        commentCount: 0,
+        likedByMe: false,
+        mine: false,
+        createdAt: "2026-11-01T09:30:00Z",
+        updatedAt: "2026-11-01T09:30:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+
+  const commentList = parseCommunityComments({
+    items: [
+      {
+        id: 301,
+        postId: 21,
+        memberId: 99,
+        authorNickname: "탈퇴한회원",
+        authorWithdrawn: true,
+        parentCommentId: null,
+        content: "좋은 관점이네요.",
+        mine: false,
+        createdAt: "2026-11-01T10:05:00Z",
+        updatedAt: "2026-11-01T10:05:00Z",
+      },
+      {
+        id: 302,
+        postId: 21,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        parentCommentId: 301,
+        content: "감사합니다! 리스크 관리가 최우선입니다.",
+        mine: true,
+        createdAt: "2026-11-01T10:06:00Z",
+        updatedAt: "2026-11-01T10:06:00Z",
+      },
+    ],
+  });
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard initialPage={postPage} initialComments={{ 21: commentList.items }} />
+      </MemberProvider>,
+    );
+    assert.match(html, /<option value="LATEST"[^>]*>최신글<\/option>/);
+    assert.match(html, /<select[^>]*aria-label="카테고리 필터"/);
+    assert.match(html, /<select[^>]*aria-label="종목 태그 필터"/);
+    assert.match(html, /<select[^>]*aria-label="정렬 선택"/);
+    assert.match(html, /<span>원장 스냅샷 검증됨<\/span><svg[^>]*data-flat-icon="check"/);
+    assert.match(html, /BTCUSDT 무기한/);
+    assert.equal(html.includes("글쓰기 모달 열기"), false);
+    assert.equal(html.slice(0, html.indexOf("lg:flex")).includes("모의투자 하러가기"), false);
+    assert.match(html, /data-flat-icon="chart-bar"[\s\S]*?<span>포지션 공유하기<\/span>/);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(html), false);
+    assert.match(html, /<option value="POPULAR"[^>]*>인기글<\/option>/);
+    assert.equal(html.includes("새 게시글 보기"), false);
+    assert.match(html, /data-infinite-scroll="community-sentinel"/);
+    assert.equal(html.includes('id="community-inline-write-form"'), false);
+    assert.equal(html.includes('aria-label="댓글 및 대댓글"'), false);
+    assert.match(html, /BTC 10배 롱 포지션 진입 및 손절가 공유/);
+    assert.match(html, /좋아요 5/);
+    assert.match(html, /댓글 2/);
+    assert.match(html, /더보기 →/);
+    assert.match(html, /href="\/community\/all\/21"/);
+    assert.match(html, /게시글 수정/);
+    assert.match(html, /게시글 삭제/);
+    assert.match(html, /href="\/members\/7">트레이더7<\/a>/);
+    assert.equal(postPage.items[0].authorProfileImgUrl, "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/profile/7/avatar.png");
+    assert.equal(postPage.items[1].authorProfileImgUrl, null);
+    assert.match(html, /src="https:\/\/s3\.ap-northeast-2\.amazonaws\.com\/yogimangchi\/profile\/7\/avatar\.png"/);
+    assert.equal(html.includes("old.png"), false);
+    assert.match(html, /<span class="member-note" data-withdrawn="true">탈퇴한회원<\/span>/);
+    assert.equal(html.includes("옛날닉네임"), false);
+    assert.equal(html.includes("/members/99"), false);
+
+    const toastHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard initialPage={postPage} initialPendingNewPostsCount={3} />
+      </MemberProvider>,
+    );
+    assert.match(toastHtml, /fixed left-1\/2 top-20/);
+    assert.match(toastHtml, /새 게시글 보기/);
+    assert.match(toastHtml, />3</);
+
+    const detailHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard
+          initialPage={postPage}
+          initialComments={{ 21: commentList.items }}
+          highlightPostId={21}
+        />
+      </MemberProvider>,
+    );
+    assert.match(detailHtml, /커뮤니티 피드로 돌아가기/);
+    assert.equal(detailHtml.includes("게시글 상세 #"), false);
+    assert.match(detailHtml, /좋은 관점이네요\./);
+    assert.match(
+      detailHtml,
+      /data-flat-icon="corner-down-right"[^>]*>[\s\S]*?<a href="\/members\/7">트레이더7<\/a>: 감사합니다! 리스크 관리가 최우선입니다\./,
+    );
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(detailHtml), false);
+  } finally {
+    client.clear();
+  }
+});
+
+test("Community API binding supports FormData multipart, S3 files, sharedPosition, comment likes/mentions, deleted parent comment masking, reports, and latest-check", async () => {
+  const form = new FormData();
+  form.append("category", "ANALYSIS");
+  form.append("title", "S3 멀티파트 테스트");
+  form.append("content", "차트 이미지 첨부 본문");
+
+  let capturedContentType: string | null = "not-checked";
+  let capturedBodyIsFormData = false;
+  await contentJson(
+    "http://localhost:8080",
+    "/community/posts",
+    { method: "POST", access: "tok", body: form },
+    async (_url, init) => {
+      const headers = new Headers(init?.headers);
+      capturedContentType = headers.get("Content-Type");
+      capturedBodyIsFormData = init?.body instanceof FormData;
+      return Response.json({
+        id: 55,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        category: "ANALYSIS",
+        symbolTag: "BTC",
+        title: "S3 멀티파트 테스트",
+        content: "차트 이미지 첨부 본문",
+        likeCount: 0,
+        commentCount: 0,
+        reportCount: 0,
+        likedByMe: false,
+        reportedByMe: false,
+        mine: true,
+        files: [],
+        sharedPosition: null,
+        createdAt: "2026-11-08T10:00:00Z",
+        updatedAt: "2026-11-08T10:00:00Z",
+      });
+    },
+  );
+  assert.equal(capturedContentType, null);
+  assert.equal(capturedBodyIsFormData, true);
+
+  assert.equal(
+    contentMessage(new ContentApiError(400, "FILE_VIDEO_NOT_ALLOWED")),
+    "동영상 파일은 업로드할 수 없습니다. 이미지(JPG, PNG, WEBP 최대 5MB) 또는 GIF 움짤(최대 3MB)만 첨부해 주세요.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "FILE_TYPE_NOT_ALLOWED")),
+    "지원하지 않는 파일 형식입니다. JPG, PNG, WEBP 또는 GIF(움짤) 파일만 첨부할 수 있습니다.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "GIF_FILE_TOO_LARGE")),
+    "GIF 움짤 용량이 제한(최대 3MB)을 초과했습니다. 3MB 이하의 가벼운 GIF 파일만 첨부해 주세요.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "IMAGE_FILE_TOO_LARGE")),
+    "이미지 파일 용량이 제한(장당 최대 5MB)을 초과했습니다. 5MB 이하의 이미지를 선택해 주세요.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "FILE_TOTAL_SIZE_EXCEEDED")),
+    "첨부 파일의 총합 용량이 제한(최대 20MB)을 초과했습니다.",
+  );
+  assert.equal(
+    contentMessage(new ContentApiError(400, "FILE_COUNT_EXCEEDED")),
+    "첨부 가능한 최대 이미지 장수를 초과했습니다.",
+  );
+
+  for (const allowedPath of [
+    "/community/posts/latest-check?sincePostId=21",
+    "/community/ux/subscribe/feed",
+    "/community/report-reasons",
+    "/community/posts/21/reports",
+    "/community/posts/21/comments/301",
+    "/community/posts/21/comments/301/likes",
+    "/community/posts/21/comments/301/reports",
+    "/community/comments/301",
+    "/community/comments/301/likes",
+    "/community/comments/301/reports",
+  ]) {
+    const res = await contentJson("http://localhost:8080", allowedPath, {}, async () =>
+      Response.json({ ok: true }),
+    );
+    assert.deepEqual(res, { ok: true }, allowedPath);
+  }
+
+  assert.deepEqual(
+    parseCommentLike({ commentId: 302, likeCount: 9, likedByMe: true }),
+    { commentId: 302, likeCount: 9, likedByMe: true },
+  );
+  assert.deepEqual(
+    parseCommunityReport({ targetId: 21, reportCount: 2, reportedByMe: true }),
+    { targetId: 21, reportCount: 2, reportedByMe: true },
+  );
+  assert.deepEqual(
+    parseReportReasons([
+      { code: "SPAM", description: "스팸 홍보/도배글입니다." },
+      { code: "ABUSE", description: "욕설/생명경시/혐오/차별적 표현입니다." },
+    ]),
+    [
+      { code: "SPAM", description: "스팸 홍보/도배글입니다." },
+      { code: "ABUSE", description: "욕설/생명경시/혐오/차별적 표현입니다." },
+    ],
+  );
+
+  const latestChecked = parseLatestPostsCheck({
+    newPostCount: 1,
+    latestPostId: 77,
+    items: [
+      {
+        id: 77,
+        memberId: 15,
+        authorNickname: "퀀트매니저",
+        authorWithdrawn: false,
+        category: "POSITION",
+        symbolTag: "SOL",
+        title: "SOL 20배 대회 포지션 스냅샷 및 S3 차트 공유",
+        content: "돌파 구간에서 롱 포지션 유지 중입니다.",
+        likeCount: 12,
+        commentCount: 3,
+        reportCount: 1,
+        likedByMe: false,
+        reportedByMe: true,
+        mine: false,
+        files: [
+          {
+            id: 901,
+            postId: 77,
+            originalName: "sol-breakout-chart.png",
+            size: 124800,
+            url: "https://s3.ap-northeast-2.amazonaws.com/yogimangchi/community/77/sol-breakout-chart.png",
+            contentType: "image/png",
+            createdAt: "2026-11-08T11:00:00Z",
+          },
+        ],
+        sharedPosition: {
+          id: "POS_SOL_LONG_20X",
+          marketLabel: "시즌 1 대회",
+          symbol: "SOL",
+          pair: "SOLUSDT",
+          side: "LONG",
+          leverage: 20,
+          entryPrice: "176.20",
+          markPrice: "184.50",
+          liquidationPrice: "168.10",
+          roePct: "+94.21%",
+          pnlUsdt: "+471.05 USDT",
+          positive: true,
+          showPnlAmount: true,
+          verified: true,
+        },
+        createdAt: "2026-11-08T11:00:00Z",
+        updatedAt: "2026-11-08T11:00:00Z",
+      },
+    ],
+  });
+  assert.equal(latestChecked.newPostCount, 1);
+  assert.equal(latestChecked.latestPostId, 77);
+  assert.equal(latestChecked.items[0].files?.length, 1);
+  assert.equal(latestChecked.items[0].sharedPosition?.pair, "SOLUSDT");
+
+  const commentsWithDeletedAndMention = parseCommunityComments({
+    items: [
+      {
+        id: 401,
+        postId: 77,
+        memberId: 22,
+        authorNickname: "솔라나고래",
+        authorWithdrawn: false,
+        parentCommentId: null,
+        targetCommentId: null,
+        targetMemberId: null,
+        targetNickname: null,
+        content: "삭제된 댓글입니다.",
+        likeCount: 0,
+        reportCount: 0,
+        likedByMe: false,
+        reportedByMe: false,
+        mine: false,
+        deleted: true,
+        createdAt: "2026-11-08T11:01:00Z",
+        updatedAt: "2026-11-08T11:02:00Z",
+      },
+      {
+        id: 402,
+        postId: 77,
+        memberId: 31,
+        authorNickname: "매크로워처",
+        authorWithdrawn: false,
+        parentCommentId: 401,
+        targetCommentId: 401,
+        targetMemberId: 22,
+        targetNickname: "솔라나고래",
+        content: "타겟 멘션 대댓글이 정상적으로 유지됩니다.",
+        likeCount: 7,
+        reportCount: 1,
+        likedByMe: true,
+        reportedByMe: true,
+        mine: false,
+        deleted: false,
+        createdAt: "2026-11-08T11:03:00Z",
+        updatedAt: "2026-11-08T11:03:00Z",
+      },
+    ],
+  });
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialPage={{
+            items: latestChecked.items,
+            hasNext: false,
+            nextCursorId: null,
+          }}
+          initialComments={{ 77: commentsWithDeletedAndMention.items }}
+          highlightPostId={77}
+        />
+      </MemberProvider>,
+    );
+    assert.match(html, /data-shared-position="POS_SOL_LONG_20X"/);
+    assert.match(html, /SOLUSDT 무기한/);
+    assert.match(html, /\+94\.21%/);
+    assert.match(html, /\(\+471\.05 USDT\)/);
+    assert.match(html, /data-post-files="77"/);
+    assert.match(html, /sol-breakout-chart\.png/);
+    assert.match(html, /data-deleted-comment="true">삭제된 댓글입니다\.<\/p>/);
+    assert.match(html, /data-mention="솔라나고래">@솔라나고래<\/span>/);
+    assert.match(html, /타겟 멘션 대댓글이 정상적으로 유지됩니다\./);
+    assert.match(html, /data-flat-icon="heart"[^>]*>[\s\S]*?<span>7<\/span>/);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(html), false);
+    assert.match(html, /신고 취소/);
+    assert.match(html, /data-comment-auth-notice="true"/);
+    assert.match(html, /댓글 작성은 로그인 이후 가능합니다\./);
+    assert.equal(html.includes("댓글 등록"), false);
+    assert.equal(html.includes("답글 등록"), false);
+    assert.match(html, /bg-gray-200 text-gray-400 cursor-default/);
+    assert.equal(html.includes("cursor-not-allowed"), false);
+  } finally {
+    client.clear();
+  }
+
+  assert.equal(communityCommentsPath(21, 401, 20), "/community/posts/21/comments?cursorId=401&size=20");
+  const pagedComments = parseCommunityComments({
+    items: commentsWithDeletedAndMention.items,
+    hasNext: true,
+    nextCursorId: 401,
+  });
+  assert.equal(pagedComments.hasNext, true);
+  assert.equal(pagedComments.nextCursorId, 401);
+
+  const memberCommentPage = parseMemberCommunityCommentPage({
+    items: [
+      {
+        id: 501,
+        postId: 21,
+        postTitle: "BTC 10배 롱 포지션 진입 및 손절가 공유",
+        postCategory: "POSITION",
+        postSymbolTag: "BTC",
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        parentCommentId: 301,
+        targetCommentId: 301,
+        targetMemberId: 99,
+        targetNickname: "탈퇴한회원",
+        content: "감사합니다! 리스크 관리가 최우선입니다.",
+        likeCount: 3,
+        reportCount: 0,
+        likedByMe: true,
+        reportedByMe: false,
+        mine: true,
+        createdAt: "2026-11-01T10:06:00Z",
+        updatedAt: "2026-11-01T10:06:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+  assert.equal(memberCommentPage.items.length, 1);
+  assert.equal(memberCommentPage.items[0].postTitle, "BTC 10배 롱 포지션 진입 및 손절가 공유");
+
+  const memberReportPage = parseMemberCommunityReportPage({
+    items: [
+      {
+        id: 1001,
+        targetType: "POST",
+        targetId: 77,
+        postId: 77,
+        title: "외부 리딩방 홍보 글",
+        reasonType: "SPAM",
+        reasonDescription: "스팸 홍보/도배글입니다.",
+        status: "RECEIVED",
+        createdAt: "2026-11-08T12:00:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+  assert.equal(memberReportPage.items.length, 1);
+  assert.equal(memberReportPage.items[0].targetType, "POST");
+  assert.equal(memberReportPage.items[0].reasonDescription, "스팸 홍보/도배글입니다.");
+
+  const publicPortfolio = parsePublicMemberPortfolio({
+    memberId: 7,
+    accountExists: true,
+    roundId: 1,
+    roundNumber: 1,
+    initialSeed: "10000",
+    wallet: {
+      balance: "10500",
+      availableBalance: "8500",
+      usedMargin: "2000",
+      reservedMargin: "0",
+      totalEquity: "10750",
+      unrealizedPnl: "250",
+      realizedPnl: "500",
+      totalPnl: "750",
+      totalRoiPct: "7.50",
+      priceFresh: true,
+    },
+    allocation: {
+      usedMarginRatioPct: "18.60",
+      availableCashRatioPct: "81.40",
+      longMarginUsdt: "2000",
+      shortMarginUsdt: "0",
+      longRatioPct: "100.00",
+      shortRatioPct: "0.00",
+      longPositionCount: 1,
+      shortPositionCount: 0,
+    },
+    positions: [
+      {
+        id: 11,
+        symbol: "BTCUSDT",
+        tradingSymbolId: 1,
+        side: "LONG",
+        leverage: 10,
+        quantity: "0.25",
+        entryPrice: "80000",
+        markPrice: "81000",
+        liquidationPrice: "72500",
+        margin: "2000",
+        unrealizedPnl: "250",
+        roePct: "12.50",
+        marginRatioPct: "18.60",
+      },
+    ],
+    symbolPerformances: [],
+    closedTradeSummary: {
+      closedPositionCount: 5,
+      winCount: 4,
+      lossCount: 1,
+      winRatePct: "80.00",
+    },
+  });
+  assert.equal(publicPortfolio.accountExists, true);
+  assert.equal(publicPortfolio.wallet.totalEquity, "10750");
+  assert.equal(publicPortfolio.closedTradeSummary.winRatePct, "80.00");
+
+  const globalsCss = fs.readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
+  assert.equal(globalsCss.includes("not-allowed"), false);
+  assert.match(globalsCss, /\.trading-workspace textarea:focus-visible/);
+});
+
+test("MainPortal, MemberSignupPage, MemberAccount, MemberMyProfilePage, and V1Header render unified V1/xrhub/CoinNess layouts, 4-tab My Page, and auth button rules", async () => {
+  const client = new QueryClient();
+  const epoch = Date.now();
+  const loggedInSession = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "트레이더7",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await loggedInSession.restore();
+
+  try {
+    const portalHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+    assert.match(portalHtml, /나의 투자 욕망을 실현할 곳/);
+    assert.match(portalHtml, /오늘의 요기 달러/);
+    assert.match(portalHtml, /환율 계산기/);
+    assert.match(portalHtml, /실시간 인기 종목 TOP 3/);
+    assert.match(portalHtml, /YOGIMANGCHI PLAYBOOK/);
+    assert.match(portalHtml, /24시 실시간 속보/);
+    assert.match(portalHtml, /aria-label="실시간 마켓 지표 불러오는 중"/);
+    assert.equal(portalHtml.includes("$94,280.50"), false);
+    assert.equal(portalHtml.includes("56.4%"), false);
+    assert.match(portalHtml, /선물 모의투자 퀵 시뮬레이터/);
+    assert.match(portalHtml, /선물 모의투자 시작하기/);
+    assert.match(portalHtml, /실시간 커뮤니티 HOT/);
+    assert.match(portalHtml, /aria-label="최신 커뮤니티 글 불러오는 중"/);
+    assert.match(portalHtml, /aria-label="실시간 속보 불러오는 중"/);
+    assert.equal(portalHtml.includes("속보 이미지 제보"), false);
+    assert.equal(portalHtml.includes('href="/signup"'), false);
+    assert.equal(portalHtml.includes('href="/assets"'), false);
+
+    // Seed real portal post to verify heart/comment icons and author profile image rendering
+    const seededPortalClient = new QueryClient();
+    seededPortalClient.setQueryData(
+      ["portal-posts", "http://localhost:8080", 0],
+      parseCommunityPostPage({
+        items: [
+          {
+            id: 901,
+            memberId: 7,
+            authorNickname: "트레이더7",
+            authorProfileImgUrl: "https://cdn.example.com/avatar-7.png",
+            authorWithdrawn: false,
+            category: "ANALYSIS",
+            symbolTag: "BTC",
+            title: "실시간 BTC 돌파 시나리오",
+            content: "거래량 동반 돌파 구간입니다.",
+            likeCount: 12,
+            commentCount: 4,
+            likedByMe: false,
+            mine: false,
+            createdAt: "2026-11-10T09:00:00Z",
+            updatedAt: "2026-11-10T09:00:00Z",
+          },
+        ],
+        hasNext: false,
+        nextCursorId: null,
+      }),
+    );
+    const seededPortalHtml = renderToStaticMarkup(
+      <MemberProvider client={seededPortalClient}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+    seededPortalClient.clear();
+    assert.match(seededPortalHtml, /src="https:\/\/cdn\.example\.com\/avatar-7\.png"/);
+    assert.match(seededPortalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="heart"/);
+    assert.match(seededPortalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="comment"/);
+
+    const signupAnonHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberSignupPage />
+      </MemberProvider>,
+    );
+    assert.match(signupAnonHtml, /identity_verification_wrap/);
+    assert.match(signupAnonHtml, /소셜 계정 본인인증/);
+    assert.doesNotMatch(signupAnonHtml, /data-s3-slot="signup-profile-image"/);
+    assert.match(signupAnonHtml, /1단계 · 소셜 계정 본인인증/);
+    assert.match(signupAnonHtml, /프로필 이미지 등록과 최종 약관 동의는 1단계 소셜 본인인증 완료 직후\(2단계\)에서 안전하게 저장됩니다\./);
+
+    const signupLoggedInHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <MemberSignupPage />
+      </MemberProvider>,
+    );
+    assert.match(signupLoggedInHtml, /이미 로그인되어 있습니다\. 메인 페이지로 자동 이동합니다/);
+    assert.equal(signupLoggedInHtml.includes("동의하고 가입하기"), false);
+    assert.equal(signupLoggedInHtml.includes('href="/login"'), false);
+    assert.equal(signupLoggedInHtml.includes('href="/signup"'), false);
+
+    const accountHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <MemberAccount />
+      </MemberProvider>,
+    );
+    assert.match(accountHtml, /회원정보 수정/);
+    assert.match(accountHtml, /기본 정보/);
+    assert.match(accountHtml, /data-s3-slot="account-profile-image"/);
+    assert.equal(accountHtml.includes('href="/signup"'), false);
+    assert.equal(accountHtml.includes('href="/assets"'), false);
+    assert.equal(accountHtml.includes("마이페이지(/me)"), false);
+    assert.equal(accountHtml.includes("마이페이지 (/me)"), false);
+    assert.equal(accountHtml.includes("S3 프리뷰 지원"), false);
+    assert.equal(accountHtml.includes("S3 스토리지 업로드"), false);
+    assert.equal(accountHtml.includes("공개 프로필 보기"), false);
+    assert.equal(accountHtml.includes("회원 #"), false);
+
+    // 비로그인 시 마이페이지(/me): 오직 2탭(포트폴리오, 커뮤니티활동)만 노출, 자산 2탭 숨김
+    const meAnonHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberMyProfilePage />
+      </MemberProvider>,
+    );
+    assert.match(meAnonHtml, /마이페이지/);
+    assert.match(meAnonHtml, /data-tab-variant="bookmark"/);
+    assert.match(meAnonHtml, /포트폴리오/);
+    assert.match(meAnonHtml, /커뮤니티활동/);
+    assert.equal(meAnonHtml.includes("내 모의투자 자산"), false);
+    assert.equal(meAnonHtml.includes("시즌별 대회 자산"), false);
+    assert.match(meAnonHtml, /포지션 증거금 비중 \(%\)/);
+    assert.match(meAnonHtml, /롱 \/ 숏 포지션 비율/);
+
+    // 로그인 시 마이페이지(/me): 4대 메인 탭 전체 노출 + 모의투자 5탭 원장 기본 노출
+    const meLoggedInHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <MemberMyProfilePage />
+      </MemberProvider>,
+    );
+    assert.match(meLoggedInHtml, /내 모의투자 자산/);
+    assert.equal(meLoggedInHtml.includes("터미널에서 주문하기"), false);
+    assert.match(meLoggedInHtml, /data-tab-variant="bookmark"/);
+    assert.equal(meLoggedInHtml.includes("border-t-[3px]"), false);
+    assert.equal(meLoggedInHtml.includes("transition-all"), false);
+    assert.match(
+      meLoggedInHtml,
+      /aria-selected="true"[^>]*class="[^"]*h-10[^"]*border-\[#0058FF\] bg-\[#0058FF\] font-black text-white/,
+    );
+    assert.match(
+      meLoggedInHtml,
+      /aria-selected="false"[^>]*class="[^"]*h-10[^"]*bg-\[#EEF1F6\] font-bold text-gray-500/,
+    );
+    assert.match(meLoggedInHtml, /시즌별 대회 자산/);
+    assert.match(meLoggedInHtml, /포트폴리오/);
+    assert.match(meLoggedInHtml, /커뮤니티활동/);
+    assert.match(meLoggedInHtml, /포지션 현황/);
+    assert.match(meLoggedInHtml, /손익현황/);
+    assert.match(meLoggedInHtml, /주문내역/);
+    assert.match(meLoggedInHtml, /거래내역/);
+    assert.match(meLoggedInHtml, /미체결내역/);
+    assert.equal(meLoggedInHtml.includes('href="/login"'), false);
+    assert.equal(meLoggedInHtml.includes('href="/signup"'), false);
+
+    // 헤더 비로그인 vs 로그인 버튼 및 라이트/다크 픽셀 단위 100% 동일 규격 검증
+    const anonHeaderHtml = renderToStaticMarkup(
+      <V1Header theme="dark" rightExtra={<span>불필요한우측요소</span>} />,
+    );
+    assert.match(anonHeaderHtml, /src="\/logo_dark\.png"/);
+    assert.match(anonHeaderHtml, /href="\/login"[^>]*>로그인<\/a>/);
+    assert.match(anonHeaderHtml, /h-16 w-full max-w-\[1280px\]/);
+    assert.match(anonHeaderHtml, /h-9 min-w-\[96px\]/);
+    assert.match(anonHeaderHtml, /border-white\/10 bg-\[#0B0E11\] text-white/);
+    assert.equal(anonHeaderHtml.includes('href="/signup"'), false);
+    assert.equal(anonHeaderHtml.includes("테마 전환"), false);
+    assert.equal(anonHeaderHtml.includes("알림 열기"), false);
+    assert.equal(anonHeaderHtml.includes("내 프로필 아바타"), false);
+    assert.equal(anonHeaderHtml.includes("불필요한우측요소"), false);
+
+    const loggedInHeaderHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <V1Header theme="light" />
+      </MemberProvider>,
+    );
+    assert.match(loggedInHeaderHtml, /src="\/images\/logo\.webp"/);
+    assert.match(loggedInHeaderHtml, /href="\/me"[^>]*>마이페이지<\/a>/);
+    assert.match(loggedInHeaderHtml, /h-16 w-full max-w-\[1280px\]/);
+    assert.match(loggedInHeaderHtml, /h-9 min-w-\[96px\]/);
+    assert.match(loggedInHeaderHtml, /border-gray-200 bg-white text-gray-900/);
+    assert.equal(loggedInHeaderHtml.includes('href="/login"'), false);
+    assert.equal(loggedInHeaderHtml.includes('href="/signup"'), false);
+    assert.equal(loggedInHeaderHtml.includes('href="/assets"'), false);
+    assert.equal(loggedInHeaderHtml.includes("테마 전환"), false);
+    assert.equal(loggedInHeaderHtml.includes("알림 열기"), true);
+    assert.equal(loggedInHeaderHtml.includes("내 프로필 아바타"), false);
+    const newsIdx = loggedInHeaderHtml.indexOf('href="/news"');
+    const tradingIdx = loggedInHeaderHtml.indexOf('href="/trading"');
+    const contestIdx = loggedInHeaderHtml.indexOf('href="/contest"');
+    const communityIdx = loggedInHeaderHtml.indexOf('href="/community"');
+    assert.equal(newsIdx > 0 && newsIdx < tradingIdx && tradingIdx < contestIdx && contestIdx < communityIdx, true);
+
+    const publicMemberHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <PublicMember memberId={11} />
+      </MemberProvider>,
+    );
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(portalHtml), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(signupAnonHtml), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(meAnonHtml), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(meLoggedInHtml), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(publicMemberHtml), false);
+    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="swap"/);
+    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="bolt"/);
+    assert.match(portalHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="trophy"/);
+    assert.match(signupAnonHtml, /<svg[^>]*fill="none"[^>]*stroke="currentColor"[^>]*data-flat-icon="check"/);
+  } finally {
+    client.clear();
+  }
+});
+
+test("DimModal and scroll lock preserve exact scrollY position and hide scrollbar without jumping to top", () => {
+  resetScrollLockForTest();
+  let restoredX = -1;
+  let restoredY = -1;
+  const mockWin = {
+    scrollY: 480,
+    scrollTo: (x: number, y: number) => {
+      restoredX = x;
+      restoredY = y;
+    },
+  };
+  const mockDoc = {
+    body: {
+      style: {} as Record<string, string>,
+      dataset: {} as Record<string, string | undefined>,
+    },
+    documentElement: {
+      scrollTop: 480,
+      style: {} as Record<string, string>,
+    },
+  };
+
+  const saved = lockBodyScroll(mockWin, mockDoc);
+  assert.equal(saved, 480);
+  assert.equal(mockDoc.body.style.position, "fixed");
+  assert.equal(mockDoc.body.style.top, "-480px");
+  assert.equal(mockDoc.body.style.overflow, "hidden");
+  assert.equal(mockDoc.documentElement.style.overflow, "hidden");
+  assert.equal(mockDoc.documentElement.style.scrollbarWidth, "none");
+
+  const unlockedY = unlockBodyScroll(mockWin, mockDoc);
+  assert.equal(unlockedY, 480);
+  assert.equal(mockDoc.body.style.position, "");
+  assert.equal(mockDoc.body.style.top, "");
+  assert.equal(restoredX, 0);
+  assert.equal(restoredY, 480);
+
+  const openModalHtml = renderToStaticMarkup(
+    <DimModal open onClose={() => {}} title="속보 상세 팝업">
+      <p>팝업 본문 내용</p>
+    </DimModal>,
+  );
+  assert.match(openModalHtml, /data-dim-modal="open"/);
+  assert.match(openModalHtml, /속보 상세 팝업/);
+  assert.equal(
+    renderToStaticMarkup(
+      <DimModal open={false} onClose={() => {}} title="닫힌 팝업">
+        <p>내용</p>
+      </DimModal>,
+    ),
+    "",
+  );
+});
+
+test("MemberShell and MemberLoginView render the official /images/logo.webp brand asset", () => {
+  const client = new QueryClient();
+  try {
+    const loginHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberLoginView google="http://localhost:8080/oauth2/authorization/google" kakao="http://localhost:8080/oauth2/authorization/kakao" />
+      </MemberProvider>,
+    );
+    assert.match(loginHtml, /src="\/images\/logo\.webp"/);
+    assert.match(loginHtml, /ym-login-logo-img/);
+    assert.match(loginHtml, /max-w-\[520px\]/);
+    assert.match(loginHtml, /sm:whitespace-nowrap/);
+    assert.match(loginHtml, /sm:flex-nowrap/);
+
+    const globalsCss = fs.readFileSync(
+      path.join(process.cwd(), "src/app/globals.css"),
+      "utf8",
+    );
+    assert.match(globalsCss, /\.ym-container-auth\s*\{[\s\S]*?max-width:\s*560px;/);
+    assert.match(globalsCss, /\.ym-container-signup\s*\{[\s\S]*?max-width:\s*580px;/);
+
+    const portalHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+    assert.match(portalHtml, /src="\/images\/logo\.webp"/);
+    assert.match(portalHtml, /ym-brand-logo-img/);
+
+    const footerHtml = renderToStaticMarkup(<SiteFooter />);
+    assert.match(footerHtml, /© 2026 YogiMangchi\. All rights reserved\./);
+    assert.equal(footerHtml.includes("Yogi-Mangchi"), false);
+  } finally {
+    client.clear();
+  }
+});
+
+test("Market overview helpers and MainPortal top ticker bar bind free public market metrics with safe fallbacks", async () => {
+  assert.equal(classifyFearGreedLabelKr(15), "극단적 공포");
+  assert.equal(classifyFearGreedLabelKr(35), "공포");
+  assert.equal(classifyFearGreedLabelKr(50), "중립");
+  assert.equal(classifyFearGreedLabelKr(68), "탐욕");
+  assert.equal(classifyFearGreedLabelKr(82), "극단적 탐욕");
+
+  assert.equal(computeKimchiPremiumPercent(135_000_000, 96_500, 1_385), 1.01);
+  const domDelta = computeBtcDominanceChange24h(58.2, 1.8, 4.2);
+  assert.ok(domDelta !== null && domDelta > 0);
+
+  const liveOverview = await fetchLiveMarketOverview(async url => {
+    const target = String(url);
+    if (target.includes("api.coingecko.com/api/v3/global")) {
+      return Response.json({
+        data: {
+          market_cap_percentage: { btc: 58.34 },
+          market_cap_change_percentage_24h_usd: 1.5,
+        },
+      });
+    }
+    if (target.includes("fapi.binance.com/fapi/v1/ticker/24hr")) {
+      return Response.json({
+        lastPrice: "97200.00",
+        priceChangePercent: "3.10",
+      });
+    }
+    if (target.includes("api.upbit.com/v1/ticker")) {
+      return Response.json([{ trade_price: 136_500_000 }]);
+    }
+    if (target.includes("open.er-api.com")) {
+      return Response.json({ rates: { KRW: 1390 } });
+    }
+    if (target.includes("api.coingecko.com/api/v3/derivatives/exchanges")) {
+      return Response.json([
+        { id: "binance_futures", open_interest_btc: 425_000 },
+      ]);
+    }
+    if (target.includes("api.alternative.me/fng")) {
+      return Response.json({
+        data: [{ value: "74", value_classification: "Greed" }],
+      });
+    }
+    if (target.includes("fapi.binance.com/futures/data/takerlongshortRatio")) {
+      return Response.json([
+        { buyVol: "620.0", sellVol: "380.0", buySellRatio: "1.6316" },
+      ]);
+    }
+    return new Response("not found", { status: 404 });
+  });
+
+  assert.ok(liveOverview !== null);
+  assert.equal(liveOverview.btcDominancePercent, 58.3);
+  assert.ok(liveOverview.btcDominanceChange24h !== null && liveOverview.btcDominanceChange24h > 0);
+  assert.equal(liveOverview.kimchiPremiumPercent, 1.03);
+  assert.equal(liveOverview.openInterestBillionsUsd, 41.3);
+  assert.equal(liveOverview.fearGreedValue, 74);
+  assert.equal(liveOverview.fearGreedLabelKr, "탐욕");
+  assert.equal(liveOverview.futuresBullPct, 62);
+  assert.equal(liveOverview.futuresBearPct, 38);
+  assert.equal(liveOverview.btcChange24h, 3.1);
+
+  // When upstream market APIs are completely unreachable, NEVER fabricate fake fallback numbers
+  const unavailableOverview = await fetchLiveMarketOverview(async () => {
+    throw new Error("network down");
+  });
+  assert.equal(unavailableOverview, null);
+
+  const parsed = parseMarketOverviewPayload({
+    btcDominancePercent: 59.1,
+    btcDominanceChange24h: -0.45,
+    kimchiPremiumPercent: -0.32,
+    ethKimchiPremiumPercent: 1.45,
+    xrpKimchiPremiumPercent: 1.88,
+    openInterestBillionsUsd: 44.8,
+    futuresBullPct: 62,
+    futuresBearPct: 38,
+    fearGreedValue: 22,
+    fearGreedLabelKr: "극단적 공포",
+    updatedAt: "2026-11-10T09:30:00Z",
+  });
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal initialMarketOverview={parsed} />
+      </MemberProvider>,
+    );
+    assert.match(html, /BTC 도미넌스[\s\S]*?>59\.1%<\/strong>[\s\S]*?text-\[#F6465D\]">-0\.45%<\/em>/);
+    assert.match(html, /김치프리미엄[\s\S]*?data-kimchi-coin="BTC"[\s\S]*?>-0\.32%<\/strong>/);
+    assert.match(html, /data-kimchi-coin="ETH"[\s\S]*?\+1\.45%/);
+    assert.match(html, /data-kimchi-coin="XRP"[\s\S]*?\+1\.88%/);
+    assert.match(html, /투자자 롱\/숏 비율[\s\S]*?BTC 기준[\s\S]*?62%[\s\S]*?38%[\s\S]*?BTCUSDT 선물 5m/);
+    assert.equal(html.includes("바이낸스 BTCUSDT 5m"), false);
+    assert.equal(html.includes("24h 선물 미결제약정"), false);
+    assert.match(html, /공포·탐욕 지수[\s\S]*?>22 \(극단적 공포\)<\/strong>[\s\S]*?BTC 중심 시장/);
+    assert.equal(html.includes("요기망치 V2 OPEN · 10,000 USDT 즉시 지급"), false);
+    assert.match(html, /data-hero-chart="btc-dominance"/);
+    assert.match(html, /data-hero-chart="kimchi-premium"/);
+    assert.match(html, /data-hero-chart="long-short-ratio"/);
+    assert.match(html, /data-hero-chart="fear-greed"/);
+    assert.match(html, /animate-pulse[\s\S]*?24시 실시간 속보/);
+  } finally {
+    client.clear();
+  }
+});
+
+test("NewsFeed 실시간 뉴스 투자 심리 card dynamically binds real news sentiment, user reactions, and live market overview metrics", () => {
+  const highlightsWithSummary = parseNewsHighlights({
+    mustReadBreaking: [],
+    popularByViews: [],
+    popularByReactions: [],
+    keywordIssues: [],
+    recommendedNewsroom: [],
+    sentimentSummary: {
+      totalBullVotes: 15,
+      totalBearVotes: 45,
+      bullPct: 25,
+      bearPct: 75,
+      dominantSentiment: "BEARISH",
+      bullishArticleCount: 2,
+      bearishArticleCount: 7,
+      neutralArticleCount: 1,
+      summary: "거시 긴축 우려 및 선물 롱 청산 확대로 단기 매도 심리가 우세합니다.",
+    },
+  });
+  assert.equal(highlightsWithSummary.sentimentSummary.bullishArticleCount, 2);
+  assert.equal(highlightsWithSummary.sentimentSummary.bearishArticleCount, 7);
+  assert.equal(highlightsWithSummary.sentimentSummary.neutralArticleCount, 1);
+  assert.equal(
+    highlightsWithSummary.sentimentSummary.summary,
+    "거시 긴축 우려 및 선물 롱 청산 확대로 단기 매도 심리가 우세합니다.",
+  );
+
+  const bearishMarket = parseMarketOverviewPayload({
+    btcDominancePercent: 57.2,
+    btcDominanceChange24h: -0.25,
+    kimchiPremiumPercent: -0.4,
+    openInterestBillionsUsd: 36.1,
+    fearGreedValue: 28,
+    fearGreedLabelKr: "공포",
+    futuresBullPct: 36,
+    futuresBearPct: 64,
+    btcChange24h: -4.2,
+    updatedAt: "2026-11-10T09:40:00Z",
+  });
+
+  const computedBearish = computeLiveNewsSentiment({
+    articles: [],
+    highlights: highlightsWithSummary,
+    marketOverview: bearishMarket,
+  });
+  assert.equal(computedBearish.bullPct + computedBearish.bearPct, 100);
+  assert.equal(computedBearish.bullPct < 40, true);
+  assert.match(
+    computedBearish.summaryText,
+    /거시 긴축 우려 및 선물 롱 청산 확대로 단기 매도 심리가 우세합니다\. \(공포·탐욕 28 공포 · 선물 매수수급 36%\)/,
+  );
+
+  const samplePage = parseNewsPage({
+    items: [
+      {
+        id: 501,
+        category: "CRYPTO",
+        title: "비트코인 현물 ETF 순유입 및 기관 매수세 확대",
+        summary: "기관 수요 유입으로 단기 반등 모멘텀이 강화되었습니다.",
+        content: "본문",
+        sourceName: "Desk",
+        sentiment: "BULLISH",
+        bullCount: 10,
+        bearCount: 2,
+        symbolTag: "BTC",
+        publishedAt: "2026-11-10T09:00:00Z",
+      },
+      {
+        id: 502,
+        category: "MACRO",
+        title: "미 국채 금리 급락에 따른 위험자산 선호 회복",
+        summary: "거시 지표 안정으로 매수 심리가 유입되고 있습니다.",
+        content: "본문",
+        sourceName: "Desk",
+        sentiment: "BULLISH",
+        bullCount: 8,
+        bearCount: 2,
+        symbolTag: null,
+        publishedAt: "2026-11-10T08:30:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+
+  const beforeReaction = computeLiveNewsSentiment({
+    articles: samplePage.items,
+  });
+  const afterBearSurge = computeLiveNewsSentiment({
+    articles: samplePage.items,
+    liveReactions: {
+      501: { bullCount: 10, bearCount: 90 },
+    },
+    userReactions: {
+      502: "bear",
+    },
+  });
+  assert.equal(beforeReaction.bullPct + beforeReaction.bearPct, 100);
+  assert.equal(afterBearSurge.bullPct + afterBearSurge.bearPct, 100);
+  assert.equal(afterBearSurge.bullPct < beforeReaction.bullPct, true);
+  assert.match(afterBearSurge.summaryText, /실시간 뉴스\(강세 2건·약세 0건, 투표 111표\)/);
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed
+          initialPage={samplePage}
+          initialHighlights={highlightsWithSummary}
+          initialMarketOverview={bearishMarket}
+        />
+      </MemberProvider>,
+    );
+    assert.match(html, new RegExp(`강세 ${computedBearish.bullPct}%`));
+    assert.match(html, new RegExp(`약세 ${computedBearish.bearPct}%`));
+    assert.match(
+      html,
+      /거시 긴축 우려 및 선물 롱 청산 확대로 단기 매도 심리가 우세합니다\. \(공포·탐욕 28 공포 · 선물 매수수급 36%\)/,
+    );
+    assert.equal(
+      html.includes("현물 ETF 자금 유입 및 거시 금리 동결 기조로 단기 매수 심리가 우위를 보이고 있습니다."),
+      false,
+    );
+  } finally {
+    client.clear();
+  }
+});
+
+test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-server Redis Top 3 popular coins", async () => {
+  // No synthetic history fabrication: insufficient history returns null cleanly
+  assert.equal(buildExchangeRateChartGeometry([]), null);
+  assert.equal(buildExchangeRateChartGeometry([1405.2]), null);
+
+  const chartGeo = buildExchangeRateChartGeometry([
+    1390.0, 1392.0, 1391.5, 1394.0, 1395.5, 1396.0, 1397.2, 1398.4, 1400.1, 1401.5,
+    1403.0, 1404.2, 1408.6, 1405.2,
+  ]);
+  assert.ok(chartGeo !== null);
+  assert.equal(chartGeo.twoWeeksAgoRate, 1390.0);
+  assert.equal(chartGeo.oneWeekAgoRate, 1398.4);
+  assert.equal(chartGeo.todayRate, 1405.2);
+  assert.match(chartGeo.polylinePoints, /^10,\d+\.\d+ .* 410,\d+\.\d+$/);
+
+  const mappedCoins = mapRedisTickersToPopularCoins([
+    {
+      tradingSymbolId: 1,
+      symbol: "BTC",
+      quoteAsset: "USDT",
+      markPrice: "96840.25",
+      changePercent24h: "3.42",
+      highPrice24h: "97500.00",
+      lowPrice24h: "93200.00",
+      quoteVolume24h: "2450800000",
+      status: "FRESH",
+    },
+    {
+      tradingSymbolId: 2,
+      symbol: "ETH",
+      quoteAsset: "USDT",
+      markPrice: "3085.50",
+      changePercent24h: "-1.75",
+      highPrice24h: "3180.00",
+      lowPrice24h: "3050.00",
+      quoteVolume24h: "980400000",
+      status: "FRESH",
+    },
+    {
+      tradingSymbolId: 3,
+      symbol: "SOL",
+      quoteAsset: "USDT",
+      markPrice: "228.90",
+      changePercent24h: "6.15",
+      highPrice24h: "232.00",
+      lowPrice24h: "214.00",
+      quoteVolume24h: "745200000",
+      status: "FRESH",
+    },
+  ]);
+
+  assert.equal(mappedCoins.length, 3);
+  assert.equal(mappedCoins[0].available, true);
+  assert.equal(mappedCoins[0].price, "$96,840.25");
+  assert.equal(mappedCoins[0].changeRate, 3.42);
+  assert.equal(mappedCoins[0].volume, "2,450.8M USDT");
+  assert.equal(mappedCoins[0].trendColor, "var(--color-bull)");
+  assert.equal(mappedCoins[0].high24h, "$97,500.00");
+
+  assert.equal(mappedCoins[1].available, true);
+  assert.equal(mappedCoins[1].price, "$3,085.50");
+  assert.equal(mappedCoins[1].changeRate, -1.75);
+  assert.equal(mappedCoins[1].volume, "980.4M USDT");
+  assert.equal(mappedCoins[1].trendColor, "#F6465D");
+  assert.equal(mappedCoins[1].low24h, "$3,050.00");
+
+  assert.equal(mappedCoins[2].available, true);
+  assert.equal(mappedCoins[2].price, "$228.90");
+  assert.equal(mappedCoins[2].changeRate, 6.15);
+  assert.equal(mappedCoins[2].volume, "745.2M USDT");
+  assert.equal(mappedCoins[2].trendColor, "var(--color-bull)");
+
+  const customOverview = parseMarketOverviewPayload({
+    btcDominancePercent: 58.1,
+    btcDominanceChange24h: 0.41,
+    kimchiPremiumPercent: 1.12,
+    openInterestBillionsUsd: 40.5,
+    fearGreedValue: 71,
+    fearGreedLabelKr: "탐욕",
+    futuresBullPct: 58,
+    futuresBearPct: 42,
+    btcChange24h: 3.42,
+    usdKrwRate: 1405.2,
+    usdKrwChangeAmount: -3.4,
+    usdKrwChangePct: -0.24,
+    usdKrwHistory: [
+      1390.0, 1392.0, 1391.5, 1394.0, 1395.5, 1396.0, 1397.2, 1398.4, 1400.1, 1401.5,
+      1403.0, 1404.2, 1408.6, 1405.2,
+    ],
+    updatedAt: "2026-11-10T10:00:00Z",
+  });
+
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal
+          initialMarketOverview={customOverview}
+          initialTickers={[
+            {
+              tradingSymbolId: 1,
+              symbol: "BTC",
+              quoteAsset: "USDT",
+              markPrice: "96840.25",
+              changePercent24h: "3.42",
+              highPrice24h: "97500.00",
+              lowPrice24h: "93200.00",
+              quoteVolume24h: "2450800000",
+              status: "FRESH",
+            },
+            {
+              tradingSymbolId: 2,
+              symbol: "ETH",
+              quoteAsset: "USDT",
+              markPrice: "3085.50",
+              changePercent24h: "-1.75",
+              highPrice24h: "3180.00",
+              lowPrice24h: "3050.00",
+              quoteVolume24h: "980400000",
+              status: "FRESH",
+            },
+            {
+              tradingSymbolId: 3,
+              symbol: "SOL",
+              quoteAsset: "USDT",
+              markPrice: "228.90",
+              changePercent24h: "6.15",
+              highPrice24h: "232.00",
+              lowPrice24h: "214.00",
+              quoteVolume24h: "745200000",
+              status: "FRESH",
+            },
+          ]}
+        />
+      </MemberProvider>,
+    );
+
+    assert.match(html, /1 YD = 1,405\.20 KRW/);
+    assert.match(html, /▼ -3\.40 \(-0\.24%\)/);
+    assert.match(html, /2주 전 \(1,390\.0원\)/);
+    assert.match(html, /1주 전 \(1,398\.4원\)/);
+    assert.match(html, /오늘 \(1,405\.2원\)/);
+    assert.match(html, /value="140,520"/);
+
+    assert.match(html, /\$96,840\.25/);
+    assert.match(html, /\+3\.42%/);
+    assert.match(html, /24h 거래대금 2,450\.8M USDT/);
+
+    assert.match(html, /\$3,085\.50/);
+    assert.match(html, /text-\[#F6465D\]">-1\.75%<\/span>/);
+    assert.match(html, /24h 거래대금 980\.4M USDT/);
+    assert.match(html, /24h 고가/);
+    assert.match(html, /\$3,180\.00/);
+  } finally {
+    client.clear();
+  }
+});
+
+test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커뮤니티·마이페이지에 적용된다", () => {
+  const client = new QueryClient();
+  try {
+    const headerHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <V1Header />
+      </MemberProvider>,
+    );
+    assert.match(
+      headerHtml,
+      /ym-gnb-inner mx-auto flex h-16 w-full max-w-\[1280px\] items-center justify-between px-4 sm:px-6/,
+    );
+
+    const mainOverviewFixture = parseMarketOverviewPayload({
+      btcDominancePercent: 58.1,
+      btcDominanceChange24h: 0.41,
+      kimchiPremiumPercent: 1.12,
+      openInterestBillionsUsd: 40.5,
+      fearGreedValue: 71,
+      fearGreedLabelKr: "탐욕",
+      futuresBullPct: 58,
+      futuresBearPct: 42,
+      btcChange24h: 3.42,
+      usdKrwRate: 1405.2,
+      usdKrwChangeAmount: -3.4,
+      usdKrwChangePct: -0.24,
+      usdKrwHistory: [1395, 1400, 1405.2],
+      updatedAt: "2026-11-10T10:00:00Z",
+    });
+    const mainHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal initialMarketOverview={mainOverviewFixture} />
+      </MemberProvider>,
+    );
+    // 메인 시장 요약 4종 차트·환율·인기종목 반응형 클래스 (가짜 가격·스파크라인 없이 정직한 연동 대기 상태)
+    assert.match(mainHtml, /grid grid-cols-1 gap-3\.5 sm:grid-cols-2[^>]*data-hero-market-charts="ready"/);
+    assert.match(mainHtml, /whitespace-nowrap text-xl font-black text-gray-900 sm:text-3xl/);
+    assert.match(mainHtml, /data-popular-coins-state=/);
+
+    const newsHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialPendingCoinCount={2} initialPendingEconomyCount={1} />
+      </MemberProvider>,
+    );
+    // 속보 서브탭 뉴스룸과 동일한 중앙 세그먼트 탭 바 및 투자 심리 바 줄바꿈 방지
+    assert.match(newsHtml, /mx-auto grid max-w-xl grid-cols-3 gap-1 rounded-2xl bg-\[#F2F4F7\] p-1\.5/);
+    assert.match(newsHtml, /bg-bull px-1\.5 whitespace-nowrap/);
+    assert.match(newsHtml, /data-breaking-badge="all"/);
+
+    const communityHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialPage={{
+            items: [
+              {
+                id: 901,
+                memberId: 7,
+                authorNickname: "트레이더7",
+                authorProfileImgUrl: null,
+                authorWithdrawn: false,
+                category: "POSITION",
+                symbolTag: "BTC",
+                title: "모바일 반응형 테스트 게시글",
+                content: "포지션 스냅샷 카드 반응형 확인",
+                likeCount: 5,
+                commentCount: 1,
+                likedByMe: false,
+                reportedByMe: false,
+                mine: false,
+                sharedPosition: SAMPLE_TEST_POSITION,
+                files: [],
+                createdAt: "2026-11-10 10:00",
+                updatedAt: "2026-11-10 10:00",
+              },
+            ],
+            hasNext: false,
+            nextCursorId: null,
+          }}
+        />
+      </MemberProvider>,
+    );
+    // 커뮤니티 게시글 카드 모바일 패딩 및 포지션 공유 스냅샷 반응형 그리드
+    assert.match(communityHtml, /rounded-2xl border border-gray-200 bg-white p-4 transition-colors sm:p-6/);
+    assert.match(communityHtml, /grid grid-cols-1 gap-2 rounded-xl border border-gray-200 bg-white px-3\.5 py-2\.5 text-xs sm:grid-cols-3/);
+
+    const myPageHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MemberMyProfilePage />
+      </MemberProvider>,
+    );
+    // 마이페이지 북마크 탭 모바일 패딩, 도넛 차트 세로/가로 반응형 스택, 롱/숏 비율 줄바꿈 대응
+    assert.match(myPageHtml, /px-3 sm:px-5 text-xs sm:text-sm/);
+    assert.match(myPageHtml, /flex flex-col items-center gap-4 sm:flex-row sm:gap-6/);
+    assert.match(
+      myPageHtml,
+      /flex flex-wrap items-center justify-between gap-1 text-\[11px\] sm:text-xs font-black/,
+    );
+  } finally {
+    client.clear();
+  }
+});
+
+test("뉴스 조회수 멱등 카운트(로그인 계정당 1회·비로그인 일일 1회) 및 많이 본 뉴스 정렬(조회수 내림차순, 동률 시 최신순)이 동작한다", async () => {
+  const storeData = new Map<string, string>();
+  const mockStorage = {
+    getItem: (key: string) => storeData.get(key) ?? null,
+    setItem: (key: string, val: string) => {
+      storeData.set(key, val);
+    },
+  };
+
+  // 1. KST 날짜 포맷 및 비로그인 익명 뷰어 식별자 유지 검증
+  const kstDay1 = getKstDateString(new Date("2026-11-10T01:00:00Z"));
+  assert.equal(kstDay1, "2026-11-10");
+  const viewerId1 = getOrCreateAnonNewsViewerId(mockStorage);
+  const viewerId2 = getOrCreateAnonNewsViewerId(mockStorage);
+  assert.match(viewerId1, /^anon-[A-Za-z0-9._:-]+$/);
+  assert.equal(viewerId1, viewerId2);
+
+  // 2. 비로그인 유저: 같은 날(2026-11-10)에는 1번만 조회수가 증가하고, 다음 날(2026-11-11)에는 다시 1번 증가
+  const baseArticle = {
+    id: 501,
+    category: "CRYPTO" as const,
+    section: "NEWSROOM" as const,
+    subCategory: "CRYPTO" as const,
+    title: "비트코인 기관 수급 분석",
+    summary: "요약",
+    content: "본문",
+    sourceName: "Yogimangchi Desk",
+    sourceUrl: "https://example.com/news/501",
+    thumbnailUrl: null,
+    aiSummary: null,
+    sentiment: "BULLISH" as const,
+    bullCount: 10,
+    bearCount: 2,
+    viewCount: 100,
+    symbolTag: "BTC",
+    publishedAt: "2026-11-10T08:00:00Z",
+  };
+
+  assert.equal(hasAnonViewedNewsToday(501, "2026-11-10", mockStorage), false);
+  const firstAnon = applyIdempotentNewsView(baseArticle, {
+    today: "2026-11-10",
+    storage: mockStorage,
+  });
+  assert.equal(firstAnon.incremented, true);
+  assert.equal(firstAnon.viewCount, 101);
+  assert.equal(hasAnonViewedNewsToday(501, "2026-11-10", mockStorage), true);
+
+  const secondAnonSameDay = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: firstAnon.viewCount },
+    { today: "2026-11-10", storage: mockStorage },
+  );
+  assert.equal(secondAnonSameDay.incremented, false);
+  assert.equal(secondAnonSameDay.viewCount, 101);
+
+  // 다음 날(2026-11-11)에는 이전 날짜 기록이 정리되고 다시 1회 카운트 가능
+  assert.equal(hasAnonViewedNewsToday(501, "2026-11-11", mockStorage), false);
+  markAnonViewedNewsToday(502, "2026-11-11", mockStorage);
+  const nextDayAnon = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: 101 },
+    { today: "2026-11-11", storage: mockStorage },
+  );
+  assert.equal(nextDayAnon.incremented, true);
+  assert.equal(nextDayAnon.viewCount, 102);
+
+  // 3. 로그인 회원: 계정당 영구 1회만 증가하고 다른 계정은 별도로 1회 증가
+  assert.equal(hasMemberViewedNews(77, 501, mockStorage), false);
+  const member77First = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: 200 },
+    { memberId: 77, storage: mockStorage },
+  );
+  assert.equal(member77First.incremented, true);
+  assert.equal(member77First.viewCount, 201);
+  assert.equal(hasMemberViewedNews(77, 501, mockStorage), true);
+
+  const member77Second = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: 201 },
+    { memberId: 77, storage: mockStorage },
+  );
+  assert.equal(member77Second.incremented, false);
+  assert.equal(member77Second.viewCount, 201);
+
+  markMemberViewedNews(88, 999, mockStorage);
+  const member88First = applyIdempotentNewsView(
+    { ...baseArticle, viewCount: 201 },
+    { memberId: 88, storage: mockStorage },
+  );
+  assert.equal(member88First.incremented, true);
+  assert.equal(member88First.viewCount, 202);
+
+  // 4. contentJson `/news/{id}/views` 경로 및 `X-Anon-Viewer-Id` 헤더 전달 검증
+  let capturedUrl = "";
+  let capturedAnonHeader = "";
+  await contentJson(
+    "http://localhost:8080",
+    "/news/501/views",
+    { method: "POST", anonViewerId: viewerId1 },
+    async (input, init) => {
+      capturedUrl = String(input);
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      capturedAnonHeader = headers["X-Anon-Viewer-Id"] ?? "";
+      return new Response(JSON.stringify({ ...baseArticle, viewCount: 105 }), { status: 200 });
+    },
+  );
+  assert.equal(capturedUrl, "http://localhost:8080/api/v1/news/501/views");
+  assert.equal(capturedAnonHeader, viewerId1);
+
+  // 5. sortNewsItems(items, "POPULAR"): 반응수(bull+bear)와 무관하게 실제 viewCount 내림차순,
+  //    조회수가 같을 때는 publishedAt 최신순(동일 시각이면 id 내림차순)으로 정렬
+  const sampleItems = [
+    {
+      ...baseArticle,
+      id: 1,
+      title: "조회수 50 · 오래된 기사 (반응 매우 많음)",
+      bullCount: 999,
+      bearCount: 500,
+      viewCount: 50,
+      publishedAt: "2026-11-10T06:00:00Z",
+    },
+    {
+      ...baseArticle,
+      id: 2,
+      title: "조회수 50 · 최신 기사",
+      bullCount: 1,
+      bearCount: 0,
+      viewCount: 50,
+      publishedAt: "2026-11-10T09:30:00Z",
+    },
+    {
+      ...baseArticle,
+      id: 3,
+      title: "조회수 120 · 최다 조회 기사",
+      bullCount: 2,
+      bearCount: 1,
+      viewCount: 120,
+      publishedAt: "2026-11-10T07:00:00Z",
+    },
+    {
+      ...baseArticle,
+      id: 4,
+      title: "조회수 50 · 중간 시각 기사",
+      bullCount: 50,
+      bearCount: 50,
+      viewCount: 50,
+      publishedAt: "2026-11-10T08:15:00Z",
+    },
+  ];
+
+  const popularSorted = sortNewsItems(sampleItems, "POPULAR");
+  assert.deepEqual(
+    popularSorted.map(item => item.id),
+    [3, 2, 4, 1],
+  );
+
+  // 모든 기사의 조회수가 동일할 때(예: 모두 0회) 최신순으로 정렬되는지 검증
+  const equalViewItems = sampleItems.map(item => ({ ...item, viewCount: 0 }));
+  const tieBrokenPopular = sortNewsItems(equalViewItems, "POPULAR");
+  assert.deepEqual(
+    tieBrokenPopular.map(item => item.id),
+    [2, 4, 3, 1],
+  );
+
+  // 6. NewsFeed 렌더링 시 조회수 표기 및 POPULAR 정렬 순서 확인
+  const client = new QueryClient();
+  try {
+    const popularNewsroomHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed
+          initialPage={{ items: sampleItems, hasNext: false, nextCursorId: null }}
+          initialSection="NEWSROOM"
+          initialNewsroomSort="POPULAR"
+        />
+      </MemberProvider>,
+    );
+    assert.match(popularNewsroomHtml, /조회 120/);
+    assert.match(popularNewsroomHtml, /조회 50/);
+    assert.equal(
+      popularNewsroomHtml.indexOf("조회수 120 · 최다 조회 기사") <
+        popularNewsroomHtml.indexOf("조회수 50 · 최신 기사") &&
+        popularNewsroomHtml.indexOf("조회수 50 · 최신 기사") <
+          popularNewsroomHtml.indexOf("조회수 50 · 중간 시각 기사") &&
+        popularNewsroomHtml.indexOf("조회수 50 · 중간 시각 기사") <
+          popularNewsroomHtml.indexOf("조회수 50 · 오래된 기사 (반응 매우 많음)"),
+      true,
+    );
+  } finally {
+    client.clear();
+  }
+});
+
+test("기존 회원 로그인 시 원래 보던 페이지 또는 메인 페이지로 복귀하고 회원가입 완료 시 메인 페이지로 이동한다", () => {
+  const storeMap = new Map<string, string>();
+  const mockStorage = {
+    getItem: (key: string) => storeMap.get(key) ?? null,
+    setItem: (key: string, val: string) => {
+      storeMap.set(key, val);
+    },
+    removeItem: (key: string) => {
+      storeMap.delete(key);
+    },
+  };
+
+  // 1. 저장된 경로가 없을 때 기본값은 메인 페이지("/")
+  assert.equal(consumeLoginReturnPath(mockStorage), "/");
+  assert.equal(normalizeLoginReturnPath(null), "/");
+  assert.equal(normalizeLoginReturnPath(""), "/");
+
+  // 2. 인증/계정 전용 경로 및 외부 URL은 안전하게 메인 페이지("/")로 정규화
+  assert.equal(normalizeLoginReturnPath("/login"), "/");
+  assert.equal(normalizeLoginReturnPath("/signup"), "/");
+  assert.equal(normalizeLoginReturnPath("/auth/callback?code=123"), "/");
+  assert.equal(normalizeLoginReturnPath("/account"), "/");
+  assert.equal(normalizeLoginReturnPath("https://evil.example.com/phish"), "/");
+  assert.equal(normalizeLoginReturnPath("//evil.example.com"), "/");
+
+  // 3. 원래 보던 내부 페이지(/community, /news?tab=newsroom, /trading 등) 저장 후 로그인 완료 시 정확히 복원 및 1회 소비
+  assert.equal(
+    saveLoginReturnPath("/news?tab=newsroom&sub=all&sort=popular", mockStorage),
+    "/news?tab=newsroom&sub=all&sort=popular",
+  );
+  assert.equal(
+    consumeLoginReturnPath(mockStorage),
+    "/news?tab=newsroom&sub=all&sort=popular",
+  );
+  // 소비 후 다시 조회하면 메인 페이지("/")로 초기화됨
+  assert.equal(consumeLoginReturnPath(mockStorage), "/");
+
+  // 4. 회원가입 완료 시 clearLoginReturnPath로 기존 저장 경로를 비우고 메인 페이지("/")로 이동
+  saveLoginReturnPath("/community", mockStorage);
+  clearLoginReturnPath(mockStorage);
+  assert.equal(consumeLoginReturnPath(mockStorage), "/");
+});
+
+test("시즌별 대회 허브(/contest), 대회 전용 트레이딩 서브헤더(/contest/[seasonId]/trading), 관리자 대회 목록(/admin/contest) 및 상세/청크500 정산(/admin/contest/[seasonId]) 화면이 정상 렌더링된다", async () => {
+  const client = new QueryClient();
+  const epoch = Date.now();
+  const loggedInSession = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "트레이더7",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await loggedInSession.restore();
+
+  try {
+    // 1. V1Header: 관리자 권한일 때 우측 '관리자'(/admin/contest) 이동 배지 노출
+    const adminHeaderHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <V1Header theme="light" role="ADMIN" />
+      </MemberProvider>,
+    );
+    assert.match(adminHeaderHtml, /href="\/admin\/contest"[^>]*>관리자<\/a>/);
+    assert.match(adminHeaderHtml, /href="\/me"[^>]*>마이페이지<\/a>/);
+    assert.equal(adminHeaderHtml.includes("준비중"), false);
+
+    // 2. 비로그인/게스트 ContestHub: 로그인 유도 앰버 배너 + 공개 대회 3단 섹션 + 리더보드
+    const anonContestHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <ContestHub />
+      </MemberProvider>,
+    );
+    assert.match(anonContestHtml, /시즌별 선물 모의투자 대회/);
+    assert.match(anonContestHtml, /대회 규칙·상금 안내/);
+    assert.match(
+      anonContestHtml,
+      /현재 대회 목록만 열람하고 계십니다\. 대회에 참가 신청하고 수익률 랭킹에 도전하려면 로그인이 필요합니다\./,
+    );
+    assert.match(anonContestHtml, /href="\/login"[^>]*>지금 로그인하기<\/a>/);
+    assert.match(anonContestHtml, /aria-label="대회 시즌 불러오는 중"/);
+    assert.match(anonContestHtml, /data-public-contest-stage="running"/);
+    assert.match(anonContestHtml, /data-public-contest-stage="recruiting"/);
+    assert.match(anonContestHtml, /data-public-contest-stage="finished"/);
+    assert.match(anonContestHtml, /data-contest-section="leaderboard"/);
+    assert.equal(anonContestHtml.includes("2026 정규 시즌 2 선물 수익률 대회"), false);
+    assert.equal(anonContestHtml.includes("cursor-not-allowed"), false);
+    assert.equal(/[\u{1F300}-\u{1FAFF}]/u.test(anonContestHtml), false);
+
+    // 3. 정식 로그인 회원 ContestHub: 내 진행 중인 대회 섹션 + 참가 신청 가능/참가 심사 중/종료 및 반려 3탭 (가짜 목업 미노출)
+    const memberContestHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <ContestHub />
+      </MemberProvider>,
+    );
+    assert.match(memberContestHtml, /data-contest-section="ongoing"/);
+    assert.match(memberContestHtml, /내 진행 중인 대회/);
+    assert.match(memberContestHtml, /data-contest-section="catalog"/);
+    assert.match(memberContestHtml, /참가 신청 가능 \(0\)/);
+    assert.match(memberContestHtml, /참가 심사 중 \(0\)/);
+    assert.match(memberContestHtml, /종료 및 반려 \(0\)/);
+    assert.equal(memberContestHtml.includes("202602"), false);
+    assert.equal(memberContestHtml.includes("cursor-not-allowed"), false);
+
+    // 4. 대회 전용 선물 트레이딩 48px 서브헤더 (/contest/[seasonId]/trading)
+    const subheaderHtml = renderToStaticMarkup(
+      <ContestTradingSubheader seasonId={202602} />,
+    );
+    assert.match(subheaderHtml, /data-contest-trading-subheader="202602"/);
+    assert.match(subheaderHtml, /href="\/contest"/);
+    assert.match(subheaderHtml, /대회 목록/);
+    assert.match(subheaderHtml, /대회 시즌 #202602/);
+    assert.match(subheaderHtml, /ACTIVE/);
+    assert.match(subheaderHtml, /시즌 시드/);
+    assert.match(subheaderHtml, /대회 평가자산/);
+    assert.match(subheaderHtml, /대회 가용증거금/);
+    assert.match(subheaderHtml, /CONTEST MODE/);
+
+    // 5. 관리자 대회 목록 (/admin/contest) 권한 가드 및 시즌 생성/수정 모달 (ContestCreateEditModal)
+    const blockedMemberAdminHtml = renderToStaticMarkup(
+      <MemberProvider session={loggedInSession} client={client}>
+        <AdminContestList />
+      </MemberProvider>,
+    );
+    assert.match(blockedMemberAdminHtml, /data-admin-guard="blocked"/);
+    assert.equal(blockedMemberAdminHtml.includes("data-admin-edit-season"), false);
+
+    const adminJwtToken = `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: "1", roles: ["ROLE_ADMIN"] })).toString("base64url")}.sig`;
+    const adminContestSession = createMemberSession(
+      "http://localhost:8080",
+      async url =>
+        String(url).endsWith("csrf")
+          ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+          : Response.json({
+              memberId: 1,
+              nickname: "구름관리자",
+              accessToken: adminJwtToken,
+              tokenType: "Bearer",
+              expiresIn: 900,
+              expiresAt: new Date(epoch + 900000).toISOString(),
+            }),
+      () => epoch,
+      fn => fn(),
+      () => true,
+      () => null,
+    );
+    await adminContestSession.restore();
+
+    const adminListHtml = renderToStaticMarkup(
+      <MemberProvider session={adminContestSession} client={client}>
+        <AdminContestList />
+      </MemberProvider>,
+    );
+    assert.match(adminListHtml, /data-admin-header="true"/);
+    assert.match(adminListHtml, /ADMIN/);
+    assert.match(adminListHtml, /대회 관리/);
+    assert.match(adminListHtml, /회원 관리/);
+    assert.match(adminListHtml, /커뮤니티 관리/);
+    assert.match(adminListHtml, /신고 관리/);
+    assert.match(adminListHtml, /시스템 운영/);
+    assert.match(adminListHtml, /서비스 홈으로/);
+    assert.match(adminListHtml, /대회 시즌 관리/);
+    assert.match(adminListHtml, /\+ 새 대회 시즌 생성/);
+    assert.match(adminListHtml, /전체 대회 시즌/);
+    assert.match(adminListHtml, /참가 모집중 시즌/);
+    assert.match(adminListHtml, /진행중\(LIVE\) 시즌/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>시즌 ID<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*w-\[220px\] max-w-\[220px\][^>]*whitespace-nowrap[^>]*>대회명<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>공개여부<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>취소여부<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>초기 시드머니<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>정산 상태<\/th>/);
+    assert.match(adminListHtml, /<th[^>]*whitespace-nowrap[^>]*>관리<\/th>/);
+    assert.equal(adminListHtml.includes("data-admin-edit-season=\"202602\""), false);
+    assert.equal(adminListHtml.includes("cursor-not-allowed"), false);
+
+    const createModalHtml = renderToStaticMarkup(
+      <ContestCreateEditModal
+        open={true}
+        mode="create"
+        onClose={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    assert.match(createModalHtml, /새 대회 시즌 생성/);
+    assert.match(createModalHtml, /시즌 초기 시드머니 \(USDT\)/);
+    assert.match(createModalHtml, /참가 신청 시작 일시/);
+    assert.match(createModalHtml, /참가 신청 마감 일시/);
+    assert.match(createModalHtml, /대회 진행 시작 일시/);
+    assert.match(createModalHtml, /대회 진행 종료 일시/);
+    assert.match(createModalHtml, /즉시 공개 여부/);
+
+    // 6. 관리자 대회 시즌 상세 및 청크 500 정산/신청자 운영 (/admin/contest/[seasonId])
+    const adminDetailHtml = renderToStaticMarkup(
+      <MemberProvider session={adminContestSession} client={client}>
+        <AdminContestDetail seasonId={202602} />
+      </MemberProvider>,
+    );
+    assert.match(adminDetailHtml, /대회 목록으로 돌아가기/);
+    assert.match(adminDetailHtml, /data-admin-action="early-finish-settle"/);
+    assert.match(adminDetailHtml, /대회 조기 종료 및 강제 정산/);
+    assert.match(adminDetailHtml, /data-admin-action="cleanup-remaining"/);
+    assert.match(adminDetailHtml, /남은 포지션·미체결 주문 재정리/);
+    assert.match(adminDetailHtml, /대회 개요 및 상태 제어/);
+    assert.match(adminDetailHtml, /주요 일정 및 자동 종료 스케줄/);
+    assert.match(adminDetailHtml, /청크 500 정산 시스템 상태 &amp; 실행 이력/);
+    assert.match(adminDetailHtml, /아직 실행된 정산 이력이 없습니다\./);
+    assert.match(adminDetailHtml, /신청자 관리 \(0\)/);
+    assert.match(adminDetailHtml, /참가자 및 시즌 지갑 목록 \(0\)/);
+    assert.match(adminDetailHtml, /반려 이력 \(0\)/);
+    assert.match(adminDetailHtml, /선택 일괄 승인 \(0\)/);
+    assert.equal(adminDetailHtml.includes("델타헤저"), false);
+    assert.equal(adminDetailHtml.includes("cursor-not-allowed"), false);
+
+    // 7. contest-client API 계약 검증 (공개·회원·관리자 엔드포인트, 메서드, Authorization 헤더, Decimal 포맷)
+    const calls: Array<{ url: string; method: string; auth: string; body: string }> = [];
+    const mockTransport: typeof fetch = async (input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      calls.push({
+        url: String(input),
+        method: init?.method ?? "GET",
+        auth: headers.Authorization ?? "",
+        body: typeof init?.body === "string" ? init.body : "",
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+
+    const opts = { baseUrl: "http://localhost:8081", transport: mockTransport };
+    await fetchPublicContestSeasons(opts);
+    await fetchPublicContestLeaderboard(202602, { ...opts, size: 20 });
+    await fetchPublicMemberContestSeasons(11, opts);
+    await fetchMyContestOverview("jwt-token", opts);
+    await applyForContestSeason(202605, "트레이더7", "jwt-token", opts);
+    await fetchMyContestSeasons("jwt-token", opts);
+    await fetchContestSeasonSummary(202602, "jwt-token", opts);
+    await fetchAdminContestSeasons({ ...opts, token: "admin-jwt", size: 20 });
+    await createAdminContestSeason(
+      {
+        title: "신규 시즌",
+        description: "설명",
+        seedMoney: "10000",
+        recruitmentStartAt: "2026-12-01T00:00:00Z",
+        recruitmentEndAt: "2026-12-10T23:59:00Z",
+        contestStartAt: "2026-12-11T09:00:00Z",
+        contestEndAt: "2026-12-31T23:59:00Z",
+        isPublic: true,
+      },
+      { ...opts, token: "admin-jwt" },
+    );
+    await updateAdminContestSeason(
+      202602,
+      {
+        title: "수정 시즌",
+        description: "설명",
+        seedMoney: "10000",
+        recruitmentStartAt: "2026-12-01T00:00:00Z",
+        recruitmentEndAt: "2026-12-10T23:59:00Z",
+        contestStartAt: "2026-12-11T09:00:00Z",
+        contestEndAt: "2026-12-31T23:59:00Z",
+        isPublic: true,
+      },
+      { ...opts, token: "admin-jwt" },
+    );
+    await patchAdminContestSeasonStatus(
+      202602,
+      { isPublic: false, isCanceled: true },
+      { ...opts, token: "admin-jwt" },
+    );
+    await fetchAdminContestSeasonDetail(202602, { ...opts, token: "admin-jwt" });
+    await approveAdminContestApplicant(202602, 501, { ...opts, token: "admin-jwt" });
+    await bulkApproveAdminContestApplicants(202602, [501, 502], { ...opts, token: "admin-jwt" });
+    await rejectAdminContestApplicant(202602, 503, "사유", { ...opts, token: "admin-jwt" });
+    await settleAdminContestSeason(202602, { ...opts, token: "admin-jwt" });
+    await cleanupRemainingAdminContestSeason(202602, { ...opts, token: "admin-jwt" });
+
+    assert.equal(calls[0]?.url, "http://localhost:8081/api/v1/trading/contest/public/seasons");
+    assert.equal(
+      calls[1]?.url,
+      "http://localhost:8081/api/v1/trading/contest/public/seasons/202602/leaderboard?size=20",
+    );
+    assert.equal(
+      calls[2]?.url,
+      "http://localhost:8081/api/v1/trading/contest/public/members/11/seasons",
+    );
+    assert.equal(calls[3]?.url, "http://localhost:8081/api/v1/trading/contest/me/overview");
+    assert.equal(calls[3]?.auth, "Bearer jwt-token");
+    assert.equal(
+      calls[4]?.url,
+      "http://localhost:8081/api/v1/trading/contest/seasons/202605/applications",
+    );
+    assert.equal(calls[4]?.method, "POST");
+    assert.equal(calls[5]?.url, "http://localhost:8081/api/v1/trading/contest/account/seasons");
+    assert.equal(
+      calls[6]?.url,
+      "http://localhost:8081/api/v1/trading/contest/seasons/202602/summary",
+    );
+    assert.equal(
+      calls[7]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons?size=20",
+    );
+    assert.equal(calls[8]?.method, "POST");
+    assert.equal(calls[9]?.method, "PUT");
+    assert.equal(
+      calls[10]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/status",
+    );
+    assert.equal(calls[10]?.method, "PATCH");
+    assert.equal(
+      calls[11]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602",
+    );
+    assert.equal(
+      calls[12]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/applicants/501/approve",
+    );
+    assert.equal(
+      calls[13]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/applicants/bulk-approve",
+    );
+    assert.equal(
+      calls[14]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/applicants/503/reject",
+    );
+    assert.equal(
+      calls[15]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/settle",
+    );
+    assert.equal(
+      calls[16]?.url,
+      "http://localhost:8081/api/v1/trading/admin/contest/seasons/202602/cleanup-remaining",
+    );
+
+    assert.equal(formatContestUsdt("10000"), "10,000.00 USDT");
+    assert.equal(formatContestSignedUsdt("3480.5"), "+3,480.50 USDT");
+    assert.equal(formatContestSignedRoi("-5.8"), "-5.80%");
+    assert.equal(formatContestWinRate("68.40"), "68.4%");
+  } finally {
+    client.clear();
+  }
+});
+
+test("GNB admin button role gate, contest trading path routing, and AdminUsers/AdminCommunity pages", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  try {
+    const makeJwt = (payloadObj: Record<string, unknown>) => {
+      const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+      const payload = Buffer.from(JSON.stringify(payloadObj)).toString("base64url");
+      return `${header}.${payload}.sig`;
+    };
+
+    const adminToken = makeJwt({ sub: "1", roles: ["ROLE_ADMIN"] });
+    const memberToken = makeJwt({ sub: "2", roles: ["ROLE_MEMBER"] });
+
+    const parsedAdmin = parseAccess({
+      memberId: 1,
+      nickname: "총괄관리자",
+      accessToken: adminToken,
+      tokenType: "Bearer",
+      expiresIn: 900,
+      expiresAt: "2026-12-31T23:59:59Z",
+    });
+    assert.equal(parsedAdmin.role, "ADMIN");
+
+    const parsedMember = parseAccess({
+      memberId: 2,
+      nickname: "일반회원",
+      accessToken: memberToken,
+      tokenType: "Bearer",
+      expiresIn: 900,
+      expiresAt: "2026-12-31T23:59:59Z",
+    });
+    assert.equal(parsedMember.role, "MEMBER");
+
+    // GNB V1Header: 일반회원 세션에서는 관리자 버튼 미노출, ADMIN 세션에서만 노출
+    const epoch = Date.now();
+    const memberSession = createMemberSession(
+      "http://localhost:8080",
+      async url =>
+        String(url).endsWith("csrf")
+          ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+          : Response.json({
+              memberId: 2,
+              nickname: "일반회원",
+              accessToken: memberToken,
+              tokenType: "Bearer",
+              expiresIn: 900,
+              expiresAt: new Date(epoch + 900000).toISOString(),
+            }),
+      () => epoch,
+      fn => fn(),
+      () => true,
+      () => null,
+    );
+    await memberSession.restore();
+    const memberHeaderHtml = renderToStaticMarkup(
+      <MemberProvider session={memberSession} client={client}>
+        <V1Header />
+      </MemberProvider>,
+    );
+    assert.equal(memberHeaderHtml.includes('href="/admin/contest"'), false);
+
+    const adminSession = createMemberSession(
+      "http://localhost:8080",
+      async url =>
+        String(url).endsWith("csrf")
+          ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+          : Response.json({
+              memberId: 1,
+              nickname: "총괄관리자",
+              accessToken: adminToken,
+              tokenType: "Bearer",
+              expiresIn: 900,
+              expiresAt: new Date(epoch + 900000).toISOString(),
+            }),
+      () => epoch,
+      fn => fn(),
+      () => true,
+      () => null,
+    );
+    await adminSession.restore();
+    const adminHeaderHtml = renderToStaticMarkup(
+      <MemberProvider session={adminSession} client={client}>
+        <V1Header />
+      </MemberProvider>,
+    );
+    assert.equal(adminHeaderHtml.includes('href="/admin/contest"'), true);
+
+    // Contest trading path routing & WS authenticate frame
+    assert.equal(
+      resolveContestTradingPath("account/summary", 202602),
+      "contest/seasons/202602/account/summary",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/orders/market", 202602),
+      "contest/seasons/202602/orders/market",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/positions/10/stop-loss", 202602),
+      "contest/seasons/202602/positions/10/stop-loss",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/symbols/1/leverage?side=LONG", 202602),
+      "contest/seasons/202602/symbols/1/leverage?side=LONG",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/events?afterId=0&limit=50", 202602),
+      "contest/seasons/202602/events?afterId=0&limit=50",
+    );
+    assert.equal(
+      resolveContestTradingPath("account/recovery", 202602),
+      "contest/seasons/202602/recovery",
+    );
+    assert.equal(resolveContestTradingPath("account/summary", undefined), "account/summary");
+
+    const sentFrames: string[] = [];
+    authenticateGuestTradingSocket(
+      { send: msg => sentFrames.push(String(msg)) },
+      "jwt-123",
+      0,
+      202602,
+    );
+    assert.deepEqual(JSON.parse(sentFrames[0]!), {
+      type: "AUTHENTICATE",
+      credential: "jwt-123",
+      afterEventId: "0",
+      contestSeasonId: 202602,
+    });
+
+    // AdminUsers (/admin/users) & AdminCommunity (/admin/community) SSR rendering
+    const adminUsersHtml = renderToStaticMarkup(
+      <MemberProvider session={adminSession} client={client}>
+        <AdminUsers />
+      </MemberProvider>,
+    );
+    assert.match(adminUsersHtml, /data-admin-users-page="true"/);
+    assert.match(adminUsersHtml, /회원 관리/);
+    assert.match(adminUsersHtml, /전체 회원/);
+    assert.match(adminUsersHtml, /활동 회원/);
+    assert.match(adminUsersHtml, /탈퇴 회원/);
+    assert.match(adminUsersHtml, /href="\/admin\/users"/);
+    assert.match(adminUsersHtml, /href="\/admin\/community"/);
+    assert.match(adminUsersHtml, /<th[^>]*whitespace-nowrap[^>]*>회원번호<\/th>/);
+    assert.match(adminUsersHtml, /<th[^>]*whitespace-nowrap[^>]*>관리 액션<\/th>/);
+    assert.equal(adminUsersHtml.includes("cursor-not-allowed"), false);
+
+    const adminCommunityHtml = renderToStaticMarkup(
+      <MemberProvider session={adminSession} client={client}>
+        <AdminCommunity />
+      </MemberProvider>,
+    );
+    assert.match(adminCommunityHtml, /data-admin-community-page="true"/);
+    assert.match(adminCommunityHtml, /커뮤니티 관리/);
+    assert.match(adminCommunityHtml, /게시글 관리/);
+    assert.match(adminCommunityHtml, /댓글 관리/);
+    assert.match(adminCommunityHtml, /<th[^>]*whitespace-nowrap[^>]*>글 번호<\/th>/);
+    assert.match(adminCommunityHtml, /<th[^>]*whitespace-nowrap[^>]*>삭제 여부<\/th>/);
+    assert.equal(adminCommunityHtml.includes("cursor-not-allowed"), false);
+    assert.equal(adminCommunityHtml.includes("확장슬롯"), false);
+
+    const adminReportsHtml = renderToStaticMarkup(
+      <MemberProvider session={adminSession} client={client}>
+        <AdminReportsView />
+      </MemberProvider>,
+    );
+    assert.match(adminReportsHtml, /data-admin-reports="true"/);
+    assert.match(adminReportsHtml, /커뮤니티 신고 관리 센터/);
+    assert.match(adminReportsHtml, /href="\/admin\/reports"/);
+    assert.match(adminReportsHtml, /<th[^>]*whitespace-nowrap[^>]*>대상 누적신고<\/th>/);
+    assert.match(adminReportsHtml, /<th[^>]*whitespace-nowrap[^>]*>신고 사유<\/th>/);
+    assert.equal(adminReportsHtml.includes("cursor-not-allowed"), false);
+    assert.equal(adminReportsHtml.includes("확장슬롯"), false);
+
+    // admin-api.ts contract verification
+    const adminCalls: Array<{ url: string; method: string; auth: string }> = [];
+    const adminTransport: typeof fetch = async (input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      adminCalls.push({
+        url: String(input),
+        method: init?.method ?? "GET",
+        auth: headers.Authorization ?? "",
+      });
+      if ((init?.method ?? "GET") === "DELETE" || (init?.method ?? "GET") === "POST") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(
+        JSON.stringify({
+          totalCount: 2,
+          activeCount: 1,
+          withdrawnCount: 1,
+          content: [],
+          nextCursorId: null,
+          hasNext: false,
+          totalElements: 0,
+          totalPages: 0,
+          postReportCount: 0,
+          commentReportCount: 0,
+          activeTargetReportCount: 0,
+        }),
+        { status: 200 },
+      );
+    };
+    const adminOpts = { origin: "http://localhost:8080", transport: adminTransport };
+    await fetchAdminMembers("admin-jwt", { status: "ACTIVE", role: "MEMBER", size: 10 }, adminOpts);
+    await withdrawAdminMember("admin-jwt", 77, adminOpts);
+    await fetchAdminCommunityPosts("admin-jwt", "ACTIVE", { title: "비트", size: 10 }, adminOpts);
+    await deleteAdminCommunityPost("admin-jwt", 301, adminOpts);
+    await fetchAdminCommunityReplies("admin-jwt", "WITHDRAWN", { replyContent: "댓글", size: 10 }, adminOpts);
+    await deleteAdminCommunityReply("admin-jwt", 401, adminOpts);
+    await fetchAdminReports("admin-jwt", { targetType: "POST", reasonType: "SPAM", page: 0, size: 20 }, adminOpts);
+    await dismissAdminReport("admin-jwt", "COMMENT", 401, 15, adminOpts);
+    await moderateAdminReportTarget("admin-jwt", "POST", 301, "DELETE_TARGET", adminOpts);
+
+    assert.equal(
+      adminCalls[0]?.url,
+      "http://localhost:8080/api/v1/admin/members?status=ACTIVE&role=MEMBER&size=10",
+    );
+    assert.equal(adminCalls[0]?.auth, "Bearer admin-jwt");
+    assert.equal(adminCalls[1]?.url, "http://localhost:8080/api/v1/admin/members/77");
+    assert.equal(adminCalls[1]?.method, "DELETE");
+    assert.match(
+      adminCalls[2]?.url ?? "",
+      /^http:\/\/localhost:8080\/api\/v1\/admin\/community\/posts\/active-author\?/,
+    );
+    assert.equal(adminCalls[3]?.url, "http://localhost:8080/api/v1/admin/community/posts/301");
+    assert.equal(adminCalls[3]?.method, "DELETE");
+    assert.match(
+      adminCalls[4]?.url ?? "",
+      /^http:\/\/localhost:8080\/api\/v1\/admin\/community\/replies\/withdrawn-author\?/,
+    );
+    assert.equal(adminCalls[5]?.url, "http://localhost:8080/api/v1/admin/community/replies/401");
+    assert.equal(adminCalls[5]?.method, "DELETE");
+    assert.equal(
+      adminCalls[6]?.url,
+      "http://localhost:8080/api/v1/admin/community/reports?targetType=POST&targetStatus=ALL&reasonType=SPAM&page=0&size=20",
+    );
+    assert.equal(
+      adminCalls[7]?.url,
+      "http://localhost:8080/api/v1/admin/community/reports/COMMENT/401/reporters/15",
+    );
+    assert.equal(adminCalls[7]?.method, "DELETE");
+    assert.equal(
+      adminCalls[8]?.url,
+      "http://localhost:8080/api/v1/admin/community/reports/POST/301/moderate?action=DELETE_TARGET",
+    );
+    assert.equal(adminCalls[8]?.method, "POST");
+  } finally {
+    client.clear();
+  }
+});
+
+test("메인페이지(/) 새로고침 시 SSR과 클라이언트 초기 Hydration(localStorage ADMIN 힌트 존재) 마크업이 100% 일치하여 Hydration Mismatch가 발생하지 않는다", async () => {
+  const client = new QueryClient();
+  const globalRef = globalThis as Record<string, unknown>;
+  const prevWindow = globalRef.window;
+  const prevDocument = globalRef.document;
+
+  try {
+    // 1. 서버 SSR 환경 (window === undefined, phase === "loading")
+    delete globalRef.window;
+    delete globalRef.document;
+
+    const ssrHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+
+    assert.match(ssrHtml, /ym-gnb-auth-loading/);
+    assert.match(ssrHtml, /ym-auth-slot-admin/);
+    assert.match(ssrHtml, /ym-auth-slot-member/);
+    assert.match(ssrHtml, /ym-auth-slot-anon/);
+
+    // 2. 브라우저 초기 Hydration 환경 (window.localStorage에 ADMIN 힌트 존재, useEffect 전 phase === "loading")
+    const store = new Map<string, string>([
+      ["yogimangchi:header-auth-hint:v1", JSON.stringify({ loggedIn: true, role: "ADMIN" })],
+    ]);
+    const dataset: Record<string, string> = { ymAuthHint: "admin" };
+    globalRef.window = {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, val: string) => {
+          store.set(key, val);
+        },
+      },
+    };
+    globalRef.document = {
+      documentElement: { dataset },
+    };
+
+    const clientHydrationHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal />
+      </MemberProvider>,
+    );
+
+    // SSR과 클라이언트 첫 렌더 HTML이 바이트 단위로 100% 일치해야 React 19 Hydration Mismatch가 발생하지 않음
+    assert.equal(ssrHtml, clientHydrationHtml);
+  } finally {
+    if (prevWindow === undefined) {
+      delete globalRef.window;
+    } else {
+      globalRef.window = prevWindow;
+    }
+    if (prevDocument === undefined) {
+      delete globalRef.document;
+    } else {
+      globalRef.document = prevDocument;
+    }
+    client.clear();
+  }
+});
+
+test("fetchRedisMarketOverview는 trading-server의 Redis 기반 /api/v1/market/overview decimal string 응답을 파싱하고 UNAVAILABLE 상태는 거부하여 이전 신선값을 유지한다", async () => {
+  const requestedUrls: string[] = [];
+  const freshOverview = await fetchRedisMarketOverview(
+    "http://localhost:8081",
+    undefined,
+    async input => {
+      requestedUrls.push(String(input));
+      return Response.json({
+        btcDominancePercent: "59.7",
+        btcDominanceChange24h: "1.85",
+        kimchiPremiumPercent: "1.26",
+        openInterestBillionsUsd: "30.4",
+        fearGreedValue: 32,
+        fearGreedLabelKr: "공포",
+        futuresBullPct: 58,
+        futuresBearPct: 42,
+        btcChange24h: "-2.14",
+        usdKrwRate: "1343.92",
+        usdKrwChangeAmount: "3.64",
+        usdKrwChangePct: "0.27",
+        usdKrwHistory: [
+          "1325.1",
+          "1326.0",
+          "1328.4",
+          "1331.2",
+          "1333.5",
+          "1330.8",
+          "1334.0",
+          "1336.5",
+          "1338.1",
+          "1339.9",
+          "1342.0",
+          "1341.2",
+          "1340.5",
+          "1343.92",
+        ],
+        status: "FRESH",
+        updatedAt: "2026-11-10T17:58:00Z",
+      });
+    },
+  );
+
+  assert.deepEqual(requestedUrls, ["http://localhost:8081/api/v1/market/overview"]);
+  assert.equal(freshOverview.btcDominancePercent, 59.7);
+  assert.equal(freshOverview.btcDominanceChange24h, 1.85);
+  assert.equal(freshOverview.kimchiPremiumPercent, 1.26);
+  assert.equal(freshOverview.openInterestBillionsUsd, 30.4);
+  assert.equal(freshOverview.fearGreedValue, 32);
+  assert.equal(freshOverview.fearGreedLabelKr, "공포");
+  assert.equal(freshOverview.usdKrwRate, 1343.92);
+  assert.equal(freshOverview.usdKrwChangeAmount, 3.64);
+  assert.equal(freshOverview.usdKrwChangePct, 0.27);
+  assert.equal(freshOverview.usdKrwHistory[13], 1343.92);
+
+  await assert.rejects(
+    () =>
+      fetchRedisMarketOverview("http://localhost:8081", undefined, async () =>
+        Response.json({
+          ...freshOverview,
+          status: "UNAVAILABLE",
+          updatedAt: null,
+        }),
+      ),
+    /not ready yet/,
+  );
+});
+
+test("실시간 뉴스 투자 심리는 SSE 센티먼트 요약과 Redis 마켓 지표를 동기화해 상단 바와 요약 수치를 일치시키고 전체 화면에서 터미널 문구를 노출하지 않는다", () => {
+  const sseSentiment = parseNewsSentimentSummary({
+    totalBullVotes: 24,
+    totalBearVotes: 8,
+    bullPct: 63,
+    bearPct: 37,
+    dominantSentiment: "BULLISH",
+    bullishArticleCount: 10,
+    bearishArticleCount: 7,
+    neutralArticleCount: 23,
+    summary:
+      "최근 실시간 뉴스 40건(강세 10·약세 7·중립 23) 분석 결과, #BTC 및 거시경제·금리 이슈를 중심으로 단기 매수·강세 심리(63%)가 우위를 보이고 있습니다.",
+  });
+  assert.equal(sseSentiment.bullPct, 63);
+  assert.equal(sseSentiment.bearPct, 37);
+
+  const redisMarket = parseMarketOverviewPayload({
+    btcDominancePercent: 59.7,
+    btcDominanceChange24h: 1.85,
+    kimchiPremiumPercent: 1.26,
+    openInterestBillionsUsd: 30.4,
+    fearGreedValue: 32,
+    fearGreedLabelKr: "공포",
+    futuresBullPct: 64,
+    futuresBearPct: 36,
+    btcChange24h: -1.2,
+    updatedAt: "2026-11-10T18:00:00Z",
+  });
+
+  const highlights = parseNewsHighlights({
+    mustReadBreaking: [],
+    popularByViews: [],
+    popularByReactions: [],
+    keywordIssues: [],
+    recommendedNewsroom: [],
+    sentimentSummary: sseSentiment,
+  });
+
+  const synced = computeLiveNewsSentiment({
+    articles: [],
+    highlights,
+    marketOverview: redisMarket,
+  });
+  assert.equal(synced.bullPct + synced.bearPct, 100);
+  assert.equal(
+    synced.summaryText.includes(`심리(${synced.bullPct}%)`),
+    true,
+    `summaryText(${synced.summaryText})가 상단 바 강세 비율(${synced.bullPct}%)과 일치해야 합니다.`,
+  );
+  assert.equal(synced.summaryText.includes("심리(63%)"), false);
+  assert.equal(synced.summaryText.includes("(공포·탐욕 32 공포 · 선물 매수수급 64%)"), true);
+
+  const bearishShift = computeLiveNewsSentiment({
+    articles: [],
+    highlights,
+    liveReactions: {
+      9001: { bullCount: 0, bearCount: 120 },
+    },
+    marketOverview: parseMarketOverviewPayload({
+      ...redisMarket,
+      fearGreedValue: 20,
+      fearGreedLabelKr: "극단적 공포",
+      futuresBullPct: 30,
+      futuresBearPct: 70,
+      btcChange24h: -6.5,
+    }),
+  });
+  assert.equal(bearishShift.bullPct < synced.bullPct, true);
+  assert.equal(
+    bearishShift.summaryText.includes(`단기 매도·경계 심리(${bearishShift.bearPct}%)`),
+    true,
+  );
+
+  const client = new QueryClient();
+  try {
+    const newsHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <NewsFeed initialHighlights={highlights} initialMarketOverview={redisMarket} />
+      </MemberProvider>,
+    );
+    const portalHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <MainPortal initialMarketOverview={redisMarket} />
+      </MemberProvider>,
+    );
+    const communityHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard />
+      </MemberProvider>,
+    );
+    const contestHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <ContestHub />
+      </MemberProvider>,
+    );
+
+    assert.equal(newsHtml.includes("모의투자 하러가기"), true);
+    assert.equal(portalHtml.includes("모의투자 하러가기"), true);
+    assert.equal(communityHtml.includes("포지션 공유하기"), true);
+    assert.equal(newsHtml.includes("터미널"), false);
+    assert.equal(portalHtml.includes("터미널"), false);
+    assert.equal(communityHtml.includes("터미널"), false);
+    assert.equal(contestHtml.includes("터미널"), false);
+  } finally {
+    client.clear();
+  }
+});
+
+test("전역 포인터 커서, KST 대회 시각 변환, 12종목 포지션 스냅샷 파서 및 포지션 미첨부 글 비위조 검증", () => {
+  const globalsCss = fs.readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
+  assert.match(globalsCss, /button:not\(:disabled\)[\s\S]*?cursor:\s*pointer;/);
+  assert.equal(globalsCss.includes("not-allowed"), false);
+
+  // src/** 전 파일에서 "터미널" 단어가 단 1곳도 존재하지 않음을 영구 검증
+  const scanSrcForForbiddenWord = (dir: string) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) scanSrcForForbiddenWord(full);
+      else if (/\.(tsx?|jsx?|css)$/.test(ent.name)) {
+        const fileText = fs.readFileSync(full, "utf8");
+        assert.equal(
+          fileText.includes("터미널"),
+          false,
+          `${full} 파일에 금지된 "터미널" 문구가 포함되어 있습니다.`,
+        );
+      }
+    }
+  };
+  scanSrcForForbiddenWord(path.join(process.cwd(), "src"));
+
+  // KST(UTC+9) 시각 변환 및 datetime-local 왕복 검증
+  assert.equal(formatContestDateTime("2026-11-10T15:00:00Z"), "2026.11.11 00:00");
+  assert.equal(toDatetimeLocalInput("2026-11-10T15:00:00Z"), "2026-11-11T00:00");
+  assert.equal(toIsoInstantFromInput("2026-11-11T00:00"), "2026-11-10T15:00:00.000Z");
+
+  // 12종목 필터 태그 지원 및 null/빈 청산가·마크가 안전 파싱
+  assert.equal(SYMBOL_FILTER_TAGS.length, 13);
+  assert.equal(SYMBOL_FILTER_TAGS.includes("DOGE"), true);
+  assert.equal(SYMBOL_FILTER_TAGS.includes("PEPE"), true);
+  assert.equal(SYMBOL_FILTER_TAGS.includes("SHIB"), true);
+
+  const parsedSnap = parseSharedPositionSnapshot({
+    id: "MOCK_POS_42",
+    marketLabel: "모의투자 선물",
+    symbol: "DOGE",
+    pair: "DOGEUSDT",
+    side: "SHORT",
+    leverage: 5,
+    entryPrice: "0.3820",
+    markPrice: "",
+    liquidationPrice: null,
+    roePct: "-3.12%",
+    pnlUsdt: "-15.60 USDT",
+    positive: false,
+  });
+  assert.equal(parsedSnap.markPrice, "-");
+  assert.equal(parsedSnap.liquidationPrice, "-");
+  assert.equal(parsedSnap.positive, false);
+
+  // sharedPosition이 null인 POSITION 카테고리 글은 가짜 포지션 카드를 위조 렌더링하지 않는다
+  const client = new QueryClient();
+  try {
+    const textOnlyPositionPostHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialPage={{
+            items: [
+              {
+                id: 999,
+                memberId: 7,
+                authorNickname: "트레이더7",
+                authorProfileImgUrl: null,
+                authorWithdrawn: false,
+                category: "POSITION",
+                symbolTag: "BTC",
+                title: "포지션 스냅샷 없이 올린 텍스트 관점 글",
+                content: "진입 전 관점 공유입니다.",
+                likeCount: 0,
+                commentCount: 0,
+                likedByMe: false,
+                reportedByMe: false,
+                mine: false,
+                sharedPosition: null,
+                files: [],
+                createdAt: "2026-11-10T15:00:00Z",
+                updatedAt: "2026-11-10T15:00:00Z",
+              },
+            ],
+            hasNext: false,
+            nextCursorId: null,
+          }}
+        />
+      </MemberProvider>,
+    );
+    assert.equal(textOnlyPositionPostHtml.includes("data-shared-position="), false);
+    assert.match(textOnlyPositionPostHtml, /2026\.11\.11 00:00/);
+  } finally {
+    client.clear();
+  }
+});
+
+test("GNB는 대칭 3열 그리드로 정중앙 고정되고 우측 유틸 영역·버튼은 상태와 무관하게 동일 규격을 유지한다", async () => {
+  const client = new QueryClient();
+  const epoch = Date.now();
+  const memberSession = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 11,
+            nickname: "트레이더11",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  try {
+    const anonHtml = renderToStaticMarkup(<V1Header theme="light" />);
+    const loadingHtml = renderToStaticMarkup(
+      <MemberProvider session={memberSession} client={client}>
+        <V1Header theme="light" />
+      </MemberProvider>,
+    );
+    await memberSession.restore();
+    const memberHtml = renderToStaticMarkup(
+      <MemberProvider session={memberSession} client={client}>
+        <V1Header theme="light" />
+      </MemberProvider>,
+    );
+    const adminHtml = renderToStaticMarkup(<V1Header theme="light" role="ADMIN" />);
+    const adminHeaderHtml = renderToStaticMarkup(<AdminHeader activeSection="contest" />);
+
+    for (const html of [anonHtml, loadingHtml, memberHtml, adminHtml]) {
+      assert.equal(html.includes("md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"), true);
+      assert.equal(html.includes("ym-gnb-right flex min-h-[38px] md:min-w-[104px] md:justify-self-end"), true);
+      assert.equal(html.includes("md:w-[188px]"), false);
+      assert.equal(html.includes("h-9 min-w-[96px] w-[104px]"), true);
+      assert.equal(html.includes("-translate-x-1/2"), false);
+    }
+
+    assert.equal(adminHtml.includes("h-9 w-[72px]"), true);
+    assert.equal(adminHtml.includes(">관리자</a>"), true);
+    assert.equal(adminHeaderHtml.includes("md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"), true);
+    assert.equal(adminHeaderHtml.includes('aria-label="관리자 메뉴" class="hidden md:flex md:justify-self-center'), true);
+    assert.equal(adminHeaderHtml.includes("lg:w-[268px] lg:min-w-[268px]"), true);
+  } finally {
+    client.clear();
+  }
+});
+
+test("커뮤니티 우측 대회투자 TOP5는 가짜 목업 없이 Redis 기반 실시간 시즌·랭킹·S3 프로필·탈퇴 회원 보호를 렌더링한다", async () => {
+  const client = new QueryClient();
+  try {
+    // 1. 초기 로딩 상태: 가짜 트레이더(알파트레이더/+148.60%/정기 시즌) 미노출 및 스켈레톤 상태 검증
+    const loadingSidebarHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard />
+      </MemberProvider>,
+    );
+    assert.equal(loadingSidebarHtml.includes('data-contest-top5-card="true"'), true);
+    assert.equal(loadingSidebarHtml.includes('data-contest-top5-state="loading"'), true);
+    assert.equal(loadingSidebarHtml.includes("알파트레이더"), false);
+    assert.equal(loadingSidebarHtml.includes("퀀트매니저"), false);
+    assert.equal(loadingSidebarHtml.includes("+148.60%"), false);
+    assert.equal(loadingSidebarHtml.includes("정기 시즌"), false);
+    assert.equal(loadingSidebarHtml.includes("대회 참여하기 →"), true);
+
+    // 2. loadInitialContestSidebarSnapshot 서버 프리패치 + LIVE 시즌 우선 선택 + S3 프로필/404 탈퇴 가드 검증
+    const snapshot = await loadInitialContestSidebarSnapshot({
+      tradingBaseUrl: "http://localhost:8081",
+      contentBaseUrl: "http://localhost:8080",
+      transport: async input => {
+        const url = String(input);
+        if (url.includes("/contest/public/seasons/2/leaderboard")) {
+          return Response.json({
+            season: {
+              id: 2,
+              title: "요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP",
+              description: "실시간 수익률 랭킹 대회",
+              seedMoney: "10000",
+              recruitmentStartAt: "2026-11-05T14:33:13Z",
+              recruitmentEndAt: "2026-11-24T14:33:13Z",
+              contestStartAt: "2026-11-08T14:33:13Z",
+              contestEndAt: "2026-11-24T14:33:13Z",
+              isPublic: true,
+              isCanceled: false,
+              settledAt: null,
+              displayStatus: "LIVE",
+              statusLabel: "대회 진행중",
+              participantCount: 2,
+              applicantCount: 0,
+              pendingOrderCount: 0,
+              openPositionCount: 1,
+              createdAt: "2026-11-10T14:33:13Z",
+              updatedAt: "2026-11-10T14:33:13Z",
+            },
+            items: [
+              {
+                rank: 1,
+                participantId: 2,
+                memberId: 1,
+                nickname: "구닉네임",
+                accountId: 34,
+                seedMoney: "10000",
+                totalEquity: "12840.5",
+                balance: "11000",
+                realizedPnl: "1000",
+                unrealizedPnl: "1840.5",
+                roiPct: "28.405",
+                openPositionCount: 1,
+                settled: false,
+                settledAt: null,
+              },
+              {
+                rank: 2,
+                participantId: 3,
+                memberId: 999,
+                nickname: "탈퇴전닉네임",
+                accountId: 35,
+                seedMoney: "10000",
+                totalEquity: "9450",
+                balance: "9450",
+                realizedPnl: "-550",
+                unrealizedPnl: "0",
+                roiPct: "-5.5",
+                openPositionCount: 0,
+                settled: false,
+                settledAt: null,
+              },
+            ],
+            nextCursorId: null,
+            hasNext: false,
+          });
+        }
+        if (url.includes("/contest/public/seasons")) {
+          return Response.json({
+            recruiting: [],
+            running: [
+              {
+                id: 2,
+                title: "요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP",
+                description: "실시간 수익률 랭킹 대회",
+                seedMoney: "10000",
+                recruitmentStartAt: "2026-11-05T14:33:13Z",
+                recruitmentEndAt: "2026-11-24T14:33:13Z",
+                contestStartAt: "2026-11-08T14:33:13Z",
+                contestEndAt: "2026-11-24T14:33:13Z",
+                isPublic: true,
+                isCanceled: false,
+                settledAt: null,
+                displayStatus: "LIVE",
+                statusLabel: "대회 진행중",
+                participantCount: 2,
+                applicantCount: 0,
+                pendingOrderCount: 0,
+                openPositionCount: 1,
+                createdAt: "2026-11-10T14:33:13Z",
+                updatedAt: "2026-11-10T14:33:13Z",
+              },
+            ],
+            finished: [
+              {
+                id: 1,
+                title: "요기망치 제1회 선물 트레이딩 챌린지",
+                description: "정산 완료 시즌",
+                seedMoney: "10000",
+                recruitmentStartAt: "2026-10-06T14:33:13Z",
+                recruitmentEndAt: "2026-10-20T14:33:13Z",
+                contestStartAt: "2026-10-20T14:33:13Z",
+                contestEndAt: "2026-11-03T14:33:13Z",
+                isPublic: true,
+                isCanceled: false,
+                settledAt: "2026-11-03T14:33:13Z",
+                displayStatus: "FINISHED",
+                statusLabel: "정산완료",
+                participantCount: 1,
+                applicantCount: 0,
+                pendingOrderCount: 0,
+                openPositionCount: 0,
+                createdAt: "2026-11-10T14:33:13Z",
+                updatedAt: "2026-11-10T14:33:13Z",
+              },
+            ],
+            seasons: [],
+          });
+        }
+        if (url.endsWith("/api/v1/members/1")) {
+          return Response.json({
+            memberId: 1,
+            nickname: "안녕4",
+            profileMessage: "실전 트레이딩",
+            profileImgUrl: "https://yogimangchi-bucket.s3.ap-northeast-2.amazonaws.com/member/profile/1/avatar.png",
+            createdAt: "2026-10-22T18:04:40Z",
+          });
+        }
+        if (url.endsWith("/api/v1/members/999")) {
+          return Response.json({ code: "RESOURCE_NOT_FOUND" }, { status: 404 });
+        }
+        return Response.json({ code: "RESOURCE_NOT_FOUND" }, { status: 404 });
+      },
+    });
+
+    assert.equal(selectDefaultContestSidebarSeasonId(snapshot.seasons), 2);
+    assert.equal(snapshot.profiles[1]?.nickname, "안녕4");
+    assert.equal(snapshot.profiles[999]?.withdrawn, true);
+
+    const readySidebarHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialContestSeasons={snapshot.seasons}
+          initialContestLeaderboard={snapshot.leaderboard}
+          initialContestProfiles={snapshot.profiles}
+        />
+      </MemberProvider>,
+    );
+
+    assert.equal(readySidebarHtml.includes('data-contest-top5-state="ready"'), true);
+    assert.equal(readySidebarHtml.includes("실시간 LIVE"), true);
+    assert.equal(readySidebarHtml.includes('label="진행 중 (LIVE)"'), true);
+    assert.equal(readySidebarHtml.includes('label="종료 · 정산 완료"'), true);
+    assert.equal(readySidebarHtml.includes("요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP"), true);
+    assert.equal(readySidebarHtml.includes('href="/members/1"'), true);
+    assert.equal(readySidebarHtml.includes(">안녕4</a>"), true);
+    assert.equal(
+      readySidebarHtml.includes(
+        'src="https://yogimangchi-bucket.s3.ap-northeast-2.amazonaws.com/member/profile/1/avatar.png"',
+      ),
+      true,
+    );
+    assert.equal(readySidebarHtml.includes("12,840.50 USDT"), true);
+    assert.equal(readySidebarHtml.includes("+28.40%"), true);
+    assert.equal(readySidebarHtml.includes("탈퇴한회원"), true);
+    assert.equal(readySidebarHtml.includes("/members/999"), false);
+    assert.equal(readySidebarHtml.includes("-5.50%"), true);
+  } finally {
+    client.clear();
+  }
+});
+
+
+test("회원-대회-심볼-탈퇴보호 전 생애주기 API 계약 및 금지 표현(터미널·not-allowed·이모지) 전역 무결성을 검증한다", async () => {
+  const calls: Array<{ url: string; method: string; auth: string; body: string }> = [];
+  const fakeTransport: typeof fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const headers = new Headers(init?.headers);
+    const auth = headers.get("Authorization") ?? "";
+    const body = typeof init?.body === "string" ? init.body : "";
+    calls.push({ url, method, auth, body });
+    if (url.endsWith("/api/v1/symbols")) {
+      return Response.json([
+        {
+          id: 1,
+          symbol: "BTC",
+          name: "비트코인",
+          quoteAsset: "USDT",
+          displaySymbol: "BTC/USDT",
+        },
+      ]);
+    }
+    if (url.includes("/applications") && method === "DELETE") {
+      return Response.json({
+        applicationId: 901,
+        seasonId: 202608,
+        seasonTitle: "2026 매크로 위클리 FOMC 특별 토너먼트",
+        seasonDisplayStatus: "RECRUITING",
+        contestStartAt: "2026-11-19T00:00:00Z",
+        contestEndAt: "2026-11-26T14:59:00Z",
+        memberId: 7,
+        nickname: "퀀트고수",
+        status: "CANCELED",
+        rejectReason: null,
+        appliedAt: "2026-11-10T01:00:00Z",
+        processedAt: "2026-11-11T02:00:00Z",
+        processedByMemberId: 7,
+      });
+    }
+    if (url.endsWith("/contest/account/nickname") && method === "PATCH") {
+      return Response.json({ updatedCount: 2 });
+    }
+    return Response.json({});
+  };
+
+  // 1. marketSymbolsJson은 /api/v1/trading/symbols가 아닌 공개 /api/v1/symbols를 호출해야 한다
+  const symbols = (await marketSymbolsJson(
+    "http://localhost:8081",
+    undefined,
+    fakeTransport,
+  )) as Array<{ id: number; symbol: string }>;
+  assert.equal(symbols.length, 1);
+  assert.equal(symbols[0]?.symbol, "BTC");
+  assert.equal(calls[0]?.url, "http://localhost:8081/api/v1/symbols");
+  assert.equal(calls[0]?.method, "GET");
+
+  // 2. 대회 참가 신청 취소(DELETE) 및 대회 계좌 닉네임 동기화(PATCH) 계약 검증
+  const canceled = await cancelContestSeasonApplication(202608, "jwt-member-7", {
+    baseUrl: "http://localhost:8081",
+    transport: fakeTransport,
+  });
+  assert.equal(canceled.status, "CANCELED");
+  assert.equal(
+    calls[1]?.url,
+    "http://localhost:8081/api/v1/trading/contest/seasons/202608/applications",
+  );
+  assert.equal(calls[1]?.method, "DELETE");
+  assert.equal(calls[1]?.auth, "Bearer jwt-member-7");
+
+  const synced = await syncContestAccountNickname("새닉네임8", "jwt-member-7", {
+    baseUrl: "http://localhost:8081",
+    transport: fakeTransport,
+  });
+  assert.equal(synced.updatedCount, 2);
+  assert.equal(calls[2]?.url, "http://localhost:8081/api/v1/trading/contest/account/nickname");
+  assert.equal(calls[2]?.method, "PATCH");
+  assert.equal(calls[2]?.auth, "Bearer jwt-member-7");
+  assert.equal(JSON.parse(calls[2]?.body ?? "{}").nickname, "새닉네임8");
+
+  // 3. session.setNickname 즉시 반영 및 세대(generation) 불일치 보호 검증
+  const epoch = Date.parse("2026-11-11T12:00:00Z");
+  const jwtToken = `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: "7", roles: ["ROLE_MEMBER"] })).toString("base64url")}.sig`;
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "초기닉네임",
+            accessToken: jwtToken,
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+  assert.equal(session.getSnapshot().nickname, "초기닉네임");
+  const gen = session.getSnapshot().generation;
+  session.setNickname("변경닉네임", 7, gen + 99);
+  assert.equal(session.getSnapshot().nickname, "초기닉네임");
+  session.setNickname("변경닉네임", 7, gen);
+  assert.equal(session.getSnapshot().nickname, "변경닉네임");
+
+  // 4. 심사 대기 카드(wait)에 신청 취소 버튼 노출 검증
+  const waitCardHtml = renderToStaticMarkup(
+    <ContestListCard
+      contest={{
+        id: 202608,
+        title: "2026 매크로 위클리 FOMC 특별 토너먼트",
+        description: "심사 대기 테스트",
+        seedMoney: "10,000 USDT",
+        recruitmentStartAt: "2026.11.01 00:00",
+        recruitmentEndAt: "2026.11.18 23:59",
+        contestStartAt: "2026.11.19 09:00",
+        contestEndAt: "2026.11.26 23:59",
+        participantCount: 10,
+        cardType: "wait",
+        accentLabel: "심사중",
+        actionLabel: "승인 대기중",
+      }}
+      onCancel={() => {}}
+    />,
+  );
+  assert.equal(waitCardHtml.includes('data-contest-action="cancel-application"'), true);
+  assert.equal(waitCardHtml.includes("신청 취소"), true);
+
+  // 4-b. 모집중 카드(apply) 비로그인/로그인 분기 및 대회 섹션 제목 수직 정렬 CSS 규칙 검증
+  const applySeasonSample = {
+    id: 202609,
+    title: "2026년 11월 요기망치 선물 트레이딩 챌린지",
+    description: "모집중 로그인 가드 테스트",
+    seedMoney: "10,000 USDT",
+    recruitmentStartAt: "2026.11.20 00:00",
+    recruitmentEndAt: "2026.12.07 23:59",
+    contestStartAt: "2026.11.23 00:00",
+    contestEndAt: "2026.12.14 23:59",
+    participantCount: 15,
+    cardType: "apply" as const,
+    accentLabel: "모집중",
+    actionLabel: "신청",
+  };
+  const anonApplyCardHtml = renderToStaticMarkup(
+    <ContestListCard contest={applySeasonSample} isLoggedIn={false} onApply={() => {}} />,
+  );
+  assert.match(
+    anonApplyCardHtml,
+    /<a[^>]*data-contest-action="apply-login-required"[^>]*href="\/login"[^>]*><span>로그인 후 신청 가능<\/span><\/a>/,
+  );
+  assert.equal(anonApplyCardHtml.includes('data-contest-action="apply"'), false);
+
+  const memberApplyCardHtml = renderToStaticMarkup(
+    <ContestListCard contest={applySeasonSample} isLoggedIn={true} onApply={() => {}} />,
+  );
+  assert.equal(memberApplyCardHtml.includes('data-contest-action="apply"'), true);
+  assert.equal(memberApplyCardHtml.includes("로그인 후 신청 가능"), false);
+
+  const contestGlobalsCss = fs.readFileSync(
+    path.join(process.cwd(), "src/app/globals.css"),
+    "utf8",
+  );
+  assert.match(
+    contestGlobalsCss,
+    /\.member-shell\s+\.member-card\s+\[data-contest-hub\]\s+h2\s*\{[^}]*margin:\s*0;/,
+  );
+
+  // 5. 탈퇴/미존재 회원 및 대회 신청 에러 한국어 메시지 매핑 검증
+  assert.equal(
+    contentMessage(new ContentApiError(404, "MEMBER_NOT_FOUND")),
+    "탈퇴했거나 존재하지 않는 회원입니다.",
+  );
+  assert.equal(
+    mutationMessage(new TradingApiError(409, undefined, "CONTEST_APPLICATION_NOT_PENDING")),
+    "심사 대기 중인 신청 건만 취소할 수 있습니다.",
+  );
+  assert.equal(
+    mutationMessage(new TradingApiError(409, undefined, "CONTEST_RECRUITMENT_CLOSED")),
+    "현재 대회 참가 신청 기간이 아닙니다.",
+  );
+
+  // 6. frontend/src/** 전 파일 금지 단어("터미널", "not-allowed") 및 이모지 0건 검증
+  const emojiRegex = /[\u{1F300}-\u{1FAFF}]/u;
+  const verifySrcCleanliness = (dir: string) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        verifySrcCleanliness(full);
+      } else if (/\.(tsx?|jsx?|css)$/.test(ent.name)) {
+        const text = fs.readFileSync(full, "utf8");
+        assert.equal(text.includes("터미널"), false, `Forbidden "터미널" in ${full}`);
+        assert.equal(text.includes("not-allowed"), false, `Forbidden "not-allowed" in ${full}`);
+        assert.equal(emojiRegex.test(text), false, `Forbidden emoji in ${full}`);
+      }
+    }
+  };
+  verifySrcCleanliness(path.join(process.cwd(), "src"));
+});
+
+
+test("거래소 표준 소수점·단위 포맷터가 18자리 정밀 원장 값을 충돌·오버플로우 없이 렌더링한다", async () => {
+  // 1. 실거래소(Binance/Bybit) 표준 포맷터 순수 검증 (실제 스크린샷 18자리 원장 값 포함)
+  assert.equal(formatExchangeUsdt("9632.453247403207324577"), "9,632.45 USDT");
+  assert.equal(formatExchangeUsdt("6537.261324384422285327"), "6,537.26 USDT");
+  assert.equal(formatExchangeUsdt("3460.66227824862853755"), "3,460.66 USDT");
+  assert.equal(formatExchangeUsdt("9997.923602633050822877"), "9,997.92 USDT");
+  assert.equal(formatExchangeUsdt("0"), "0.00 USDT");
+  assert.equal(formatExchangeUsdt("-0.001"), "0.00 USDT");
+
+  assert.equal(formatExchangeSignedUsdt("-367.546752596792675423"), "-367.55 USDT");
+  assert.equal(formatExchangeSignedUsdt("184.204"), "+184.20 USDT");
+  assert.equal(formatExchangeSignedUsdt("-0.004"), "0.00 USDT");
+
+  assert.equal(formatExchangeSignedPct("-3.6755"), "-3.68%");
+  assert.equal(formatExchangeSignedPct("18.4219"), "+18.42%");
+  assert.equal(formatExchangeSignedPct("-0.001"), "0.00%");
+
+  assert.equal(formatExchangePct("34.614", 2), "34.61%");
+  assert.equal(formatExchangePct("65.386", 2), "65.39%");
+  assert.equal(formatExchangeCompactPct("100.000000"), "100%");
+  assert.equal(formatExchangeCompactPct("0.000000"), "0%");
+  assert.equal(formatExchangeCompactPct("64.285714"), "64.29%");
+
+  assert.equal(formatExchangeSeedUsdt("10000"), "10,000 USDT");
+  assert.equal(formatExchangeSeedUsdt("10000.00000000"), "10,000 USDT");
+  assert.equal(formatExchangeFeeUsdt("2.081234"), "2.08 USDT");
+  assert.equal(formatExchangeFeeUsdt("0.00450000"), "0.0045 USDT");
+
+  assert.equal(formatExchangePrice("94280.50000000"), "94,280.50");
+  assert.equal(formatExchangePrice("0.58200000"), "0.5820");
+  assert.equal(formatExchangePrice("0.00000984"), "0.00000984");
+  assert.equal(formatExchangePrice("0.582419", "0.0001"), "0.5824");
+  assert.equal(formatExchangeQuantity("0.05000000", "BTC"), "0.05 BTC");
+  assert.equal(formatExchangeQuantity("1000000.00000000", "PEPE"), "1,000,000 PEPE");
+
+  assert.equal(formatContestSeedPlain("10000.00000000"), "10,000");
+  assert.equal(formatContestSignedUsdt("-0.001"), "0.00 USDT");
+  assert.equal(formatContestSignedRoi("-0.001"), "0.00%");
+
+  // 2. 마이페이지(/me) 및 커뮤니티 포지션 공유 카드 SSR 렌더링 검증
+  const epoch = Date.parse("2026-11-11T14:30:00Z");
+  const jwtToken = `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: "1", roles: ["ROLE_ADMIN"] })).toString("base64url")}.sig`;
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 1,
+            nickname: "안녕4",
+            accessToken: jwtToken,
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+
+  const client = new QueryClient();
+  const tradingBase = resolveTradingContestBaseUrl();
+  const gen = session.getSnapshot().generation;
+  client.setQueryData(
+    ["member", "public-portfolio", 1, tradingBase, gen],
+    parsePublicMemberPortfolio({
+      memberId: 1,
+      accountExists: true,
+      roundNumber: 1,
+      initialSeed: "10000",
+      valuedAt: "2026-11-11T14:34:49Z",
+      wallet: {
+        quoteAsset: "USDT",
+        balance: "9997.923602633050822877",
+        usedMargin: "3460.66227824862853755",
+        availableBalance: "6537.261324384422285327",
+        realizedPnl: "-2.076397366949177123",
+        unrealizedPnl: "-365.470355229843498300",
+        totalPnl: "-367.546752596792675423",
+        totalEquity: "9632.453247403207324577",
+        totalRoiPct: "-3.6755",
+      },
+      allocation: {
+        usedMarginRatioPct: "34.61",
+        availableCashRatioPct: "65.39",
+        longMarginUsdt: "3460.66227824862853755",
+        shortMarginUsdt: "0",
+        longRatioPct: "100.000000",
+        shortRatioPct: "0.000000",
+        longPositionCount: 1,
+        shortPositionCount: 0,
+      },
+      closedTradeSummary: {
+        closedPositionCount: 0,
+        winCount: 0,
+        lossCount: 0,
+        winRatePct: "0",
+      },
+      positions: [
+        {
+          id: 101,
+          tradingSymbolId: 1,
+          symbol: "BTCUSDT",
+          side: "LONG",
+          leverage: 2,
+          quantity: "0.05000000",
+          entryPrice: "69213.24556497",
+          markPrice: "61903.83846037",
+          liquidationPrice: "34800.12345678",
+          margin: "3460.66227824862853755",
+          unrealizedPnl: "-365.470355229843498300",
+          roePct: "-10.5607",
+          marginRatioPct: "34.61",
+        },
+      ],
+      symbolPerformances: [],
+    }),
+  );
+
+  try {
+    const meHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <MemberMyProfilePage />
+      </MemberProvider>,
+    );
+    assert.equal(meHtml.includes("9,632.45 USDT"), true);
+    assert.equal(meHtml.includes("6,537.26 USDT"), true);
+    assert.equal(meHtml.includes("3,460.66 USDT"), true);
+    assert.equal(meHtml.includes("9,997.92 USDT"), true);
+    assert.equal(meHtml.includes("-367.55 USDT"), true);
+    assert.equal(meHtml.includes("-3.68%"), true);
+    assert.equal(meHtml.includes("1회차 시드머니: 10,000 USDT"), true);
+    assert.equal(meHtml.includes("지갑 잔고 (확정 원장)"), true);
+    assert.equal(meHtml.includes("LONG 100% (3,460.66 USDT)"), true);
+    assert.equal(meHtml.includes("SHORT 0% (0.00 USDT)"), true);
+    assert.equal(meHtml.includes("0.05 BTC"), true);
+
+    // 18자리 미정제 소수점 및 구버전 비정형 표기 노출 0건 검증
+    assert.equal(meHtml.includes("9632.453247"), false);
+    assert.equal(meHtml.includes("6537.261324"), false);
+    assert.equal(meHtml.includes("3460.662278"), false);
+    assert.equal(meHtml.includes("9997.923602"), false);
+    assert.equal(meHtml.includes("-367.546752"), false);
+    assert.equal(meHtml.includes("-3.6755%"), false);
+    assert.equal(meHtml.includes("10000 USDT"), false);
+
+    const microPosCardHtml = renderToStaticMarkup(
+      <SharedPositionCard
+        snapshot={{
+          id: "MOCK_POS_PEPE",
+          marketLabel: "모의투자 선물",
+          symbol: "PEPE",
+          pair: "PEPEUSDT",
+          side: "LONG",
+          leverage: 5,
+          entryPrice: "0.00000984",
+          markPrice: "0.00001042",
+          liquidationPrice: "0.00000810",
+          roePct: "+29.4715%",
+          pnlUsdt: "+58.943122 USDT",
+          positive: true,
+        }}
+      />,
+    );
+    assert.equal(microPosCardHtml.includes("0.00000984 USDT"), true);
+    assert.equal(microPosCardHtml.includes("0.00001042 USDT"), true);
+    assert.equal(microPosCardHtml.includes("+29.47%"), true);
+    assert.equal(microPosCardHtml.includes("+58.94 USDT"), true);
+  } finally {
+    client.clear();
+  }
+});
+
+
+test("checkbox line-height alignment and modal idle anti-flicker / scrollbar-gap compensation stay intact", () => {
+  const globalsCss = fs.readFileSync(
+    path.join(process.cwd(), "src/app/globals.css"),
+    "utf8",
+  );
+  assert.match(globalsCss, /label\.member-check,\s*\.member-fields label\.member-check/);
+  assert.match(globalsCss, /\.member-shell \.member-check\s*\{[\s\S]*?gap:\s*10px;[\s\S]*?line-height:\s*22px;/);
+  assert.match(globalsCss, /\.member-shell \.member-check input\[type="checkbox"\]\s*\{[\s\S]*?margin:\s*2px 0 0 0;/);
+
+  const memberSimSrc = fs.readFileSync(
+    path.join(process.cwd(), "src/features/trading/components/member-simulation.tsx"),
+    "utf8",
+  );
+  assert.equal(
+    memberSimSrc.includes("canRestart = admission.trade && enabled && !current.isError && !current.isFetching"),
+    false,
+    "background 5s refetch must not toggle canRestart / blocked banner while popup is idle",
+  );
+  assert.match(memberSimSrc, /useCurrentRound\(dialogOpen\)/);
+  assert.match(memberSimSrc, /useDialogScrollLock\(dialog(?:,|\))/);
+
+  resetScrollLockForTest();
+  const mockWin = {
+    scrollY: 320,
+    innerWidth: 1920,
+    scrollTo: () => {},
+  };
+  const mockDoc = {
+    body: {
+      style: {} as Record<string, string>,
+      dataset: {} as Record<string, string | undefined>,
+    },
+    documentElement: {
+      scrollTop: 320,
+      clientWidth: 1905,
+      style: {} as Record<string, string>,
+    },
+  };
+  lockBodyScroll(mockWin, mockDoc);
+  assert.equal(mockDoc.body.style.paddingRight, "15px");
+  unlockBodyScroll(mockWin, mockDoc);
+  assert.equal(mockDoc.body.style.paddingRight, "");
+});
+
+
+test("community header keeps only position share, post edit view hides comments and position share, and only comment authors see edit/delete on detail page", async () => {
+  const epoch = Date.now();
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 7,
+            nickname: "트레이더7",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+
+  const editTargetPage = parseCommunityPostPage({
+    items: [
+      {
+        id: 21,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorProfileImgUrl: null,
+        authorWithdrawn: false,
+        category: "FREE",
+        symbolTag: "BTC",
+        title: "내 매매 복기 일지",
+        content: "오늘 진입 근거와 복기 내용을 정리합니다.",
+        likeCount: 5,
+        commentCount: 3,
+        likedByMe: false,
+        mine: true,
+        createdAt: "2026-11-11T10:00:00Z",
+        updatedAt: "2026-11-11T10:00:00Z",
+      },
+      {
+        id: 22,
+        memberId: 8,
+        authorNickname: "알파트레이더",
+        authorProfileImgUrl: null,
+        authorWithdrawn: false,
+        category: "ANALYSIS",
+        symbolTag: "ETH",
+        title: "다른 트레이더의 전략 글",
+        content: "피드의 다른 게시글입니다.",
+        likeCount: 2,
+        commentCount: 0,
+        likedByMe: false,
+        mine: false,
+        createdAt: "2026-11-11T09:00:00Z",
+        updatedAt: "2026-11-11T09:00:00Z",
+      },
+    ],
+    hasNext: false,
+    nextCursorId: null,
+  });
+
+  const detailComments = parseCommunityComments({
+    items: [
+      {
+        id: 301,
+        postId: 21,
+        memberId: 8,
+        authorNickname: "알파트레이더",
+        authorWithdrawn: false,
+        parentCommentId: null,
+        content: "다른 사람이 남긴 루트 댓글입니다.",
+        mine: false,
+        createdAt: "2026-11-11T10:05:00Z",
+        updatedAt: "2026-11-11T10:05:00Z",
+      },
+      {
+        id: 302,
+        postId: 21,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        parentCommentId: null,
+        content: "내가 직접 작성한 루트 댓글입니다.",
+        mine: true,
+        createdAt: "2026-11-11T10:06:00Z",
+        updatedAt: "2026-11-11T10:06:00Z",
+      },
+      {
+        id: 303,
+        postId: 21,
+        memberId: 7,
+        authorNickname: "트레이더7",
+        authorWithdrawn: false,
+        parentCommentId: 301,
+        content: "내가 작성한 대댓글입니다.",
+        mine: true,
+        createdAt: "2026-11-11T10:07:00Z",
+        updatedAt: "2026-11-11T10:07:00Z",
+      },
+      {
+        id: 304,
+        postId: 21,
+        memberId: 9,
+        authorNickname: "솔라나고래",
+        authorWithdrawn: false,
+        parentCommentId: 301,
+        content: "제3자가 작성한 대댓글입니다.",
+        mine: false,
+        createdAt: "2026-11-11T10:08:00Z",
+        updatedAt: "2026-11-11T10:08:00Z",
+      },
+    ],
+  });
+
+  const client = new QueryClient();
+  try {
+    // 1. 게시글 수정 화면(상세페이지에서 진입): 댓글 레이아웃 & 포지션 공유 버튼/옵션 완전 제거
+    const editDetailHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard
+          initialPage={editTargetPage}
+          initialComments={{ 21: detailComments.items }}
+          highlightPostId={21}
+          initialEditingPostId={21}
+        />
+      </MemberProvider>,
+    );
+    assert.match(editDetailHtml, /게시글 수정/);
+    assert.match(editDetailHtml, /이전 화면으로 돌아가기/);
+    assert.match(editDetailHtml, /수정 저장/);
+    assert.equal(editDetailHtml.includes("포지션 공유하기"), false);
+    assert.equal(editDetailHtml.includes("글쓰기 모달 열기"), false);
+    assert.equal(editDetailHtml.includes("모의투자 하러가기 →"), false);
+    assert.equal(editDetailHtml.includes('aria-label="댓글 및 대댓글"'), false);
+    assert.equal(editDetailHtml.includes("댓글 등록"), false);
+    assert.equal(editDetailHtml.includes("내가 직접 작성한 루트 댓글입니다."), false);
+    assert.equal(editDetailHtml.includes("댓글 3"), false);
+    assert.equal(editDetailHtml.includes("좋아요 5"), false);
+    assert.equal(editDetailHtml.includes("게시글 삭제"), false);
+    assert.equal(editDetailHtml.includes("다른 트레이더의 전략 글"), false);
+    // 수정 폼 내 카테고리 셀렉트에서 POSITION(포지션 공유) 선택 불가 확인
+    const editFormMatch = editDetailHtml.match(/<form class="mt-4 space-y-3[\s\S]*?<\/form>/);
+    assert.ok(editFormMatch, "post edit form must render");
+    assert.equal(editFormMatch[0].includes('value="POSITION"'), false);
+
+    // 2. 상세페이지(일반 조회): 댓글 작성자 본인(memberId=7)의 댓글(#302, #303)에만 수정·삭제 선택 버튼 노출, 타인 댓글(#301, #304)에는 미노출
+    const detailHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <CommunityBoard
+          initialPage={editTargetPage}
+          initialComments={{ 21: detailComments.items }}
+          highlightPostId={21}
+        />
+      </MemberProvider>,
+    );
+    assert.match(detailHtml, /<span>포지션 공유하기<\/span>/);
+    assert.equal(detailHtml.includes("글쓰기 모달 열기"), false);
+    assert.equal(detailHtml.includes("모의투자 하러가기 →"), false);
+    assert.match(detailHtml, /aria-label="댓글 및 대댓글"/);
+
+    const editButtons = detailHtml.match(/data-comment-action="edit"/g) ?? [];
+    const deleteButtons = detailHtml.match(/data-comment-action="delete"/g) ?? [];
+    assert.equal(editButtons.length, 2, "only own root comment (#302) and own reply (#303) have edit button");
+    assert.equal(deleteButtons.length, 2, "only own root comment (#302) and own reply (#303) have delete button");
+
+    const otherReplyIdx = detailHtml.indexOf('id="comment-304"');
+    assert.ok(otherReplyIdx > -1);
+    const otherReplySlice = detailHtml.slice(otherReplyIdx, otherReplyIdx + 1200);
+    assert.equal(otherReplySlice.includes('data-comment-action="edit"'), false);
+    assert.equal(otherReplySlice.includes('data-comment-action="delete"'), false);
+
+    // 3. 비로그인 상세페이지: 어떤 댓글에도 수정·삭제 버튼 미노출
+    const guestDetailHtml = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialPage={editTargetPage}
+          initialComments={{ 21: detailComments.items }}
+          highlightPostId={21}
+        />
+      </MemberProvider>,
+    );
+    assert.equal(guestDetailHtml.includes('data-comment-action="edit"'), false);
+    assert.equal(guestDetailHtml.includes('data-comment-action="delete"'), false);
+  } finally {
+    client.clear();
+  }
+});
+
+test("V1 규격 실시간 알림은 체결(시장가·지정가·손절)·강제청산·대회 승인/반려/종료 정산·커뮤니티 댓글·@멘션·좋아요 묶음·팔로우와 벨/드로어/토스트/전체내역을 렌더링한다", async () => {
+  const nowIso = new Date().toISOString();
+
+  // 1. 시장가·지정가·손절 체결 및 강제청산 포맷 검증
+  const marketOpen = normalizeRawNotification("TRADING", {
+    notificationId: 101,
+    actorMemberId: null,
+    category: "MOCK",
+    type: "ORDER_COMPLETED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      displayNameKr: "비트코인",
+      symbol: "BTCUSDT",
+      orderType: "MARKET",
+      positionSide: "LONG",
+      positionAction: "OPEN",
+      quantity: "0.5",
+      executedAmount: "48500",
+      price: "97000",
+    },
+  });
+  assert.equal(formatNotificationTitle(marketOpen), "비트코인 시장가 주문 체결되었습니다.");
+  assert.equal(getNotificationTradeMeta(marketOpen).sideLabel, "Long / Open · 시장가");
+  assert.equal(getNotificationTradeMeta(marketOpen).tone, "long");
+  assert.equal(
+    getNotificationNavigationTarget(marketOpen)?.href,
+    "/me?tab=mock-assets&detailTab=trades",
+  );
+
+  const limitClose = normalizeRawNotification("TRADING", {
+    notificationId: 102,
+    actorMemberId: null,
+    category: "MOCK",
+    type: "ORDER_COMPLETED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      displayNameKr: "이더리움",
+      symbol: "ETHUSDT",
+      orderType: "LIMIT",
+      positionSide: "SHORT",
+      positionAction: "CLOSE",
+      quantity: "2",
+      executedAmount: "6400",
+      realizedPnl: "185.5",
+    },
+  });
+  assert.equal(formatNotificationTitle(limitClose), "이더리움 지정가 주문 체결되었습니다.");
+  assert.match(formatNotificationDescription(limitClose), /실현손익 \+185\.5 USDT/);
+  assert.equal(getNotificationTradeMeta(limitClose).sideLabel, "Short / Close · 지정가");
+
+  const stopLossFill = normalizeRawNotification("TRADING", {
+    notificationId: 103,
+    actorMemberId: null,
+    category: "MOCK",
+    type: "ORDER_COMPLETED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      displayNameKr: "솔라나",
+      orderType: "STOP_MARKET",
+      positionSide: "LONG",
+      positionAction: "CLOSE",
+      quantity: "10",
+      executedAmount: "1800",
+      realizedPnl: "-45",
+    },
+  });
+  assert.equal(formatNotificationTitle(stopLossFill), "솔라나 손절 주문 체결되었습니다.");
+
+  const liquidation = normalizeRawNotification("TRADING", {
+    notificationId: 104,
+    actorMemberId: null,
+    category: "MOCK",
+    type: "LIQUIDATION_COMPLETED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      displayNameKr: "비트코인",
+      positionSide: "LONG",
+      liquidationPrice: "88100",
+      closeQuantity: "1",
+      realizedPnl: "-9800",
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(liquidation),
+    "[청산 알림] 비트코인 포지션이 강제 청산되었습니다.",
+  );
+  assert.equal(getNotificationTradeMeta(liquidation).tone, "warning");
+  assert.match(formatNotificationDescription(liquidation), /청산가 88,100 USDT/);
+
+  // 2. 대회 승인·반려·종료 최종 순위 정산 검증
+  const contestApproved = normalizeRawNotification("TRADING", {
+    notificationId: 105,
+    actorMemberId: null,
+    category: "CONTEST",
+    type: "CONTEST_APPLICATION_APPROVED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: { seasonId: 3, seasonTitle: "제3회 선물 챔피언십" },
+  });
+  assert.equal(
+    formatNotificationTitle(contestApproved),
+    "[제3회 선물 챔피언십] 신청이 승인되었습니다!",
+  );
+  assert.equal(getNotificationNavigationTarget(contestApproved)?.href, "/contest/3/trading");
+
+  const contestRejected = normalizeRawNotification("TRADING", {
+    notificationId: 106,
+    actorMemberId: null,
+    category: "CONTEST",
+    type: "CONTEST_APPLICATION_REJECTED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      seasonId: 3,
+      seasonTitle: "제3회 선물 챔피언십",
+      rejectReason: "참가 조건 재확인 요망",
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(contestRejected),
+    "[제3회 선물 챔피언십] 신청이 반려되었습니다.",
+  );
+  assert.equal(formatNotificationDescription(contestRejected), "사유: 참가 조건 재확인 요망");
+
+  const contestSettled = normalizeRawNotification("TRADING", {
+    notificationId: 107,
+    actorMemberId: null,
+    category: "CONTEST",
+    type: "CONTEST_SEASON_SETTLED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      seasonId: 3,
+      seasonTitle: "제3회 선물 챔피언십",
+      finalRank: 2,
+      totalParticipants: 48,
+      finalRoiPct: "64.25",
+      finalBalance: "16425",
+      finalRealizedPnl: "6425",
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(contestSettled),
+    "[제3회 선물 챔피언십] 대회가 종료되었습니다! (최종 2위)",
+  );
+  assert.match(formatNotificationDescription(contestSettled), /48명 중 2위 · 수익률 \+64\.25%/);
+  assert.equal(
+    getNotificationNavigationTarget(contestSettled)?.href,
+    "/me?tab=contest-assets&contestSubTab=finished&seasonId=3",
+  );
+  assert.equal(
+    getNotificationDetailFields(contestSettled).some(f => f.value === "2위 / 48명"),
+    true,
+  );
+
+  // 3. 커뮤니티 댓글·@멘션·좋아요 묶음·팔로우 검증
+  const mentionReply = normalizeRawNotification("CONTENT", {
+    notificationId: 201,
+    actorMemberId: 33,
+    category: "COMMUNITY",
+    type: "REPLY_COMMENT_CREATED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      actorNickname: "차트장인",
+      postId: 55,
+      postTitle: "BTC 지지선 분석",
+      replyId: 777,
+      content: "@트레이더11 좋은 관점 감사합니다!",
+      mentioned: true,
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(mentionReply),
+    '차트장인님이 글 "BTC 지지선 분석"의 댓글에서 회원님을 @멘션했습니다.',
+  );
+  assert.equal(
+    getNotificationNavigationTarget(mentionReply)?.href,
+    "/community/all/55#comment-777",
+  );
+
+  const groupedLike = normalizeRawNotification("CONTENT", {
+    notificationId: 202,
+    actorMemberId: 44,
+    category: "COMMUNITY",
+    type: "POST_LIKED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: {
+      latestActorNickname: "고래추적자",
+      groupCount: 4,
+      postId: 55,
+      postTitle: "BTC 지지선 분석",
+    },
+  });
+  assert.equal(
+    formatNotificationTitle(groupedLike),
+    '고래추적자님 외 3명이 내 글 "BTC 지지선 분석"을 좋아합니다.',
+  );
+
+  const followNotif = normalizeRawNotification("CONTENT", {
+    notificationId: 203,
+    actorMemberId: 88,
+    category: "FOLLOW",
+    type: "FOLLOW_CREATED",
+    isRead: false,
+    createdAt: nowIso,
+    lastEventAt: nowIso,
+    payload: { actorNickname: "스캘퍼왕", actorMemberId: 88 },
+  });
+  assert.equal(formatNotificationTitle(followNotif), "스캘퍼왕님이 나를 팔로우했습니다.");
+  assert.equal(getNotificationNavigationTarget(followNotif)?.href, "/members/88");
+  assert.equal(formatNotificationCount(125), "99+");
+
+  // 4. V1Header 벨 배지, 드로어, 토스트, /notifications 전체 내역 페이지 SSR 렌더링 검증
+  const client = new QueryClient();
+  const epoch = Date.now();
+  const session = createMemberSession(
+    "http://localhost:8080",
+    async url =>
+      String(url).endsWith("csrf")
+        ? Response.json({ headerName: "X-CSRF-TOKEN", token: "csrf" })
+        : Response.json({
+            memberId: 11,
+            nickname: "트레이더11",
+            accessToken: "header.payload.sig",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            expiresAt: new Date(epoch + 900000).toISOString(),
+          }),
+    () => epoch,
+    fn => fn(),
+    () => true,
+    () => null,
+  );
+  await session.restore();
+
+  try {
+    const pageAndOverlayHtml = renderToStaticMarkup(
+      <MemberProvider session={session} client={client}>
+        <NotificationCenterProvider
+          initialState={{
+            items: [marketOpen, contestSettled, mentionReply, groupedLike],
+            newCount: 102,
+            unreadCount: 4,
+            isDrawerOpen: true,
+            toasts: [
+              {
+                id: "toast-1",
+                uid: marketOpen.uid,
+                source: "TRADING",
+                notificationId: 101,
+                type: "ORDER_COMPLETED",
+                category: "MOCK",
+                title: formatNotificationTitle(marketOpen),
+                description: formatNotificationDescription(marketOpen),
+                createdAt: nowIso,
+                tradeTone: "long",
+                tradeSideLabel: "Long / Open · 시장가",
+                href: "/me?tab=mock-assets&detailTab=trades",
+              },
+            ],
+          }}
+        >
+          <NotificationsPageView initialTab="ALL" />
+        </NotificationCenterProvider>
+      </MemberProvider>,
+    );
+
+    assert.equal(pageAndOverlayHtml.includes('data-notification-bell="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes('data-notification-badge="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes(">99+<"), true);
+    assert.equal(pageAndOverlayHtml.includes('data-notification-drawer="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes('data-notification-toast-stack="true"'), true);
+    assert.equal(pageAndOverlayHtml.includes('data-toast-position="top-center"'), true);
+    assert.match(pageAndOverlayHtml, /left-1\/2 top-\[72px\][^"]*-translate-x-1\/2/);
+    assert.equal(pageAndOverlayHtml.includes('data-notifications-page="true"'), true);
+    assert.match(pageAndOverlayHtml, /비트코인 시장가 주문 체결되었습니다\./);
+    assert.match(pageAndOverlayHtml, /\[제3회 선물 챔피언십\] 대회가 종료되었습니다! \(최종 2위\)/);
+    assert.match(pageAndOverlayHtml, /@멘션했습니다/);
+    assert.match(pageAndOverlayHtml, /고래추적자님 외 3명/);
+  } finally {
+    client.clear();
+  }
+});
+
+test("native <select> exact box-model vertical centering, single-line truncation, and single chevron invariant", () => {
+  const globalsCss = fs.readFileSync(
+    path.join(process.cwd(), "src/app/globals.css"),
+    "utf8",
+  );
+  const selectTail = globalsCss.slice(globalsCss.indexOf("select.rounded-xl"));
+  assert.equal(selectTail.includes("appearance: none"), false);
+  assert.equal(selectTail.includes("background-image"), false);
+  assert.match(
+    selectTail,
+    /select\.rounded-xl,\s*select\.rounded-lg\s*\{[\s\S]*?white-space:\s*nowrap;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;/,
+  );
+  assert.match(
+    selectTail,
+    /select\.rounded-xl\.h-9,\s*select\.rounded-lg\.h-9\s*\{[\s\S]*?padding-top:\s*8px;[\s\S]*?padding-bottom:\s*8px;[\s\S]*?line-height:\s*18px;/,
+  );
+  assert.match(
+    selectTail,
+    /select\.rounded-xl\.h-10,\s*select\.rounded-lg\.h-10\s*\{[\s\S]*?padding-top:\s*10px;[\s\S]*?padding-bottom:\s*10px;[\s\S]*?line-height:\s*18px;/,
+  );
+  assert.match(
+    selectTail,
+    /select\.rounded-xl\.h-11,\s*select\.rounded-lg\.h-11\s*\{[\s\S]*?padding-top:\s*11px;[\s\S]*?padding-bottom:\s*11px;[\s\S]*?line-height:\s*20px;/,
+  );
+  assert.match(globalsCss, /\.order-leverage-input\s*\{[\s\S]*?py-\[11px\]/);
+  assert.match(globalsCss, /\.close-position-select select\s*\{[\s\S]*?py-\[11px\]/);
+  assert.match(globalsCss, /\.history-filters select\s*\{[\s\S]*?py-\[7px\]/);
+  assert.match(
+    globalsCss,
+    /\.trading-workspace \.member-simulation \.member-round-select select\s*\{[\s\S]*?height:\s*34px;[\s\S]*?padding:\s*7px 10px;[\s\S]*?line-height:\s*18px;/,
+  );
+  assert.match(
+    globalsCss,
+    /\.member-shell \.member-round-select select\s*\{[\s\S]*?height:\s*46px;[\s\S]*?padding-top:\s*12px;[\s\S]*?padding-bottom:\s*12px;[\s\S]*?line-height:\s*20px;/,
+  );
+});
+
+test("커뮤니티 사이드바 대회 시즌 셀렉트는 긴 제목을 말줄임해 화살표 여백을 보존하고 title로 전체 제목을 제공한다", () => {
+  assert.equal(
+    formatSidebarSeasonLabel("요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP"),
+    "요기망치 제2회 선물 실전 대회…",
+  );
+  assert.equal(
+    formatSidebarSeasonLabel("요기망치 제2회 선물 실전 대회·WINTER"),
+    "요기망치 제2회 선물 실전 대회…",
+  );
+  assert.equal(
+    formatSidebarSeasonLabel("요기망치 제2회 선물 실전 대회-WINTER"),
+    "요기망치 제2회 선물 실전 대회…",
+  );
+  assert.equal(formatSidebarSeasonLabel("  제3회 선물 대회  "), "제3회 선물 대회");
+  assert.equal(formatSidebarSeasonLabel("1234567890123456789"), "1234567890123456789");
+  assert.equal(formatSidebarSeasonLabel("12345678901234567890"), "123456789012345678…");
+
+  const client = new QueryClient();
+  const recruitingClient = new QueryClient();
+  try {
+    const runningSeason = {
+      id: 2,
+      title: "요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP",
+      description: "실시간 수익률 랭킹 대회",
+      seedMoney: "10000",
+      recruitmentStartAt: "2026-11-05T14:33:13Z",
+      recruitmentEndAt: "2026-11-24T14:33:13Z",
+      contestStartAt: "2026-11-08T14:33:13Z",
+      contestEndAt: "2026-11-24T14:33:13Z",
+      isPublic: true,
+      isCanceled: false,
+      settledAt: null,
+      displayStatus: "LIVE" as const,
+      statusLabel: "대회 진행중",
+      participantCount: 2,
+      applicantCount: 0,
+      pendingOrderCount: 0,
+      openPositionCount: 1,
+      createdAt: "2026-11-10T14:33:13Z",
+      updatedAt: "2026-11-10T14:33:13Z",
+    };
+    const finishedSeason = {
+      ...runningSeason,
+      id: 1,
+      title: "요기망치 제1회 선물 트레이딩 챌린지",
+      displayStatus: "FINISHED" as const,
+      statusLabel: "정산완료",
+      settledAt: "2026-11-03T14:33:13Z",
+    };
+    const recruitingSeason = {
+      ...runningSeason,
+      id: 3,
+      title: "제3회 봄 선물 챌린지",
+      displayStatus: "RECRUITING" as const,
+      statusLabel: "모집중",
+    };
+
+    const html = renderToStaticMarkup(
+      <MemberProvider client={client}>
+        <CommunityBoard
+          initialContestSeasons={{
+            recruiting: [recruitingSeason],
+            running: [runningSeason],
+            finished: [finishedSeason],
+            seasons: [runningSeason, finishedSeason, recruitingSeason],
+          }}
+        />
+      </MemberProvider>,
+    );
+
+    assert.equal(
+      html.includes('aria-label="대회 시즌 선택" title="요기망치 제2회 선물 실전 대회 · WINTER CHAMPIONSHIP"'),
+      true,
+    );
+    assert.equal(html.includes(">요기망치 제2회 선물 실전 대회…</option>"), true);
+    assert.equal(html.includes(">요기망치 제1회 선물 트레이딩 챌…</option>"), true);
+
+    const longRecruitingSeason = {
+      ...recruitingSeason,
+      id: 4,
+      title: "요기망치 제4회 선물 실전 모집 · SPRING CHAMPIONSHIP",
+    };
+    const recruitingOnlyHtml = renderToStaticMarkup(
+      <MemberProvider client={recruitingClient}>
+        <CommunityBoard
+          initialContestSeasons={{
+            recruiting: [recruitingSeason, longRecruitingSeason],
+            running: [],
+            finished: [],
+            seasons: [recruitingSeason, longRecruitingSeason],
+          }}
+        />
+      </MemberProvider>,
+    );
+    assert.equal(
+      recruitingOnlyHtml.includes('aria-label="대회 시즌 선택" title="제3회 봄 선물 챌린지"'),
+      true,
+    );
+    assert.equal(recruitingOnlyHtml.includes(">제3회 봄 선물 챌린지</option>"), true);
+    assert.equal(recruitingOnlyHtml.includes(">요기망치 제4회 선물 실전 모집…</option>"), true);
+  } finally {
+    client.clear();
+    recruitingClient.clear();
+  }
+});
+
+function makeCommunityPostFixture(overrides: Partial<CommunityPost> & { id: number; memberId: number }): CommunityPost {
+  return {
+    authorNickname: `트레이더${overrides.memberId}`,
+    authorWithdrawn: false,
+    category: "FREE",
+    symbolTag: "BTC",
+    title: `게시글 #${overrides.id}`,
+    content: "본문 내용",
+    likeCount: 0,
+    commentCount: 0,
+    likedByMe: false,
+    mine: false,
+    createdAt: "2026-11-22T06:00:00Z",
+    updatedAt: "2026-11-22T06:00:00Z",
+    ...overrides,
+  };
+}
+
+test("shouldNotifyIncomingCommunityPost excludes own SSE posts even before HTTP onSuccess (race condition) and partial frames", () => {
+  const empty = new Set<number>();
+
+  // Race condition: SSE arrives before createPostMutation.onSuccess populates myCreatedPostIds
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 501, authorId: 7, category: "FREE", symbolTag: "BTC" },
+      {
+        currentMemberId: 7,
+        myCreatedPostIds: empty,
+        visiblePostIds: empty,
+        queuedPostIds: empty,
+        category: "",
+        symbolTag: "",
+      },
+    ),
+    false,
+  );
+
+  // Partial/malformed SSE frame omitting top-level authorId but carrying parsed memberId or mine flag
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 502, memberId: 7, category: "MARKET", symbolTag: "ETH" },
+      {
+        currentMemberId: 7,
+        myCreatedPostIds: empty,
+        visiblePostIds: empty,
+        queuedPostIds: empty,
+        category: "",
+        symbolTag: "",
+      },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 503, mine: true, category: "FREE", symbolTag: null },
+      {
+        currentMemberId: null,
+        myCreatedPostIds: empty,
+        visiblePostIds: empty,
+        queuedPostIds: empty,
+        category: "",
+        symbolTag: "",
+      },
+    ),
+    false,
+  );
+
+  // Post already tracked in myCreatedPostIds (even when authorId is omitted)
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 504, category: "FREE", symbolTag: "BTC" },
+      {
+        currentMemberId: 7,
+        myCreatedPostIds: new Set([504]),
+        visiblePostIds: empty,
+        queuedPostIds: empty,
+        category: "",
+        symbolTag: "",
+      },
+    ),
+    false,
+  );
+});
+
+test("shouldNotifyIncomingCommunityPost notifies for other users' new posts, respects category/symbol filters, and deduplicates visible/queued IDs", () => {
+  const baseContext = {
+    currentMemberId: 7,
+    myCreatedPostIds: new Set<number>([501]),
+    visiblePostIds: new Set<number>([499, 500]),
+    queuedPostIds: new Set<number>([510]),
+    category: "" as const,
+    symbolTag: "",
+  };
+
+  // Truly new post by another user
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 511, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      baseContext,
+    ),
+    true,
+  );
+
+  // Anonymous visitor (currentMemberId === null) still receives alerts for new posts
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 511, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      { ...baseContext, currentMemberId: null },
+    ),
+    true,
+  );
+
+  // Already visible in feed -> skip
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 500, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      baseContext,
+    ),
+    false,
+  );
+
+  // Already queued by earlier SSE delivery -> skip duplicate replay
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 510, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      baseContext,
+    ),
+    false,
+  );
+
+  // Active category & symbolTag filters
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 512, authorId: 42, category: "FREE", symbolTag: "BTC" },
+      { ...baseContext, category: "ANALYSIS", symbolTag: "BTC" },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 513, authorId: 42, category: "ANALYSIS", symbolTag: "ETH" },
+      { ...baseContext, category: "ANALYSIS", symbolTag: "BTC" },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 514, authorId: 42, category: "ANALYSIS", symbolTag: null },
+      { ...baseContext, category: "ANALYSIS", symbolTag: "BTC" },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyIncomingCommunityPost(
+      { postId: 515, authorId: 42, category: "ANALYSIS", symbolTag: "BTC" },
+      { ...baseContext, category: "ANALYSIS", symbolTag: "BTC" },
+    ),
+    true,
+  );
+});
+
+test("filterIncomingLatestPosts excludes own posts and visible posts while preserving other users' truly new posts", () => {
+  const posts: CommunityPost[] = [
+    makeCommunityPostFixture({ id: 605, memberId: 7, mine: true }),
+    makeCommunityPostFixture({ id: 604, memberId: 7, mine: false }),
+    makeCommunityPostFixture({ id: 603, memberId: 99, mine: false }),
+    makeCommunityPostFixture({ id: 602, memberId: 88, mine: false }),
+    makeCommunityPostFixture({ id: 601, memberId: 42, mine: false }),
+    makeCommunityPostFixture({ id: 601, memberId: 42, mine: false }),
+    makeCommunityPostFixture({ id: 600, memberId: 55, mine: false }),
+  ];
+
+  const filtered = filterIncomingLatestPosts(posts, {
+    currentMemberId: 7,
+    myCreatedPostIds: new Set([603]),
+    visiblePostIds: new Set([600]),
+  });
+
+  assert.deepEqual(
+    filtered.map(post => post.id),
+    [602, 601],
+  );
+
+  // When /latest-check returns only current user's own or already-visible posts, returns empty list
+  const ownOnly = filterIncomingLatestPosts(
+    [
+      makeCommunityPostFixture({ id: 610, memberId: 7, mine: true }),
+      makeCommunityPostFixture({ id: 609, memberId: 7, mine: false }),
+      makeCommunityPostFixture({ id: 600, memberId: 55, mine: false }),
+    ],
+    {
+      currentMemberId: 7,
+      myCreatedPostIds: new Set(),
+      visiblePostIds: new Set([600]),
+    },
+  );
+  assert.deepEqual(ownOnly, []);
+});
+
+test("CommunityBoard SSE and latest-check handlers ignore malformed SSE frames and scrub own created posts", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "src/features/member/components/community-board.tsx"),
+    "utf8",
+  );
+  assert.match(source, /shouldNotifyIncomingCommunityPost\(/);
+  assert.match(source, /filterIncomingLatestPosts\(checked\.items/);
+  assert.match(source, /latestPostIdRef\.current = Math\.max\(latestPostIdRef\.current, created\.id\)/);
+  assert.match(source, /queuedPostIdsRef\.current\.delete\(created\.id\)/);
+  // Ensure malformed SSE catch block does not blindly increment pendingNewPostsCount
+  const sseEffectMatch = source.match(
+    /es\.addEventListener\("UX_COMMUNITY_POST_CREATED"[\s\S]*?const timer = window\.setInterval/,
+  );
+  assert.ok(sseEffectMatch, "SSE handler block should exist");
+  const onPostCreatedBlock = source.match(
+    /const onPostCreated = \(event: MessageEvent\) => \{[\s\S]*?es\.addEventListener\("UX_COMMUNITY_POST_CREATED"/,
+  );
+  assert.ok(onPostCreatedBlock, "onPostCreated block should exist");
+  assert.equal(
+    /\}\s*catch\s*\{\s*setPendingNewPostsCount\(/.test(onPostCreatedBlock[0]),
+    false,
+    "malformed SSE catch block must not increment pendingNewPostsCount",
+  );
+});
+
+test("V1Header /members/me sync avoids infinite re-fetch loop and member hooks memoize return value", () => {
+  const providerSource = fs.readFileSync(
+    path.join(process.cwd(), "src/features/member/components/member-provider.tsx"),
+    "utf8",
+  );
+  assert.match(providerSource, /return useMemo\(\(\) => \(\{ \.\.\.context, snapshot \}\), \[context, snapshot\]\);/);
+  assert.match(providerSource, /return useMemo\(\(\) => \(context \? \{ \.\.\.context, snapshot \} : null\), \[context, snapshot\]\);/);
+
+  const headerSource = fs.readFileSync(
+    path.join(process.cwd(), "src/features/member/components/v1-ui.tsx"),
+    "utf8",
+  );
+  const meEffect = headerSource.match(/useEffect\(\(\) => \{[\s\S]*?\.request\("\/members\/me"[\s\S]*?\}, \[[^\]]+\]\);/);
+  assert.ok(meEffect, "V1Header /members/me effect should exist");
+  assert.equal(
+    /\[[^\]]*\bmemberCtx\b[^\]]*\]/.test(meEffect[0]),
+    false,
+    "V1Header /members/me effect must not depend on the memberCtx wrapper object",
+  );
+  assert.match(meEffect[0], /verifiedSessionKeyRef\.current === sessionKey/);
+});
+
+test("shouldPreserveQueryOnSessionChange preserves public market queries without leaking personalized data on logout or account switch", () => {
+  // Public market / symbol / contest sidebar queries survive all session transitions
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-redis-market-overview", "https://t"], null, 7), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-redis-tickers", "https://t"], 7, null), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["community-sidebar-contest-seasons", "https://t"], 7, 8), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["community-sidebar-contest-top5", "https://t", 1], 7, null), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["trading", "symbols", "https://t"], 7, null), true);
+
+  // Anonymous portal feeds stay during initial null -> member restore to avoid skeleton double-flash,
+  // but are always purged on logout (7 -> null) or account switch (7 -> 8).
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-news", "https://c", 0], null, 7), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-posts", "https://c", 0], null, 7), true);
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-news", "https://c", 1], 7, null), false);
+  assert.equal(shouldPreserveQueryOnSessionChange(["portal-posts", "https://c", 1], 7, 8), false);
+
+  // Member-private queries are ALWAYS purged on every session transition
+  assert.equal(shouldPreserveQueryOnSessionChange(["member", "profile", 7, 1], null, 7), false);
+  assert.equal(shouldPreserveQueryOnSessionChange(["member", "consents"], 7, null), false);
+  assert.equal(shouldPreserveQueryOnSessionChange(["member", "public-portfolio", 7], 7, 8), false);
+  assert.equal(shouldPreserveQueryOnSessionChange(["trading", "account", 7], 7, null), false);
+});
+
+test("Main, Community, and MyPage shimmer skeletons and non-blocking community routes render cleanly", () => {
+  const mainSkel = renderToStaticMarkup(<MainPortalPageSkeleton />);
+  const communitySkel = renderToStaticMarkup(<CommunityPageSkeleton />);
+  const myPageSkel = renderToStaticMarkup(<MyPageSkeleton />);
+
+  for (const [name, html] of [
+    ["main", mainSkel],
+    ["community", communitySkel],
+    ["mypage", myPageSkel],
+  ] as const) {
+    assert.match(html, new RegExp(`data-page-skeleton="${name}"`));
+    assert.match(html, /role="status"/);
+    assert.match(html, /aria-busy="true"/);
+    assert.match(html, /ym-skeleton/);
+    assert.equal(html.includes("transition-all"), false);
+  }
+  assert.match(myPageSkel, /ym-skeleton-dark/);
+
+  // V1AssetSummaryCard loading state renders dark shimmer bars instead of 0.00 USDT flash
+  const loadingCardHtml = renderToStaticMarkup(
+    <V1AssetSummaryCard
+      loading
+      summary={{
+        title: "내 모의투자 자산",
+        totalAsset: "0.00 USDT",
+        cashBalance: "0.00 USDT",
+        totalBuyAmount: "0.00 USDT",
+        totalCoinValue: "0.00 USDT",
+        totalProfit: "0.00 USDT",
+        totalRoi: "0.00%",
+      }}
+    />,
+  );
+  assert.match(loadingCardHtml, /ym-skeleton-dark/);
+  assert.match(loadingCardHtml, /aria-busy="true"/);
+  assert.equal(loadingCardHtml.includes("0.00 USDT"), false);
+
+  // Community pages no longer block navigation behind SSR 3-step loadInitialContestSidebarSnapshot
+  for (const routeFile of [
+    "src/app/community/page.tsx",
+    "src/app/community/all/page.tsx",
+    "src/app/community/[category]/page.tsx",
+    "src/app/community/[category]/[id]/page.tsx",
+  ]) {
+    const src = fs.readFileSync(path.join(process.cwd(), routeFile), "utf8");
+    assert.equal(
+      src.includes("loadInitialContestSidebarSnapshot"),
+      false,
+      `${routeFile} must not block route transitions with SSR sidebar waterfall`,
+    );
+  }
 });

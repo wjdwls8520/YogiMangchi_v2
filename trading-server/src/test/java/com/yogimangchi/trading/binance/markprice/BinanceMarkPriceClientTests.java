@@ -47,7 +47,13 @@ class BinanceMarkPriceClientTests {
     private boolean databaseUnavailable;
     private BinanceMarkPriceClient client;
     private final Clock clock = Clock.fixed(Instant.ofEpochMilli(1562305380000L), ZoneOffset.UTC);
-    private final LatestPriceStore latestPrices = new LatestPriceStore(clock);
+    private boolean failUnavailable,failPrice,failSubscription;
+    private final LatestPriceStore latestPrices = new LatestPriceStore(clock,event->{
+        if(event instanceof com.yogimangchi.trading.marketdata.MarketDataEvent market&&(failUnavailable&&market.type()==com.yogimangchi.trading.marketdata.MarketDataEvent.Type.UNAVAILABLE
+            ||failPrice&&market.type()==com.yogimangchi.trading.marketdata.MarketDataEvent.Type.PRICE
+            ||failSubscription&&market.type()==com.yogimangchi.trading.marketdata.MarketDataEvent.Type.RECONNECTING))
+            throw new IllegalStateException("test downstream journal failure");
+    });
     private final List<com.yogimangchi.trading.marketdata.ticker.MarketTicker> tickers = new ArrayList<>();
 
     @BeforeEach
@@ -89,6 +95,35 @@ class BinanceMarkPriceClientTests {
         client.stop();
         ((Logger) LoggerFactory.getLogger(BinanceMarkPriceClient.class)).detachAppender(logs);
         logs.stop();
+    }
+
+    @Test void staleWatchdogStillAbortsAndReconnectsWhenUnavailableJournalFails() {
+        client.start();var first=openLatest();failUnavailable=true;now.set(Duration.ofSeconds(16).toNanos());
+        healthCheck.run();verify(first.socket).abort();assertThat(retries).hasSize(1);
+        assertThat(latestPrices.find(42L).status()).isNotEqualTo(LatestPriceStore.Status.FRESH);
+        failUnavailable=false;retries.get(0).action.run();var second=openLatest();
+        second.listener.onText(second.socket,BinanceMarkPriceProtocolTests.message("BTCUSDT","123"),true);
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.FRESH);healthCheck.run();
+        assertThat(retries).hasSize(1);
+    }
+    @Test void failedPriceCommitAndStateNotificationCannotOrphanTheConnection() {
+        client.start();var first=openLatest();failPrice=true;failUnavailable=true;
+        first.listener.onText(first.socket,BinanceMarkPriceProtocolTests.message("BTCUSDT","123"),true);
+        verify(first.socket).abort();assertThat(retries).hasSize(1);
+        assertThat(latestPrices.find(42L).status()).isEqualTo(LatestPriceStore.Status.UNAVAILABLE);
+        failPrice=false;failUnavailable=false;retries.get(0).action.run();var second=openLatest();
+        second.listener.onText(second.socket,BinanceMarkPriceProtocolTests.message("BTCUSDT","124").replace("1562305380000","1562305381000"),true);
+        assertThat(latestPrices.find(42L).latestPrice().orElseThrow().domainMarkPrice()).isEqualByComparingTo("124");
+    }
+    @Test void initialStateCommitFailureRetriesEvenWhenUnavailableCommitAlsoFails() {
+        failSubscription=true;failUnavailable=true;client.start();assertThat(connections).isEmpty();assertThat(retries).hasSize(1);
+        failSubscription=false;failUnavailable=false;retries.get(0).action.run();openLatest();
+        assertThat(connections).hasSize(1);
+    }
+    @Test void shutdownAlwaysStopsExecutorWhenUnavailableNotificationFails() {
+        client.start();var first=openLatest();failUnavailable=true;client.stop();
+        verify(first.socket).abort();verify(executor).shutdownNow();
+        assertThat(latestPrices.find(42L).status()).isNotEqualTo(LatestPriceStore.Status.FRESH);
     }
 
     @Test

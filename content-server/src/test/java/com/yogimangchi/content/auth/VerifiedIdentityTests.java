@@ -39,4 +39,19 @@ class VerifiedIdentityTests {
         var user=new DefaultOidcUser(List.of(new SimpleGrantedAuthority("ROLE_USER")),idToken);
         return new OAuth2AuthenticationToken(user,user.getAuthorities(),"google");
     }
+    @Test void malformedKakaoIdsAndUnverifiedOrMissingEmailCannotCreateProof() {
+        var valid=Map.<String,Object>of("email","same@example.test","is_email_valid",true,"is_email_verified",true);
+        for(Object id:List.of("12345",1.5d,-1L,0L)) {
+            var user=new DefaultOAuth2User(List.of(new SimpleGrantedAuthority("ROLE_USER")),Map.of("id",id,"kakao_account",valid),"id");
+            assertThatThrownBy(()->VerifiedIdentity.from(new OAuth2AuthenticationToken(user,user.getAuthorities(),"kakao")))
+                    .isInstanceOfSatisfying(AuthFailure.class,e->assertThat(e.code()).isEqualTo("OAUTH_IDENTITY_INVALID"));
+        }
+        for(var account:List.of(Map.of("is_email_valid",true,"is_email_verified",true),
+                Map.of("email","private@example.test","is_email_valid",false,"is_email_verified",true),
+                Map.of("email","private@example.test","is_email_valid",true,"is_email_verified",false))) {
+            var user=new DefaultOAuth2User(List.of(new SimpleGrantedAuthority("ROLE_USER")),Map.of("id",12345L,"kakao_account",account),"id");
+            assertThatThrownBy(()->VerifiedIdentity.from(new OAuth2AuthenticationToken(user,user.getAuthorities(),"kakao")))
+                    .isInstanceOfSatisfying(AuthFailure.class,e->assertThat(e.code()).isEqualTo("VERIFIED_EMAIL_REQUIRED"));
+        }
+    }
 }

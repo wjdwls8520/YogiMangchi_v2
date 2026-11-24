@@ -19,6 +19,7 @@ import org.springframework.stereotype.Component;
 
 /** Single ordered reader with a durable PostgreSQL checkpoint. Pub/Sub is never an execution queue. */
 @Component
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="trading.risk-journal.enabled",havingValue="false")
 public class MarketTriggerWorker {
     private static final Logger log = LoggerFactory.getLogger(MarketTriggerWorker.class);
     private static final DefaultRedisScript<List> READ = new DefaultRedisScript<>("""

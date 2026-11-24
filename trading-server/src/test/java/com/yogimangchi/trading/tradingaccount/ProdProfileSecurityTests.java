@@ -6,11 +6,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(properties={"binance.mark-price.enabled=false","binance.order-book.enabled=false","trading.member-auth.enabled=true",
@@ -24,10 +27,23 @@ class ProdProfileSecurityTests {
         MemberJwtIntegrationTests.jwtSettings(registry);
     }
     @Autowired MockMvc mvc;
+    @Autowired Environment environment;
     @Test void productionBlocksSwaggerButRetainsOnlyExistingPublicBusinessRoutes() throws Exception {
         mvc.perform(get("/v3/api-docs")).andExpect(status().isForbidden());
         mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/symbols")).andExpect(status().isOk());
         mvc.perform(get("/api/v1/trading/account/events")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"))
+                .andExpect(jsonPath("$.components").doesNotExist());
+        assertThat(environment.getProperty("server.forward-headers-strategy")).isEqualTo("native");
+        assertThat(environment.getProperty("server.tomcat.remoteip.internal-proxies")).isNotBlank();
+        assertThat(environment.getProperty("spring.datasource.hikari.maximum-pool-size")).isEqualTo("10");
+        assertThat(environment.getProperty("spring.datasource.hikari.minimum-idle")).isEqualTo("2");
+        assertThat(environment.getProperty("spring.datasource.hikari.connection-timeout")).isEqualTo("3000");
+        assertThat(environment.getProperty("spring.datasource.hikari.leak-detection-threshold")).isEqualTo("10000");
+        assertThat(environment.getProperty("management.endpoint.health.show-details")).isEqualTo("never");
+        assertThat(environment.getProperty("trading.ops.alert-cooldown-seconds")).isEqualTo("300");
     }
 }

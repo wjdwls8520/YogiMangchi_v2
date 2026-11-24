@@ -4,7 +4,7 @@ import java.time.Instant;
 import io.swagger.v3.oas.annotations.media.Schema;
 import com.yogimangchi.trading.tradingaccount.service.LiquidationPriceEstimator.Status;
 
-@Schema(description = "Hedge Mode: at most one OPEN lifecycle per account/symbol/side. Additional fills preserve id/openedAt, update weighted average entryPrice and remaining quantity/margin. leverage is the current shared symbol setting. realizedPnl is cumulative; markPrice/unrealizedPnl are null unless FRESH. Fully closed lifecycles never reopen.")
+@Schema(description = "Hedge Mode: at most one OPEN lifecycle per account/symbol/side. Additional fills preserve id/openedAt, update weighted average entryPrice and remaining quantity/margin. leverage is the current direction-specific symbol setting. realizedPnl is cumulative; markPrice/unrealizedPnl are null unless FRESH. Fully closed lifecycles never reopen.")
 public record PositionResponse(Long id, Long tradingSymbolId, String side, String quantity,
         @Schema(description="Quantity reserved by PENDING CLOSE orders, independent of wallet reservedMargin") String reservedCloseQuantity,
         @Schema(description="Remaining quantity minus reservedCloseQuantity; available for MARKET or new LIMIT CLOSE") String freeCloseQuantity,
@@ -15,4 +15,17 @@ public record PositionResponse(Long id, Long tradingSymbolId, String side, Strin
         @Schema(description="ESTIMATED_DOWNWARD: LONG; ESTIMATED_UPWARD: SHORT. PRICE_UNAVAILABLE: this symbol lacks fresh data. NO_THRESHOLD: no positive supported-price boundary. UNSUPPORTED_MODEL: precision/range/search cannot certify a boundary. ALREADY_AT_RISK: this position already meets the isolated liquidation condition. MARGIN_MIGRATION_REQUIRED: legacy Cross exposure is held pending safe conversion or review; price is null") Status liquidationPriceStatus,
         @Schema(description="This symbol's server receivedAt, not the provider clock. Null when its price is unavailable or legacy conversion is incomplete", nullable=true) Instant liquidationPriceAsOf,
         @Schema(description="ISOLATED, or LEGACY_CROSS while trading is held for conversion/review. There is no selectable Cross mode", allowableValues={"ISOLATED","LEGACY_CROSS"}) String marginMode,
-        @Schema(description="Historical model at this lifecycle's first entry: CROSS or ISOLATED. Conversion never rewrites opening facts") String openedMarginMode) { }
+        @Schema(description="Historical model at this lifecycle's first entry: CROSS or ISOLATED. Conversion never rewrites opening facts") String openedMarginMode,
+        com.yogimangchi.trading.stoploss.StopLossResponse stopLoss,
+        @Schema(nullable=true, description="Optional full-position Mark-triggered take profit configuration") com.yogimangchi.trading.takeprofit.TakeProfitResponse takeProfit) {
+    public PositionResponse(Long id, Long tradingSymbolId, String side, String quantity,
+            String reservedCloseQuantity, String freeCloseQuantity, String entryPrice,
+            int leverage, String margin, String status, String realizedPnl, String markPrice, String unrealizedPnl,
+            String priceStatus, Instant priceEventTime, Instant openedAt,
+            String liquidationPrice, Status liquidationPriceStatus, Instant liquidationPriceAsOf,
+            String marginMode, String openedMarginMode, com.yogimangchi.trading.stoploss.StopLossResponse stopLoss) {
+        this(id, tradingSymbolId, side, quantity, reservedCloseQuantity, freeCloseQuantity, entryPrice,
+                leverage, margin, status, realizedPnl, markPrice, unrealizedPnl, priceStatus, priceEventTime, openedAt,
+                liquidationPrice, liquidationPriceStatus, liquidationPriceAsOf, marginMode, openedMarginMode, stopLoss, null);
+    }
+}
