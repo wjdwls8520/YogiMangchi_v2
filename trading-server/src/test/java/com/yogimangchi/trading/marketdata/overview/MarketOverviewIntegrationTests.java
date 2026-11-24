@@ -54,6 +54,8 @@ class MarketOverviewIntegrationTests {
     @Autowired private TradingSymbolService symbols;
 
     private long btcSymbolId;
+    private long ethSymbolId;
+    private long xrpSymbolId;
 
     @AfterEach
     void cleanupRedisKeys() {
@@ -63,6 +65,18 @@ class MarketOverviewIntegrationTests {
                     RedisMarketDataBridge.snapshotKey(btcSymbolId),
                     RedisMarketDataBridge.stateKey(btcSymbolId),
                     RedisTickerStore.snapshotKey(btcSymbolId)
+            ));
+        }
+        if (ethSymbolId > 0) {
+            redis.delete(List.of(
+                    RedisMarketDataBridge.snapshotKey(ethSymbolId),
+                    RedisMarketDataBridge.stateKey(ethSymbolId)
+            ));
+        }
+        if (xrpSymbolId > 0) {
+            redis.delete(List.of(
+                    RedisMarketDataBridge.snapshotKey(xrpSymbolId),
+                    RedisMarketDataBridge.stateKey(xrpSymbolId)
             ));
         }
     }
@@ -86,10 +100,16 @@ class MarketOverviewIntegrationTests {
     void collectorWritesRealTimeOverviewIntoRedisAndServiceOverlaysLiveBtcMarkPrice() throws Exception {
         TradingSymbol btc = em.createQuery("from TradingSymbol where symbol = 'BTC'", TradingSymbol.class)
                 .getSingleResult();
+        TradingSymbol eth = em.createQuery("from TradingSymbol where symbol = 'ETH'", TradingSymbol.class)
+                .getSingleResult();
+        TradingSymbol xrp = em.createQuery("from TradingSymbol where symbol = 'XRP'", TradingSymbol.class)
+                .getSingleResult();
         btcSymbolId = btc.getId();
+        ethSymbolId = eth.getId();
+        xrpSymbolId = xrp.getId();
         Instant now = Instant.now();
 
-        // 1. Seed sub-second live BTC Mark Price ($75,000) & 24h Ticker (-2.00%) in shared Redis
+        // 1. Seed sub-second live BTC ($75,000), ETH ($2,000), XRP ($1.00) Mark Prices & BTC 24h Ticker (-2.00%) in shared Redis
         redis.opsForValue().set(
                 RedisMarketDataBridge.snapshotKey(btcSymbolId),
                 mapper.writeValueAsString(MarketDataEvent.price(
@@ -98,6 +118,22 @@ class MarketOverviewIntegrationTests {
                 Duration.ofSeconds(5)
         );
         redis.opsForValue().set(RedisMarketDataBridge.stateKey(btcSymbolId), "FRESH", Duration.ofSeconds(5));
+        redis.opsForValue().set(
+                RedisMarketDataBridge.snapshotKey(ethSymbolId),
+                mapper.writeValueAsString(MarketDataEvent.price(
+                        new LatestMarkPrice(ethSymbolId, new BigDecimal("2000.00"), now, now)
+                )),
+                Duration.ofSeconds(5)
+        );
+        redis.opsForValue().set(RedisMarketDataBridge.stateKey(ethSymbolId), "FRESH", Duration.ofSeconds(5));
+        redis.opsForValue().set(
+                RedisMarketDataBridge.snapshotKey(xrpSymbolId),
+                mapper.writeValueAsString(MarketDataEvent.price(
+                        new LatestMarkPrice(xrpSymbolId, new BigDecimal("1.00"), now, now)
+                )),
+                Duration.ofSeconds(5)
+        );
+        redis.opsForValue().set(RedisMarketDataBridge.stateKey(xrpSymbolId), "FRESH", Duration.ofSeconds(5));
         redis.opsForValue().set(
                 RedisTickerStore.snapshotKey(btcSymbolId),
                 mapper.writeValueAsString(new MarketTicker(
@@ -117,8 +153,12 @@ class MarketOverviewIntegrationTests {
                         {"chart":{"result":[{"meta":{"regularMarketPrice":1344.20,"chartPreviousClose":1340.50,"fulldayChange":3.70,"fulldayChangePercent":0.28},
                         "indicators":{"quote":[{"close":[1325.1,1326.0,1328.4,1331.2,1333.5,1330.8,1334.0,1336.5,1338.1,1339.9,1342.0,1341.2,1340.5,1344.2]}]}}]}}
                         """,
-                MarketOverviewCollector.UPBIT_BTC_KRW_URI, """
-                        [{"market":"KRW-BTC","trade_price":102091990.0}]
+                MarketOverviewCollector.UPBIT_KIMCHI_MARKETS_URI, """
+                        [
+                          {"market":"KRW-BTC","trade_price":102091990.0},
+                          {"market":"KRW-ETH","trade_price":2730000.0},
+                          {"market":"KRW-XRP","trade_price":1370.0}
+                        ]
                         """,
                 MarketOverviewCollector.COINGECKO_GLOBAL_URI, """
                         {"data":{"market_cap_percentage":{"btc":59.74},"market_cap_change_percentage_24h_usd":-3.50}}
@@ -152,13 +192,17 @@ class MarketOverviewIntegrationTests {
             String rawRedisJson = redis.opsForValue().get(RedisMarketOverviewStore.OVERVIEW_KEY);
             assertThat(rawRedisJson).isNotBlank();
 
-            // 102,091,990 / (75,000 * 1,344.20 = 100,815,000) - 1 = +1.27%
-            // 400,000 BTC * $75,000 = $30.0B
+            // BTC: 102,091,990 / (75,000 * 1,344.20 = 100,815,000) - 1 = +1.27%
+            // ETH: 2,730,000 / (2,000 * 1,344.20 = 2,688,400) - 1 = +1.55%
+            // XRP: 1,370 / (1.00 * 1,344.20 = 1,344.20) - 1 = +1.92%
+            // OI: 400,000 BTC * $75,000 = $30.0B
             mvc.perform(get("/api/v1/market/overview"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.status").value("FRESH"))
                     .andExpect(jsonPath("$.btcDominancePercent").value("59.7"))
                     .andExpect(jsonPath("$.kimchiPremiumPercent").value("1.27"))
+                    .andExpect(jsonPath("$.ethKimchiPremiumPercent").value("1.55"))
+                    .andExpect(jsonPath("$.xrpKimchiPremiumPercent").value("1.92"))
                     .andExpect(jsonPath("$.openInterestBillionsUsd").value("30.0"))
                     .andExpect(jsonPath("$.fearGreedValue").value(32))
                     .andExpect(jsonPath("$.fearGreedLabelKr").value("공포"))

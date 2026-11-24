@@ -159,7 +159,7 @@ function pnlColorText(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith("-")) return "text-[#F6465D]";
   if (!/[1-9]/.test(trimmed)) return "text-gray-600";
-  return "text-[#0ECB81]";
+  return "text-bull";
 }
 
 function formatKstDateTimeShort(value: string): string {
@@ -1215,7 +1215,7 @@ export function MemberMyProfilePage({
                       </div>
                       <div className="my-4 space-y-2">
                         <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-black">
-                          <span className="text-[#0ECB81]">
+                          <span className="text-bull">
                             LONG {longRatioDisplay}% ({longMarginDisplay})
                           </span>
                           <span className="text-[#F6465D]">
@@ -1224,7 +1224,7 @@ export function MemberMyProfilePage({
                         </div>
                         <div className="flex h-3.5 w-full overflow-hidden rounded-full bg-gray-200">
                           <div
-                            className="h-full bg-[#0ECB81]"
+                            className="h-full bg-bull"
                             style={{ width: `${longRatioDisplay}%` }}
                           />
                           <div
@@ -1316,7 +1316,7 @@ export function MemberMyProfilePage({
                                     <span
                                       className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
                                         pos.side === "LONG"
-                                          ? "bg-emerald-50 text-[#0ECB81]"
+                                          ? "bg-emerald-50 text-bull"
                                           : "bg-rose-50 text-[#F6465D]"
                                       }`}
                                     >
@@ -1441,7 +1441,7 @@ export function MemberMyProfilePage({
                                     <span
                                       className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
                                         row.side === "LONG"
-                                          ? "bg-emerald-50 text-[#0ECB81]"
+                                          ? "bg-emerald-50 text-bull"
                                           : "bg-rose-50 text-[#F6465D]"
                                       }`}
                                     >
@@ -1569,7 +1569,7 @@ export function MemberMyProfilePage({
                                   </td>
                                   <td
                                     className={`px-4 py-3.5 font-bold ${
-                                      order.side === "BUY" ? "text-[#0ECB81]" : "text-[#F6465D]"
+                                      order.side === "BUY" ? "text-bull" : "text-[#F6465D]"
                                     }`}
                                   >
                                     {order.sideLabel}
@@ -1645,7 +1645,7 @@ export function MemberMyProfilePage({
                                 </td>
                                 <td
                                   className={`px-4 py-3.5 font-bold ${
-                                    trade.side === "BUY" ? "text-[#0ECB81]" : "text-[#F6465D]"
+                                    trade.side === "BUY" ? "text-bull" : "text-[#F6465D]"
                                   }`}
                                 >
                                   {trade.sideLabel}
@@ -1707,7 +1707,7 @@ export function MemberMyProfilePage({
                                 </td>
                                 <td
                                   className={`px-4 py-3.5 font-bold ${
-                                    order.side === "BUY" ? "text-[#0ECB81]" : "text-[#F6465D]"
+                                    order.side === "BUY" ? "text-bull" : "text-[#F6465D]"
                                   }`}
                                 >
                                   {order.sideLabel}
@@ -2041,7 +2041,7 @@ export function MemberMyProfilePage({
 
                         <div className="my-4 space-y-2">
                           <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-black">
-                            <span className="text-[#0ECB81]">
+                            <span className="text-bull">
                               LONG {longRatioDisplay}% ({longCountDisplay}종목)
                             </span>
                             <span className="text-[#F6465D]">
@@ -2050,7 +2050,7 @@ export function MemberMyProfilePage({
                           </div>
                           <div className="flex h-3.5 w-full overflow-hidden rounded-full bg-gray-200">
                             <div
-                              className="h-full bg-[#0ECB81]"
+                              className="h-full bg-bull"
                               style={{ width: `${longRatioDisplay}%` }}
                             />
                             <div
@@ -2117,7 +2117,7 @@ export function MemberMyProfilePage({
                                     <span
                                       className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-black ${
                                         pos.side === "LONG"
-                                          ? "bg-emerald-50 text-[#0ECB81]"
+                                          ? "bg-emerald-50 text-bull"
                                           : "bg-rose-50 text-[#F6465D]"
                                       }`}
                                     >
@@ -2424,7 +2424,7 @@ export function MemberMyProfilePage({
                       liveReports.map(item => {
                         const statusMeta =
                           item.reportStatus === "RESOLVED"
-                            ? { label: "조치완료", cls: "bg-emerald-50 text-[#0ECB81]" }
+                            ? { label: "조치완료", cls: "bg-emerald-50 text-bull" }
                             : item.reportStatus === "DISMISSED"
                               ? { label: "반려됨", cls: "bg-gray-100 text-gray-600" }
                               : { label: "접수완료", cls: "bg-rose-50 text-[#F6465D]" };

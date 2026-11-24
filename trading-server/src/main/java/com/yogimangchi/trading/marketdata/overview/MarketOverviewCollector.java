@@ -61,8 +61,11 @@ public class MarketOverviewCollector {
     static final URI NAVER_KRW_URI = URI.create("https://api.stock.naver.com/marketindex/exchange/FX_USDKRW");
     static final URI OPEN_ER_USD_URI = URI.create("https://open.er-api.com/v6/latest/USD");
     static final URI UPBIT_BTC_KRW_URI = URI.create("https://api.upbit.com/v1/ticker?markets=KRW-BTC");
+    static final URI UPBIT_KIMCHI_MARKETS_URI = URI.create("https://api.upbit.com/v1/ticker?markets=KRW-BTC,KRW-ETH,KRW-XRP");
     static final URI BINANCE_FAPI_BTC_24H_URI = URI.create("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=BTCUSDT");
     static final URI BINANCE_SPOT_BTC_24H_URI = URI.create("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT");
+    static final URI BINANCE_FAPI_ETH_24H_URI = URI.create("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=ETHUSDT");
+    static final URI BINANCE_FAPI_XRP_24H_URI = URI.create("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=XRPUSDT");
     static final URI BINANCE_TAKER_RATIO_URI = URI.create("https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=BTCUSDT&period=5m&limit=1");
     static final URI BINANCE_ACCOUNT_RATIO_URI = URI.create("https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=5m&limit=1");
     static final URI COINGECKO_GLOBAL_URI = URI.create("https://api.coingecko.com/api/v3/global");
@@ -223,15 +226,27 @@ public class MarketOverviewCollector {
         // 2. Real-time USD/KRW exchange rate + 14-day history (Yahoo KRW=X -> Naver FX_USDKRW -> OpenER/Frankfurter)
         FxQuote fxQuote = resolveUsdKrwQuote(now, prev);
 
-        // 3. Real-time Upbit KRW-BTC ticker
-        Optional<BigDecimal> fetchedUpbit = fetchUpbitBtcKrw();
-        if (fetchedUpbit.isEmpty()) {
+        // 3. Real-time Upbit KRW-BTC / KRW-ETH / KRW-XRP tickers
+        UpbitKrwPrices fetchedUpbit = fetchUpbitKimchiPrices();
+        if (fetchedUpbit.btc() == null) {
             staleGroups++;
         }
-        BigDecimal upbitBtcKrw = fetchedUpbit.orElse(prev.upbitBtcKrw());
+        BigDecimal upbitBtcKrw = fetchedUpbit.btc() != null ? fetchedUpbit.btc() : prev.upbitBtcKrw();
         BigDecimal kimchiPremium = (upbitBtcKrw != null && btcQuote.priceUsd() != null)
                 ? MarketOverviewMath.computeKimchiPremiumPercent(upbitBtcKrw, btcQuote.priceUsd(), fxQuote.rate())
                 : prev.kimchiPremiumPercent();
+
+        BigDecimal upbitEthKrw = fetchedUpbit.eth() != null ? fetchedUpbit.eth() : prev.upbitEthKrw();
+        BigDecimal ethPriceUsd = resolveSymbolMarkUsd("ETH", now, BINANCE_FAPI_ETH_24H_URI);
+        BigDecimal ethKimchiPremium = (upbitEthKrw != null && ethPriceUsd != null)
+                ? MarketOverviewMath.computeKimchiPremiumPercent(upbitEthKrw, ethPriceUsd, fxQuote.rate())
+                : prev.ethKimchiPremiumPercent();
+
+        BigDecimal upbitXrpKrw = fetchedUpbit.xrp() != null ? fetchedUpbit.xrp() : prev.upbitXrpKrw();
+        BigDecimal xrpPriceUsd = resolveSymbolMarkUsd("XRP", now, BINANCE_FAPI_XRP_24H_URI);
+        BigDecimal xrpKimchiPremium = (upbitXrpKrw != null && xrpPriceUsd != null)
+                ? MarketOverviewMath.computeKimchiPremiumPercent(upbitXrpKrw, xrpPriceUsd, fxQuote.rate())
+                : prev.xrpKimchiPremiumPercent();
 
         // 4. Macro: BTC Dominance (every 60s or cold start)
         BigDecimal btcDominance = prev.btcDominancePercent();
@@ -305,7 +320,11 @@ public class MarketOverviewCollector {
                 fxQuote.changeAmount(),
                 fxQuote.changePct(),
                 fxQuote.history(),
-                now
+                now,
+                upbitEthKrw,
+                ethKimchiPremium,
+                upbitXrpKrw,
+                xrpKimchiPremium
         );
         this.lastSnapshot = next;
         this.lastStaleGroupCount = staleGroups;
@@ -511,11 +530,63 @@ public class MarketOverviewCollector {
         return List.copyOf(updated);
     }
 
-    private Optional<BigDecimal> fetchUpbitBtcKrw() {
-        return fetchJson(UPBIT_BTC_KRW_URI)
+    private UpbitKrwPrices fetchUpbitKimchiPrices() {
+        JsonNode array = fetchJson(UPBIT_KIMCHI_MARKETS_URI)
                 .filter(JsonNode::isArray)
                 .filter(arr -> !arr.isEmpty())
-                .flatMap(arr -> parsePositiveDecimal(arr.get(0).get("trade_price")));
+                .or(() -> fetchJson(UPBIT_BTC_KRW_URI)
+                        .filter(JsonNode::isArray)
+                        .filter(arr -> !arr.isEmpty()))
+                .orElse(null);
+        if (array == null) {
+            return new UpbitKrwPrices(null, null, null);
+        }
+        BigDecimal btc = null;
+        BigDecimal eth = null;
+        BigDecimal xrp = null;
+        for (JsonNode row : array) {
+            String market = row.path("market").asText("");
+            BigDecimal price = parsePositiveDecimal(row.get("trade_price")).orElse(null);
+            if (price == null) {
+                continue;
+            }
+            if ("KRW-BTC".equalsIgnoreCase(market)) {
+                btc = price;
+            } else if ("KRW-ETH".equalsIgnoreCase(market)) {
+                eth = price;
+            } else if ("KRW-XRP".equalsIgnoreCase(market)) {
+                xrp = price;
+            }
+        }
+        return new UpbitKrwPrices(btc, eth, xrp);
+    }
+
+    private BigDecimal resolveSymbolMarkUsd(String baseSymbol, Instant now, URI fallbackTickerUri) {
+        Long symbolId = findSymbolId(baseSymbol);
+        if (symbolId != null) {
+            try {
+                List<String> vals = redis.opsForValue().multiGet(List.of(
+                        RedisMarketDataBridge.snapshotKey(symbolId),
+                        RedisMarketDataBridge.stateKey(symbolId)
+                ));
+                if (vals != null && vals.size() == 2 && vals.get(0) != null && "FRESH".equals(vals.get(1))) {
+                    MarketDataEvent event = mapper.readValue(vals.get(0), MarketDataEvent.class);
+                    LatestMarkPrice price = event != null ? event.price() : null;
+                    if (price != null && LatestPriceStore.isFreshAt(price, now)) {
+                        return price.domainMarkPrice();
+                    }
+                }
+            } catch (IOException | DataAccessException | IllegalArgumentException ignored) {
+                // Fallback to REST ticker below
+            }
+        }
+        JsonNode tickerNode = fetchJson(fallbackTickerUri).orElse(null);
+        if (tickerNode != null && tickerNode.isObject()) {
+            return parsePositiveDecimal(tickerNode.get("lastPrice"))
+                    .or(() -> parsePositiveDecimal(tickerNode.get("price")))
+                    .orElse(null);
+        }
+        return null;
     }
 
     private Optional<DominanceQuote> fetchDominanceQuote() {
@@ -614,8 +685,12 @@ public class MarketOverviewCollector {
     }
 
     private Long findBtcSymbolId() {
+        return findSymbolId("BTC");
+    }
+
+    private Long findSymbolId(String baseSymbol) {
         for (TradingSymbolResponse symbol : symbols.findActiveSymbols()) {
-            if ("BTC".equalsIgnoreCase(symbol.symbol()) && "USDT".equalsIgnoreCase(symbol.quoteAsset())) {
+            if (baseSymbol.equalsIgnoreCase(symbol.symbol()) && "USDT".equalsIgnoreCase(symbol.quoteAsset())) {
                 return symbol.id();
             }
         }
@@ -675,6 +750,7 @@ public class MarketOverviewCollector {
     }
 
     private record BtcQuote(BigDecimal priceUsd, BigDecimal change24hPct) { }
+    private record UpbitKrwPrices(BigDecimal btc, BigDecimal eth, BigDecimal xrp) { }
     private record FxQuote(BigDecimal rate, BigDecimal changeAmount, BigDecimal changePct, List<BigDecimal> history) { }
     private record DominanceQuote(BigDecimal dominancePercent, BigDecimal totalMarketCapChange24hPct) { }
     private record OpenInterestQuote(BigDecimal openInterestBtc, BigDecimal openInterestBillionsUsd) { }

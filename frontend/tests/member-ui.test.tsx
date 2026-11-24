@@ -1531,7 +1531,11 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
     btcDominancePercent: 59.1,
     btcDominanceChange24h: -0.45,
     kimchiPremiumPercent: -0.32,
+    ethKimchiPremiumPercent: 1.45,
+    xrpKimchiPremiumPercent: 1.88,
     openInterestBillionsUsd: 44.8,
+    futuresBullPct: 62,
+    futuresBearPct: 38,
     fearGreedValue: 22,
     fearGreedLabelKr: "극단적 공포",
     updatedAt: "2026-11-10T09:30:00Z",
@@ -1545,9 +1549,19 @@ test("Market overview helpers and MainPortal top ticker bar bind free public mar
       </MemberProvider>,
     );
     assert.match(html, /BTC 도미넌스[\s\S]*?>59\.1%<\/strong>[\s\S]*?text-\[#F6465D\]">-0\.45%<\/em>/);
-    assert.match(html, /김치프리미엄[\s\S]*?>-0\.32%<\/strong>/);
-    assert.match(html, /24h 선물 미결제약정[\s\S]*?>\$44\.8B<\/strong>/);
-    assert.match(html, /공포·탐욕 지수[\s\S]*?>22 \(극단적 공포\)<\/strong>/);
+    assert.match(html, /김치프리미엄[\s\S]*?data-kimchi-coin="BTC"[\s\S]*?>-0\.32%<\/strong>/);
+    assert.match(html, /data-kimchi-coin="ETH"[\s\S]*?\+1\.45%/);
+    assert.match(html, /data-kimchi-coin="XRP"[\s\S]*?\+1\.88%/);
+    assert.match(html, /투자자 롱\/숏 비율[\s\S]*?BTC 기준[\s\S]*?62%[\s\S]*?38%[\s\S]*?BTCUSDT 선물 5m/);
+    assert.equal(html.includes("바이낸스 BTCUSDT 5m"), false);
+    assert.equal(html.includes("24h 선물 미결제약정"), false);
+    assert.match(html, /공포·탐욕 지수[\s\S]*?>22 \(극단적 공포\)<\/strong>[\s\S]*?BTC 중심 시장/);
+    assert.equal(html.includes("요기망치 V2 OPEN · 10,000 USDT 즉시 지급"), false);
+    assert.match(html, /data-hero-chart="btc-dominance"/);
+    assert.match(html, /data-hero-chart="kimchi-premium"/);
+    assert.match(html, /data-hero-chart="long-short-ratio"/);
+    assert.match(html, /data-hero-chart="fear-greed"/);
+    assert.match(html, /animate-pulse[\s\S]*?24시 실시간 속보/);
   } finally {
     client.clear();
   }
@@ -1737,7 +1751,7 @@ test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-ser
   assert.equal(mappedCoins[0].price, "$96,840.25");
   assert.equal(mappedCoins[0].changeRate, 3.42);
   assert.equal(mappedCoins[0].volume, "2,450.8M USDT");
-  assert.equal(mappedCoins[0].trendColor, "#0ECB81");
+  assert.equal(mappedCoins[0].trendColor, "var(--color-bull)");
   assert.equal(mappedCoins[0].high24h, "$97,500.00");
 
   assert.equal(mappedCoins[1].available, true);
@@ -1751,7 +1765,7 @@ test("MainPortal binds live USD/KRW exchange rate 14-day history and trading-ser
   assert.equal(mappedCoins[2].price, "$228.90");
   assert.equal(mappedCoins[2].changeRate, 6.15);
   assert.equal(mappedCoins[2].volume, "745.2M USDT");
-  assert.equal(mappedCoins[2].trendColor, "#0ECB81");
+  assert.equal(mappedCoins[2].trendColor, "var(--color-bull)");
 
   const customOverview = parseMarketOverviewPayload({
     btcDominancePercent: 58.1,
@@ -1873,8 +1887,8 @@ test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커�
         <MainPortal initialMarketOverview={mainOverviewFixture} />
       </MemberProvider>,
     );
-    // 메인 시장 요약·환율·인기종목 반응형 클래스 (가짜 가격·스파크라인 없이 정직한 연동 대기 상태)
-    assert.match(mainHtml, /gap-x-3 gap-y-1\.5 text-\[11px\] sm:gap-4 sm:text-xs/);
+    // 메인 시장 요약 4종 차트·환율·인기종목 반응형 클래스 (가짜 가격·스파크라인 없이 정직한 연동 대기 상태)
+    assert.match(mainHtml, /grid grid-cols-1 gap-3\.5 sm:grid-cols-2[^>]*data-hero-market-charts="ready"/);
     assert.match(mainHtml, /whitespace-nowrap text-xl font-black text-gray-900 sm:text-3xl/);
     assert.match(mainHtml, /data-popular-coins-state=/);
 
@@ -1885,7 +1899,7 @@ test("모바일 반응형 레이아웃 클래스가 헤더·메인·뉴스·커�
     );
     // 속보 서브탭 뉴스룸과 동일한 중앙 세그먼트 탭 바 및 투자 심리 바 줄바꿈 방지
     assert.match(newsHtml, /mx-auto grid max-w-xl grid-cols-3 gap-1 rounded-2xl bg-\[#F2F4F7\] p-1\.5/);
-    assert.match(newsHtml, /bg-\[#0ECB81\] px-1\.5 whitespace-nowrap/);
+    assert.match(newsHtml, /bg-bull px-1\.5 whitespace-nowrap/);
     assert.match(newsHtml, /data-breaking-badge="all"/);
 
     const communityHtml = renderToStaticMarkup(
@@ -3436,6 +3450,45 @@ test("회원-대회-심볼-탈퇴보호 전 생애주기 API 계약 및 금지 �
   );
   assert.equal(waitCardHtml.includes('data-contest-action="cancel-application"'), true);
   assert.equal(waitCardHtml.includes("신청 취소"), true);
+
+  // 4-b. 모집중 카드(apply) 비로그인/로그인 분기 및 대회 섹션 제목 수직 정렬 CSS 규칙 검증
+  const applySeasonSample = {
+    id: 202609,
+    title: "2026년 11월 요기망치 선물 트레이딩 챌린지",
+    description: "모집중 로그인 가드 테스트",
+    seedMoney: "10,000 USDT",
+    recruitmentStartAt: "2026.11.20 00:00",
+    recruitmentEndAt: "2026.12.07 23:59",
+    contestStartAt: "2026.11.23 00:00",
+    contestEndAt: "2026.12.14 23:59",
+    participantCount: 15,
+    cardType: "apply" as const,
+    accentLabel: "모집중",
+    actionLabel: "신청",
+  };
+  const anonApplyCardHtml = renderToStaticMarkup(
+    <ContestListCard contest={applySeasonSample} isLoggedIn={false} onApply={() => {}} />,
+  );
+  assert.match(
+    anonApplyCardHtml,
+    /<a[^>]*data-contest-action="apply-login-required"[^>]*href="\/login"[^>]*><span>로그인 후 신청 가능<\/span><\/a>/,
+  );
+  assert.equal(anonApplyCardHtml.includes('data-contest-action="apply"'), false);
+
+  const memberApplyCardHtml = renderToStaticMarkup(
+    <ContestListCard contest={applySeasonSample} isLoggedIn={true} onApply={() => {}} />,
+  );
+  assert.equal(memberApplyCardHtml.includes('data-contest-action="apply"'), true);
+  assert.equal(memberApplyCardHtml.includes("로그인 후 신청 가능"), false);
+
+  const contestGlobalsCss = fs.readFileSync(
+    path.join(process.cwd(), "src/app/globals.css"),
+    "utf8",
+  );
+  assert.match(
+    contestGlobalsCss,
+    /\.member-shell\s+\.member-card\s+\[data-contest-hub\]\s+h2\s*\{[^}]*margin:\s*0;/,
+  );
 
   // 5. 탈퇴/미존재 회원 및 대회 신청 에러 한국어 메시지 매핑 검증
   assert.equal(

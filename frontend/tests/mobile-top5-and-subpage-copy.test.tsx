@@ -145,7 +145,7 @@ test("모바일 커뮤니티 대회투자 TOP5는 단일 aside를 피드 상단 
   );
   assert.match(
     collapsedHtml,
-    /data-contest-top5-summary="true">1위 안녕4 · <span class="font-extrabold tabular-nums text-\[#0ECB81\]">\+28\.40%<\/span><\/span>/,
+    /data-contest-top5-summary="true">1위 안녕4 · <span class="font-extrabold tabular-nums text-bull">\+28\.40%<\/span><\/span>/,
   );
   assert.equal(collapsedHtml.includes("<span>펼치기</span>"), true);
   assert.equal(collapsedHtml.includes("<span>접기</span>"), false);

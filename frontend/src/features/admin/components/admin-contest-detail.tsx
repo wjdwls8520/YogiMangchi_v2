@@ -1221,7 +1221,7 @@ export function AdminContestDetail({
                             ? "text-[#F6465D]"
                             : participant.roi === "0.00%"
                               ? "text-gray-700"
-                              : "text-[#0ECB81]",
+                              : "text-bull",
                         )}
                       >
                         {participant.realizedPnl} ({participant.roi})

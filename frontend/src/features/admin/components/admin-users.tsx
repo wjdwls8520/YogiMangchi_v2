@@ -516,7 +516,7 @@ export function AdminUsers() {
           </div>
           <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
             <p className="text-xs font-bold text-gray-400">활동 회원</p>
-            <p className="mt-2 text-2xl font-black tabular-nums text-[#0ECB81]">
+            <p className="mt-2 text-2xl font-black tabular-nums text-bull">
               {activeCount.toLocaleString("ko-KR")}명
             </p>
           </div>
@@ -718,7 +718,7 @@ export function AdminUsers() {
                                   ? "bg-gray-100 text-gray-500"
                                   : isSuspended
                                     ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                    : "bg-emerald-50 text-[#0ECB81]",
+                                    : "bg-emerald-50 text-bull",
                             )}
                           >
                             {formatMemberStatusKr(isBanned ? "BANNED" : isWithdrawn ? "WITHDRAWN" : isSuspended ? "SUSPENDED" : "ACTIVE")}

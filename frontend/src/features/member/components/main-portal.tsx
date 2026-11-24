@@ -25,6 +25,7 @@ import {
 } from "../api/market-overview";
 import { marketTickersJson } from "../../trading/api/client";
 import { DimModal } from "./dim-modal";
+import { HeroMarketCharts } from "./hero-market-charts";
 import {
   V1Header,
   V1Button,
@@ -55,7 +56,7 @@ export interface PopularCoinCardData {
   volume: string | null;
   high24h: string | null;
   low24h: string | null;
-  trendColor: "#0ECB81" | "#F6465D" | "#6B7280";
+  trendColor: "var(--color-bull)" | "#F6465D" | "#6B7280";
 }
 
 function formatUsdPrice(value: number): string {
@@ -132,11 +133,11 @@ export function mapRedisTickersToPopularCoins(rawTickers: unknown): PopularCoinC
     const high24h = Number.isFinite(highNum) && highNum > 0 ? formatUsdPrice(highNum) : null;
     const low24h = Number.isFinite(lowNum) && lowNum > 0 ? formatUsdPrice(lowNum) : null;
 
-    const trendColor: "#0ECB81" | "#F6465D" | "#6B7280" =
+    const trendColor: "var(--color-bull)" | "#F6465D" | "#6B7280" =
       changeRate === null
         ? "#6B7280"
         : changeRate > 0
-          ? "#0ECB81"
+          ? "var(--color-bull)"
           : changeRate < 0
             ? "#F6465D"
             : "#6B7280";
@@ -403,111 +404,45 @@ export function MainPortal({
       {/* V1 공통 헤더 */}
       <V1Header theme="light" />
 
-      {/* 상단 마켓 지표 티커 바 */}
-      <section className="border-b border-gray-200 bg-white py-2.5 text-xs" aria-label="글로벌 마켓 요약 지표">
-        <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-3 px-4 md:px-6">
-          {isOverviewLoading ? (
-            <div className="flex flex-wrap items-center gap-3" aria-busy="true" aria-label="실시간 마켓 지표 불러오는 중">
-              {[0, 1, 2, 3].map(idx => (
-                <span key={idx} className="inline-block h-4 w-28 rounded ym-skeleton" />
-              ))}
+      {/* V1 히어로 섹션 (좌측 메인 타이틀·CTA / 우측 글로벌 마켓 4종 차트) */}
+      <section className="relative overflow-hidden border-b border-gray-200 bg-white py-10 md:py-14">
+        <div className="relative z-10 mx-auto max-w-[1280px] px-4 md:px-6">
+          <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-12 lg:gap-10">
+            <div className="text-left lg:col-span-5">
+              <h1 className="mb-4 text-3xl font-extrabold leading-[1.2] tracking-tight text-gray-900 sm:text-4xl lg:text-[36px] xl:text-[40px] break-keep">
+                <span className="lg:whitespace-nowrap">나의 투자 욕망을 실현할 곳,</span>
+                <br />
+                <span className="text-[#0058FF]">요기망치</span>
+              </h1>
+
+              <p className="mb-7 max-w-lg text-sm leading-relaxed text-gray-600 sm:text-base break-keep">
+                실패가 두려워 시작하지 못했던 투자, 실제 바이낸스 실시간 시세와 연동되는
+                가장 완벽한 선물 모의투자 환경에서 리스크 없이 마음껏 도전하세요.
+              </p>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <Link
+                  href="/trading"
+                  className="flex h-12 w-full items-center justify-center whitespace-nowrap rounded-xl bg-[#0058FF] px-7 text-sm font-bold text-white transition-colors hover:bg-blue-700 sm:w-auto sm:text-base"
+                >
+                  선물 모의투자 시작하기
+                </Link>
+                <Link
+                  href="/contest"
+                  className="flex h-12 w-full items-center justify-center whitespace-nowrap rounded-xl border border-gray-300 bg-white px-7 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50 sm:w-auto sm:text-base"
+                >
+                  대회 참여하기
+                </Link>
+              </div>
             </div>
-          ) : marketOverview ? (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] sm:gap-4 sm:text-xs tabular-nums">
-              <span className="whitespace-nowrap font-bold text-gray-500">
-                BTC 도미넌스{" "}
-                <strong className="text-gray-900">
-                  {marketOverview.btcDominancePercent !== null
-                    ? `${marketOverview.btcDominancePercent.toFixed(1)}%`
-                    : "—"}
-                </strong>{" "}
-                {marketOverview.btcDominanceChange24h !== null ? (
-                  <em
-                    className={
-                      marketOverview.btcDominanceChange24h >= 0
-                        ? "not-italic font-bold text-[#0ECB81]"
-                        : "not-italic font-bold text-[#F6465D]"
-                    }
-                  >
-                    {marketOverview.btcDominanceChange24h >= 0 ? "+" : ""}
-                    {marketOverview.btcDominanceChange24h.toFixed(2)}%
-                  </em>
-                ) : null}
-              </span>
-              <span className="whitespace-nowrap font-bold text-gray-500">
-                김치프리미엄{" "}
-                <strong className="text-gray-900">
-                  {marketOverview.kimchiPremiumPercent !== null
-                    ? `${marketOverview.kimchiPremiumPercent >= 0 ? "+" : ""}${marketOverview.kimchiPremiumPercent.toFixed(2)}%`
-                    : "—"}
-                </strong>
-              </span>
-              <span className="whitespace-nowrap font-bold text-gray-500">
-                24h 선물 미결제약정{" "}
-                <strong className="text-gray-900">
-                  {marketOverview.openInterestBillionsUsd !== null
-                    ? `$${marketOverview.openInterestBillionsUsd.toFixed(1)}B`
-                    : "—"}
-                </strong>
-              </span>
-              <span className="whitespace-nowrap font-bold text-gray-500">
-                공포·탐욕 지수{" "}
-                <strong className="text-[#0058FF]">
-                  {marketOverview.fearGreedValue !== null
-                    ? `${marketOverview.fearGreedValue}${marketOverview.fearGreedLabelKr ? ` (${marketOverview.fearGreedLabelKr})` : ""}`
-                    : "—"}
-                </strong>
-              </span>
+
+            <div className="lg:col-span-7">
+              <HeroMarketCharts
+                marketOverview={marketOverview}
+                isLoading={isOverviewLoading}
+                onRetry={() => void marketOverviewQuery.refetch()}
+              />
             </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs font-bold text-gray-500">
-              <span>실시간 시세 연동 대기 중 (—)</span>
-              <button
-                type="button"
-                onClick={() => void marketOverviewQuery.refetch()}
-                className="rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100 cursor-pointer"
-              >
-                다시 조회
-              </button>
-            </div>
-          )}
-          <Link href="/trading" className="whitespace-nowrap font-bold text-[#0058FF] hover:underline">
-            모의투자 하러가기 →
-          </Link>
-        </div>
-      </section>
-
-      {/* V1 히어로 섹션 */}
-      <section className="relative overflow-hidden border-b border-gray-200 bg-white pt-10 pb-14 md:pt-16 md:pb-20">
-        <div className="relative z-10 mx-auto max-w-[1280px] px-4 text-center md:px-6">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-[#0058FF]">
-            <span className="h-2 w-2 rounded-full bg-[#0058FF]"></span>
-            요기망치 V2 OPEN · 10,000 USDT 즉시 지급
-          </div>
-
-          <h1 className="mb-6 text-3xl font-extrabold leading-tight tracking-tight text-gray-900 sm:text-5xl md:text-6xl">
-            나의 투자 욕망을 실현할 곳, <br className="hidden sm:block" />
-            <span className="text-[#0058FF]">요기망치</span>
-          </h1>
-
-          <p className="mx-auto mb-8 max-w-2xl text-sm text-gray-600 sm:text-base md:mb-10 md:text-lg">
-            실패가 두려워 시작하지 못했던 투자, 실제 바이낸스 실시간 시세와 연동되는
-            가장 완벽한 선물 모의투자 환경에서 리스크 없이 마음껏 도전하세요.
-          </p>
-
-          <div className="flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
-            <Link
-              href="/trading"
-              className="flex h-14 w-full items-center justify-center rounded-xl bg-[#0058FF] px-8 text-base font-bold text-white transition-colors hover:bg-blue-700 sm:w-auto"
-            >
-              선물 모의투자 시작하기
-            </Link>
-            <Link
-              href="/contest"
-              className="flex h-14 w-full items-center justify-center rounded-xl border border-gray-300 bg-white px-8 text-base font-bold text-gray-700 transition-colors hover:bg-gray-50 sm:w-auto"
-            >
-              대회 참여하기
-            </Link>
           </div>
         </div>
       </section>
@@ -552,7 +487,7 @@ export function MainPortal({
                             <span
                               className={
                                 marketOverview.usdKrwChangeAmount >= 0
-                                  ? "shrink-0 whitespace-nowrap rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-bold text-[#0ECB81]"
+                                  ? "shrink-0 whitespace-nowrap rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-bold text-bull"
                                   : "shrink-0 whitespace-nowrap rounded-md bg-rose-50 px-2 py-0.5 text-xs font-bold text-[#F6465D]"
                               }
                             >
@@ -784,7 +719,7 @@ export function MainPortal({
                     <span
                       className={
                         coin.changeRate >= 0
-                          ? "rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-black tabular-nums text-[#0ECB81]"
+                          ? "rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-black tabular-nums text-bull"
                           : "rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-black tabular-nums text-[#F6465D]"
                       }
                     >
@@ -1066,7 +1001,10 @@ export function MainPortal({
           <div className="card rounded-2xl border border-gray-200 bg-white p-6 lg:col-span-7">
             <div className="mb-5 flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-4">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#0058FF]"></span>
+                <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#0058FF] opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#0058FF] animate-pulse" />
+                </span>
                 <h2 className="text-lg font-black text-gray-900 whitespace-nowrap">24시 실시간 속보</h2>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -1166,7 +1104,7 @@ export function MainPortal({
                   onClick={() => setSimSide("LONG")}
                   className={`h-10 rounded-xl text-xs font-black transition-colors ${
                     simSide === "LONG"
-                      ? "bg-[#0ECB81] text-white"
+                      ? "bg-bull text-white"
                       : "border border-gray-200 bg-gray-50 text-gray-600"
                   }`}
                 >
@@ -1254,13 +1192,13 @@ export function MainPortal({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">예상 수익률 (ROE)</span>
-                  <strong className={simResult.isPositive ? "text-[#0ECB81]" : "text-[#F6465D]"}>
+                  <strong className={simResult.isPositive ? "text-bull" : "text-[#F6465D]"}>
                     {simResult.roe}
                   </strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">예상 실현 손익</span>
-                  <strong className={simResult.isPositive ? "text-[#0ECB81]" : "text-[#F6465D]"}>
+                  <strong className={simResult.isPositive ? "text-bull" : "text-[#F6465D]"}>
                     {simResult.pnl}
                   </strong>
                 </div>
@@ -1343,7 +1281,7 @@ export function MainPortal({
                   onClick={() => void togglePortalNewsReaction(selectedNews, "BULL")}
                   className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-bold transition-colors ${
                     activeReaction === "BULL"
-                      ? "border-[#0ECB81] bg-emerald-50 text-[#0ECB81]"
+                      ? "border-bull bg-emerald-50 text-bull"
                       : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
                   }`}
                 >

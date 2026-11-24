@@ -64,7 +64,7 @@ function publicPnlColor(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith("-")) return "text-[#F6465D]";
   if (!/[1-9]/.test(trimmed)) return "text-gray-500";
-  return "text-[#0ECB81]";
+  return "text-bull";
 }
 
 function formatPublicKstDate(value: string): string {
@@ -851,11 +851,11 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             <div className="rounded-2xl border border-gray-100 bg-[#F9FAFB] p-5">
                               <h3 className="text-sm font-black text-gray-900">롱 / 숏 비율</h3>
                               <div className="mt-3 flex justify-between text-xs font-bold">
-                                <span className="text-[#0ECB81]">LONG {formatExchangeCompactPct(longRatioPct)}</span>
+                                <span className="text-bull">LONG {formatExchangeCompactPct(longRatioPct)}</span>
                                 <span className="text-[#F6465D]">SHORT {formatExchangeCompactPct(shortRatioPct)}</span>
                               </div>
                               <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-gray-200">
-                                <div className="h-full bg-[#0ECB81]" style={{ width: `${longRatioPct}%` }} />
+                                <div className="h-full bg-bull" style={{ width: `${longRatioPct}%` }} />
                                 <div className="h-full bg-[#F6465D]" style={{ width: `${shortRatioPct}%` }} />
                               </div>
                             </div>
@@ -914,7 +914,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                                       </td>
                                       <td
                                         className={`px-4 py-3 font-bold ${
-                                          pos.side === "LONG" ? "text-[#0ECB81]" : "text-[#F6465D]"
+                                          pos.side === "LONG" ? "text-bull" : "text-[#F6465D]"
                                         }`}
                                       >
                                         {pos.side}
@@ -1196,7 +1196,7 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             liveReports.map(item => {
                               const statusMeta =
                                 item.reportStatus === "RESOLVED"
-                                  ? { label: "조치완료", cls: "bg-emerald-50 text-[#0ECB81]" }
+                                  ? { label: "조치완료", cls: "bg-emerald-50 text-bull" }
                                   : item.reportStatus === "DISMISSED"
                                     ? { label: "반려됨", cls: "bg-gray-100 text-gray-600" }
                                     : { label: "접수완료", cls: "bg-rose-50 text-[#F6465D]" };

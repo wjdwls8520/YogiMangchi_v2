@@ -109,7 +109,7 @@ function HealthBadge({ tone, label }: { tone: OpsHealthTone; label: string }) {
         : "border-rose-200 bg-rose-50 text-[#F6465D]";
   const dot =
     tone === "green"
-      ? "bg-[#0ECB81]"
+      ? "bg-bull"
       : tone === "yellow"
         ? "bg-amber-500"
         : "bg-[#F6465D]";
@@ -1098,7 +1098,7 @@ export function AdminOpsView() {
                       "h-full rounded-full",
                       (tradingOps?.runtime?.heapUsagePercent ?? 0) >= 85
                         ? "bg-[#F6465D]"
-                        : "bg-[#0ECB81]",
+                        : "bg-bull",
                     )}
                     style={{
                       width: `${Math.min(100, Math.max(0, tradingOps?.runtime?.heapUsagePercent ?? 0))}%`,
@@ -1253,7 +1253,7 @@ export function AdminOpsView() {
                   "rounded-full px-2 py-0.5 text-[10px] font-black",
                   (tradingOps?.ledgerMismatches ?? 0) > 0
                     ? "bg-rose-50 text-[#F6465D]"
-                    : "bg-emerald-50 text-[#0ECB81]",
+                    : "bg-emerald-50 text-bull",
                 )}
               >
                 원장 불일치 {tradingOps?.ledgerMismatches ?? 0}건
@@ -1863,7 +1863,7 @@ export function AdminOpsView() {
                             className={cn(
                               "rounded-md px-2 py-0.5 text-[11px] font-black",
                               inquiry.status === "ANSWERED"
-                                ? "bg-emerald-50 text-[#0ECB81]"
+                                ? "bg-emerald-50 text-bull"
                                 : inquiry.status === "CLOSED"
                                   ? "bg-gray-200 text-gray-700"
                                   : "bg-amber-50 text-amber-700",

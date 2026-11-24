@@ -44,12 +44,27 @@ export function MainPortalPageSkeleton() {
       <span className="sr-only">메인 페이지를 불러오는 중입니다…</span>
       <SkeletonHeaderBar />
 
-      {/* 상단 실시간 마켓 지표 바 */}
-      <div className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
-          {[0, 1, 2, 3].map(idx => (
-            <div key={idx} className="h-4 w-28 rounded ym-skeleton" />
-          ))}
+      {/* 2단 히어로: 좌측 헤드라인 / 우측 글로벌 마켓 4종 차트 스켈레톤 */}
+      <div className="border-b border-gray-200 bg-white py-10 md:py-14">
+        <div className="mx-auto grid max-w-[1280px] grid-cols-1 items-center gap-8 px-4 md:px-6 lg:grid-cols-12 lg:gap-10">
+          <div className="space-y-4 lg:col-span-5">
+            <div className="h-10 w-4/5 rounded-xl ym-skeleton" />
+            <div className="h-10 w-2/5 rounded-xl ym-skeleton" />
+            <div className="h-4 w-full rounded ym-skeleton" />
+            <div className="h-4 w-5/6 rounded ym-skeleton" />
+            <div className="flex gap-3 pt-2">
+              <div className="h-12 w-40 rounded-xl ym-skeleton" />
+              <div className="h-12 w-32 rounded-xl ym-skeleton" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:col-span-7">
+            {[0, 1, 2, 3].map(idx => (
+              <div key={idx} className="h-[156px] rounded-2xl border border-gray-200 bg-[#F9FAFB] p-4 space-y-3">
+                <div className="h-4 w-24 rounded ym-skeleton" />
+                <div className="h-16 w-full rounded-xl ym-skeleton" />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 

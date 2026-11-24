@@ -528,7 +528,7 @@ export function SupportCenter() {
                           <span
                             className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-extrabold ${
                               inquiry.status === "ANSWERED"
-                                ? "bg-emerald-50 text-[#0ECB81]"
+                                ? "bg-emerald-50 text-bull"
                                 : inquiry.status === "CLOSED"
                                   ? "bg-gray-200 text-gray-600"
                                   : "bg-amber-50 text-amber-700"

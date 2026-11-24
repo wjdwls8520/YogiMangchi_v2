@@ -265,7 +265,7 @@ export function SharedPositionCard({
   const pnlColorClass = isNegative
     ? "text-[#F6465D]"
     : hasNonZero && snapshot.positive
-      ? "text-[#0ECB81]"
+      ? "text-bull"
       : "text-gray-600";
   const normalizedEntry = formatSnapshotPrice(snapshot.entryPrice);
   const normalizedMark = formatSnapshotPrice(snapshot.markPrice);
@@ -289,7 +289,7 @@ export function SharedPositionCard({
           <span
             className={`shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-black ${
               snapshot.side === "LONG"
-                ? "bg-[#0ECB81]/10 text-[#0ECB81]"
+                ? "bg-bull/10 text-bull"
                 : "bg-[#F6465D]/10 text-[#F6465D]"
             }`}
           >
@@ -298,7 +298,7 @@ export function SharedPositionCard({
           {snapshot.verified === true ? (
             <span
               data-position-verified="true"
-              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-[#0ECB81]"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-bull"
             >
               <span>원장 스냅샷 검증됨</span>
               <V1IconCheck className="h-3 w-3" />
@@ -806,7 +806,7 @@ export function CommunityBoard({
     ? "text-[#F6465D]"
     : topLeaderIsZero
       ? "text-gray-600"
-      : "text-[#0ECB81]";
+      : "text-bull";
 
   const top5StatusBadge =
     activeSidebarSeason?.displayStatus === "LIVE" ? (
@@ -3425,7 +3425,7 @@ export function CommunityBoard({
                             ? "text-[#F6465D]"
                             : isZero
                               ? "text-gray-600"
-                              : "text-[#0ECB81]";
+                              : "text-bull";
                           const rankBadgeClass =
                             entry.rank === 1
                               ? "bg-[#0058FF] text-white"

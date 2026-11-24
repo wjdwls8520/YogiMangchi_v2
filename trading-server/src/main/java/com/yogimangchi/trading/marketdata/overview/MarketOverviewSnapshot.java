@@ -1,9 +1,11 @@
 package com.yogimangchi.trading.marketdata.overview;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record MarketOverviewSnapshot(
         BigDecimal btcDominancePercent,
         BigDecimal btcDominanceChange24h,
@@ -21,7 +23,11 @@ public record MarketOverviewSnapshot(
         BigDecimal usdKrwChangeAmount,
         BigDecimal usdKrwChangePct,
         List<BigDecimal> usdKrwHistory,
-        Instant updatedAt
+        Instant updatedAt,
+        BigDecimal upbitEthKrw,
+        BigDecimal ethKimchiPremiumPercent,
+        BigDecimal upbitXrpKrw,
+        BigDecimal xrpKimchiPremiumPercent
 ) {
 
     public MarketOverviewSnapshot {
@@ -48,7 +54,11 @@ public record MarketOverviewSnapshot(
                 MarketOverviewMath.DEFAULT_USD_KRW_CHANGE_AMOUNT,
                 MarketOverviewMath.DEFAULT_USD_KRW_CHANGE_PCT,
                 MarketOverviewMath.buildDeterministicUsdKrwHistory(MarketOverviewMath.DEFAULT_USD_KRW_RATE),
-                updatedAt
+                updatedAt,
+                null,
+                null,
+                null,
+                null
         );
     }
 }

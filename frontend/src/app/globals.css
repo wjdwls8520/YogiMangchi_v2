@@ -33,6 +33,22 @@
   --color-brand-700: #ffb54a;
   --color-gain: #0ecb81;
   --color-loss: #f6465d;
+  /* 사이트 공용 상승·매수·긍정 초록 단일 마스터 색상 — 이 한 줄만 바꾸면 사이트 전체 초록 계열 일괄 변경 */
+  --color-bull: #20b26c;
+  --color-bull-dark: color-mix(in srgb, var(--color-bull) 82%, #000000);
+  --color-bull-soft: color-mix(in srgb, var(--color-bull) 9%, #ffffff);
+  --color-bull-border: color-mix(in srgb, var(--color-bull) 30%, #ffffff);
+  /* Tailwind emerald 팔레트도 --color-bull 단일 기준색에서 자동 파생 (채도·톤 일관성 유지) */
+  --color-emerald-50: color-mix(in srgb, var(--color-bull) 9%, #ffffff);
+  --color-emerald-100: color-mix(in srgb, var(--color-bull) 18%, #ffffff);
+  --color-emerald-200: color-mix(in srgb, var(--color-bull) 30%, #ffffff);
+  --color-emerald-300: color-mix(in srgb, var(--color-bull) 55%, #ffffff);
+  --color-emerald-400: color-mix(in srgb, var(--color-bull) 78%, #ffffff);
+  --color-emerald-500: var(--color-bull);
+  --color-emerald-600: var(--color-bull);
+  --color-emerald-700: color-mix(in srgb, var(--color-bull) 82%, #000000);
+  --color-emerald-800: color-mix(in srgb, var(--color-bull) 66%, #000000);
+  --color-emerald-900: color-mix(in srgb, var(--color-bull) 52%, #000000);
   --text-trade-meta: 0.75rem;
   --text-trade-meta--line-height: 1.125rem;
   --text-trade-body: 0.8125rem;
@@ -1289,6 +1305,11 @@ body:has(.member-shell) :focus-visible {
   font-size: 18px;
   font-weight: 700;
   color: #1D1D1F;
+}
+
+.member-shell .member-card [data-contest-hub] h2 {
+  margin: 0;
+  line-height: 1.25;
 }
 
 /* Inputs & Buttons (xrhub.co.kr exact specifications) */

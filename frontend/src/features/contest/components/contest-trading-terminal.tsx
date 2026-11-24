@@ -41,7 +41,7 @@ interface ContestSeasonTerminalMeta {
   dotColor: string;
 }
 
-const SEASON_DOT_PALETTE = ["#0058FF", "#0EA5E9", "#0ECB81", "#F59E0B", "#F6465D", "#06B6D4"];
+const SEASON_DOT_PALETTE = ["#0058FF", "#0EA5E9", "var(--color-bull)", "#F59E0B", "#F6465D", "#06B6D4"];
 
 function resolveContestTerminalMeta(seasonIdInput: number | string): ContestSeasonTerminalMeta {
   const numericId = Number(seasonIdInput);
@@ -207,7 +207,7 @@ export function ContestTradingSubheader({
   const roiColorClass = meta.seasonRoi.startsWith("-")
     ? "text-[#F6465D]"
     : meta.seasonRoi.startsWith("+")
-      ? "text-[#0ECB81]"
+      ? "text-bull"
       : "text-gray-300";
 
   return (
