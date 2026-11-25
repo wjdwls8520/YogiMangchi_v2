@@ -47,6 +47,7 @@ public class ContentNotificationService {
     public static final String TYPE_POST_LIKED = "POST_LIKED";
     public static final String TYPE_REPLY_LIKED = "REPLY_LIKED";
     public static final String TYPE_FOLLOW_CREATED = "FOLLOW_CREATED";
+    public static final String TYPE_NOTICE_POST_CREATED = "NOTICE_POST_CREATED";
     public static final String TYPE_REPORT_RESOLVED = "REPORT_RESOLVED";
     public static final String TYPE_REPORT_DISMISSED = "REPORT_DISMISSED";
     public static final String TYPE_CONTENT_MODERATED = "CONTENT_MODERATED";
@@ -405,6 +406,26 @@ public class ContentNotificationService {
                 }
             } catch (Exception e) {
                 log.warn("팔로우 알림 처리 실패: actorId={}, targetId={}", actorId, targetId, e);
+            }
+        });
+    }
+
+    public void notifyNoticePostCreatedAfterCommit(
+            Long actorId,
+            Long postId,
+            String postTitle,
+            String postContent) {
+        afterCommit(() -> {
+            try {
+                List<DispatchOutcome> outcomes = requiresNewTx.execute(
+                        tx -> dispatchNoticePostCreatedInNewTx(actorId, postId, postTitle, postContent));
+                if (outcomes != null) {
+                    for (DispatchOutcome outcome : outcomes) {
+                        sse.sendNotification(outcome.receiverId(), outcome.eventName(), outcome.notification(), outcome.status());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("공지사항 등록 전체 알림 처리 실패: postId={}, actorId={}", postId, actorId, e);
             }
         });
     }
@@ -819,6 +840,67 @@ public class ContentNotificationService {
                 queryStatusInternal(targetId));
     }
 
+    private List<DispatchOutcome> dispatchNoticePostCreatedInNewTx(
+            Long actorId,
+            Long postId,
+            String postTitle,
+            String postContent) {
+        ActorSnapshot actor = loadActiveMemberSnapshot(actorId);
+        if (actor == null) {
+            return List.of();
+        }
+        Boolean activeNotice = jdbc.queryForObject(
+                "select exists(select 1 from content.community_post where id = ? and status = 'ACTIVE' and category = 'NOTICE')",
+                Boolean.class,
+                postId);
+        if (!Boolean.TRUE.equals(activeNotice)) {
+            return List.of();
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("postId", postId);
+        payload.put("postTitle", Objects.toString(postTitle, ""));
+        payload.put("postCategory", "NOTICE");
+        payload.put("contentPreview", summarizeText(postContent, PREVIEW_MAX_LENGTH));
+        payload.put("actorMemberId", actor.memberId());
+        payload.put("actorNickname", actor.nickname());
+        payload.put("actorProfileImageUrl", actor.profileImageUrl());
+        String payloadJson = writeJson(payload);
+
+        record InsertedNoticeNotification(Long receiverId, NotificationItemResponse item) { }
+        List<InsertedNoticeNotification> inserted = jdbc.query(
+                "insert into content.notification("
+                        + "receiver_member_id, actor_member_id, category, type, payload_json, is_read, read_at, created_at, last_event_at"
+                        + ") "
+                        + "select m.id, ?, ?, ?, cast(? as jsonb), false, null, now(), now() "
+                        + "from content.member m "
+                        + "where m.status = 'ACTIVE' and m.id <> ? "
+                        + "order by m.id asc "
+                        + "returning id, receiver_member_id, actor_member_id, category, type, payload_json::text as payload_text, is_read, created_at, last_event_at",
+                (rs, n) -> new InsertedNoticeNotification(rs.getLong("receiver_member_id"), mapItem(rs)),
+                actor.memberId(),
+                CATEGORY_COMMUNITY,
+                TYPE_NOTICE_POST_CREATED,
+                payloadJson,
+                actor.memberId());
+
+        if (inserted.isEmpty()) {
+            return List.of();
+        }
+
+        List<DispatchOutcome> outcomes = new ArrayList<>();
+        for (InsertedNoticeNotification row : inserted) {
+            if (sse.hasActiveConnection(row.receiverId())) {
+                outcomes.add(new DispatchOutcome(
+                        row.receiverId(),
+                        "NOTIFICATION_COMMUNITY_NOTICE_CREATED",
+                        row.item(),
+                        queryStatusInternal(row.receiverId())));
+            }
+        }
+        return outcomes;
+    }
+
     private DispatchOutcome dispatchReportHandledInNewTx(
             Long reporterId,
             String status,
@@ -1137,6 +1219,7 @@ public class ContentNotificationService {
             case TYPE_POST_LIKED -> "NOTIFICATION_COMMUNITY_POST_LIKED_CREATED";
             case TYPE_REPLY_LIKED -> "NOTIFICATION_COMMUNITY_REPLY_LIKED_CREATED";
             case TYPE_FOLLOW_CREATED -> "NOTIFICATION_COMMUNITY_FOLLOW_CREATED";
+            case TYPE_NOTICE_POST_CREATED -> "NOTIFICATION_COMMUNITY_NOTICE_CREATED";
             case TYPE_REPORT_RESOLVED -> "NOTIFICATION_REPORT_RESOLVED";
             case TYPE_REPORT_DISMISSED -> "NOTIFICATION_REPORT_DISMISSED";
             case TYPE_CONTENT_MODERATED -> "NOTIFICATION_CONTENT_MODERATED";

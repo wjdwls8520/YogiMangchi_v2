@@ -21,6 +21,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -265,6 +267,133 @@ class ContentNotificationIntegrationTests extends TestEnvironment {
         assertThat(jdbc.queryForObject(
                 "select count(*) from content.notification where receiver_member_id = ?",
                 Long.class, authorId)).isZero();
+    }
+
+    @Test
+    void noticeCategoryRequiresAdminAndBroadcastsNotificationToAllActiveMembers() throws Exception {
+        var admin = signupWithPrefix("운영자");
+        var memberA = signupWithPrefix("유저일");
+        var memberB = signupWithPrefix("유저이");
+        var suspended = signupWithPrefix("정지유");
+
+        jdbc.update("update content.member set role = 'ADMIN' where id = ?", admin.access().memberId());
+        jdbc.update("update content.member set status = 'SUSPENDED', suspended_at = now(), suspended_reason = 'test' where id = ?",
+                suspended.access().memberId());
+
+        String adminToken = "Bearer " + admin.access().accessToken();
+        String tokenA = "Bearer " + memberA.access().accessToken();
+        String tokenB = "Bearer " + memberB.access().accessToken();
+
+        // 1. Non-admin CANNOT create a NOTICE post via JSON or Multipart
+        mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", tokenA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "category": "NOTICE",
+                                  "title": "일반유저 공지 시도",
+                                  "content": "차단되어야 합니다."
+                                }
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        mvc.perform(multipart("/api/v1/community/posts")
+                        .param("category", "NOTICE")
+                        .param("title", "멀티파트 공지 시도")
+                        .param("content", "차단되어야 합니다.")
+                        .header("Authorization", tokenA))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        // 2. Non-admin CANNOT change own FREE post into NOTICE via PATCH
+        JsonNode memberFreePost = json.readTree(mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", tokenA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":\"FREE\",\"title\":\"일반자유글\",\"content\":\"내용\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString());
+        long freePostId = memberFreePost.get("id").asLong();
+
+        mvc.perform(patch("/api/v1/community/posts/" + freePostId)
+                        .header("Authorization", tokenA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":\"NOTICE\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        // 3. Admin creates a NOTICE post -> 201 Created
+        JsonNode noticePost = json.readTree(mvc.perform(post("/api/v1/community/posts")
+                        .header("Authorization", adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "category": "NOTICE",
+                                  "title": "점검 끝났습니다.",
+                                  "content": "모든 거래 엔진과 시세 스트림이 정상화되었습니다."
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.category").value("NOTICE"))
+                .andExpect(jsonPath("$.title").value("점검 끝났습니다."))
+                .andReturn().getResponse().getContentAsString());
+        long noticePostId = noticePost.get("id").asLong();
+
+        // 4. Filter by category=NOTICE returns ONLY notice posts
+        mvc.perform(get("/api/v1/community/posts").param("category", "NOTICE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].id").value(noticePostId))
+                .andExpect(jsonPath("$.items[0].category").value("NOTICE"));
+
+        // 5. All other ACTIVE members receive NOTICE_POST_CREATED notification; author & suspended do NOT
+        mvc.perform(get("/api/v1/notifications").header("Authorization", tokenA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].category").value("COMMUNITY"))
+                .andExpect(jsonPath("$.content[0].type").value("NOTICE_POST_CREATED"))
+                .andExpect(jsonPath("$.content[0].payload.postId").value(noticePostId))
+                .andExpect(jsonPath("$.content[0].payload.postTitle").value("점검 끝났습니다."))
+                .andExpect(jsonPath("$.content[0].payload.postCategory").value("NOTICE"));
+
+        mvc.perform(get("/api/v1/notifications").header("Authorization", tokenB))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].type").value("NOTICE_POST_CREATED"))
+                .andExpect(jsonPath("$.content[0].payload.postId").value(noticePostId));
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from content.notification where receiver_member_id = ? and type = 'NOTICE_POST_CREATED'",
+                Long.class, admin.access().memberId())).isZero();
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from content.notification where receiver_member_id = ? and type = 'NOTICE_POST_CREATED'",
+                Long.class, suspended.access().memberId())).isZero();
+
+        // 6. Regular users CAN read, like, and comment on NOTICE posts
+        mvc.perform(get("/api/v1/community/posts/" + noticePostId).header("Authorization", tokenA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.category").value("NOTICE"));
+
+        mvc.perform(put("/api/v1/community/posts/" + noticePostId + "/likes").header("Authorization", tokenA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.likeCount").value(1));
+
+        mvc.perform(post("/api/v1/community/posts/" + noticePostId + "/comments")
+                        .header("Authorization", tokenA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"빠른 점검 감사합니다!\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.content").value("빠른 점검 감사합니다!"));
+
+        // 7. Admin editing an existing NOTICE post does NOT send duplicate NOTICE_POST_CREATED notifications
+        mvc.perform(patch("/api/v1/community/posts/" + noticePostId)
+                        .header("Authorization", adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"점검 완료 안내\",\"content\":\"내용 보강\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.category").value("NOTICE"));
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from content.notification where receiver_member_id = ? and type = 'NOTICE_POST_CREATED'",
+                Long.class, memberA.access().memberId())).isEqualTo(1L);
     }
 
     private AuthService.Issued signupWithPrefix(String prefix) {

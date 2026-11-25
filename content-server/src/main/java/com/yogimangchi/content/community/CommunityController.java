@@ -71,7 +71,7 @@ public class CommunityController {
     @GetMapping(value = "/api/v1/community/posts", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(
             summary = "List active community posts",
-            description = "Public. Supports sort=LATEST|POPULAR|WEEKLY_POPULAR|ALL|BEST. Optional member Bearer sets likedByMe, reportedByMe and mine flags."
+            description = "Public. Supports category=ALL|MARKET|ANALYSIS|POSITION|FREE|NOTICE and sort=LATEST|POPULAR|WEEKLY_POPULAR|ALL|BEST. Optional member Bearer sets likedByMe, reportedByMe and mine flags."
     )
     public ResponseEntity<CommunityService.CommunityPostPageResponse> listPosts(
             @RequestParam(required = false) String category,
@@ -134,7 +134,7 @@ public class CommunityController {
 
     @PostMapping(value = "/api/v1/community/posts", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Create a community post (JSON)", description = "Active member Bearer required.")
+    @Operation(summary = "Create a community post (JSON)", description = "Active member Bearer required. Category NOTICE is restricted to ADMIN role and notifies all other active members.")
     public ResponseEntity<CommunityService.CommunityPostResponse> createPostJson(
             @AuthenticationPrincipal Jwt jwt,
             @RequestBody(required = false) CommunityService.CreatePostRequest body,
@@ -150,7 +150,7 @@ public class CommunityController {
 
     @PostMapping(value = "/api/v1/community/posts", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Create a community post with image attachments (Multipart)", description = "Active member Bearer required. Supports up to 10 images (JPG/JPEG/PNG/WEBP <=5MB, GIF <=3MB) and optional sharedPosition JSON.")
+    @Operation(summary = "Create a community post with image attachments (Multipart)", description = "Active member Bearer required. Supports up to 10 images (JPG/JPEG/PNG/WEBP <=5MB, GIF <=3MB) and optional sharedPosition JSON. Category NOTICE is restricted to ADMIN role and notifies all other active members.")
     public ResponseEntity<CommunityService.CommunityPostResponse> createPostMultipart(
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) String category,
@@ -181,7 +181,7 @@ public class CommunityController {
     @PatchMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @PutMapping(value = "/api/v1/community/posts/{postId:[0-9]+}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @SecurityRequirement(name = "memberBearer")
-    @Operation(summary = "Update own community post (JSON)", description = "Post owner Bearer required. Preserves existing sharedPosition (including verified=true) unless clearSharedPosition=true or a new sharedPosition is supplied.")
+    @Operation(summary = "Update own community post (JSON)", description = "Post owner Bearer required. Preserves existing sharedPosition (including verified=true) unless clearSharedPosition=true or a new sharedPosition is supplied. Category NOTICE requires ADMIN role.")
     public ResponseEntity<CommunityService.CommunityPostResponse> updatePostJson(
             @PathVariable Long postId,
             @AuthenticationPrincipal Jwt jwt,
