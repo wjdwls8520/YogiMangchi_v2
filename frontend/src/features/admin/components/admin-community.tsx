@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { DimModal } from "../../member/components/dim-modal";
+import { stripNoticePrefix } from "../../member/api/community-news";
 import { useOptionalMember } from "../../member/components/member-provider";
 import { RequestIdChip } from "../../../components/request-id-copy";
 import { getErrorRequestId, isUnexpectedApiError } from "../../../lib/request-id";
@@ -680,12 +681,28 @@ export function AdminCommunity() {
                             #{post.postId}
                           </td>
                           <td className="px-4 py-3.5 whitespace-nowrap">
-                            <span className="inline-flex shrink-0 whitespace-nowrap rounded-lg bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-700">
-                              {post.category}
+                            <span
+                              className={cn(
+                                "inline-flex shrink-0 whitespace-nowrap rounded-lg px-2 py-0.5 text-[11px] font-bold",
+                                post.category === "NOTICE"
+                                  ? "bg-red-50 text-red-600"
+                                  : "bg-gray-100 text-gray-700",
+                              )}
+                            >
+                              {post.category === "NOTICE" ? "공지사항" : post.category}
                             </span>
                           </td>
                           <td className="w-[260px] max-w-[260px] px-4 py-3.5">
-                            <div className="truncate font-bold text-gray-900">{post.title}</div>
+                            <div className="truncate font-bold text-gray-900">
+                              {post.category === "NOTICE" ? (
+                                <>
+                                  <span className="mr-1 font-black text-red-600">[공지]</span>
+                                  <span>{stripNoticePrefix(post.title)}</span>
+                                </>
+                              ) : (
+                                post.title
+                              )}
+                            </div>
                             <div className="mt-0.5 truncate text-[11px] text-gray-500">
                               {post.content}
                             </div>

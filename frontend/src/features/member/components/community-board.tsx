@@ -14,6 +14,7 @@ import {
   communityCategoryLabel,
   communityCommentsPath,
   communityPostsPath,
+  formatCommunityPostTitleText,
   parseCommentLike,
   parseCommunityComment,
   parseCommunityComments,
@@ -25,6 +26,7 @@ import {
   parsePublicMemberPortfolio,
   parseReportReasons,
   readCommunityOrPublic,
+  stripNoticePrefix,
   type CommunityCategory,
   type CommunityComment,
   type CommunityPost,
@@ -89,6 +91,30 @@ const SELECTABLE_CATEGORIES: readonly CommunityCategory[] = [
   "POSITION",
   "FREE",
 ];
+
+export function getWritableCommunityCategories(isAdmin: boolean): readonly CommunityCategory[] {
+  return isAdmin ? ["NOTICE", ...SELECTABLE_CATEGORIES] : SELECTABLE_CATEGORIES;
+}
+
+function NoticePostTitle({
+  category,
+  title,
+}: {
+  category: CommunityCategory;
+  title: string;
+}) {
+  if (category !== "NOTICE") {
+    return <>{title}</>;
+  }
+  return (
+    <>
+      <span className="mr-1.5 font-black text-red-600" data-notice-prefix="true">
+        [공지]
+      </span>
+      <span>{stripNoticePrefix(title)}</span>
+    </>
+  );
+}
 
 const SELECTABLE_SYMBOLS = SYMBOL_FILTER_TAGS.filter(
   (s): s is Exclude<(typeof SYMBOL_FILTER_TAGS)[number], ""> => Boolean(s),
@@ -381,7 +407,7 @@ export function CommunityBoard({
 }: {
   initialPage?: CommunityPostPage;
   initialComments?: Record<number, CommunityComment[]>;
-  initialV1Tab?: "all" | "best" | "latest";
+  initialV1Tab?: "all" | "best" | "latest" | "notice";
   initialCategory?: "" | CommunityCategory;
   highlightPostId?: number;
   initialEditingPostId?: number;
@@ -394,11 +420,19 @@ export function CommunityBoard({
   const { origin, session, snapshot } = useMember();
   const queryClient = useQueryClient();
 
-  const [v1Tab, setV1Tab] = useState<"all" | "best">(initialV1Tab === "best" ? "best" : "all");
+  const resolvedInitialTab: "all" | "best" | "notice" =
+    initialV1Tab === "notice" || initialCategory === "NOTICE"
+      ? "notice"
+      : initialV1Tab === "best"
+        ? "best"
+        : "all";
+  const [v1Tab, setV1Tab] = useState<"all" | "best" | "notice">(resolvedInitialTab);
   const [sort, setSort] = useState<CommunitySort>(
-    initialV1Tab === "best" ? "WEEKLY_POPULAR" : "LATEST",
+    resolvedInitialTab === "best" ? "WEEKLY_POPULAR" : "LATEST",
   );
-  const [category, setCategory] = useState<"" | CommunityCategory>(initialCategory);
+  const [category, setCategory] = useState<"" | CommunityCategory>(
+    resolvedInitialTab === "notice" ? "NOTICE" : initialCategory,
+  );
   const [symbolTag, setSymbolTag] = useState<string>("");
   const [searchInput, setSearchInput] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -470,6 +504,8 @@ export function CommunityBoard({
   const likingPostIdsRef = useRef<Set<number>>(new Set());
   const likingCommentIdsRef = useRef<Set<number>>(new Set());
   const isLoggedIn = snapshot.phase === "ready";
+  const isAdmin = isLoggedIn && snapshot.role === "ADMIN";
+  const writableCategories = useMemo(() => getWritableCommunityCategories(isAdmin), [isAdmin]);
 
   const tradingBase = resolveTradingContestBaseUrl();
   const [writeModalOpen, setWriteModalOpen] = useState(false);
@@ -857,8 +893,15 @@ export function CommunityBoard({
     size: 10,
   });
 
+  const initialResolvedCategory: "" | CommunityCategory =
+    resolvedInitialTab === "notice" ? "NOTICE" : initialCategory;
+  const initialResolvedSort: CommunitySort =
+    resolvedInitialTab === "best" ? "WEEKLY_POPULAR" : "LATEST";
   const isDefaultQuery =
-    category === "" && sort === "LATEST" && symbolTag === "" && keyword === "";
+    category === initialResolvedCategory &&
+    sort === initialResolvedSort &&
+    symbolTag === "" &&
+    keyword === "";
 
   const postsQuery = useQuery({
     queryKey: ["community-posts", origin, path, snapshot.generation, snapshot.memberId],
@@ -1362,11 +1405,21 @@ export function CommunityBoard({
   }
 
   function handleV1TabChange(nextValue: string) {
-    const nextTab: "all" | "best" = nextValue === "best" ? "best" : "all";
+    const nextTab: "all" | "best" | "notice" =
+      nextValue === "best" ? "best" : nextValue === "notice" ? "notice" : "all";
     setV1Tab(nextTab);
-    if (nextTab === "best") {
+    if (nextTab === "notice") {
+      setCategory("NOTICE");
+      setSort("LATEST");
+    } else if (nextTab === "best") {
+      if (category === "NOTICE") {
+        setCategory("");
+      }
       setSort("WEEKLY_POPULAR");
     } else {
+      if (category === "NOTICE") {
+        setCategory("");
+      }
       setSort("LATEST");
     }
     resetFeedPagination();
@@ -1396,6 +1449,10 @@ export function CommunityBoard({
         ? "POSITION"
         : String(data.get("category") ?? "FREE")
     ) as CommunityCategory;
+    if (postCategory === "NOTICE" && !isAdmin) {
+      setWriteModalError({ text: "공지사항은 관리자만 작성할 수 있습니다." });
+      return;
+    }
     const rawSymbol = matchedPosition
       ? matchedPosition.symbol
       : String(data.get("symbolTag") ?? "");
@@ -1443,6 +1500,10 @@ export function CommunityBoard({
     if (!editingPost || !requireReadyMember()) return;
     const data = new FormData(event.currentTarget);
     const postCategory = String(data.get("category") ?? editingPost.category) as CommunityCategory;
+    if ((postCategory === "NOTICE" || editingPost.category === "NOTICE") && !isAdmin) {
+      showErrorFeedback("공지사항은 관리자만 작성하거나 수정할 수 있습니다.");
+      return;
+    }
     const rawSymbol = String(data.get("symbolTag") ?? "").trim();
     const title = String(data.get("title") ?? "").trim();
     const content = String(data.get("content") ?? "").trim();
@@ -1986,7 +2047,7 @@ export function CommunityBoard({
             <p className="mt-1 text-sm font-medium text-gray-500">
               {isEditingMode
                 ? "작성한 게시글의 내용과 첨부 이미지를 수정합니다."
-                : "전체글과 주간 인기글을 확인하고 모의투자 관점을 공유하세요."}
+                : "전체글, 주간 인기글, 공지사항을 확인하고 모의투자 관점을 공유하세요."}
             </p>
           </div>
           {!isEditingMode && (
@@ -2044,12 +2105,13 @@ export function CommunityBoard({
                 </Link>
               </div>
             ) : (
-              /* V1 CommunityTabs (전체글 | 주간 인기글) */
+              /* V1 CommunityTabs (전체글 | 주간 인기글 | 공지사항) */
               <div className="rounded-2xl border border-gray-200 bg-white px-4 pt-2 pb-4">
                 <V1Tabs
                   tabs={[
                     { label: "전체글", value: "all" },
                     { label: "주간 인기글", value: "best" },
+                    { label: "공지사항", value: "notice" },
                   ]}
                   activeTab={v1Tab}
                   onChange={handleV1TabChange}
@@ -2067,7 +2129,16 @@ export function CommunityBoard({
                         aria-label="카테고리 필터"
                         value={category}
                         onChange={event => {
-                          setCategory(event.currentTarget.value as "" | CommunityCategory);
+                          const nextCategory = event.currentTarget.value as "" | CommunityCategory;
+                          setCategory(nextCategory);
+                          if (nextCategory === "NOTICE") {
+                            setV1Tab("notice");
+                            setSort("LATEST");
+                          } else if (v1Tab === "notice") {
+                            setV1Tab(
+                              sort === "WEEKLY_POPULAR" || sort === "POPULAR" ? "best" : "all",
+                            );
+                          }
                           resetFeedPagination();
                         }}
                         className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF]"
@@ -2111,7 +2182,13 @@ export function CommunityBoard({
                         onChange={event => {
                           const nextSort = event.currentTarget.value as CommunitySort;
                           setSort(nextSort);
-                          setV1Tab(nextSort === "WEEKLY_POPULAR" || nextSort === "POPULAR" ? "best" : "all");
+                          if (v1Tab !== "notice") {
+                            setV1Tab(
+                              nextSort === "WEEKLY_POPULAR" || nextSort === "POPULAR"
+                                ? "best"
+                                : "all",
+                            );
+                          }
                           resetFeedPagination();
                         }}
                         className="h-10 w-full rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF]"
@@ -2215,7 +2292,9 @@ export function CommunityBoard({
 
             {visiblePosts.length === 0 && !isLoadingPosts && !loadError && (
               <div className="card rounded-2xl border border-gray-200 bg-white py-16 text-center text-sm text-gray-500">
-                조건에 맞는 게시글이 없습니다. 첫 번째 관점을 남겨보세요!
+                {v1Tab === "notice" || category === "NOTICE"
+                  ? "아직 등록된 공지사항이 없습니다."
+                  : "조건에 맞는 게시글이 없습니다. 첫 번째 관점을 남겨보세요!"}
               </div>
             )}
 
@@ -2273,7 +2352,13 @@ export function CommunityBoard({
                               nickname={post.authorNickname}
                               withdrawn={post.authorWithdrawn}
                             />
-                            <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
+                            <span
+                              className={
+                                post.category === "NOTICE"
+                                  ? "rounded-md bg-red-50 px-2 py-0.5 text-[11px] font-extrabold text-red-600"
+                                  : "rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600"
+                              }
+                            >
                               {communityCategoryLabel(post.category)}
                             </span>
                             {post.symbolTag && (
@@ -2328,7 +2413,7 @@ export function CommunityBoard({
                                     setPendingDelete({
                                       kind: "POST",
                                       postId: post.id,
-                                      title: post.title,
+                                      title: formatCommunityPostTitleText(post.category, post.title),
                                     });
                                   }
                                 }}
@@ -2394,7 +2479,7 @@ export function CommunityBoard({
                                 defaultValue={post.category}
                                 className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-xs font-bold"
                               >
-                                {SELECTABLE_CATEGORIES.filter(item => item !== "POSITION").map(item => (
+                                {writableCategories.filter(item => item !== "POSITION").map(item => (
                                   <option key={item} value={item}>
                                     {communityCategoryLabel(item)}
                                   </option>
@@ -2521,7 +2606,7 @@ export function CommunityBoard({
                         {isDetailView ? (
                           <div>
                             <h3 className="text-xl font-bold text-gray-900">
-                              {post.title}
+                              <NoticePostTitle category={post.category} title={post.title} />
                             </h3>
                             <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
                               {post.content}
@@ -2530,7 +2615,7 @@ export function CommunityBoard({
                         ) : (
                           <Link href={`/community/${v1Tab}/${post.id}`} className="group block">
                             <h3 className="text-lg font-bold text-gray-900 group-hover:text-[#0058FF]">
-                              {post.title}
+                              <NoticePostTitle category={post.category} title={post.title} />
                             </h3>
                             <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
                               {post.content}
@@ -3508,6 +3593,12 @@ export function CommunityBoard({
             aria-disabled={!isLoggedIn}
             onClick={() => {
               if (!requireReadyMember()) return;
+              if (isAdmin && (v1Tab === "notice" || category === "NOTICE")) {
+                setModalCategory("NOTICE");
+                setModalPositionId("");
+              } else {
+                setModalCategory("FREE");
+              }
               setWriteModalOpen(true);
             }}
             aria-label="글쓰기"
@@ -3547,12 +3638,16 @@ export function CommunityBoard({
             <select
               name="category"
               value={modalCategory}
-              onChange={event =>
-                setModalCategory(event.currentTarget.value as CommunityCategory)
-              }
+              onChange={event => {
+                const nextCategory = event.currentTarget.value as CommunityCategory;
+                setModalCategory(nextCategory);
+                if (nextCategory === "NOTICE") {
+                  setModalPositionId("");
+                }
+              }}
               className="h-10 rounded-xl border border-gray-300 bg-white px-3.5 text-xs font-bold text-gray-900 focus:border-[#0058FF] focus:outline-none"
             >
-              {SELECTABLE_CATEGORIES.map(item => (
+              {writableCategories.map(item => (
                 <option key={item} value={item}>
                   {communityCategoryLabel(item)}
                 </option>
@@ -3600,6 +3695,11 @@ export function CommunityBoard({
               ))}
             </select>
           </div>
+          {modalCategory === "NOTICE" && isAdmin && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-semibold text-red-700">
+              <span className="font-black text-red-600">[공지]</span> 말머리가 제목 앞에 빨간색으로 자동 표시되며, 등록 시 모든 활성 회원에게 새 공지사항 알림이 발송됩니다.
+            </div>
+          )}
           {modalCategory === "POSITION" &&
             !shareablePositionsQuery.isLoading &&
             liveShareablePositions.length === 0 && (
