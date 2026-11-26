@@ -26,7 +26,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class CommunityService {
-    private static final Set<String> CATEGORIES = Set.of("MARKET", "ANALYSIS", "POSITION", "FREE");
+    public static final String CATEGORY_NOTICE = "NOTICE";
+    private static final Set<String> CATEGORIES = Set.of("MARKET", "ANALYSIS", "POSITION", "FREE", CATEGORY_NOTICE);
     public static final int MAX_SHARED_POSITION_LEVERAGE = 100;
     public static final String WITHDRAWN_AUTHOR_NICKNAME = "탈퇴한회원";
     public static final String DELETED_COMMENT_MASK = "삭제된 댓글입니다.";
@@ -638,7 +639,10 @@ public class CommunityService {
         String sharedPositionJson = serializeSharedPosition(effectiveSnapshot, serverVerified);
 
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
-        requireActiveMember(memberId);
+        Member author = requireActiveMember(memberId);
+        if (CATEGORY_NOTICE.equals(category) && author.getRole() != Member.Role.ADMIN) {
+            throw noticeAdminOnly();
+        }
 
         List<CommunityS3Service.UploadResult> uploadedFiles = s3.validateAndUploadPostImages(files, 0);
 
@@ -686,6 +690,13 @@ public class CommunityService {
                 created.createdAt(),
                 publicSnapshot
         ));
+        if (CATEGORY_NOTICE.equals(category) && notifications != null) {
+            notifications.notifyNoticePostCreatedAfterCommit(
+                    memberId,
+                    created.id(),
+                    created.title(),
+                    created.content());
+        }
         return created;
     }
 
@@ -718,7 +729,7 @@ public class CommunityService {
         }
 
         jdbc.execute("SET LOCAL lock_timeout = '2s'");
-        requireActiveMember(memberId);
+        Member actor = requireActiveMember(memberId);
 
         var locked = jdbc.query(
                 "select id, member_id, category, symbol_tag, title, content, shared_position_json, status "
@@ -739,6 +750,12 @@ public class CommunityService {
         LockedPost existing = locked.get(0);
         if (!existing.memberId().equals(memberId)) {
             throw forbidden();
+        }
+
+        String category = body.category() == null ? existing.category() : validateCategory(body.category());
+        if ((CATEGORY_NOTICE.equals(category) || CATEGORY_NOTICE.equals(existing.category()))
+                && actor.getRole() != Member.Role.ADMIN) {
+            throw noticeAdminOnly();
         }
 
         List<String> keysToDeleteAfterCommit = new ArrayList<>();
@@ -769,7 +786,6 @@ public class CommunityService {
             s3.registerAfterCommitDelete(keysToDeleteAfterCommit);
         }
 
-        String category = body.category() == null ? existing.category() : validateCategory(body.category());
         String symbolTag = body.symbolTag() == null ? existing.symbolTag() : normalizeSymbolTag(body.symbolTag());
         String title = body.title() == null ? existing.title() : validateTitle(body.title());
         String content = body.content() == null ? existing.content() : validatePostContent(body.content());
@@ -1639,11 +1655,11 @@ public class CommunityService {
                 .toList();
     }
 
-    private void requireActiveMember(Long memberId) {
+    private Member requireActiveMember(Long memberId) {
         if (memberId == null || memberId <= 0) {
             throw AuthFailure.unauthorized();
         }
-        members.lockById(memberId)
+        return members.lockById(memberId)
                 .filter(m -> m.getStatus() == Member.Status.ACTIVE)
                 .orElseThrow(() -> new AuthFailure("MEMBER_NOT_ACTIVE", HttpStatus.UNAUTHORIZED));
     }
@@ -1960,5 +1976,9 @@ public class CommunityService {
 
     private static AuthFailure forbidden() {
         return new AuthFailure("ACCESS_DENIED", HttpStatus.FORBIDDEN);
+    }
+
+    private static AuthFailure noticeAdminOnly() {
+        return new AuthFailure("ACCESS_DENIED", HttpStatus.FORBIDDEN, "공지사항은 관리자만 작성하거나 수정할 수 있습니다.");
     }
 }

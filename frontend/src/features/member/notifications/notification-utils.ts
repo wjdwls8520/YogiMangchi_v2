@@ -1,4 +1,5 @@
 import { formatInquiryCategoryKr } from "../../../lib/labels";
+import { stripNoticePrefix } from "../api/community-news";
 import type {
   NotificationCategory,
   NotificationDetailField,
@@ -50,6 +51,7 @@ const TYPE_LABELS: Record<string, string> = {
   POST_LIKED: "게시글 좋아요",
   REPLY_LIKED: "댓글 좋아요",
   FOLLOW_CREATED: "팔로우",
+  NOTICE_POST_CREATED: "공지사항",
   REPORT_RESOLVED: "신고 처리 완료",
   REPORT_DISMISSED: "신고 기각",
   CONTENT_MODERATED: "콘텐츠 제재 안내",
@@ -354,6 +356,9 @@ export function getNotificationTradeMeta(notification: NotificationItem): {
   sideLabel: string | null;
   tone: NotificationTradeTone;
 } {
+  if (notification.type === "NOTICE_POST_CREATED") {
+    return { sideLabel: "공지사항", tone: "sell" };
+  }
   if (!isTradeNotification(notification)) {
     return { sideLabel: null, tone: null };
   }
@@ -556,6 +561,12 @@ export function formatNotificationTitle(notification: NotificationItem): string 
     }
     case "FOLLOW_CREATED":
       return `${actorName}님이 나를 팔로우했습니다.`;
+    case "NOTICE_POST_CREATED": {
+      const cleanTitle = postTitleSummary ? stripNoticePrefix(postTitleSummary) : null;
+      return cleanTitle
+        ? `[공지] ${cleanTitle}`
+        : "새 공지사항이 등록되었습니다.";
+    }
     default:
       return "새 알림이 도착했습니다.";
   }
@@ -657,6 +668,16 @@ export function formatNotificationDescription(notification: NotificationItem): s
   if (type === "SUPPORT_INQUIRY_ANSWERED") {
     const preview = summarizeText(getPayloadString(notification.payload, "replyPreview"), 60);
     return preview ? `답변: "${preview}"` : "고객센터에서 운영팀 답변을 확인해 주세요.";
+  }
+
+  if (type === "NOTICE_POST_CREATED") {
+    const preview = summarizeText(
+      getPayloadString(notification.payload, "contentPreview", "summary", "message"),
+      56,
+    );
+    return preview
+      ? `새 공지사항이 등록되었습니다 · ${preview}`
+      : "새 공지사항이 등록되었습니다. 커뮤니티에서 확인해 주세요.";
   }
 
   return "";
@@ -813,6 +834,16 @@ export function getNotificationDetailFields(
         createDetailField("문의 유형", inquiryCategory ? formatInquiryCategoryKr(inquiryCategory) : null),
         createDetailField("문의 제목", title),
         createDetailField("답변 요약", replyPreview),
+      ].filter((f): f is NotificationDetailField => f !== null);
+    }
+    case "NOTICE_POST_CREATED": {
+      const cleanTitle = postTitle ? stripNoticePrefix(postTitle) : null;
+      const preview = getPayloadString(notification.payload, "contentPreview", "summary", "message");
+      return [
+        createDetailField("구분", "운영 공지사항"),
+        createDetailField("제목", cleanTitle ? `[공지] ${cleanTitle}` : postTitle),
+        createDetailField("작성자", actorName),
+        createDetailField("내용 요약", preview),
       ].filter((f): f is NotificationDetailField => f !== null);
     }
     default:
@@ -976,6 +1007,14 @@ export function getNotificationNavigationTarget(
           ? `/support?inquiryId=${Math.trunc(inquiryId)}`
           : "/support",
       label: "1:1 문의 답변 확인",
+    };
+  }
+
+  if (type === "NOTICE_POST_CREATED") {
+    const postId = getPayloadNumericValue(notification.payload, "postId", "targetPostId");
+    return {
+      href: postId !== null && postId > 0 ? `/community/notice/${Math.trunc(postId)}` : "/community/notice",
+      label: "공지사항 보러가기",
     };
   }
 

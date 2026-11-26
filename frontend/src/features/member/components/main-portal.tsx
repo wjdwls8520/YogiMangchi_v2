@@ -12,6 +12,7 @@ import {
   parseNewsPage,
   parseNewsReaction,
   readCommunityOrPublic,
+  stripNoticePrefix,
   type NewsItem,
 } from "../api/community-news";
 import { contentJson, contentMessage } from "../api/client";
@@ -966,9 +967,25 @@ export function MainPortal({
                       ) : null}
                     </div>
 
-                    <Link href={`/community/all/${post.id}`} className="block group">
+                    <Link
+                      href={
+                        post.category === "NOTICE"
+                          ? `/community/notice/${post.id}`
+                          : `/community/all/${post.id}`
+                      }
+                      className="block group"
+                    >
                       <h3 className="mb-1.5 text-base font-black text-gray-900 group-hover:text-[#0058FF] line-clamp-1">
-                        {post.title}
+                        {post.category === "NOTICE" ? (
+                          <>
+                            <span className="mr-1.5 font-black text-red-600" data-notice-prefix="true">
+                              [공지]
+                            </span>
+                            <span>{stripNoticePrefix(post.title)}</span>
+                          </>
+                        ) : (
+                          post.title
+                        )}
                       </h3>
                       <p className="text-sm text-gray-600 line-clamp-2">{post.content}</p>
                     </Link>

@@ -13,6 +13,7 @@ import {
   parseMemberCommunityReportPage,
   parsePublicMemberPortfolio,
   readCommunityOrPublic,
+  stripNoticePrefix,
   type CommunityCategory,
 } from "../api/community-news";
 import { tradingJson } from "../../trading/api/client";
@@ -1075,17 +1076,36 @@ export function PublicMember({ memberId }: { memberId: number }) {
                             livePosts.map(post => (
                               <article key={post.id} className="rounded-xl border border-gray-200 p-4">
                                 <div className="flex items-center justify-between text-xs text-gray-400">
-                                  <span className="font-bold text-[#0058FF]">
+                                  <span
+                                    className={
+                                      post.category === "NOTICE"
+                                        ? "font-bold text-red-600"
+                                        : "font-bold text-[#0058FF]"
+                                    }
+                                  >
                                     {communityCategoryLabel(post.category as CommunityCategory)}
                                     {post.symbolTag ? ` · #${post.symbolTag}` : ""}
                                   </span>
                                   <span>{formatPublicKstDate(post.createdAt)}</span>
                                 </div>
                                 <Link
-                                  href={`/community/all/${post.id}`}
+                                  href={
+                                    post.category === "NOTICE"
+                                      ? `/community/notice/${post.id}`
+                                      : `/community/all/${post.id}`
+                                  }
                                   className="mt-1 block text-sm font-black text-gray-900 hover:text-[#0058FF]"
                                 >
-                                  {post.title}
+                                  {post.category === "NOTICE" ? (
+                                    <>
+                                      <span className="mr-1 font-black text-red-600" data-notice-prefix="true">
+                                        [공지]
+                                      </span>
+                                      <span>{stripNoticePrefix(post.title)}</span>
+                                    </>
+                                  ) : (
+                                    post.title
+                                  )}
                                 </Link>
                                 <p className="mt-1 line-clamp-2 text-xs text-gray-600">
                                   {post.content}

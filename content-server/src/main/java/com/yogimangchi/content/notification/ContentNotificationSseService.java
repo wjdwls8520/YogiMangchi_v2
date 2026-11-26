@@ -153,6 +153,14 @@ public class ContentNotificationSseService {
         }
     }
 
+    public boolean hasActiveConnection(Long memberId) {
+        if (memberId == null) {
+            return false;
+        }
+        Set<SseEmitter> memberEmitters = emittersByMember.get(memberId);
+        return memberEmitters != null && !memberEmitters.isEmpty();
+    }
+
     public int activeConnectionCount() {
         return emittersByMember.values().stream().mapToInt(Set::size).sum();
     }

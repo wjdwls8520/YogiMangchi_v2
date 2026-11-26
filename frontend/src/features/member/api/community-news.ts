@@ -5,7 +5,7 @@ export type NewsCategory = "CRYPTO" | "MACRO" | "ONCHAIN" | "REGULATION";
 export type NewsSection = "BREAKING" | "NEWSROOM";
 export type NewsSubCategory = "COIN_FLASH" | "ECONOMY_FLASH" | "CRYPTO" | "STOCKS" | "FX_RATES";
 export type NewsSentiment = "BULLISH" | "BEARISH" | "NEUTRAL";
-export type CommunityCategory = "MARKET" | "ANALYSIS" | "POSITION" | "FREE";
+export type CommunityCategory = "MARKET" | "ANALYSIS" | "POSITION" | "FREE" | "NOTICE";
 export type CommunitySort = "LATEST" | "POPULAR" | "WEEKLY_POPULAR";
 
 export const NEWS_CATEGORIES: readonly { key: "" | NewsCategory; label: string }[] = [
@@ -18,6 +18,7 @@ export const NEWS_CATEGORIES: readonly { key: "" | NewsCategory; label: string }
 
 export const COMMUNITY_CATEGORIES: readonly { key: "" | CommunityCategory; label: string }[] = [
   { key: "", label: "전체" },
+  { key: "NOTICE", label: "공지사항 (NOTICE)" },
   { key: "MARKET", label: "시황·관점 (MARKET)" },
   { key: "ANALYSIS", label: "차트 분석 (ANALYSIS)" },
   { key: "POSITION", label: "포지션 공유 (POSITION)" },
@@ -385,11 +386,27 @@ export function newsCategoryLabel(category: NewsCategory): string {
 
 export function communityCategoryLabel(category: CommunityCategory): string {
   switch (category) {
+    case "NOTICE": return "공지사항";
     case "MARKET": return "시황·관점";
     case "ANALYSIS": return "차트 분석";
     case "POSITION": return "포지션 공유";
     case "FREE": return "자유";
   }
+}
+
+export function stripNoticePrefix(title: string): string {
+  const stripped = title.replace(/^\s*\[공지\]\s*/u, "").trimStart();
+  return stripped.length > 0 ? stripped : title.trim();
+}
+
+export function formatCommunityPostTitleText(
+  category: CommunityCategory | string,
+  title: string,
+): string {
+  if (category === "NOTICE") {
+    return `[공지] ${stripNoticePrefix(title)}`;
+  }
+  return title;
 }
 
 export function parseNewsItem(value: unknown): NewsItem {
@@ -622,7 +639,15 @@ export function parseSharedPositionSnapshot(value: unknown): SharedPositionSnaps
 export function parseCommunityPost(value: unknown): CommunityPost {
   const row = obj(value);
   const category = row.category;
-  if (category !== "MARKET" && category !== "ANALYSIS" && category !== "POSITION" && category !== "FREE") return fail();
+  if (
+    category !== "MARKET" &&
+    category !== "ANALYSIS" &&
+    category !== "POSITION" &&
+    category !== "FREE" &&
+    category !== "NOTICE"
+  ) {
+    return fail();
+  }
   if (typeof row.authorWithdrawn !== "boolean" || typeof row.likedByMe !== "boolean" || typeof row.mine !== "boolean") return fail();
   const authorWithdrawn = row.authorWithdrawn;
   const authorNickname = authorWithdrawn ? "탈퇴한회원" : str(row.authorNickname, 40);
